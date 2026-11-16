@@ -1,0 +1,12 @@
+const fs=require('fs');const L=process.argv[2];
+const r=JSON.parse(fs.readFileSync(L+'/r58c/B/rerun-out/20261115T131745Z/result.json'));
+console.log('start',new Date(r.t*1000).toISOString(),'end',new Date(r.t_end*1000).toISOString());
+const c=fs.readFileSync(L+'/r58c/B/rerun-out/20261115T131745Z/compare.jsonl','utf8').trim().split('\n').map(JSON.parse);
+console.log(c.map(x=>x.unit+' '+x.result+' '+x.criterion).join('\n'));
+const p=JSON.parse(fs.readFileSync(L+'/train/stageB/plan.json'));
+console.log('keys',Object.keys(p));
+const ck=(p.checkpoints||[]).map(x=>typeof x==='string'?x:(x.sha||x.ckpt||JSON.stringify(x)));
+const hk=(p.heldout&&p.heldout.checkpoints)||p.heldout_checkpoints||[];
+const h=hk.map(x=>typeof x==='string'?x:(x.sha||x.ckpt||JSON.stringify(x)));
+const s=new Set(ck);console.log('tune',ck.length,'heldout',h.length,'shared',h.filter(x=>s.has(x)).length, 'sample',ck[0],h[0]);
+console.log('has 02b9557c6bee in tune', ck.some(x=>x.startsWith('02b9557c6bee')),'in held',h.some(x=>x.startsWith('02b9557c6bee')));

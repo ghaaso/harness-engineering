@@ -45,3 +45,5 @@ The EMS application remains in its original repository. The extraction did not d
 See `VALIDATION.md` and `validation/` for the recorded checks. `tools/verify_extraction.py` checks extracted file hashes; `tools/restore_artifacts.py` verifies every archive/object and restores the original relative layout. Restoration refuses differing pre-existing files and unsafe paths.
 
 The local audit/backup directory is `C:/Users/User/Documents/projects/.harness-extraction-2026-11-15`. It holds the verified original Git bundle, fixed recovery object store, release ZIPs, validation copies and source-state baselines. It is outside the EMS repo and outside the harness Git working tree.
+
+**Transfer update, 16 November:** files written in EMS_workshop1 after the update capture ended (15 November 2026, 18:33 UTC) were added later, without deleting or changing anything under `recovered/`. Counts, exclusions and verification are in [TRANSFER-UPDATE-2026-11-16.md](TRANSFER-UPDATE-2026-11-16.md).

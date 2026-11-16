@@ -1,0 +1,1 @@
+const fs = require("fs"); for (const f of process.argv.slice(2)) { const j = JSON.parse(fs.readFileSync(f, "utf8")); for (const k of Object.keys(j.result.agents)) for (const c of j.result.agents[k].checks) if (c.result !== "pass") console.log(" [" + c.result + "] " + k + ": " + String(c.name).slice(0, 150) + " :: " + String(c.evidence).slice(0, 260)); }

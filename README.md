@@ -44,3 +44,5 @@ The FixFlow lab and deployment scripts require the original EMS application. Fro
 `history/heads/*` and `history/remotes/*` preserve the selected paths across the available source refs. Filtering changes commit IDs; the commit map records the relationship to EMS. `main` combines the research branches and captures the uncommitted research. The original project and its Git history were not rewritten.
 
 Third-party skill and research materials retain their existing licenses and source attribution. No new blanket license is asserted over this collected corpus.
+
+**Transfer update, 16 November:** harness work written in EMS_workshop1 after the 15 November snapshot (the end of the embeddings trial, its audits, the rebuilt graph v2 page and the research direction) was added on branch `transfer/2026-11-16-embeddings-final-and-setup`. What was added, what was left out because the archive already holds the same bytes, and how to verify it are in [the transfer update](migration/TRANSFER-UPDATE-2026-11-16.md).

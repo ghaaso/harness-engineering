@@ -1172,3 +1172,85 @@ the state of the real lane. It goes to the end of section M word for word, befor
      with the run of 10:44Z and step 1's real run. If it does not, the lane reports.
      (c) What it means later. The end-of-run script runs again only if step 1 has to be repeated before
      the freeze. The coordinator's report names this limit of the test.
+
+Ruling 112 (copied word for word from `orchestrator/coordinator-rulings-112.md`, sha256 28ea3f28eebd507360752c629e5d6cca89a4739d647874c3e56e0aeff035e269):
+
+Ruled by the coordinator on 2026-11-15 at about 22:28Z (file hash and exact time are in `progress.jsonl`,
+line `rulings_112`), after the held-out run of step 7 had ended and before its hand-off went to the grader
+(step 8). Raised by the coordinator from the run's own progress file, after the lane reported the run's
+length. It is made after the code freeze: it lives in this file and in `progress.jsonl`, and goes to the end
+of the protocol's section M word for word once step 9.4 has finished.
+
+112. A machine sleep during the held-out run.
+     (a) What happened. The owner's machine went to sleep on its idle timer (15 minutes; Windows system
+     log, Kernel-Power 42, "Sleep Reason: System Idle") on 2026-11-15 at 19:38:17Z and was woken at
+     21:38:12Z (Power-Troubleshooter 1, wake source a USB device). The container `kge-H1` was frozen for
+     that time and went on by itself after the wake. One unit was in training when the machine slept:
+     E1, c04, seed 3, checkpoint f57288f1f9a1 (four tasks, T1-0557 to T1-0560). Its progress line gives
+     7,237.7 s of wall time; the trainer's own clock gives 42.6 s. The run then finished all 210 units
+     with exit 0, no failed line and one start line (no relaunch); the launch took 4 h 43 min in all.
+     (b) What was checked. The unit has its 70 epochs and 70 losses, all finite. After epoch 5 its loss
+     curve stays within 0.012 of each sibling seed's on the same checkpoint (the two siblings differ by
+     0.013 from each other), and it shows no jump (largest rise between two epochs 0.009; the siblings
+     0.007 and 0.012). Its 434 pool scores are finite, and their order agrees with the siblings' about as
+     the siblings agree with each other (Spearman 0.917 and 0.921, against 0.944; five other checkpoints
+     give 0.73 to 0.96). The coordinator's count over the whole run finds no score row and no loss that
+     is not a finite number (2,268,424 score rows, 210 loss lists).
+     (c) The decision. The run stands as it is and goes to the grader. A sleep freezes a process and its
+     memory; it is not one of the stops of step 7, and no unit failed. The unit is not trained again:
+     item 27 allows exactly one held-out run, the frozen driver refuses a second one, and the figures of
+     section H are descriptive. That the unit's bytes equal those of an uninterrupted run is likely and
+     not proved.
+     (d) What it means later. The coordinator's report names the sleep, the unit and this limit;
+     RESULT.md and AUDIT.md cannot (their writers read no text for it). The independent audit of step 10
+     is given this ruling. From now on the coordinator's session asks the app to keep the machine awake
+     while it works, and the lane runs each remaining step inside an open turn or asks the same.
+
+Ruling 113 (copied word for word from `orchestrator/coordinator-rulings-113.md`, sha256 f65381b1a327cf2dc1a0d173d8d63ffb50faefb87fb1b97a330a426d368dc40d):
+
+Ruled by the coordinator on 2026-11-15 at about 23:13Z (file hash and exact time are in `progress.jsonl`,
+line `rulings_113`), after step 9.4 had finished and while the independent audit of step 10 was running.
+Raised by that audit: its reader of the held-out run and its process refuter. It is made after the code
+freeze: it lives in this file and in `progress.jsonl`, and goes to the end of the protocol's section M word
+for word after the audit has ended.
+
+113. A byte check of the unit that spanned the machine sleep.
+     (a) Why. Ruling 112(c) left it "likely and not proved" that the unit E1, c04, seed 3 at checkpoint
+     f57288f1f9a1 has the bytes of an uninterrupted run. The audit's reader of the held-out run found one
+     task of that unit (T1-0557, the arm alone, pool) whose top ten for seed 3 differs from both sibling
+     seeds in six places while the siblings differ from each other in one: the only such case among the
+     run's 1,254 seed-task cases. The process refuter noted that a byte check was possible and was not
+     made. The frozen arm repeats byte for byte on the one tuning unit that step 2c trained again.
+     (b) What is run, once each, each unit in a fresh process, on the card:
+     (i) a control on tuning data: the stage-B unit E1/c04/s2/02b9557c6bee, to show that the way of
+     running used here repeats a part that is known to repeat;
+     (ii) the three units E1/c04/s1, s2 and s3 at the held-out checkpoint
+     f57288f1f9a18e41171b0c5be0b0f20674fb4c42. Seeds 1 and 2 did not sleep: they are the control that a
+     held-out unit repeats. Seed 3 is the unit in question.
+     (c) How. The training and scoring path is the frozen one: `kge.train` with the record's settings
+     (c04, 70 epochs, no early stopping), then the scoring and part writing of stage B, in the order
+     `heldout.py` runs them. The lane chooses the way that changes no frozen file: the frozen driver in
+     test mode with a test record that names E1, c04, w 1 and 70 epochs, or a small new script that calls
+     the same frozen functions. Either way everything new lives in one new folder, `r58c/sleep-check/`
+     (scripts, a test record and its own progress file if needed, the mount list, the mount record, logs
+     and the re-run parts). Nothing is written to `train/`, `r58c/mounts/`, the lane's `progress.jsonl`
+     or the deliverable folder, and no file of the freeze list changes: the freeze check is run before
+     and after and must stay silent.
+     (d) The container. One container at a time, name `kge-S1`, the frozen card image, no network, no
+     pull, 6 GB (as ruling 108), the lane lock held, the memory sample of ruling 108 before it starts.
+     It mounts, read-only, what the unit needs (the code, the one held-out parent's staged inputs and
+     graph folder, and for the tuning control that checkpoint's) and, writable, only
+     `r58c/sleep-check/out`. Its mount list and its saved mount record are kept in `r58c/sleep-check/`.
+     It mounts nothing under `build/sealed`, no other held-out parent, and not `train/heldout` writable.
+     (e) The comparison is the coordinator's, by ruling 68's rule for E1: the loss list, both score
+     tables (gunzipped) and `counts.json` of each re-run part against the part of the real run, byte for
+     byte. The lane sends the paths and the exit lines, not a judgment.
+     (f) What each outcome means. All four equal: the sleep did not change the unit, and T1-0557's
+     pattern is that seed's own. The controls equal and seed 3 different: the sleep changed the unit;
+     the report says so and gives the audit's bound on its effect (at most 0.0013 on a held-out
+     seed-mean P@10, at most 0.0044 on the answer level); nothing is graded again (item 27 allows one
+     run, and the grader refuses a second grading). A control different: the check says nothing about
+     the sleep, and the report says that.
+     (g) What it is not. It is not a second held-out run: no hand-off is made, nothing goes to the
+     grader, no figure is computed from it, and RESULT.md, AUDIT.md and CLAIMS.md stay as they are. It
+     trains on one held-out parent's graph after the single grading has ended.

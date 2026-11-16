@@ -1,0 +1,1 @@
+const p=require(process.argv[2]);const h=p.heldout;console.log(Object.keys(p));console.log(typeof h, h&&Object.keys(h));const a=h.assignment;console.log(Array.isArray(a)?'arr '+a.length:typeof a, JSON.stringify(a).slice(0,400));

@@ -1,0 +1,1 @@
+const f=require('./pykeen_src.json');const [k,re,ctx]=process.argv.slice(2);const s=f[k];const ls=s.split('\n');const r=new RegExp(re);const c=+ctx||4;ls.forEach((l,i)=>{if(r.test(l))console.log(ls.slice(Math.max(0,i-1),i+c).map((x,j)=>(i+j)+': '+x).join('\n')+'\n--')})

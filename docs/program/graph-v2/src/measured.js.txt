@@ -117,5 +117,63 @@ ${arr(S.step4).length ? `<h4>What this changes in the design</h4>${list(S.step4)
 ${S.not_claimed ? `<p class="note"><b>Not claimed.</b> ${e(Array.isArray(S.not_claimed) ? S.not_claimed.join(' ') : S.not_claimed)}</p>` : ''}
 ${fold('What this measurement could not measure (' + arr(S.could_not_measure).length + ')', list(S.could_not_measure))}</div>`;
   }
-  return { ltB, ltI, pmE };
+  /* ---------- embeddings trial: section G ---------- */
+  // values printed at 4 decimals as the coordinator's report prints them; axis ticks carry class "cmp"
+  const r4 = x => { if (typeof x !== 'number' || !isFinite(x)) throw new Error('embeddings: not a number ' + x); return (Math.round(Math.abs(x) * 1e4 + 1e-9) / 1e4).toFixed(4); };
+  const s4 = x => (+r4(x) === 0 ? '' : x > 0 ? '+' : '−') + r4(x);
+  const iv = o => `${s4(o.diff)} [${s4(o.lo)}, ${s4(o.hi)}]`;
+  const WORD = w => w === 'cannot tell (lower)' ? 'lower' : w;
+  const wtag = w => `<span class="ew w-${esc(WORD(w).replace(/[^a-z]+/g, '-'))}">${esc(WORD(w))}</span>`;
+  function embNames(S) { const N = Object.fromEntries(arr(S.arms).map(a => [a.key, a.name])); return t => String(t)
+    .replace(/\bE1 to E4\b/g, `${N.E1}, ${N.E2}, ${N.E3} and ${N.E4}`).replace(/^E5\.$/, `The ${N.E5}.`).replace(/\bE5's\b/g, `the ${N.E5}'`)
+    .replace(/(^|[.!?] )E5\b/g, (m, a) => a + 'The ' + N.E5).replace(/\bE5\b/g, 'the ' + N.E5).replace(/\bE([1-4])\b/g, (m, k) => N['E' + k])
+    .replace(/\bPPR\b/g, 'rooted PageRank').replace(/\bCO\b/g, 'co-change confidence').replace(/\bRRF\b/g, 'the simple ranker').replace(/P@10/g, 'top-ten precision').replace(/(^|[.!?] )(rooted PageRank|co-change confidence|the simple ranker)/g, (m, a, b) => a + b[0].toUpperCase() + b.slice(1)); }
+  const bnd = v => (v < 0 ? '−' : '+') + Math.abs(v);
+  const DESC = { E1: 'knowledge-graph embedding', E2: 'knowledge-graph embedding', E3: 'knowledge-graph embedding', E4: 'graph-neural encoder', E5: 'RotatE specialists, one per area, a router picks two', PLACEBO: 'a random score fused the same way; checks the harness' };
+  function embR(p) {
+    const S = p.structured; if (!S) return '';
+    const nm = embNames(S), te = t => e(nm(t));
+    const A = arr(S.arms), real = A.filter(a => a.key !== 'PLACEBO');
+    const V = [['fused_pool', 'Fused, pool (the primary)', 'Fused with the simple ranker, inside the candidate pool: the primary contrast'], ['alone_pool', 'Alone, pool', 'The arm alone, inside the candidate pool'], ['fused_unrestricted', 'Fused, all code files', 'Fused with the simple ranker, ranked over all code files'], ['alone_unrestricted', 'Alone, all code files', 'The arm alone, ranked over all code files']];
+    // one x range for all four views: the real arms' intervals and the adds bar, in steps of 0.01 (the placebo may be clipped)
+    const STEP = 0.01;
+    const lo = Math.floor(Math.min(...real.flatMap(a => V.map(([k]) => a[k].lo))) / STEP - 1e-9) * STEP;
+    const hi = (Math.ceil(Math.max(S.adds_bar, ...real.flatMap(a => V.map(([k]) => a[k].hi))) / STEP - 1e-9) + 1) * STEP;
+    const xp = v => (100 * (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo)).toFixed(2);
+    const B0 = S.match_band[0], B1 = S.match_band[1];
+    const ticks = []; for (let t = Math.round(lo / STEP); t <= Math.round(hi / STEP); t++) ticks.push(t);
+    const bg = (h) => `<rect x="${xp(B0)}%" y="0" width="${(xp(B1) - xp(B0)).toFixed(2)}%" height="${h}" class="efband"/>${ticks.map(t => `<line x1="${xp(t * STEP)}%" x2="${xp(t * STEP)}%" y1="0" y2="${h}" class="efgrid"/>`).join('')}<line x1="${xp(0)}%" x2="${xp(0)}%" y1="0" y2="${h}" class="efzero"/><line x1="${xp(S.adds_bar)}%" x2="${xp(S.adds_bar)}%" y1="0" y2="${h}" class="efbar"/>`;
+    const axis = `<svg class="efsvg" width="100%" height="64" aria-hidden="true">${bg(64)}<text x="${((+xp(B0) + +xp(B1)) / 2).toFixed(2)}%" y="17" text-anchor="middle" class="eflab">matches band</text><text x="${xp(S.adds_bar)}%" dx="-5" y="37" text-anchor="end" class="eflab efbarl">adds bar</text>${ticks.filter(t => t % 2 === 0).map(t => `<text x="${xp(t * STEP)}%" y="58" text-anchor="middle" class="cmp eftick">${t === 0 ? '0' : (t > 0 ? '+' : '−') + (Math.abs(t) * STEP).toFixed(2)}</text>`).join('')}</svg>`;
+    const row = (a, k) => { const o = a[k]; const cl = o.lo < lo, ch = o.hi > hi, dOff = o.diff < lo || o.diff > hi;
+      const cls = WORD(o.word) === 'lower' ? 'eflow' : WORD(o.word) === 'adds' ? 'efadd' : 'efmat';
+      const svg = `<svg class="efsvg" width="100%" height="100%" role="img" aria-label="${esc(a.name)}: ${esc(iv(o))}, ${esc(WORD(o.word))}">${bg('100%')}
+<line x1="${xp(o.lo)}%" x2="${xp(o.hi)}%" y1="50%" y2="50%" class="efci ${cls}"/>${cl ? `<text x="0%" y="50%" dy="5" text-anchor="start" class="efarr ${cls}f">◀</text>` : ''}${ch ? `<text x="100%" y="50%" dy="5" text-anchor="end" class="efarr ${cls}f">▶</text>` : ''}${dOff ? `<text x="${o.diff < lo ? '2.2%' : '97.8%'}" y="50%" dy="-8" text-anchor="${o.diff < lo ? 'start' : 'end'}" class="efoff">point ${s4(o.diff)}, off the scale</text>` : `<circle cx="${xp(o.diff)}%" cy="50%" r="6.5" class="efpt ${cls}f"/>`}</svg>`;
+      return `<div class="efrow${a.key === 'PLACEBO' ? ' efplac' : ''}"><div class="eflabc"><b>${esc(a.name)}</b><small>${esc(DESC[a.key] || '')}</small></div><div class="efplot">${svg}</div><div class="efval"><b>${iv(o)}</b> ${wtag(o.word)}<small>scores ${r4(a.level[k])}</small></div></div>`; };
+    const views = V.map(([k, , title], vi) => `<div class="efview" data-v="${k}"${vi ? ' hidden' : ''}><h5>${esc(title)}</h5><div class="efrow efaxis"><div class="eflabc"></div><div class="efplot">${axis}</div><div class="efval small">difference [95 % interval], word</div></div>${A.map(a => row(a, k)).join('')}<div class="efrow effoot"><div></div><div class="efplot"><span>← lower than the simple ranker</span><span>difference in top-ten precision</span><span>higher →</span></div><div></div></div></div>`).join('');
+    const C = S.comparators, cp = C.pool, cu = C.unrestricted;
+    const levels = `<p class="small">The simple ranker (rooted PageRank fused with co-change confidence) scores <b>${r4(cp.RRF)}</b> in the pool and <b>${r4(cu.RRF)}</b> over all code files. In the pool, rooted PageRank alone scores ${r4(cp.PPR)}, co-change confidence alone ${r4(cp.CO)}, a same-folder rule ${r4(cp.DIR)} and a random order ${r4(cp.RANDOM)}.</p>`;
+    const E1 = A.find(a => a.key === 'E1');
+    const pil = `<p class="small"><b>${esc(E1.name)} on the ${num(S.pilot_n)} commits the pilot's set also holds:</b> fused, pool ${iv(S.pilot_shared)}${S.pilot_shared.lo > 0 ? ', wholly above zero' : ''}${S.pilot_shared.diff < S.adds_bar ? `, still under the +${S.adds_bar} bar` : ''}.</p>`;
+    const fa = real.map(a => a.answer_level.fused), allIn = real.every(a => a.answer_level.fused_vs.lo < 0 && a.answer_level.fused_vs.hi > 0);
+    const ans = `<p class="small"><b>Answer level</b> (how much of the reference answer fits in ${num(S.answer_budget)} tokens; the protocol gives no word there): the simple ranker ${r4(S.answer_level_rrf)}, the fused arms ${r4(Math.min(...fa))} to ${r4(Math.max(...fa))}${allIn ? ', each difference with an interval that includes zero' : ''}; ${esc(E1.name)} fused ${iv(E1.answer_level.fused_vs)}.</p>`;
+    const seg = `<div class="seg" role="group" aria-label="Contrast" data-ctl="embv">${V.map(([k, l], i) => `<button type="button" data-v="${k}" aria-pressed="${i === 0}">${esc(l)}</button>`).join('')}</div>`;
+    const how = `<p class="efhow"><b>How to read it.</b> Each row is one arm: the line is its 95 % interval, the dot its difference to the simple ranker in top-ten precision; the shaded band is ${bnd(B0)} to ${bnd(B1)}, the dashed line the bar of ${bnd(S.adds_bar)}. An arm "adds" when its interval lies above zero and its gain reaches the bar; it "matches" when the whole interval lies inside the band, which means within ${S.adds_bar}, not "no difference"; "lower" when the interval lies wholly below zero.</p>`;
+    const why = `<ol class="efwhy">${arr(S.why).map(w => `<li><b>${te(w.lead)}</b> ${te(w.text)}</li>`).join('')}</ol>`;
+    const H = S.heldout, HV = H.vs || {};
+    const hcell = (r, k) => `${r4(r[k])}${HV[r.key] ? `<br><small>${iv(HV[r.key][k])}</small>` : ''}`;
+    const htab = `<div class="tblwrap"><table class="eftab"><thead><tr><th>Ranker</th><th>Pool, top-ten precision</th><th>All code files, top-ten precision</th><th>Answer level</th></tr></thead><tbody>${arr(H.rows).map(r => `<tr${r.key === 'RRF' ? ' class="efref"' : ''}><td><b>${esc(r.name)}</b></td><td>${hcell(r, 'pool')}</td><td>${hcell(r, 'unrestricted')}</td><td>${hcell(r, 'answer_level')}</td></tr>`).join('')}</tbody></table></div>`;
+    const Fz = H.frozen;
+    const lim = `<ol class="eflim">${arr(S.limits).map(t => `<li>${te(t)}</li>`).join('')}</ol>`;
+    return `<div class="slot filled"><div class="meas-block efblock"><div class="slh">${tag('meas', esc(S.report_path))} <b>Measured, judged and audited</b> (report of ${esc(S.date)}; figures read from the lane's tuning report and the grader's returns).</div>
+<h3 class="efq">Do learned graph embeddings add to the simple ranker?</h3>
+<p class="efans"><b>${te(S.answer_bold)}</b></p>${arr(S.answer_paragraphs).map(t => `<p>${te(t)}</p>`).join('')}
+<h4>Difference to the simple ranker, per arm (the later ${num(S.late_n)} tuning commits)</h4>${seg}<div class="efchart">${views}</div>
+${how}${levels}${pil}${ans}
+<h4>Why: six reasons from the audit</h4><p class="small">${te(S.why_sources)}</p>${why}<p class="note"><b>The sentence the evidence supports:</b> ${te(S.why_summary)}</p>
+<h4>Held-out: ${esc(H.heading.replace(/; one run of the frozen arm; described, not judged/, ''))}</h4>
+<p class="small">One run of the frozen arm, described and not judged. Frozen before any held-out unit ran: ${esc(nm(Fz.arm))}, setting ${esc(Fz.config_id)} (${num(Fz.dim)} dimensions), weight ${num(Fz.weight)}, ${num(Fz.epochs)} epochs. Under the two RotatE rows: the difference to the simple ranker [95 % interval].</p>${htab}<p class="small">${te(H.note)}</p>
+<h4>What the lane's result file lacks or gets wrong (${arr(S.limits).length})</h4><p class="small">${te(S.limits_intro)} Titles only; the full text is in <code>${esc(S.report_path)}</code>, section 6.</p>${lim}
+<h4>What it does not say</h4>${list(arr(S.does_not_say).map(nm))}</div></div>`;
+  }
+  return { ltB, ltI, pmE, embR };
 };

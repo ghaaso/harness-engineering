@@ -1,0 +1,1 @@
+const R=require('./report.json').res;for(const o of R)console.log(o.kind,o.file,o.created,o.started,o.status,'cpus='+o.cpus,'swap='+o.memSwap,'dev='+JSON.stringify(o.devreq),'cfgimg='+o.imageCfg,'|',o.args.slice(-160));

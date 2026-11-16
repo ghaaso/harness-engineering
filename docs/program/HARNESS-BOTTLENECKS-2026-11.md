@@ -262,6 +262,8 @@ The replacement test is frozen in `graph2/protocol.md`: facts, algorithm, output
 
 **Do not build:** a model-extracted knowledge graph; a graph database server on a memory-short PC (an embedded graph engine is under test, §6); embeddings; a memory layer that pushes context into sessions; time-based expiry. Before building any map or store, run the validation contract the testbed froze and never ran (A6-10): sealed references, equal budgets, blind scoring, and "fewer tokens with a missing prerequisite is not a win".
 
+**Added 2026-11-16: both tests have run.** The replacement test finished on 2026-11-13: the two engines returned identical answers, and the typed store scored 0.076 above scripted search in answer recall on the held-out commits, a gain that came from the mobile part of the repository only (`GRAPH-TEST-RESULT-2026-11.md`). A second test finished on 2026-11-16: four knowledge-graph embedding models and one graph-neural encoder, trained on this repository's graph, add nothing measurable to rooted PageRank fused with co-change confidence. The largest gain is +0.0023 in top-ten precision, where +0.02 was asked for (`evidence/harness-bottlenecks/graph2/embeddings/COORDINATOR-REPORT.md`, with its limits). That test covers learned graph embeddings on a graph of at most 2,450 nodes; text or code embeddings were not tested.
+
 ---
 
 ## 7. Cross-cutting mechanisms

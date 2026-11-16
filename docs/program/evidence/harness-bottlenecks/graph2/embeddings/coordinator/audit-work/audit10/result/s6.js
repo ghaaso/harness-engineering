@@ -1,0 +1,1 @@
+const {L,j}=require('./p.js');const tr=j(L+'/grader-returns/tune-rank.json');console.log(Object.keys(tr.rank).filter(k=>!/_(alone|fused)_/.test(k)), Object.keys(tr.rank).length, tr.commits, tr.tasks);

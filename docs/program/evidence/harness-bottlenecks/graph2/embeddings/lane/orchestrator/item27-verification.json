@@ -1,0 +1,378 @@
+{
+ "what": "independent verification of train/heldout/item27.json before the anchor (coordinator's workflow wf_1b8aced2-a7b; three read-only agents)",
+ "record_sha256": "55f8062cf602aed32561fb5686ed2c6fa426663558f8d6f86f98cd5f00b2d008",
+ "verdicts": {
+  "recompute": "agrees",
+  "rule": "agrees",
+  "record": "agrees"
+ },
+ "blind_result_sha256": "5414b7a56979ab56cd504e11a5af01aca262ade28b176a1362d62f5b1118a173",
+ "agents": {
+  "recompute": {
+   "verdict": "agrees",
+   "summary": "I recomputed the selection blind with my own Node code from the stage-B pool tables, the comparator tables, tune_tasks.jsonl, tune_commits.jsonl and plan.json. It agrees with the lane's stored result on every point. The ranking code reproduces metrics.json: worst difference 2.8e-17 across PPR, CO, RRF and RANDOM on late50, late50_pilot and all. The RANDOM match tests the BLAKE2b-8 tie-break on its own. All 45 candidates' all-65 means match within 1.1e-16 and their standard errors within 1.4e-17. They match in choices.json, tune.json and item27.json. The 225 block candidates match too. All 5 bands, 5 all-65 choices and 25 block choices are identical, with the same best candidate and the same earlier-commit counts (15/25/35/45/55). The block commit lists are identical (25 of 25). The selected arm is E1, configuration c04 (dim 256), w = 1, figure 0.2470098577 (record 0.24700985766370384). Next is E4 c12/w1 at 0.2462902845, a gap of 0.00072, so there is no tie at four decimals. The record's tie_group_4dp is [\"E1\"], which matches. The record's sha256 file matches its bytes (55f8062c...). blind-result.json was written before any sealed file was opened: sha256 5414b7a56979ab56cd504e11a5af01aca262ade28b176a1362d62f5b1118a173.",
+   "checks": [
+    {
+     "name": "BLAKE2b implementation vs crypto blake2b512",
+     "result": "pass",
+     "evidence": "node test_blake2b.js: 'match 9 of 9' (lengths 0,3,43,127,128,129,256,31 UTF-8,1000); 'abc' gives ba80a53f981c4d0d... (RFC 7693 vector); the outlen parameter goes into the parameter block h[0] ^= 0x01010000 ^ outlen (blake2b.js)"
+    },
+    {
+     "name": "Ranking code reproduces comparators/metrics.json",
+     "result": "pass",
+     "evidence": "node gate.js: max_abs_diff_vs_metrics_json 2.7755575615628914e-17 over PPR/CO/RRF/RANDOM pool P@10 on late50, late50_pilot, all; RRF recomputed from PPR+CO vs RRF_pool.tsv.gz max abs 0, 0 missing rows. late50: RRF 0.24934423354423352, PPR 0.21489759129759128, CO 0.21407960650460653"
+    },
+    {
+     "name": "Item 6 gate values (late50_pilot set)",
+     "result": "pass",
+     "evidence": "gate-result.json: RRF 0.23270 vs 0.233, PPR 0.20358 vs 0.204, CO 0.19548 vs 0.199 (diff 0.0035), RANDOM 0.11407 vs 0.118 (diff 0.0039), all within 0.005. These are the same figures as eval/gate.json gate_late50_pilot_pool. The pilot values are on late50_pilot, not late50 (late50 RRF is 0.2493)"
+    },
+    {
+     "name": "Commit order and late-50 flag",
+     "result": "pass",
+     "evidence": "gate.js checks: 65 commits, date_order 1..65, late50 size 50, late50 == (date_order > 15) for every commit, task flags consistent. I used date_order (author time, ruling 32, protocol-addendum-8.md:140) and the late50 flag (ruling 32: verdicts on late50; evalcore.py:41). Blocks = late50 sorted by date_order in groups of 10 (date orders 16-25 ... 56-65), each chosen on all commits with date_order < block start (item 20, protocol-addendum-8.md:90-94)"
+    },
+    {
+     "name": "Stage-B table integrity",
+     "result": "pass",
+     "evidence": "select.js consistency: 45 pool tables, no NaN or inf. Per task, the scored pool candidates = counts.json pool.cands - cands_unscored, and pool.cands equals the candidates_pool count, with 0 mismatches for all arms. cands_folded is 0 everywhere (ruling 65). Tasks absent: T1-0001..0003 for every arm (no co_changed fact); E5 has more absent tasks (unscored seeds, item 17 => fused = RRF)"
+    },
+    {
+     "name": "All-65 candidate means and SEs vs choices.json, tune.json, item27.json",
+     "result": "pass",
+     "evidence": "node compare.js: maxdiff mean 1.1102230246251565e-16, se 1.3877787807814457e-17, mismatches []. 45 candidates x 3 stored copies"
+    },
+    {
+     "name": "Block candidate means and SEs (5 blocks x 9 x 5 arms)",
+     "result": "pass",
+     "evidence": "compare.js cmpCands over choices.json blocks[0..4].candidates: no mismatch > 1e-9"
+    },
+    {
+     "name": "Best, band and ruling-53 choice on all 65 per arm",
+     "result": "pass",
+     "evidence": "compare.js: best_mine == best_stored, band_mine == band from stored candidates (all 9 in every arm's band), choice identical in choices.json, tune.json and item27.json for E1..E5"
+    },
+    {
+     "name": "Block choices per arm",
+     "result": "pass",
+     "evidence": "compare.js: 25 of 25 block choices identical (mine = choices.json = tune.json choices.blocks); best per block identical; band identical; earlier_commits 15/25/35/45/55 identical; block commit lists identical 25 of 25"
+    },
+    {
+     "name": "Item 27 / ruling 57 selected arm",
+     "result": "pass",
+     "evidence": "Mine: E1 c04 w1 0.24700985766370373; record chosen: E1 c04 w1 figure_all65 0.24700985766370384, se 0.022100754429111476, epochs 70; tie_group_4dp ['E1']. Ranking at 4 dp: E1 .2470 > E4 .2463 > E3 .2458 > E2 .2456 > E5 .2455; top gap 0.00072"
+    },
+    {
+     "name": "item27.json hash file",
+     "result": "pass",
+     "evidence": "sha256sum heldout/item27.json = 55f8062cf602aed32561fb5686ed2c6fa426663558f8d6f86f98cd5f00b2d008, equal to item27.json.sha256"
+    },
+    {
+     "name": "Band sensitivity to SE convention and to band-edge inclusivity",
+     "result": "pass",
+     "evidence": "ddof=0 SE gives the same all-65 and block choices for every arm (blind-result.json final_all65_se0, choice_se0). The nearest candidate to any band edge is at least 0.0185 inside it (E4 c13/w1 on all 65), so >= vs > cannot change a band"
+    }
+   ],
+   "discrepancies": [
+    {
+     "what": "The brief says the standard error is computed 'exactly as evalcore's summary() defines it', but evalcore has no standard-error function",
+     "expected": "An SE definition in evalcore.summary()",
+     "found": "evalcore.py:241-244 summary() returns only means. Ruling 53 (protocol-addendum-8.md:288-289) says only 'the standard error being that of the best candidate's per-commit values (as built)'. I used sample sd (ddof=1)/sqrt(n), which matches the stored se to 1.4e-17. ddof=0 values are about 1.7e-4 smaller and give the same choices",
+     "evidence": "evalcore.py:241-244; protocol-addendum-8.md:286-296; blind-result.json all65_se1 vs all65_se0; compare.js maxdiff se 1.39e-17",
+     "severity": "minor"
+    },
+    {
+     "what": "The item 6 gate values match the late50_pilot set, not late50",
+     "expected": "Brief: compare late-50 P@10 with RRF 0.233, PPR 0.204, CO 0.199",
+     "found": "On late50: RRF 0.2493, PPR 0.2149, CO 0.2141, which do not match the pilot values. On late50_pilot: 0.2327, 0.2036, 0.1955, which do match (as eval/gate.json records). Consistent with ruling 32 (protocol-addendum-8.md:140-143)",
+     "evidence": "gate-result.json comparators.*.late50 and late50_pilot",
+     "severity": "minor"
+    }
+   ],
+   "not_checked": [
+    "I did not read selectB.py, item27.py, report.py or write_result.py: there was no difference to explain.",
+    "I did not recompute the record's tables_digest (f8cb1f8b...) or the code_sha256/pins/choices_sha256 values in item27.json. Their digest formats are defined in sealed scripts. My own digest of the 45 pool tables is in blind-result.json under a different scheme.",
+    "I did not check the unrestricted scope, the arm-alone tables, the PLACEBO arm, the builder sensitivity rows, the pilot-set row (ruling 56), contrasts or verdicts in tune.json, or the other item27.json fields (epochs, s, device, image_id, frozen_at). Only epochs 70 for E1 c04 was seen to match plan.json.",
+    "I did not re-derive the pool candidate lists, PPR or CO from the graphs. I took the stored comparator tables as given. They reproduce metrics.json exactly.",
+    "I did not verify that the stage-B tables were produced correctly by training (leak rule, epochs, seeds). I took them as inputs.",
+    "I did not check that the protocol's 'one standard error' means the sample SE rather than another estimator, beyond its agreement with the stored value."
+   ],
+   "recomputed": "All-65 candidate means, mine | stored (choices.json = tune.json = item27.json); |diff| <= 1.1e-16 for every one:\nE1: c04 w.25 .2449702619|.2449702619, w.5 .2456676201|same, w1 .2470098577|same; c15 w.25 .2448395963, w.5 .2458438086, w1 .2478860128 (best); c12 w.25 .2448732905, w.5 .2465665937, w1 .2477967431. Best c15/w1, SE .0222437118, band = all 9 (threshold .2256423). Choice c04/w1 | c04/w1.\nE2: c11 .2440531271/.2440248996/.2448704394; c07 .2444829750/.2444077909/.2456100587 (best); c10 .2440103550/.2436220176/.2429274379. Best c07/w1, SE .0219262056, band all 9. Choice c07/w1 | c07/w1.\nE3: c11 .2453905048/.2450373430/.2435338835; c03 .2452335208/.2455851193/.2458295358 (best); c13 .2456209851/.2453215495/.2455453350. Best c03/w1, SE .0220076358, band all 9. Choice c03/w1 | c03/w1.\nE4: c12 .2452063129/.2451583111/.2462902845 (best); c13 .2449517157/.2442909562/.2426824721; c16 .2450226689/.2441492702/.2452557841. Best c12/w1, SE .0221556796, band all 9. Choice c12/w1 | c12/w1.\nE5: c03 .2453607973/.2454872414 (best)/.2451700024; c11 .2444206634/.2436648636/.2432518941; c09 .2450469559/.2430851990/.2435499984. Best c03/w0.5, SE .0221547894, band all 9. Choice c03/w0.5 | c03/w0.5.\n(Each triple is w = 0.25 / 0.5 / 1.)\nBlock choices 1..5 (on 15/25/35/45/55 earlier commits), mine | stored, identical in every case:\nE1 c04/.5, c04/.25, c04/.25, c04/.5, c04/1\nE2 c07/.5, c07/.25, c07/.25, c07/1, c07/1\nE3 c03/.5, c03/.25, c03/.5, c03/.5, c03/1\nE4 c12/1, c12/.25, c12/.25, c12/.25, c12/1\nE5 c03/.25, c03/.25, c03/.25, c03/.5, c03/.5\nArm figures, mine | record: E1 .24700985766370373 | .24700985766370384; E4 .24629028450182291 | .24629028450182297; E3 .24582953584876666 | .24582953584876663; E2 .24561005874467418 | .24561005874467415; E5 .24548724139108757 | .24548724139108757.\nSelected arm: E1 c04 (dim 256) w=1 | record E1 c04 w=1, epochs 70, tie_group_4dp [E1].\nblind-result.json sha256 5414b7a56979ab56cd504e11a5af01aca262ade28b176a1362d62f5b1118a173 (written before any sealed file was opened).",
+   "files_written": [
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\recompute\\blake2b.js",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\recompute\\test_blake2b.js",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\recompute\\core.js",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\recompute\\gate.js",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\recompute\\gate-result.json",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\recompute\\select.js",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\recompute\\select-stdout.txt",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\recompute\\blind-result.json",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\recompute\\compare.js",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\recompute\\compare-result.json"
+   ],
+   "fragile_points": [
+    "The protocol never defines the SE formula. Ruling 53 says only 'as built'. Sample SE (ddof=1) matches the stored value, and ddof=0 gives the same choices, so this does not affect the outcome here.",
+    "The item-27 margin is small: E1 0.24701 vs E4 0.24629 (gap 0.00072, about 3% of one SE). The selection is reproducible, but it rests on a difference far inside the noise. That is a question about the result, not about the record's soundness.",
+    "Within every arm, all nine candidates fall inside the one-SE band, so each choice is decided entirely by the smallest-model rule and then the higher mean. A change in model-size ordering (dimension, then layers) would change the choices.",
+    "The first blind run's integrity check had a bug: counts.json leaves out cands_unscored when it is zero. I fixed the check and re-ran before saving the final blind-result.json. The metric code did not change.",
+    "Python and JS string ordering could differ for non-BMP characters in paths. This was not observed: the RANDOM and RRF comparators reproduce exactly."
+   ]
+  },
+  "rule": {
+   "verdict": "agrees",
+   "summary": "All 36 stored choices (E1..E5 and PLACEBO; final_all65 plus 5 blocks each) match ruling 53 (with ruling 64) when I apply it myself to the stored candidates. All 15 PLACEBO fixed-w block choices match too. I also rebuilt every candidate's mean and SE (324 values) from the assembled stage-B pool tables with an independent Node copy of evalcore's ranking, BLAKE2b-64 tie-break, weighted RRF and numpy's pairwise mean and std(ddof=1). All 324 values are bit-identical to choices.json, and my 36 choices and the block commit lists equal the stored ones. Ruling 57 picks E1: the four-decimal figures are E1 0.2470, E4 0.2463, E3 0.2458, E2 0.2456, E5 0.2455. E1 has no tie at four decimals and leads E4 by 7.196e-4. item27.json says the same: E1, c04, w=1, figure 0.24700985766370384, epochs 70, s=1, device cuda, tie group [E1]. Its per-arm figures and candidate lists equal choices.json and tune.json. Its sha256 file matches. Its tables_digest equals my Node recomputation of ruling 82's digest (f8cb1f8b...). Its 18 code hashes match the current files. I found one latent divergence in evalcore: a NaN embedding score would still get an RRF term. The real data cannot trigger it, because the 45 pool tables hold 0 non-finite scores. No divergence I found changes a stored choice. The held-out run gets E1 (RotatE) c04, w = 1, 70 epochs, seeds 1, 2 and 3, s = 1, on cuda, as the arm alone and fused, plus RRF, PPR, CO and DIR.",
+   "checks": [
+    {
+     "name": "Step 1: ruling 53/64 applied to stored candidates, 36 choices",
+     "result": "pass",
+     "evidence": "node rule53.js -> 'agree 36 of 36'; best mean equals the stored best in all 36. In every set all 9 candidates are inside the band (band 9); the smallest margin inside the band is 8.380e-3 (PLACEBO final_all65); no candidate lies outside any band; no exact tie for the best mean, so ruling 64 never fires. Output: C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\rule\\rule53-out.json"
+    },
+    {
+     "name": "Step 1 extension: PLACEBO fixed-w block choices (15)",
+     "result": "pass",
+     "evidence": "rule53.js and recompute.js: all fixed_w0.25/0.5/1 block choices agree (e.g. w0.25 -> p3 in all blocks; w0.5 -> p2 in all blocks; w1 -> p2,p3,p2,p2,p2)"
+    },
+    {
+     "name": "Independent recomputation of all candidate means/SEs from stage-B pool tables",
+     "result": "pass",
+     "evidence": "node recompute.js -> summary {allChoicesAgree:true, maxDiffMean:0, maxDiffSe:0, exactMean:324, exactSe:324, nVals:324, nonFinite:0}. Uses a BLAKE2b implementation self-tested against Node's blake2b512, the tie-break '20261114|tid|cand' with an 8-byte digest, weighted RRF k=60 over PPR, CO and emb in that order, P@10, then a numpy-style pairwise mean over 3 seeds, then per commit, then over commits, with se = sqrt(sum((v-m)^2)/(n-1))/sqrt(n). Block commit lists and earlier_commits (15,25,35,45,55) equal the stored ones. Output: ...\\coord\\verify-item27\\rule\\recompute-out.json"
+    },
+    {
+     "name": "Commit sets and date order",
+     "result": "pass",
+     "evidence": "recompute.js checks: 388 tasks, 65 commits, 65 distinct date_order values, late50 == (date_order > 15) for every commit, date_order constant within a commit. The 4 late50_pilot-only commits have date_order 12..15 (inner), which equals choices.json pilot_only_commits_left_out. No task has an empty pool candidate list."
+    },
+    {
+     "name": "Step 2: ruling 57 arm selection",
+     "result": "pass",
+     "evidence": "node item27check.js: figures to 4 dp E1 0.2470, E2 0.2456, E3 0.2458, E4 0.2463, E5 0.2455 -> my selection E1, tie group [E1]; record chosen {arm E1, config_id c04, w 1, epochs 70, figure_all65 0.24700985766370384, se 0.022100754429111476}, tie_group_4dp [E1]. Gap E1-E4 = 7.196e-4. Each figure's fractional part at the 4th decimal (0.0986, 0.1006, 0.2954, 0.9028, 0.8724) is at least 0.2046 units from a rounding half, so Python's round(x,4) cannot differ from the rule."
+    },
+    {
+     "name": "Step 2: record vs choices.json and tune.json per arm",
+     "result": "pass",
+     "evidence": "item27check.js: for E1..E5, record (config, w, mean, se) == choices.json final_all65 == tune.json choices[arm].final_all65; the 9 candidate lists in the record equal choices.json; tune.json blocks equal choices.json blocks; record cfg == plan.json cfg; record size == plan size; selectB_final_all65_agrees true for all five. Record choices_sha256 equals sha256sum of the five choices.json files; stamp_tune.tune_sha256 bb56ff9c... equals sha256sum report/tune.json; report_sha256 74d8ef99... equals sha256sum train/report.py."
+    },
+    {
+     "name": "Step 2: epochs and settings of the chosen configuration vs plan",
+     "result": "pass",
+     "evidence": "plan.json configs.E1 c04: cfg {adversarial_temperature 1, embedding_dim 256, lr 0.002, margin 6}, epochs 70, stageA_best_epoch 70. train/stageA/results.tsv:5: E1 c04 best_epoch 70. stageB.py:120-122 round_epochs = max(20, ceil(best/freq)*freq) -> 70 (ruling 36). Record epochs 70 and s 1 equal plan.s 1. plan_hash equal (71116daa...). Record test false."
+    },
+    {
+     "name": "Record integrity: sha256 file, tables digest, code hashes",
+     "result": "pass",
+     "evidence": "sha256sum heldout/item27.json = 55f8062cf602aed32561fb5686ed2c6fa426663558f8d6f86f98cd5f00b2d008 = item27.json.sha256. node digest.js -> digest f8cb1f8bc905bc74e4b50a9348f767e1f78a102516cf9567ee7df14a7593ffe0 equals the record and every choices.json stamp; 0 files missing. All 18 code_sha256 entries match the current files (selectB.py d54cb864..., item27.py 5406fd62..., evalcore.py 4054976c...). The stageA_configs.json pin matches."
+    },
+    {
+     "name": "Step 3: ruling 53 to code mapping",
+     "result": "pass",
+     "evidence": "Size is the model only, dim then layers: selectB.py:234-236. Band: selectB.py:242 computes se = std(ddof=1)/sqrt(n) of the per-commit values (n = number of commits in the set), and selectB.py:247-249 tests mean >= top - best.se, inclusive, with no float slack. Ruling 64's exact tie (largest SE among the tied): selectB.py:248. Choice: selectB.py:256 orders by (size, -mean, config_id string, w), so w comes last. Config ids are zero-padded, so the string order equals the numeric order. The builder's reading is kept apart: selectB.py:260-264 and 361."
+    },
+    {
+     "name": "Step 3: item 20 to code mapping",
+     "result": "pass",
+     "evidence": "Date order: selectB.py:270-271 (date_order from tune_tasks.jsonl; uses the late50 flag, not late50_pilot). Five blocks of 10: selectB.py:273. Choice on all earlier commits (inner included): selectB.py:316-319. Fused pool P@10, seed-averaged: selectB.py:292-304. Block scored with the choice, and the arm alone uses the same configuration: selectB.py:338-352 (alone 346, fused 347). Final on all 65: selectB.py:326-333."
+    },
+    {
+     "name": "Step 3: item 23 averaging order",
+     "result": "pass",
+     "evidence": "Per seed P@10, then mean of the three seeds per task: selectB.py:302-304 and item27.py:125-127. Per commit: selectB.py:307 and item27.py:128. Over commits: selectB.py:243 (np.mean). The independent recomputation in this order matched bit for bit."
+    },
+    {
+     "name": "Step 3: ruling 57 and item 27 to code mapping",
+     "result": "pass",
+     "evidence": "All 65 commits: item27.py:117-118, plus the assert at 282. Ruling 53's choice per arm: item27.py:112-129 via selectB.choose. The arm figure is the chosen candidate's mean: item27.py:291. Arm ties at 4 dp, then smaller size, then E3, E1, E2, E4, E5: item27.py:61 and 132-137. The record carries arm, config, w, epochs (item27.py:290, from plan), s, device, image and code hashes (item27.py:311-322). It is hashed and written before any held-out unit, and refused if a unit exists: item27.py:246-249 and 323-330. item27 recomputes rather than copying selectB and stops on disagreement: item27.py:295-303."
+    },
+    {
+     "name": "Step 3: ruling 54 placebo",
+     "result": "pass",
+     "evidence": "Three salts p1..p3: selectB.py:67 and 217-219 (BLAKE2b of 'placebo|cfg|seed|tid|cand'). The nine-way choice runs under the same rule: selectB.py:283-285 and 312. The placebo cfg is {}, so size is (0,0) for all and the choice falls to mean, then id, then w. Fixed-w rows: selectB.py:314. My recomputation of the placebo scores reproduced every stored placebo mean and SE exactly."
+    },
+    {
+     "name": "Step 3: ruling 56",
+     "result": "pass",
+     "evidence": "selectB.py:271-272 and 336-352 assemble the late50 commits only, and pilot-only commits are recorded at 363. The choice sets themselves use all date-ordered commits, which ruling 56 does not restrict. The pilot-only commits are inner commits (date_order 12-15)."
+    },
+    {
+     "name": "Step 3: item 17, absent task and unscored seed",
+     "result": "pass",
+     "evidence": "selectB.py:295 and item27.py:126 use emb.get(tid, {}). evalcore.py:176-184 rrf_scores adds no term for an unscored candidate, so a task with no scored candidate gets fused = RRF. Real data: 3 tasks per E1-E4 set and 8 per E5 set have no scored pool candidate (recompute.js unscoredSeedTasks). These were included in the bit-identical recomputation."
+    },
+    {
+     "name": "Step 3: non-finite scores",
+     "result": "pass",
+     "evidence": "Latent divergence in evalcore.py:170-173 and 192-199: rank() treats NaN as unscored, but ranks_within passes every candidate present in the table, NaN included. A NaN candidate therefore gets a rank in the unscored block and an RRF term, against item 17. +inf would rank first. Real data: recompute.js nonFinite 0 across all 45 stage-B pool tables (E1..E5 x 3 configs x 3 seeds), so this changes no stored choice."
+    }
+   ],
+   "discrepancies": [
+    {
+     "what": "evalcore ranks_within gives a NaN-scored candidate an RRF term",
+     "expected": "Item 17 / ruling 105: a candidate without a finite score adds no embedding term to the fusion",
+     "found": "evalcore.py:170-173 filters candidates only on 'c in scores', then rank() (192-199) places a NaN candidate in the unscored block, which still receives a rank and a w/(60+r) term. +/-inf is treated as a scored value.",
+     "evidence": "evalcore.py:170-173, 192-199; recompute.js summary nonFinite 0 over the 45 stage-B pool tables",
+     "severity": "minor"
+    },
+    {
+     "what": "The record carries no explicit seeds field",
+     "expected": "Item 27: 3 seeds",
+     "found": "item27.json has no seeds key. Seeds come from heldout.py:201 SEEDS = (1, 2, 3), and heldout.py is pinned in the record's code_sha256 (matches the current file).",
+     "evidence": "item27.json keys list; heldout.py:201",
+     "severity": "minor"
+    }
+   ],
+   "not_checked": [
+    "The unrestricted-scope tables, alone tables and the late-50 fused output tables selectB wrote (fused_*/alone_*) were not recomputed; only the pool-scope selection inputs were. The digest covers the unrestricted inputs by hash only.",
+    "tune.json's late-50 rank metrics, contrasts and verdicts were not recomputed; only its choices section was compared.",
+    "The RUNLOG guard lines, progress.jsonl coordinator lines and assemble_checks PASS log were not read.",
+    "heldout.py was not read beyond SEEDS (line 201). Whether it reads the record faithfully (config, w, epochs) was not checked.",
+    "Stage-A best epochs were checked in results.tsv for E1 c04 only. Other configs' epochs were taken from plan.json.",
+    "Whether the stage-B tables themselves were produced correctly (training, leak rule, fold-in counts) is out of scope and was not checked.",
+    "The stage-B meta files were not checked for whether the c04 units actually trained 70 epochs. E1_c04_s1_meta.json shows plan_hash and runner but no epoch count."
+   ],
+   "recomputed": "Independent Node recomputation (C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\rule\\recompute.js). Inputs: tune_tasks.jsonl, the comparator candidate/PPR/CO pool tables and the 45 stage-B pool tables. Steps: a BLAKE2b-64 tie-break, weighted RRF, P@10, mean over 3 seeds per task, mean per commit, then mean over the commit set; SE = numpy std(ddof=1)/sqrt(n_commits). All 324 candidate means and SEs (6 arms x 6 sets x 9) are bit-identical to choices.json, and all 36 ruling-53 choices plus 15 placebo fixed-w choices agree. Item 27 four-decimal figures: E1 0.2470 (c04, w 1, 0.24700985766370384), E4 0.2463 (c12, w 1, 0.24629028450182297), E3 0.2458 (c03, w 1, 0.24582953584876663), E2 0.2456 (c07, w 1, 0.24561005874467415), E5 0.2455 (c03, w 0.5, 0.24548724139108757). Selected arm: E1, with no tie. Tables digest (ruling 82) recomputed: f8cb1f8bc905bc74e4b50a9348f767e1f78a102516cf9567ee7df14a7593ffe0, equal to the record. Held-out run per the record: arm E1 (RotatE), config c04, cfg {embedding_dim 256, margin 6, lr 0.002, adversarial_temperature 1}. The fixed recipe, from stageA_configs.json E1_RotatE.fixed: sLCWA, NSSALoss, Adam, batch 512, 256 negatives, inverse triples; the epoch count comes from ruling 36. Then w 1, epochs 70, s 1, device cuda, image sha256:a890c548..., seeds 1, 2, 3 (heldout.py:201), arm alone and fused, plus RRF, PPR, CO and DIR.",
+   "fragile_points": [
+    "E5 block 5 (55 earlier commits): the band holds c03 w0.5 mean 0.250885336044427 (se 0.024718743641681393) and c03 w1 mean 0.25088493156674974 (se 0.024723094615512742). The same-size 'higher mean' rule decides by a gap of 4.045e-7 and picks c03 w0.5. The gap is a real rational difference, far above float error; my independent recomputation reproduces both values bit for bit. It affects only E5's late-50 block-5 scoring, not item 27.",
+    "No band-edge case under 1e-6 in any of the 36 choices: all 9 candidates are inside the band every time. The smallest margin inside the band is 8.380e-3 (PLACEBO final_all65).",
+    "No other tie-rule margin under 1e-6. The next smallest same-size gaps are E5 block4 3.616e-5, E4 block4 4.556e-5 and E5 block2 4.921e-5; in the placebo fixed-w rows, w1 block3 2.079e-5.",
+    "Item 27: E1 leads E4 by 7.196e-4 (about 7 units at the fourth decimal). No arm figure is within 0.2 units of a four-decimal rounding half."
+   ],
+   "files_written": [
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\rule\\rule53.js",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\rule\\rule53-out.json",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\rule\\item27check.js",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\rule\\item27check-out.txt",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\rule\\recompute.js",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\rule\\recompute-out.json",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\rule\\digest.js"
+   ]
+  },
+  "record": {
+   "verdict": "agrees",
+   "summary": "The record train/heldout/item27.json (sha256 55f8062cf602aed32561fb5686ed2c6fa426663558f8d6f86f98cd5f00b2d008) passes every check I could run. It hashes to the value in item27.json.sha256. All 75 hashed entries (18 code_sha256, 44 pins, 13 tuning_inputs) match the files on disk and the freeze list, compared by content hash; none is missing from the freeze list and none points under build/sealed. I recomputed the tables digest over plan.json and 135 table and count files and got f8cb1f8b..., the same value the record, tune.json, all five choices.json files and the coordinator's tables_digest line (progress.jsonl:209) carry. The stamps match the files now: tune.json bb56ff9c..., report.py 74d8ef99..., plan.json ac9d5191..., and plan_hash 71116daa.... For every arm, the record's (config, w, mean) equals both selectB's choices.json final_all65 and tune.json choices[arm].final_all65 exactly. I re-applied ruling 53 to the record's own candidate statistics, taking sizes from plan.json, and got the same pick for all five arms. E1 picks c04 at w=1.0, not the best-mean candidate c15, because c04 is the only 256-dimension configuration in a band that holds all nine candidates; c15 and c12 are 512. Ruling 57 at four decimals gives E1 0.2470, E4 0.2463, E3 0.2458, E2 0.2456 and E5 0.2455, so E1 wins alone and the tie group is [\"E1\"]. chosen = E1 c04 {adversarial_temperature 1.0, embedding_dim 256, lr 0.002, margin 6}, w 1.0, 70 epochs, s 1, device cuda, image sha256:a890c548..., test false. No field is null and every field END-ORDER step 6 and rulings 57, 80, 84 and 85 require is present with the right type. The four coordinator lines come before frozen_at (2026-11-15T17:15:44Z): code_freeze at line 223 (16:48:03Z), grader_frozen at 224 (16:48:03Z), tune_report at 225 (16:57:57Z) and tune_rank_check at 226 (17:12:15Z, accepted, bound to the current tune-rank.json and HANDOFF.json). The ktest-r3 container had exactly its 35 allowed mounts; only /w/train/heldout was writable, tune-rank.json was read-only, it had no graph folder, its network was none, and it ran the frozen CPU image 55715543.... Its step log has the expected sha256 2439460227... and shows no warning, traceback, busy error, fallback or skipped check. progress.jsonl has no item27_freeze line now and ends with a newline. The proposed anchor line, appended as the last line, would be accepted by heldout.anchor_line (I simulated it on an in-memory copy). In the real run, what is trained is set only by the anchored record's chosen block. plan.json fixes the 70 self-assigned parents and is bound by the record's plan_hash, by the tables digest (which covers the plan.json bytes) and by the freeze list. SEEDS (1, 2, 3) is a constant in hashed code. Nothing in the launch command changes training; the run takes no option, and environment overrides are refused or never passed into the container.",
+   "checks": [
+    {
+     "name": "1a. record vs its .sha256 file",
+     "result": "pass",
+     "evidence": "node t1_hashes.js: recordSha 55f8062cf602aed32561fb5686ed2c6fa426663558f8d6f86f98cd5f00b2d008 = item27.json.sha256 '55f8062c...d008  item27.json'; 16,860 bytes"
+    },
+    {
+     "name": "1b. code_sha256/pins/tuning_inputs on disk vs record vs freeze list",
+     "result": "pass",
+     "evidence": "node t1_hashes.js: n=75 entries (18 code, 44 pins, 13 tuning_inputs), eqRec 75, eqFl 75, missingFromFl [], sealed 0; pins carry every code_sha256 entry with the same hash. The 25 ../../build pins match the freeze list's '# outside' block by content hash (e.g. 95e990307da3b42b.json at freeze-list.txt:10492, tasks.jsonl at :10493, arms/common/*.js at :10494-10516)"
+    },
+    {
+     "name": "1c. record image id vs frozen card image",
+     "result": "pass",
+     "evidence": "record image_id sha256:a890c54808c11c460d910945c4bf981390f7de43c8dfc5840269b76f5861cbe7 = freeze-list.txt:10940 'graphtest-kge-gpu:1' = ruling 41 (protocol-addendum-8.md:189-190) = item27.py:64 constant"
+    },
+    {
+     "name": "1d. whole freeze list holds now (except areas I may not open)",
+     "result": "pass",
+     "evidence": "node t6_freeze.js: 10,038 lane and outside files hashed, all ok, 0 missing; skipped export/graphs* 477 and build/facts 420 (not opened under rules 2-3); stage-B parts set on disk = listed set (9,540 = 9,540, diff empty). Freeze list has no progress.jsonl, train/heldout, heldout-launch, r58c/mounts or sealed entry (grep returned nothing), so appending the anchor cannot break the freeze check"
+    },
+    {
+     "name": "2a. required record fields (END-ORDER.md:913-918, ruling 57 protocol:312-315, rulings 41/80/82/84)",
+     "result": "pass",
+     "evidence": "t5_checks.js: keys arms, choices_sha256, chosen, code_sha256 (includes train/report.py), device 'cuda', frozen_at, image_id, pins (stageA_configs.json, evalcore.py, tasks.jsonl, 95e990307da3b42b.json, 23 harness .js), plan_hash, plan_sha256, s=1 (number), stamp_tune {tune_sha256, report_sha256}, tables, tables_digest, test=false (boolean), tie_group_4dp, tuning_inputs (tune_tasks.jsonl, 10 comparator tables, 2 candidate files); null fields anywhere: []; chosen.arm string, config_id string, cfg object, w number, epochs integer 70"
+    },
+    {
+     "name": "2b. tables_digest equals step 1 and recomputation",
+     "result": "pass",
+     "evidence": "t5_checks.js recomputed selectB.tables_digest over plan.json + 135 files (0 missing) = f8cb1f8bc905bc74e4b50a9348f767e1f78a102516cf9567ee7df14a7593ffe0 = record = coordinator tables_digest line progress.jsonl:209 (its sha256 field) = tune.json stamp = every choices.json stamp"
+    },
+    {
+     "name": "2c. arms[] equal tune.json choices[].final_all65 and choices.json",
+     "result": "pass",
+     "evidence": "t5_checks.js: E1 c04 1 0.24700985766370384; E2 c07 1 0.24561005874467415; E3 c03 1 0.24582953584876663; E4 c12 1 0.24629028450182297; E5 c03 0.5 0.24548724139108757; all eq true; choices_sha256 equal files and tune.json stamp"
+    },
+    {
+     "name": "2d. ruling 53 pick per arm and ruling 57 arm choice",
+     "result": "pass",
+     "evidence": "t5_checks.js re-ran ruling 53 on the record's candidates with sizes from plan.json: band=9 in every arm. E1 pick c04/1.0 (best c15/1.0 mean 0.24789; c04 is 256 dim, c15 and c12 are 512); E2 c07/1.0; E3 c03/1.0; E4 c12/1.0 (100,2); E5 c03/0.5; cfg and epochs equal plan.json (70, 20, 60, 95, 70). 4dp figures E1 .2470, E4 .2463, E3 .2458, E2 .2456, E5 .2455; tie group [E1]; chosen E1 = record; chosen block equals arms.E1 (config, cfg, w, epochs, figure, se)"
+    },
+    {
+     "name": "3a. anchor acceptance (heldout.py:230-244)",
+     "result": "pass",
+     "evidence": "anchor_line needs exactly one JSON line with step=coordinator, unit=item27_freeze, file='train/heldout/item27.json' and sha256 matching ^[0-9a-f]{64}$; key order and extra keys such as t are ignored. heldout.py:336-339 then requires it to equal sha256(item27.json) (item27.verify, item27.py:341-346). Simulated on an in-memory copy: accepted, returns 55f8062c...d008 = record. progress.jsonl now: 0 item27_freeze lines, 226 lines, last byte 0x0a, no CRLF, no BOM"
+    },
+    {
+     "name": "3b. real run locates LANE/progress.jsonl",
+     "result": "pass",
+     "evidence": "heldout.py:164-166 anchor=os.path.join(ROOT,'progress.jsonl'); ROOT=EMB_ROOT=/w (heldout.sh:63); r58c/A/mounts-A.json kge-H1 mounts LANE/progress.jsonl -> /w/progress.jsonl ro (mounts-A.json is in freeze-list.txt:525); env_problems accepts EMB_ROOT=/w as the lane folder (heldout.py:133-141)"
+    },
+    {
+     "name": "3c. what the run trains",
+     "result": "pass",
+     "evidence": "heldout.py:361-362 arm/cid/cfg/w/epochs come from rec['chosen'] only (epochs overridable only with --test). SEEDS=(1,2,3) at heldout.py:201. Checkpoints come from plan.json heldout.assignment: 70 parents, all self-assigned (s=1), all in heldout.checkpoints; plan_hash and s are checked against the record (:349-350) and plan.json bytes are inside tables_digest (:351-356). Runs E1 c04 alone and fused at w 1.0 plus RRF, PPR, CO, DIR, both scopes (:524-566). kge.train reads only cfg, seed, checkpoint and max_epochs plus pinned stageA_configs.json. Environment: launcher passes only EMB_ROOT, KGE_DEVICE=cuda (checked = record device, :357), KGE_IMAGE_ID (checked = record, :358), thread counts, GT_TMP. KGE_THREADS is not set (image env in r58c/mounts/kge-H1P.json shows none; default 6). KGE_E4_* are read only in kge.py's CLI. STAGEB_PROGRESS and GT_* are refused (:107-108). H1_CAP=6g only sets -m/--memory-swap (heldout.sh:58-60, 68). The real run refuses every option (:159-160)"
+    },
+    {
+     "name": "3d. start refusals and current state",
+     "result": "pass",
+     "evidence": "heldout.sh: exit 8 (H1_CAP not 4g/5g/6g; no mount list; HANDOFF.json exists; freeze check fails; manifests not in freeze list; staging/export/pins fail), exit 7 (image absent; card check fails), exit 3 (rc file not deletable; docker run fails; no saved record while running; low memory or disk stop; rc!=0); it waits, not refuses, on another kge-* container, r58c/ktest.lock, C: <15 GB, memgate. heldout.py: exit 2 (option or env override, or units failed), 5 (record test flag, anchor, pins, null code path, code hash, plan, tables digest, device, image), 6 (task file pin or truth-like keys), 7 (E4 without det=1, n/a for E1), 8 (hand-off exists or out folder holds another record's start), and 1 for a record/.sha256 mismatch (item27.verify raises SystemExit(str)). State now: no HANDOFF.json (train/heldout holds only item27.json and .sha256), no null code path, pins hold on host, freeze list holds, record image = frozen image, no r58c/ktest.lock, C: 139 GB free (df), memory free 13,890,568 KB and commit 32,766,424 KB (< 38 GB). None would trigger, except image and card, which I could not check (docker)"
+    },
+    {
+     "name": "4a. ktest-r3 mounts vs mounts-B.json entry",
+     "result": "pass",
+     "evidence": "node t4b_compare.js: record 35 mounts, allow 35, no difference either way; only writable /w/train/heldout; /w/grader-returns/tune-rank.json ro; no export/graphs, heldout_inputs or sealed row; NetworkMode none, Networks [none]; image sha256:55715543... (frozen graphtest-kge:1, freeze-list.txt:10939; lane_step.sh:114-115 refuses another); -m 1536m; ktest-r3.json sha256 1f659a7c... equals the log's line"
+    },
+    {
+     "name": "4b. ktest-r3 step log",
+     "result": "pass",
+     "evidence": "sha256 2439460227a97338238bf2024b9aef39fa987453d6f9b63f5597b9741a11907a (as expected), 13 lines; regex warn|traceback|error|busy|fallback|default|skip|refus|exception|nan|inf matched nothing. The freeze check printed nothing (rc 0) and the step ended with rc 0; the five per-arm lines and the chosen line match the record"
+    },
+    {
+     "name": "5. coordinator lines before the record; stamps equal files now",
+     "result": "pass",
+     "evidence": "progress.jsonl:223 code_freeze 16:48:03Z, :224 grader_frozen 16:48:03Z, :225 tune_report 16:57:57Z (sha256 bb56ff9c... = tune.json), :226 tune_rank_check 17:12:15Z status accepted, sha256 61deb1d2... = tune-rank.json, handoff_sha256 275c3815... = HANDOFF.json = the return's own field; all before frozen_at 17:15:44.002595Z and before ktest-r3 started (17:15:21Z). Files now: tune.json bb56ff9c..., report.py 74d8ef99..., plan.json ac9d5191..., plan_hash 71116daa..., all equal the record. tables_digest line :209 states f8cb1f8b... (plus check-log hash 7b259bd1...), the same as the record"
+    }
+   ],
+   "discrepancies": [
+    {
+     "what": "heldout.py exit codes include one the docstring does not list",
+     "expected": "Every start refusal has a numbered exit code (2, 5, 6, 7, 8)",
+     "found": "A record whose bytes do not match its .sha256 file makes item27.verify raise SystemExit(<message string>), so the process exits 1 (item27.py:345, called at heldout.py:333). Not triggered now: the hashes are equal.",
+     "evidence": "train/item27.py:341-346; train/heldout.py:333",
+     "severity": "minor"
+    },
+    {
+     "what": "Ruling 108(c)'s 10 GB host-free check is not in the launcher",
+     "expected": "Before a launch under the 6 GB cap the lane takes one memory sample and starts only with at least 10 GB free",
+     "found": "heldout.sh's own gate is 6 GB free and commit under 38 GB (heldout.sh:49-50, 148-154), so the 10 GB line is a manual lane step. Free RAM now is 13.9 GB.",
+     "evidence": "protocol-addendum-8.md ruling 108(c); train/heldout.sh:49-50,148-154; Get-CimInstance printed 13890568 32766424",
+     "severity": "minor"
+    }
+   ],
+   "not_checked": [
+    "The '# images' block of the freeze list (docker image inspect for graphtest-kge:1 and graphtest-kge-gpu:1) and whether the card is visible to the GPU image: no docker allowed",
+    "477 export/graphs* lines and 420 build/facts/cache lines of the freeze list (not opened under hard rules 2-3), and whether heldout_inputs.js check and verify-export would pass (they read heldout_inputs/ and export/graphs*); I checked only that heldout_inputs.sha256 and heldout_export.sha256 match their freeze-list lines (freeze-list.txt:502-503, inside the 10,038 that hashed ok)",
+    "The grader_frozen file under build/sealed (not opened)",
+    "Whether the per-candidate fused pool P@10 means in the record are correct computations from the stage-B tables: I checked agreement with selectB's choices.json and tune.json and re-applied the choice rules to the record's own statistics, but did not recompute P@10 from the tables and tune truth",
+    "Whether the real kge-H1 container's mounts will match r58c/A/mounts-A.json (it does not exist yet); I read the list and the launcher, not a record",
+    "The contents of build/tasks/tasks.jsonl (418 T1 held-out rows, 70 parents): only its sha256 was checked",
+    "Any test of heldout.py's code paths; the analysis is by reading code"
+   ],
+   "recomputed": "Tables digest (ruling 82) recomputed in Node from plan.json plus 135 decompressed tables and count files: f8cb1f8bc905bc74e4b50a9348f767e1f78a102516cf9567ee7df14a7593ffe0. sha256 of all 75 record-listed files; 10,038 freeze-list files; stage-B parts set (9,540). Ruling 53 pick per arm and ruling 57 arm choice from the record's candidate stats and plan.json sizes: E1 c04 w1.0 (0.2470), chosen E1. Anchor acceptance simulated with a port of heldout.anchor_line on an in-memory copy of progress.jsonl plus the given line: accepted, sha 55f8062c...d008.",
+   "files_written": [
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\record\\t1_hashes.js",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\record\\t1_result.json",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\record\\t4_mounts.js",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\record\\t4_result.txt",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\record\\t4b_compare.js",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\record\\t4b_result.txt",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\record\\t5_checks.js",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\record\\t5_result.txt",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\record\\t6_freeze.js",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\record\\t6_result.txt",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\record\\parts_have.txt",
+    "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\coord\\verify-item27\\record\\parts_listed.txt"
+   ],
+   "fragile_points": [
+    "Appending the anchor: on this machine an append can be lost silently ('Device or resource busy', ruling 106(c)). Read progress.jsonl back after appending and confirm exactly one item27_freeze line with the 64 lowercase hex hash (no 'sha256:' prefix), ending in a newline. A second item27_freeze line, a re-freeze included, makes heldout.py exit 5 (heldout.py:240).",
+    "heldout.sh reads PROBE, REHEARSAL and DRY from the calling shell (heldout.sh:51-53, 76). If any of them is set in the owner's shell, a different mode runs instead of the real run. They do not change what the real run trains.",
+    "KGE_THREADS is not passed into the container and the GPU image sets none (r58c/mounts/kge-H1P.json Env), so kge.py's default of 6 applies; the image ID is frozen, so this cannot change unless the image changes.",
+    "The record's device and image_id are constants in item27.py:63-64, not measured where it ran (ktest-r3 ran on the CPU image with KGE_DEVICE=cpu, as lane_step.sh requires). They are enforced at run time by heldout.py:357-358 against KGE_DEVICE and the docker-inspected image ID.",
+    "E1's frozen setting is c04 w=1.0 (all-65 mean 0.24701), not the best-mean candidate c15 w=1.0 (0.24789). This is what ruling 53 prescribes: the smallest model in the band, and all nine candidates are in it. A reader comparing 'best' with 'chosen' may take it for an error.",
+    "The ktest-r3 inspect record was taken while the container was running (State.Status running), so its exit code comes from the step log (rc 0), not from the record."
+   ]
+  }
+ }
+}

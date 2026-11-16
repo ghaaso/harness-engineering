@@ -301,13 +301,113 @@ function buildPremise() {
   return { result_path: dir + "result.json", notes_path: dir + "NOTES.md", date, what_it_measures, reads_by_location, total, same_task, findings_rows, premises_per_finding, reuse, stale, step4, could_not_measure, not_claimed };
 }
 
+function buildEmbeddings() {
+  const dir = G2E_REL + "/embeddings/";
+  const RP = rd(dir + "COORDINATOR-REPORT.md"); const N = RP.split("\n");
+  const TJ = readJson(dir + "lane/train/report/tune.json");
+  const HJ = readJson(dir + "lane/grader-returns/heldout.json");
+  const IJ = readJson(dir + "lane/grader-returns/tune-item24.json");
+  const CJ = readJson(dir + "lane/train/heldout/item27.json");
+  const PROT = rd(G2E_REL + "/protocol-addendum-8.md");
+  const date = need(/Written on (20\d\d-\d\d-\d\d)/.exec(N.slice(0, 6).join(" ")), "embeddings report date")[1];
+  const paras = (lines) => { const out = []; let cur = ""; for (const l of lines) { if (l.trim() === "") { if (cur) out.push(cur); cur = ""; } else cur += (cur ? " " : "") + l.trim(); } if (cur) out.push(cur); return out; };
+  // section 1: the answer
+  const s1 = paras(section(N, /^## 1\. The answer\s*$/));
+  if (s1.length < 2) throw new Error("report section 1: fewer than two paragraphs");
+  const answer_bold = need(/^\*\*(.+?)\*\*/.exec(s1[0]), "bold answer sentence")[1];
+  const answer_paragraphs = [s1[0].replace(/^\*\*.+?\*\*\s*/, ""), s1[1]];
+  // section 2: the bar and the band, from the report's words; cross-checked with the protocol's item 26
+  const s2 = section(N, /^## 2\. What was compared\s*$/).join(" ").replace(/\s+/g, " ");
+  const adds_bar = num(need(/"Adds": the interval lies above zero and the gain is at least \+(0\.\d+)/.exec(s2), "adds bar in section 2")[1]);
+  const band = need(/"Matches": the whole interval lies inside (-0\.\d+) to \+(0\.\d+)/.exec(s2), "matches band in section 2");
+  const match_band = [num(band[1]), num(band[2])];
+  const p26 = need(/^26\. "adds": .*?at least \+(0\.\d+)\.\s*$/m.exec(PROT.replace(/\r/g, "")), "protocol item 26")[1];
+  if (num(p26) !== adds_bar || -match_band[0] !== adds_bar || match_band[1] !== adds_bar) throw new Error("bar/band disagree with protocol item 26");
+  const words_note = need(/So "matches" means "within 0\.02", not "no difference"\./.exec(s2), "matches-note")[0];
+  // the verdicts
+  const ARMS = [["E1", "RotatE"], ["E2", "ComplEx-N3"], ["E3", "TransE"], ["E4", "CompGCN"], ["E5", "routed specialists"], ["PLACEBO", "placebo"]];
+  const CONTRASTS = [["fused_pool", "pool", "fused"], ["alone_pool", "pool", "alone"], ["fused_unrestricted", "unrestricted", "fused"], ["alone_unrestricted", "unrestricted", "alone"]];
+  const ci = (o, what) => ({ diff: need(get(o, "diff"), what), lo: need(get(o, "lo"), what), hi: need(get(o, "hi"), what) });
+  const arms = ARMS.map(([k, name]) => {
+    const row = { key: k, name, level: {} };
+    for (const [c, scope, kind] of CONTRASTS) {
+      row[c] = Object.assign(ci(get(TJ, "contrasts.late50." + scope + "." + k + "_" + kind + ".vs_RRF.P@10"), k + " " + c), { word: need(get(TJ, "verdicts.late50." + k + "." + c), "word " + k + " " + c) });
+      row.level[c] = need(get(TJ, "arms.late50." + scope + "." + k + "_" + kind + ".seed_mean.P@10"), "level " + k + " " + c);
+    }
+    const il = get(IJ, "labels." + k + "_fused_mean"), ia = get(IJ, "labels." + k + "_alone_mean");
+    row.answer_level = { fused: need(get(il, "mean.primary"), "answer fused " + k), alone: need(get(ia, "mean.primary"), "answer alone " + k), fused_vs: ci(get(il, "vs_RRF.primary"), "answer vs " + k), alone_vs: ci(get(ia, "vs_RRF.primary"), "answer alone vs " + k) };
+    return row;
+  });
+  const comparators = {};
+  for (const scope of ["pool", "unrestricted"]) { comparators[scope] = {}; for (const c of ["RRF", "PPR", "CO", "DIR", "RANDOM"]) comparators[scope][c] = need(get(TJ, "comparators.late50." + scope + "." + c + ".P@10"), "comparator " + c); }
+  const answer_level_rrf = need(get(IJ, "labels.RRF.mean.primary"), "answer level RRF");
+  const pilot_shared = ci(get(TJ, "contrasts.late50_pilot_shared.pool.E1_fused.vs_RRF.P@10"), "pilot-shared E1");
+  const s3 = section(N, /^## 3\. The verdicts/);
+  const late_n = need(get(TJ, "sets.late50"), "late50 size");
+  const answer_budget = num(need(/how much of the reference answer fits\s+in ([\d,]+) tokens/.exec(s3.join(" ")), "answer budget")[1]);
+  const pilot_n = num(need(/On the (\d+) of these commits that the pilot's own late 50 also holds/.exec(s3.join(" ").replace(/\s+/g, " ")), "pilot-shared commit count")[1]);
+  if (pilot_n !== get(TJ, "sets.late50_pilot_shared")) throw new Error("pilot-shared count differs from tune.json");
+  // held-out
+  const HN = [["RRF", "simple ranker"], ["E1_fused_mean", "RotatE fused"], ["E1_alone_mean", "RotatE alone"], ["PPR", "rooted PageRank alone"], ["CO", "co-change confidence alone"], ["DIR", "same folder"]];
+  const heldout = {
+    tasks: need(get(HJ, "tasks"), "heldout tasks"), commits: need(get(HJ, "commits"), "heldout commits"),
+    rows: HN.map(([k, name]) => ({ key: k, name, pool: need(get(HJ, "rank." + k + ".pool.P@10"), k), unrestricted: need(get(HJ, "rank." + k + ".unrestricted.P@10"), k), answer_level: need(get(HJ, "answer_level." + k), k) })),
+    vs: Object.fromEntries(["E1_fused_mean", "E1_alone_mean"].map((k) => [k, { pool: ci(get(HJ, "vs_RRF." + k + ".pool_P@10"), k), unrestricted: ci(get(HJ, "vs_RRF." + k + ".unrestricted_P@10"), k), answer_level: ci(get(HJ, "vs_RRF." + k + ".answer_level"), k) }])),
+    frozen: { arm: get(CJ, "chosen.arm"), config_id: get(CJ, "chosen.config_id"), dim: get(CJ, "chosen.cfg.embedding_dim"), weight: get(CJ, "chosen.w"), epochs: get(CJ, "chosen.epochs") },
+  };
+  if (heldout.frozen.arm !== "E1") throw new Error("frozen arm is no longer E1: " + heldout.frozen.arm);
+  const s5 = section(N, /^## 5\. Held-out/);
+  heldout.heading = need(/^## 5\. Held-out \((.+)\)\s*$/.exec(N[idx(N, /^## 5\. Held-out/)]), "held-out heading")[1];
+  heldout.note = need(paras(s5).find((p) => /^It is the same picture/.test(p)), "held-out note");
+  // section 4: the six reasons
+  const s4 = section(N, /^## 4\. Why\s*$/);
+  const pts = bulletsAfter(s4, s4.findIndex((l) => /^1\.\s/.test(l)), true);
+  const why = pts.map((t, i) => { const m = need(/^\*\*(.+?)\*\*\s*(.*)$/.exec(t), "bold lead of why point " + (i + 1)); return { lead: m[1], text: m[2] }; });
+  if (why.length !== 6) throw new Error("why points: " + why.length);
+  const why_sources = paras(s4)[0];
+  const why_summary = need(paras(s4).find((p) => /^The sentence the evidence supports:/.test(p)), "supported sentence").replace(/^The sentence the evidence supports:\s*/, "");
+  // section 6: limits
+  const s6 = section(N, /^## 6\. What RESULT\.md lacks or gets wrong\s*$/);
+  const lim = bulletsAfter(s6, s6.findIndex((l) => /^1\.\s/.test(l)), true);
+  const limits = lim.map((t, i) => need(/^\*\*(.+?)\*\*/.exec(t), "bold title of limit " + (i + 1))[1].replace(/\.$/, ""));
+  const limits_intro = paras(s6)[0];
+  // section 7: what it does not say
+  const s7 = section(N, /^## 7\. What the test does not say\s*$/);
+  const does_not_say = bulletsAfter(s7, s7.findIndex((l) => /^- /.test(l)), false);
+  if (does_not_say.length !== 4) throw new Error("does-not-say bullets: " + does_not_say.length);
+  // cross-check the report's tables against the data files (4 decimals); disagreements are listed, not fixed
+  const disagreements = [];
+  const r4 = (x) => (Math.round(x * 1e4) / 1e4).toFixed(4);
+  const same = (txt, v) => Math.abs(num(txt) - +r4(v)) < 1e-9;
+  for (const a of arms) {
+    const label = a.key === "PLACEBO" ? "Placebo" : a.key + " " + a.name;
+    const li = N.findIndex((l) => l.startsWith("| " + label + " |")); if (li < 0) { disagreements.push("section 3 has no row " + label); continue; }
+    const c = cells(N[li]);
+    CONTRASTS.forEach(([k], j) => { const [d, lo, hi] = triple(c[j + 1]); const w = /\]\s*(.+)$/.exec(c[j + 1])[1].trim(); const o = a[k];
+      if (!same(d, o.diff) || !same(lo, o.lo) || !same(hi, o.hi)) disagreements.push(`section 3 ${label} ${k}: report ${c[j + 1]}, tune.json ${r4(o.diff)} [${r4(o.lo)}, ${r4(o.hi)}]`);
+      const ww = o.word === "cannot tell (lower)" ? "lower" : o.word; if (w !== ww) disagreements.push(`section 3 ${label} ${k}: word ${w} vs ${o.word}`); });
+  }
+  const s3t = s3.join(" ").replace(/\s+/g, " ");
+  const lv = need(/The simple ranker scores ([\d.]+) in the pool and ([\d.]+) unrestricted\. In the pool PPR alone scores ([\d.]+), CO alone ([\d.]+), a same-folder rule ([\d.]+) and a random order ([\d.]+)\./.exec(s3t), "section 3 levels");
+  [[lv[1], comparators.pool.RRF], [lv[2], comparators.unrestricted.RRF], [lv[3], comparators.pool.PPR], [lv[4], comparators.pool.CO], [lv[5], comparators.pool.DIR], [lv[6], comparators.pool.RANDOM]].forEach(([t, v], i) => { if (!same(t, v)) disagreements.push("section 3 level " + i + ": report " + t + ", tune.json " + r4(v)); });
+  const HL = { RRF: "Simple ranker (RRF)", E1_fused_mean: "E1 fused", E1_alone_mean: "E1 alone", PPR: "PPR", CO: "CO", DIR: "Same folder" };
+  for (const r of heldout.rows) { const li = N.findIndex((l) => l.startsWith("| " + HL[r.key] + " |")); if (li < 0) { disagreements.push("section 5 has no row " + HL[r.key]); continue; }
+    const c = cells(N[li]); [["pool", 1], ["unrestricted", 2], ["answer_level", 3]].forEach(([k, j]) => { const t = /^([\d.]+)/.exec(c[j])[1]; if (!same(t, r[k])) disagreements.push(`section 5 ${HL[r.key]} ${k}: report ${t}, heldout.json ${r4(r[k])}`);
+      if (heldout.vs[r.key]) { const [d, lo, hi] = triple(c[j]); const o = heldout.vs[r.key][k]; if (!same(d, o.diff) || !same(lo, o.lo) || !same(hi, o.hi)) disagreements.push(`section 5 ${HL[r.key]} ${k}: report ${c[j]}, heldout.json ${r4(o.diff)} [${r4(o.lo)}, ${r4(o.hi)}]`); } }); }
+  if (!same(need(/E1 fused: (-?[\d.]+) \[/.exec(s3t), "answer-level E1 in section 3")[1], arms[0].answer_level.fused_vs.diff)) disagreements.push("section 3 answer level E1 fused difference");
+  if (!same(need(/The simple ranker scores (0\.\d+); the fused arms/.exec(s3t), "answer level RRF text")[1], answer_level_rrf)) disagreements.push("section 3 answer level of the simple ranker");
+  if (disagreements.length) console.log("REPORT/DATA DISAGREEMENTS:\n  " + disagreements.join("\n  ")); else console.log("embeddings: the report's tables in sections 3 and 5 equal the data files at 4 decimals");
+  return { report_path: dir + "COORDINATOR-REPORT.md", sources: [dir + "lane/train/report/tune.json", dir + "lane/grader-returns/heldout.json", dir + "lane/grader-returns/tune-item24.json", dir + "lane/train/heldout/item27.json"],
+    date, answer_bold, answer_paragraphs, adds_bar, match_band, words_note, arms, comparators, answer_level_rrf, pilot_shared, pilot_n, late_n, answer_budget, heldout, why, why_sources, why_summary, limits, limits_intro, does_not_say, disagreements };
+}
+
 function slot(p, builder) {
   const o = baseSlot(p);
   if (o.exists && builder) o.structured = builder();
   return o;
 }
 const pending = {
-  embeddings: slot(G2E_REL + "/embeddings/RESULT.md"),
+  embeddings: slot(G2E_REL + "/embeddings/COORDINATOR-REPORT.md", buildEmbeddings),
   lookup_testset: slot(G2E_REL + "/graph-v2/lookup-testset/NOTES.md", buildLookup),
   premise_measure: slot(G2E_REL + "/graph-v2/premise-measure/NOTES.md", buildPremise),
 };

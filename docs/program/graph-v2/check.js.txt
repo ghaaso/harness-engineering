@@ -126,6 +126,21 @@ if (X && X.graphify) { const G = secOf('g'); if (!/class="card gf"/.test(G) || !
     (S.could_not_measure || []).forEach((s, i) => { const seg = s.replace(/`/g, '').split(/\bCQ\d+\b|\bE1 to E3\b/).sort((x, y) => y.length - x.length)[0]; if (!norm(all).includes(norm(seg).slice(0, 30).trim())) problems.push(k + ': could-not-measure item ' + (i + 1) + ' not on the page'); });
     [S.to_beat_caveat, S.not_claimed].filter(Boolean).forEach(s => { if (!norm(all).includes(norm(s).slice(0, 40).trim())) problems.push(k + ': caveat not on the page: ' + s.slice(0, 60)); });
     notes.push(k + ': measured block(s) in ' + places.map(x => x[0].toUpperCase()).join(' and ') + ', ' + (S.could_not_measure || []).length + ' could-not-measure items shown'); } }
+/* the embeddings trial: when its structured result exists, section G draws it (question, four contrast views, reasons,
+   held-out, limits, does-not-say) and no part of the page or the record still calls it under way or pending */
+{ const p = X && X.pending && X.pending.embeddings; const S = p && p.structured;
+  if (!S) notes.push('embeddings: no structured fields, generic slot only');
+  else { const G = secOf('g'), T = norm(all);
+    if (!G.includes('Do learned graph embeddings add to the simple ranker?')) problems.push('section G: embeddings question heading missing');
+    if (!G.includes(S.report_path)) problems.push('section G: embeddings block not tagged with the report path');
+    ['fused_pool', 'alone_pool', 'fused_unrestricted', 'alone_unrestricted'].forEach(k => { if (!new RegExp('class="efview" data-v="' + k + '"').test(G)) problems.push('section G: embeddings view ' + k + ' missing'); });
+    if (/class="efview" data-v="fused_pool" hidden/.test(G)) problems.push('section G: the primary embeddings view is hidden without script');
+    if ((G.match(/<div class="efrow( efplac)?">/g) || []).length !== 4 * S.arms.length) problems.push('section G: embeddings chart does not have one row per arm in each view');
+    if (!G.includes('What the lane&#39;s result file lacks or gets wrong (' + S.limits.length + ')') && !G.includes("What the lane's result file lacks or gets wrong (" + S.limits.length + ')')) problems.push('section G: embeddings limits heading missing');
+    S.why.forEach((w, i) => { if (!T.includes(norm(w.text).slice(0, 30).trim()) && !/\bE\d/.test(w.text.slice(0, 40))) problems.push('embeddings: reason ' + (i + 1) + ' not on the page'); });
+    if (/embeddings trial[^.]*under way|trial is under way|result is not in yet/i.test(all)) problems.push('page still calls the embeddings trial under way');
+    if (/measured trial is under way|its result is pending/i.test(md)) problems.push('record still calls the embeddings trial pending');
+    notes.push('embeddings: measured block in G, ' + S.arms.length + ' arms x 4 contrasts, ' + S.why.length + ' reasons, ' + S.limits.length + ' limits, ' + S.does_not_say.length + ' does-not-say items'); } }
 if (!/R-8/.test(secOf('j'))) problems.push('section J does not name ruling R-8');
 { const A2 = secOf('a2'); // the seven measures: section, nav entry, seven columns, no saving under token count or token cost
   if (!/<section class="sec" id="a2"><h2>/.test(html)) problems.push('section A2 (the seven measures) missing');

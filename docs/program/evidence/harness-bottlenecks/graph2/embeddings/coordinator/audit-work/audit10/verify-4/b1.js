@@ -1,0 +1,4 @@
+const fs=require('fs');const L='C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/wider/embeddings';
+const o=[];for(const f of ['orchestrator/kge-B1-inspect-20261114T190928Z.json','orchestrator/kge-B1-inspect-20261115T073116Z.json','r58c/mounts/kge-H1.json','r58c/mounts/ktest-r2.json','r58c/mounts/kge-R1.json','r58c/mounts/kge-H1P.json','r58c/A/out/inspect-ktest-a52.json']){const J=JSON.parse(fs.readFileSync(L+'/'+f,'utf8'));const c=Array.isArray(J)?J[0]:J;
+o.push(f+' started='+(c.State&&c.State.StartedAt)+' cmd='+JSON.stringify((c.Config&&c.Config.Cmd)||c.Args||'').slice(0,200));for(const m of c.Mounts)o.push('   '+m.Source.replace(/^.*embeddings/,'LANE').replace(/^.*graph2/,'G2')+' -> '+m.Destination+(m.RW?' rw':' ro'));}
+fs.writeFileSync('C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/coord/audit10/verify-4/b1.out.txt',o.join('\n'));
