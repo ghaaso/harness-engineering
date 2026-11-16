@@ -18,6 +18,8 @@ The first capture (11:25–11:26 UTC) preceded real held-out scoring. When work 
 
 The later capture adds tuning reports and grader returns, selected configurations, frozen tuning/probe/held-out inputs, launch and mount records, rulings 106–111, and newer coordinator records. It enumerates new directories even when copied inputs retain old timestamps. `validation/update-capture.json` gives the actual capture interval and file changes. The initial snapshot remains in Git commit `5e503b0`; superseded data are retained under `recovered/snapshots/20261115T1125/` after restoration. Do not treat the captured partial held-out outputs as a completed run.
 
+The 16 November audit repaired a capture race: the saved log contained 77 completed units but only 76 units' data had been enumerated. Four missing files for the 77th unit are now included directly in Git. All 77 units have metadata, and all 231 recorded data hashes match. This consistency repair does not turn the partial run into a final held-out result.
+
 ## Locations
 
 - `recovered/hb/graph2/wider/embeddings/train`: trainers, Stage A and B records.

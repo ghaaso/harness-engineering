@@ -14,11 +14,12 @@ SETS={
  'tokens':TEMP/'b6c3202ba5123743/05fc6dc4-8dea-4418-8b3c-6244e4758c7b/scratchpad/tokens',
 }
 PRIMARY=SETS['hb'].parent
-for extra in ['coord','eval','g2c','gfy','lane-sel-iface','lm','refute','st','usecases','v1audit','va']:
+for extra in ['coord','eval','g2c','gfy','lane-sel-iface','lm','refute','st','usecases','v1audit','va','ref','m3','v2']:
  SETS[extra]=PRIMARY/extra
-ROOT_FILES=['co_count.js','derive.js','derive2.js','derive3.js','fix-k0-result.py','ks.md','secM.cur.txt','secM.js.txt','tok.js']
-SKIP_DIRS={'node_modules','__pycache__','.git','.venv','venv','wheels','stale','site-packages'}
+ROOT_FILES=['co_count.js','derive.js','derive2.js','derive3.js','fix-k0-result.py','ks.md','secM.cur.txt','secM.js.txt','tok.js','htmldiff.py','pdftxt.py','gap390.png']
+SKIP_DIRS={'node_modules','__pycache__','.git','.venv','venv','wheels','site-packages'}
 SKIP_PREFIXES=[
+ 'hb/graph2/wider/embeddings/image/stale/',
  'hb/graph2/engines-windows-unused/ext/',
  'hb/graph2/wider/graphify/image/src/',
  'hb/graph2/wider/feas/graphify-src-read/',

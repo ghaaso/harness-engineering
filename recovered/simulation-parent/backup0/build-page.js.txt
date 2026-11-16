@@ -1,0 +1,231 @@
+// Build script for the library pathways page. Run it from its own folder (node needs the .txt file on stdin):
+//   cd docs/program/evidence/library-pathways && node - < build-page.js.txt
+// Reads   docs/program/library-pathways/{map.json, params.json, engine.js, limitations.json, cases.json}
+//         docs/program/evidence/library-pathways/page-src/{page.html.txt, page.css.txt, page.js.txt, core.js.txt, text.json}
+// Writes  docs/program/library-pathways/index.html        (one self-contained page: data, engine, styles and script inlined)
+//         docs/program/LIBRARY-PATHWAYS-2026-11.md         (the short record, generated from the same data)
+//         docs/program/evidence/library-pathways/build-page-report.txt  (checks)
+// Neither output is edited by hand: change the data or page-src and rebuild.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+const HERE = path.resolve(process.cwd());
+if (!fs.existsSync(path.join(HERE, 'page-src', 'page.js.txt'))) { console.error('Run this from docs/program/evidence/library-pathways'); process.exit(2); }
+const PROGRAM = path.resolve(HERE, '..', '..');
+const LP = path.join(PROGRAM, 'library-pathways');
+const SRC = path.join(HERE, 'page-src');
+const read = p => fs.readFileSync(p, 'utf8');
+const MAP = JSON.parse(read(path.join(LP, 'map.json')));
+const TABLE = JSON.parse(read(path.join(LP, 'params.json')));
+const LIMS = JSON.parse(read(path.join(LP, 'limitations.json')));
+const CASES = JSON.parse(read(path.join(LP, 'cases.json')));
+const TX = JSON.parse(read(path.join(SRC, 'text.json')));
+const engineSrc = read(path.join(LP, 'engine.js'));
+const coreSrc = read(path.join(SRC, 'core.js.txt'));
+const E = require(path.join(LP, 'engine.js'));
+const C = require(path.join(SRC, 'core.js.txt'));
+const fail = [], report = [], notes = [];
+const check = (ok, msg) => { if (!ok) fail.push(msg); };
+
+/* ---------- 1. data consistency ---------- */
+const stateIds = MAP.states.map(s => s.id), branchIds = new Set(MAP.branches.map(b => b.id)), stepIds = MAP.steps.map(s => s.id);
+const paramIds = new Set(MAP.parameters.map(p => p.id));
+stateIds.forEach(id => check(Array.isArray(TX.layout.states[id]), 'layout has no position for state ' + id));
+Object.keys(TX.layout.states).forEach(id => check(stateIds.includes(id), 'layout names unknown state ' + id));
+Object.keys(TX.layout.lanes).forEach(id => check(branchIds.has(id), 'layout lane names unknown branch ' + id));
+MAP.states.forEach(s => { const st = MAP.steps.findIndex(x => x.id === s.step); check(st >= 0, 'state ' + s.id + ' has unknown step'); });
+// positions keep the stages in order from left to right
+const colRange = {};
+MAP.states.forEach(s => { const c = TX.layout.states[s.id][0]; const r = colRange[s.step] = colRange[s.step] || [99, -1]; r[0] = Math.min(r[0], c); r[1] = Math.max(r[1], c); });
+for (let i = 1; i < stepIds.length; i++) check(colRange[stepIds[i]][0] > colRange[stepIds[i - 1]][1], 'stage ' + stepIds[i] + ' is not to the right of ' + stepIds[i - 1]);
+MAP.branches.forEach(b => check(TX.layout.states[b.to][0] > TX.layout.states[b.from][0], 'branch ' + b.id + ' does not run left to right'));
+check(JSON.stringify(Object.keys(TX.design_steps)) === JSON.stringify(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10']), 'design_steps must cover steps 1 to 10');
+Object.keys(TX.design_steps).forEach(k => TX.design_steps[k].forEach(st => check(stepIds.includes(st), 'design step ' + k + ' names unknown stage ' + st)));
+check(JSON.stringify(Object.keys(LIMS.steps)) === JSON.stringify(Object.keys(TX.design_steps)), 'limitations.json steps differ from the design step table');
+MAP.policies.forEach(p => check(TX.policy_names[p.id] && TX.policy_short[p.id] && TX.policy_says[p.id], 'no display name for policy ' + p.id));
+TABLE.parameters.forEach(r => check(paramIds.has(r.id), 'params.json row for unknown parameter ' + r.id));
+MAP.parameters.forEach(p => { const r = TABLE.parameters.find(x => x.id === p.id); check(!!r, 'no params.json row for ' + p.id); if (r) check(['M', 'S', 'G'].includes(r.tag) && r.source && r.low <= r.best && r.best <= r.high, 'params.json row ' + p.id + ' needs a tag, a source and low <= best <= high'); });
+LIMS.items.forEach(it => {
+  (it.params || []).forEach(p => check(paramIds.has(p), it.id + ' names unknown parameter ' + p));
+  check(LIMS.steps[it.main_step] !== undefined, it.id + ' has an unknown main step');
+  it.steps.forEach(s => check(LIMS.steps[s] !== undefined, it.id + ' names unknown step ' + s));
+  it.real.case_ids.forEach(cid => check(CASES.cases.some(c => c.id === C.caseId(cid)), it.id + ' names a case not in cases.json: ' + cid));
+  it.contradicted.forEach(cn => cn.cases.forEach(cid => check(CASES.cases.some(c => c.id === C.caseId(cid)), it.id + ' contradiction names a case not in cases.json: ' + cid)));
+});
+LIMS.works.forEach(w => check(CASES.cases.some(c => c.id === C.caseId(w.case)), 'works names a case not in cases.json: ' + w.case));
+check(LIMS.summary.items === LIMS.items.length, 'limitations summary count differs from its items');
+check(Object.keys(LIMS.families).length === CASES.families.length, 'limitations and cases list different numbers of families');
+const famIds = CASES.families.map(f => f.id);
+CASES.cases.forEach(c => {
+  check(famIds.includes(c.family), c.id + ' has unknown family ' + c.family);
+  check(c.steps.map(s => s.step).join(',') === '1,2,3,4,5,6,7,8,9,10', c.id + ' does not have steps 1 to 10 in order');
+  c.steps.forEach(s => check(C.STATUSES.includes(s.status), c.id + ' step ' + s.step + ' has unknown status ' + s.status));
+});
+const famOrder = CASES.cases.map(c => famIds.indexOf(c.family));
+check(famOrder.every((v, i) => i === 0 || v >= famOrder[i - 1]), 'cases are not grouped by family in order');
+// the n-th family in limitations.json is the n-th in cases.json (the page relies on this for names)
+Object.keys(LIMS.families).forEach((k, i) => check(k === 'L' + String(i + 1).padStart(2, '0') && CASES.cases.some(c => c.family === famIds[i] && c.id.startsWith('f' + String(i + 1).padStart(2, '0'))), 'family order differs at ' + k));
+const mapCheck = E.checkMap(MAP);
+check(mapCheck.ok, 'engine checkMap: ' + mapCheck.problems.join('; '));
+const best = E.paramsFromTable(TABLE, 'best');
+const cons = E.conservation(MAP, best, { stocks: { E_good: 50, E_bad: 20 } });
+check(cons.ok, 'conservation fails at best values');
+
+/* ---------- 2. counts and totals ---------- */
+const CNT = C.counts(MAP, TABLE, LIMS, CASES);
+const TOT = C.statusTotals(CASES.cases);
+C.STATUSES.forEach(s => check(TOT[s].length === 10, 'totals row ' + s));
+let cellSum = 0; C.STATUSES.forEach(s => TOT[s].forEach(v => { cellSum += v; }));
+check(cellSum === CASES.cases.length * 10, 'grid totals do not add to 10 cells per case');
+
+/* ---------- 3. no fixes, no verdicts; untagged digits in the page copy ---------- */
+const BANNED = [/\bshould\b/i, /\brecommend/i, /\bmitigat/i, /\bwe propose\b/i, /\bpropose[sd]? (a|the|to)\b/i, /\bthe fix (is|would|will)\b/i, /\bto fix (it|this|the)\b/i, /\bsolution (is|would)\b/i, /\bwill (not )?work\b/i, /\bwon'?t work\b/i, /\b(does|do) not work\b/i, /\bviable\b/i, /\bworth (it|building|doing)\b/i, /\bsuggest/i, /\bit is better to\b/i, /\bredesign/i, /\bthe answer is\b/i, /\blibrary (works|fails|will|would succeed|would fail)\b/i, /\b(succeeds|fails) at its goal\b/i, /\bmust be (fixed|changed|added)\b/i, /\bneeds to (be )?(fixed|changed|added)\b/i];
+function strings(v, where, out) {
+  if (typeof v === 'string') out.push([where, v]);
+  else if (Array.isArray(v)) v.forEach((x, i) => strings(x, where + '[' + i + ']', out));
+  else if (v && typeof v === 'object') Object.keys(v).forEach(k => strings(v[k], where + '.' + k, out));
+  return out;
+}
+const pageJs = read(path.join(SRC, 'page.js.txt'));
+const jsLiterals = (pageJs.match(/'(?:[^'\\\n]|\\.)*'/g) || []).map(s => s.slice(1, -1));
+const copy = strings(TX, 'text', []).filter(([w]) => !/\.layout\.|\.design_steps\./.test(w)).concat(jsLiterals.map(s => ['page.js', s]));
+const lintHits = [];
+copy.forEach(([w, s]) => BANNED.forEach(re => { if (re.test(s)) lintHits.push(w + ': ' + s.slice(0, 120)); }));
+lintHits.forEach(h => fail.push('fix or verdict wording in the page copy: ' + h));
+const dataHits = [];
+strings({ lims: LIMS, cases: CASES, map: MAP }, 'data', []).forEach(([w, s]) => BANNED.forEach(re => { if (re.test(s)) dataHits.push(w + ': ' + s.slice(0, 140)); }));
+const digitLint = [];
+strings(TX, 'text', []).filter(([w]) => !/\.layout\.|\.design_steps\.|\.date$|\.note$/.test(w)).forEach(([w, s]) => {
+  const t = s.replace(/\{\{[^}]+\}\}/g, ' ').replace(/\bsteps? \d+(, \d+)*\b/g, ' ').replace(/\b[RB]\d\b/g, ' ');
+  const m = t.match(/\d/g); if (m) digitLint.push(w + ': ' + s.slice(0, 120));
+});
+digitLint.forEach(h => fail.push('untagged digit in the page copy: ' + h));
+
+/* ---------- 4. assemble the page ---------- */
+const DATA = { map: MAP, params: TABLE, lims: LIMS, cases: CASES, text: TX, build: { date: TX.date } };
+const html = read(path.join(SRC, 'page.html.txt'))
+  .replace('/*__CSS__*/', () => read(path.join(SRC, 'page.css.txt')))
+  .replace('/*__DATA__*/', () => JSON.stringify(DATA).replace(/</g, '\\u003c'))
+  .replace('/*__ENGINE__*/', () => engineSrc)
+  .replace('/*__CORE__*/', () => coreSrc)
+  .replace('/*__JS__*/', () => pageJs);
+check(!/https?:\/\//i.test(html), 'the page names a web address');
+const markup = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '<script></script>');
+check(!/<link\b|@import|<iframe|<img\b|<embed|<object/i.test(html), 'the page loads an outside file');
+check(!/\s(src|href|action)\s*=\s*(?!["']?#)/i.test(markup), 'the page markup points at an outside file');
+check(!/(\.src\s*=|setAttribute\(\s*['"](src|href)|\bfetch\(|XMLHttpRequest|import\()/.test(pageJs + coreSrc), 'the page script loads an outside file');
+check(!/url\((?!#)/i.test(html), 'the page uses url() for something other than an in-page id');
+check(!/localStorage|sessionStorage|indexedDB/.test(html), 'the page uses browser storage');
+check((html.match(/<script/g) || []).length === 4, 'expected four inline scripts');
+
+/* ---------- 5. the inlined engine gives the same numbers as engine.js ---------- */
+const scripts = [...html.matchAll(/<script>\n([\s\S]*?)\n<\/script>/g)].map(m => m[1]);
+check(scripts[0] === engineSrc, 'the inlined engine is not byte-identical to engine.js');
+const box = vm.createContext({});
+vm.runInContext(scripts[0], box); vm.runInContext(scripts[1], box);
+const PE = box.PathwayEngine, PC = box.PathwayCore;
+const dataBack = JSON.parse(html.match(/<script type="application\/json" id="lp-data">([\s\S]*?)<\/script>/)[1]);
+const bestPage = PE.paramsFromTable(dataBack.params, 'best');
+const tpN = E.timePath(MAP, best), tpP = PE.timePath(dataBack.map, bestPage);
+let maxGap = 0, compared = 0;
+const gap = (a, b) => { compared++; const g = Math.abs(a - b) / Math.max(1, Math.abs(a)); if (g > maxGap) maxGap = g; };
+['top_first', 'cheap_ladder'].forEach(k => { gap(tpN[k].cost, tpP[k].cost); gap(tpN[k].wrong, tpP[k].wrong); });
+tpN.periods.forEach((r, i) => { gap(r.library.cost, tpP.periods[i].library.cost); gap(r.library.wrong, tpP.periods[i].library.wrong); E.RATIO_IDS.forEach(id => gap(r.ratios[id], tpP.periods[i].ratios[id])); gap(r.stocks.E_good, tpP.periods[i].stocks.E_good); gap(r.stocks.E_bad, tpP.periods[i].stocks.E_bad); });
+const cls = { kind: 'visible', need: 'cheap_wrong', held: 'similar', distractor: 'yes' };
+const rN = E.routes(MAP, best, 'library', { classValues: cls, stocks: tpN.periods[11].stocks }), rP = PE.routes(dataBack.map, bestPage, 'library', { classValues: cls, stocks: tpP.periods[11].stocks });
+check(rN.count === rP.count, 'route counts differ between node and the page engine');
+rN.routes.forEach((r, i) => { gap(r.chance, rP.routes[i].chance); gap(r.cost, rP.routes[i].cost); });
+const enN = E.ensemble(MAP, TABLE, { n: 120, seed: 5 });
+const run = PC.ensembleRunner(PE, dataBack.map, dataBack.params, { n: 120, seed: 5 }); while (!run.done()) run.step(17);
+const enP = run.result();
+['first', 'last'].forEach(w => E.RATIO_IDS.forEach(id => { ['p5', 'p50', 'p95'].forEach(p => gap(enN.spread[w][id][p], enP.spread[w][id][p])); enN.spearman[w][id].slice(0, 10).forEach((e, i) => { check(e.id === enP.spearman[w][id][i].id, 'ensemble ranking order differs'); gap(e.rho, enP.spearman[w][id][i].rho); }); }));
+check(maxGap === 0, 'the page engine differs from engine.js by ' + maxGap);
+report.push('engine check: ' + compared + ' numbers compared between engine.js in node and the page\'s inlined engine and core at best values (time path, routes, a 120-run ensemble); largest relative gap ' + maxGap);
+
+/* ---------- 6. the short record ---------- */
+const PN = TX.policy_names;
+const f2 = v => v.toFixed(2), f1 = v => v.toFixed(1), pc = v => (100 * v).toFixed(1) + '%';
+const plain = t => C.fillTokens(t, CNT, (v, tg) => v + ' [' + tg + ']', s => s);
+const last = tpN.periods[tpN.periods.length - 1], first = tpN.periods[0];
+const ens = E.ensemble(MAP, TABLE, { n: 1000, seed: 20261112 });
+const reach = C.paramReach(E, MAP);
+const L = [];
+L.push('# Library pathways: the map, the real cases and the limitations (' + TX.date + ')', '');
+L.push('**Generated file.** Built by `docs/program/evidence/library-pathways/build-page.js.txt` from `docs/program/library-pathways/` (map.json, params.json, engine.js, limitations.json, cases.json) and the page copy in `docs/program/evidence/library-pathways/page-src/text.json`. The owner reads `docs/program/library-pathways/index.html`, built from the same data in the same run. Do not edit this file by hand.', '');
+L.push('**Rules.** This record maps and measures. It contains no fixes and no judgment on whether the library reaches its goal. Tags: [M] ' + TX.tags.M + ' [S] ' + TX.tags.S + ' [G] ' + TX.tags.G + ' ' + TX.computed_tag.replace(/ In a table or tree.*$/, '') + ' In a table, the tag in the heading applies to the column.', '');
+L.push('## 1. The map', '');
+L.push(MAP.unit + ' ' + MAP.cost_unit + ' ' + MAP.period, '');
+L.push('The graph has ' + CNT.states + ' [M] states and ' + CNT.branches + ' [M] branches over eleven stages and an outcome. It has ' + CNT.params + ' [M] settings: ' + CNT.drawn + ' [M] unknowns drawn in the runs (' + CNT.guess + ' [M] guesses, ' + CNT.study + ' [M] from outside studies, ' + CNT.measured + ' [M] measured), plus the horizon and the Opus price ratio, which are fixed.', '');
+L.push('| Way of working | What it does |', '| --- | --- |');
+MAP.policies.forEach(p => L.push('| ' + PN[p.id] + ' | ' + TX.policy_says[p.id] + ' |'));
+L.push('', '| Design step (walkthroughs) | Model stage(s) |', '| --- | --- |');
+Object.keys(TX.design_steps).forEach(k => L.push('| ' + k + '. ' + LIMS.steps[k] + ' | ' + TX.design_steps[k].map(s => MAP.steps.find(x => x.id === s).label).join('; ') + ' |'));
+L.push('', TX.design_steps_note, '');
+L.push('## 2. At the best values', '', 'All settings at the best value in params.json; horizon ' + tpN.periods.length + ' periods. Every figure here is computed [G].', '');
+L.push('| Way of working | Cost per piece [G] | Wrong rate [G] | Cost at cheap / Opus / Fable [G] |', '| --- | --- | --- | --- |');
+const tierStr = s => f1(s.costByTier.cheap) + ' / ' + f1(s.costByTier.opus) + ' / ' + f1(s.costByTier.fable);
+L.push('| ' + PN.top_first + ' | ' + f1(tpN.top_first.cost) + ' | ' + pc(tpN.top_first.wrong) + ' | ' + tierStr(tpN.top_first) + ' |');
+L.push('| ' + PN.cheap_ladder + ' | ' + f1(tpN.cheap_ladder.cost) + ' | ' + pc(tpN.cheap_ladder.wrong) + ' | ' + tierStr(tpN.cheap_ladder) + ' |');
+L.push('| ' + PN.library + ', first period | ' + f1(first.library.cost) + ' | ' + pc(first.library.wrong) + ' | ' + tierStr(first.library) + ' |');
+L.push('| ' + PN.library + ', last period | ' + f1(last.library.cost) + ' | ' + pc(last.library.wrong) + ' | ' + tierStr(last.library) + ' |');
+L.push('', '| Library against | Cost ratio, first / last [G] | Wrong-rate ratio, first / last [G] |', '| --- | --- | --- |');
+L.push('| ' + PN.cheap_ladder + ' (what the library itself adds) | ' + f2(first.ratios.cost_vs_ladder) + ' / ' + f2(last.ratios.cost_vs_ladder) + ' | ' + f2(first.ratios.wrong_vs_ladder) + ' / ' + f2(last.ratios.wrong_vs_ladder) + ' |');
+L.push('| ' + PN.top_first + ' (the owner\'s goal) | ' + f2(first.ratios.cost_vs_top) + ' / ' + f2(last.ratios.cost_vs_top) + ' | ' + f2(first.ratios.wrong_vs_top) + ' / ' + f2(last.ratios.wrong_vs_top) + ' |');
+L.push('', 'Stocks at the start of the last period: ' + f1(last.stocks.E_good) + ' [G] good entries and ' + f1(last.stocks.E_bad) + ' [G] bad. ' + TX.sections.run.ratio_read, '');
+L.push('**Loops in the stock drawing.** ' + TX.loops.map(l => l.id + ' (' + (l.kind === 'R' ? 'reinforcing' : 'balancing') + ') ' + l.name + ': ' + l.text).join(' '), '');
+L.push('## 3. Where real cases broke', '', plain(TX.sections.cases.lede) + ' **' + TX.sections.cases.warning + '** ' + TX.sections.cases.judged.replace(/ Tap.*$/, ''), '');
+L.push('| Status [M] | ' + Object.keys(LIMS.steps).join(' | ') + ' |', '| --- |' + ' ---: |'.repeat(10));
+C.STATUSES.forEach(s => L.push('| ' + s.replace('_', ' ') + ' | ' + TOT[s].join(' | ') + ' |'));
+L.push('', 'Steps: ' + Object.keys(LIMS.steps).map(k => k + ' ' + LIMS.steps[k].split(':')[0].toLowerCase()).join('; ') + '. Families: ' + CASES.families.map(f => f.name + ' (' + CASES.cases.filter(c => c.family === f.id).length + ' [M])').join('; ') + '.', '');
+L.push('## 4. The limitations, by main step', '', plain('{{c:lims}} limitations: {{c:lims_real}} seen in real cases, {{c:lims_thought}} from thought experiments only; real cases went the other way for {{c:contradicted}}.') + ' Counts are walks of the 59 [M]; they show that a route exists, not how often. "Acts through" names the model unknowns; "on the map" is the number of branches whose chance or cost uses them.', '');
+Object.keys(LIMS.steps).forEach(k => {
+  const items = LIMS.items.filter(i => String(i.main_step) === k);
+  if (!items.length) return;
+  L.push('**Step ' + k + ': ' + LIMS.steps[k] + '**', '');
+  items.forEach(it => {
+    const nb = new Set(); (it.params || []).forEach(p => reach[p].branches.forEach(b => nb.add(b)));
+    const real = it.real.cases ? it.real.cases + ' [M] cases, ' + it.real.families + ' [M] families' : 'thought experiment only';
+    const con = it.contradicted.length ? '; contradicted in ' + it.contradicted.length + ' [M] families (' + it.contradicted.map(c => c.family).join(', ') + ')' : '';
+    L.push('- ' + it.id + ' ' + it.title + '. ' + real + con + '. Acts through ' + (it.params.length ? it.params.join(', ') + '; on the map: ' + nb.size + ' [M] branches' : 'no unknown in the model') + '.');
+  });
+  L.push('');
+});
+L.push('## 5. Where the design worked in real cases', '', 'Same walks, same weight. Figures come from the walk records [M].', '');
+LIMS.works.forEach(w => L.push('- ' + C.caseId(w.case) + ' (' + CASES.families.find(f => f.id === CASES.cases.find(c => c.id === C.caseId(w.case)).family).name + '): ' + w.text));
+L.push('', '## 6. Many runs', '', plain(TX.sections.many.lede) + ' ' + plain('{{c:guess}} of the {{c:drawn}} drawn unknowns are guesses.') + ' **' + TX.sections.many.follows + '** This table: ' + ens.n + ' runs, seed 20261112, last period; the page runs its own with any seed and gives the same numbers for the same seed.', '');
+L.push('| Ratio (library over) [G] | 5 in 100 below | middle | 95 in 100 below | Moves it most (rank correlation, with tag) [G] |', '| --- | ---: | ---: | ---: | --- |');
+const rowTag = id => TABLE.parameters.find(r => r.id === id).tag;
+[['cost_vs_ladder', 'Cost, against the ladder'], ['wrong_vs_ladder', 'Wrong rate, against the ladder'], ['cost_vs_top', 'Cost, against strong directly'], ['wrong_vs_top', 'Wrong rate, against strong directly']].forEach(([id, name]) => {
+  const s = ens.spread.last[id];
+  L.push('| ' + name + ' | ' + f2(s.p5) + ' | ' + f2(s.p50) + ' | ' + f2(s.p95) + ' | ' + ens.spearman.last[id].slice(0, 5).map(e => e.id + ' ' + (e.rho > 0 ? '+' : '') + e.rho.toFixed(2) + ' [' + rowTag(e.id) + ']').join(', ') + ' |');
+});
+L.push('', 'Share of runs where the library costs less and its wrong rate is no higher (last period): against ' + PN.cheap_ladder.toLowerCase() + ' ' + pc(ens.shareBetterVs.cheap_ladder.last) + ' [G]; against ' + PN.top_first.toLowerCase() + ' ' + pc(ens.shareBetterVs.top_first.last) + ' [G]. With ' + ens.n + ' runs, rank correlations closer than about ' + (2 / Math.sqrt(ens.n)).toFixed(2) + ' [G] are not well separated.', '');
+L.push('## 7. What the map leaves out', '');
+TX.leaves_out.forEach(l => L.push('- **' + l.t + '.** ' + plain(l.x)));
+L.push('', '## 8. Files', '');
+L.push('- Page: `docs/program/library-pathways/index.html` (self-contained; opens from disk).');
+L.push('- Data: `docs/program/library-pathways/` map.json, params.json, engine.js, limitations.json, cases.json.');
+L.push('- Page sources and this build: `docs/program/evidence/library-pathways/page-src/`, `build-page.js.txt`; checks in `build-page-report.txt`.');
+L.push('- Model brief: `docs/program/evidence/library-pathways/model-brief.md` (section 12 overrides earlier sections). Engine check: `verify-engine.md`.');
+L.push('- Walkthroughs: `docs/program/evidence/library-pathways/walkthroughs/`.', '');
+const md = L.join('\n');
+check(L.length < 250, 'the record has ' + L.length + ' lines; it must stay under 250');
+BANNED.forEach(re => { const m = md.replace(/^- .*$/gm, '').match(re); if (m) notes.push('record wording to review: ' + m[0]); });
+
+/* ---------- 7. write ---------- */
+report.unshift('build of ' + new Date().toISOString(), 'checks failed: ' + fail.length);
+fail.forEach(f => report.push('FAIL: ' + f));
+report.push('counts: ' + JSON.stringify(CNT));
+report.push('grid totals (status: steps 1..10): ' + C.STATUSES.map(s => s + ' ' + TOT[s].join(',')).join(' | '));
+report.push('best values: top_first cost ' + tpN.top_first.cost + ' wrong ' + tpN.top_first.wrong + '; cheap_ladder cost ' + tpN.cheap_ladder.cost + ' wrong ' + tpN.cheap_ladder.wrong + '; library last cost ' + last.library.cost + ' wrong ' + last.library.wrong);
+report.push('page size: ' + Buffer.byteLength(html) + ' bytes; record: ' + L.length + ' lines');
+report.push('fix or verdict wording in the page copy: ' + lintHits.length + ' hits; untagged digits in the page copy: ' + digitLint.length);
+report.push('wording in the data files to review by hand (' + dataHits.length + '):');
+dataHits.forEach(h => report.push('  ' + h));
+notes.forEach(n => report.push('note: ' + n));
+fs.writeFileSync(path.join(HERE, 'build-page-report.txt'), report.join('\n') + '\n');
+if (fail.length) { console.error(fail.join('\n')); console.error('BUILD FAILED: nothing written except the report.'); process.exit(1); }
+fs.writeFileSync(path.join(LP, 'index.html'), html);
+fs.writeFileSync(path.join(PROGRAM, 'LIBRARY-PATHWAYS-2026-11.md'), md + '\n');
+console.log('ok: index.html ' + Buffer.byteLength(html) + ' bytes; record ' + L.length + ' lines; engine numbers compared ' + compared + ', largest gap ' + maxGap + '; data wording to review ' + dataHits.length);

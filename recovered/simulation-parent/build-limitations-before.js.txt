@@ -1,0 +1,813 @@
+// build-limitations.js.txt
+// Merges the 119 real-case breaks and the two thought-experiment lists into one list of
+// limitations, places each on the map (steps, parameters), counts the real cases with a
+// script, checks every quote against its source, and writes
+// docs/program/library-pathways/limitations.json.
+// Run from this folder: node - < build-limitations.js.txt
+// No fixes, no verdicts. Counts are from a chosen sample of problem cases: they show which
+// routes exist and where steps break, never how often.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const HERE = process.cwd();
+const WT = path.join(HERE, 'walkthroughs');
+const OUT = path.join(HERE, '..', '..', 'library-pathways', 'limitations.json');
+const MAP = path.join(HERE, '..', '..', 'library-pathways', 'map.json');
+
+const breaks = JSON.parse(fs.readFileSync(path.join(WT, 'all-breaks.json'), 'utf8'));
+const walksDoc = JSON.parse(fs.readFileSync(path.join(WT, 'walkthroughs.json'), 'utf8'));
+const map = JSON.parse(fs.readFileSync(MAP, 'utf8'));
+const lanes = walksDoc.result.lanes;
+
+const errors = [];
+const warn = [];
+const fail = (m) => errors.push(m);
+
+// ---------- walks (the 59 real cases) ----------
+const WALK = {}; // id -> {family, steps}
+const FAMILY_NAME = {};
+for (const l of lanes) {
+  const fam = l.id.slice(0, 3);
+  FAMILY_NAME[fam] = l.id.slice(4).replace(/-/g, ' ');
+  for (const w of l.walks) {
+    const id = fam + ':' + w.case_id.split(' ')[0];
+    if (WALK[id]) fail('duplicate walk id ' + id);
+    WALK[id] = { family: fam, steps: w.steps };
+  }
+}
+const N_WALKS = Object.keys(WALK).length;
+if (N_WALKS !== 59) fail('expected 59 walks, found ' + N_WALKS);
+if (breaks.length !== 119) fail('expected 119 breaks, found ' + breaks.length);
+
+// ---------- which walks each raw break was seen in ----------
+// Read from the "Breaks" sections of the *-walk.md files, which name the cases.
+// L01 counts some breaks per case (C1 to C6) while its walks split cases (C1a, C1b ...);
+// there a break is given the walks whose notes show it, so a few counts differ from cases_hit.
+const L = (fam, ...ids) => ids.map((x) => fam + ':' + x);
+const B = {
+  0: L('L01', 'C2a', 'C1b'), 1: L('L01', 'C2b', 'C3a', 'C4a'), 2: L('L01', 'C1a', 'C1c', 'C4a'),
+  3: L('L01', 'C1c', 'C6'), 4: L('L01', 'C1b', 'C3b'), 5: L('L01', 'C4b'),
+  6: L('L01', 'C1a', 'C2a', 'C3a', 'C4a', 'C5'), 7: L('L01', 'C2a', 'C2b', 'C4b', 'C5'),
+  8: L('L01', 'C1b', 'C4a', 'C6'), 9: L('L01', 'C1a', 'C2a', 'C3a'), 10: L('L01', 'C5'), 11: L('L01', 'C6', 'C3a'),
+  12: L('L02', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6'), 13: L('L02', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6'),
+  14: L('L02', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6'), 15: L('L02', 'C2', 'C3', 'C5'),
+  16: L('L02', 'C1', 'C2', 'C3', 'C5', 'C6'), 17: L('L02', 'C1', 'C2', 'C3'), 18: L('L02', 'C1', 'C6', 'C3'),
+  19: L('L02', 'C1', 'C2'), 20: L('L02', 'C6'), 21: L('L02', 'C4', 'C6'), 22: L('L02', 'C5'), 23: L('L02', 'C5', 'C4'),
+  24: L('L03', 'C1', 'C2', 'C3', 'C4', 'C5'), 25: L('L03', 'C1', 'C3', 'C4', 'C5'), 26: L('L03', 'C1', 'C3', 'C4', 'C5'),
+  27: L('L03', 'C2', 'C3', 'C4'), 28: L('L03', 'C1', 'C2', 'C3'), 29: L('L03', 'C2', 'C3', 'C4'), 30: L('L03', 'C1', 'C4'),
+  31: L('L03', 'C1', 'C4', 'C5'), 32: L('L03', 'C1', 'C3'), 33: L('L03', 'C2', 'C3'), 34: L('L03', 'C4'), 35: L('L03', 'C4'),
+  36: L('L04', 'C3', 'C4', 'C5'), 37: L('L04', 'C1', 'C2', 'C3', 'C4', 'C5'), 38: L('L04', 'C1', 'C2', 'C3'), 39: L('L04', 'C4'),
+  40: L('L04', 'C4', 'C5'), 41: L('L04', 'C1', 'C2', 'C5'), 42: L('L04', 'C1', 'C5'), 43: L('L04', 'C1'), 44: L('L04', 'C2', 'C4'),
+  45: L('L04', 'C4'), 46: L('L04', 'C4'),
+  47: L('L05', 'L05-1', 'L05-2', 'L05-3', 'L05-5', 'L05-6'), 48: L('L05', 'L05-3', 'L05-4', 'L05-5', 'L05-6'),
+  49: L('L05', 'L05-1', 'L05-2', 'L05-4', 'L05-6'), 50: L('L05', 'L05-1', 'L05-3', 'L05-5'), 51: L('L05', 'L05-3', 'L05-5', 'L05-6'),
+  52: L('L05', 'L05-1', 'L05-3'), 53: L('L05', 'L05-3', 'L05-4'), 54: L('L05', 'L05-2', 'L05-4', 'L05-6'), 55: L('L05', 'L05-4', 'L05-5'),
+  56: L('L05', 'L05-2'), 57: L('L05', 'L05-4'), 58: L('L05', 'L05-2'),
+  59: L('L06', 'C1b', 'C2', 'C3', 'C4'), 60: L('L06', 'C1a', 'C2', 'C3', 'C4'), 61: L('L06', 'C2', 'C3', 'C4'), 62: L('L06', 'C1b', 'C2', 'C4'),
+  63: L('L06', 'C2', 'C3', 'C4'), 64: L('L06', 'C1a', 'C2', 'C3'), 65: L('L06', 'C1a', 'C2'), 66: L('L06', 'C3', 'C4'), 67: L('L06', 'C1a', 'C2'),
+  68: L('L06', 'C1a', 'C3'), 69: L('L06', 'C1a', 'C3'), 70: L('L06', 'C1b', 'C2'),
+  71: L('L07', 'L07-1', 'L07-2', 'L07-3', 'L07-4', 'L07-6'), 72: L('L07', 'L07-2', 'L07-3', 'L07-4', 'L07-6'), 73: L('L07', 'L07-1', 'L07-6'),
+  74: L('L07', 'L07-1', 'L07-2', 'L07-5'), 75: L('L07', 'L07-1', 'L07-2', 'L07-5'), 76: L('L07', 'L07-2', 'L07-4', 'L07-5'),
+  77: L('L07', 'L07-1', 'L07-2'), 78: L('L07', 'L07-1', 'L07-2'), 79: L('L07', 'L07-3', 'L07-4'), 80: L('L07', 'L07-2', 'L07-4'),
+  81: L('L07', 'L07-3', 'L07-4'), 82: L('L07', 'L07-2'),
+  83: L('L08', 'L08-1', 'L08-2', 'L08-3', 'L08-4', 'L08-5'), 84: L('L08', 'L08-1', 'L08-2', 'L08-3', 'L08-4', 'L08-5'),
+  85: L('L08', 'L08-1', 'L08-2', 'L08-3', 'L08-4', 'L08-5'), 86: L('L08', 'L08-2'), 87: L('L08', 'L08-1', 'L08-2', 'L08-3', 'L08-4', 'L08-5'),
+  88: L('L08', 'L08-3', 'L08-4', 'L08-5'), 89: L('L08', 'L08-1', 'L08-3', 'L08-4'), 90: L('L08', 'L08-2', 'L08-5'), 91: L('L08', 'L08-3', 'L08-4'),
+  92: L('L08', 'L08-1'), 93: L('L08', 'L08-3', 'L08-5'), 94: L('L08', 'L08-1', 'L08-2'),
+  95: L('L09', 'L09-1', 'L09-2', 'L09-3', 'L09-4'), 96: L('L09', 'L09-1', 'L09-2', 'L09-3', 'L09-4'), 97: L('L09', 'L09-1', 'L09-2', 'L09-4'),
+  98: L('L09', 'L09-1', 'L09-3', 'L09-4'), 99: L('L09', 'L09-1', 'L09-2'), 100: L('L09', 'L09-1', 'L09-2'), 101: L('L09', 'L09-3', 'L09-4'),
+  102: L('L09', 'L09-3', 'L09-4'), 103: L('L09', 'L09-3', 'L09-4'), 104: L('L09', 'L09-3'), 105: L('L09', 'L09-4'), 106: L('L09', 'L09-2'),
+  107: L('L10', 'L10-1b', 'L10-3', 'L10-4', 'L10-5'), 108: L('L10', 'L10-1b', 'L10-3', 'L10-5'), 109: L('L10', 'L10-1a', 'L10-2', 'L10-4'),
+  110: L('L10', 'L10-2', 'L10-4'), 111: L('L10', 'L10-1b', 'L10-2'), 112: L('L10', 'L10-1a', 'L10-2'), 113: L('L10', 'L10-1b', 'L10-3'),
+  114: L('L10', 'L10-3'), 115: L('L10', 'L10-1a'), 116: L('L10', 'L10-1b'), 117: L('L10', 'L10-5'), 118: L('L10', 'L10-5'),
+};
+const countDiffs = [];
+for (let i = 0; i < breaks.length; i++) {
+  if (!B[i]) { fail('break #' + i + ' has no walk list'); continue; }
+  for (const w of B[i]) {
+    if (!WALK[w]) fail('break #' + i + ': unknown walk ' + w);
+    else if (WALK[w].family !== breaks[i].lane) fail('break #' + i + ': walk ' + w + ' not in family ' + breaks[i].lane);
+  }
+  if (B[i].length !== breaks[i].cases_hit) countDiffs.push({ break: i, family: breaks[i].lane, cases_hit: breaks[i].cases_hit, walks_counted: B[i].length });
+}
+
+// ---------- the two thought-experiment lists ----------
+const KNOWN = {
+  1: 'the cheap model gets tasks, not problems, and does not know when it needs help', 2: 'it asks the wrong question',
+  3: 'similar is not the same', 4: 'the judge of "equal output" is the expensive model', 5: 'what to store: too specific or too general',
+  6: 'the parts of a new problem are not known before diagnosis', 7: 'adapting the fetched solution', 8: 'wrong or half-right entries spread',
+  9: 'empty at the start, and the first weeks cost more', 10: 'lookup overhead in the window', 11: 'the first time is full price',
+  12: 'too much applies at task start', 13: '"either/or" looks like "both" when two entries partly match',
+  14: 'two checked answers do not make a checked merge', 15: 'reasoning steps have no identity, so branches cannot be joined',
+  16: 'many short subagent windows start empty', 17: 'compaction drops a fetched entry', 18: 'the entry froze the goal of its day',
+  19: 'a stored "no" is read as "never"', 20: 'a stored conclusion cannot answer new questions', 21: 'a wrong entry anchors the cheap model',
+  22: 'passing tests becomes the reward', 23: 'failure is not visible from inside', 24: 'hard problems pay every rung of the ladder',
+  25: 'the handoff is a polluted window or a brief by the model that failed', 26: 'when is it "solved"',
+  27: 'raw reasoning is not available, only a write-up after the fact', 28: 'the strong model records what was hard for it, not the mistakes it never makes',
+  29: 'the writer cannot know which details mattered', 30: 'writing happens at the largest window and the session may die first',
+  31: 'parallel sessions copy unreviewed answers or solve the same thing twice', 32: 'blame when a reused entry fails',
+  33: 'upkeep grows with size', 34: 'a rule in one project is a bug in another', 35: 'merged answers depend on their parents',
+};
+const ADDED = {
+  1: 'for a small mistake the lookup comes after the failed call', 2: "whose fact is it (the machine's, the owner's, the project's)",
+  3: 'a stored solution carries a defect nobody has found yet', 4: 'one lesson spans several places', 5: 'conventions drift without the old files changing',
+  6: 'fast-moving facts are stale when used', 7: 'new work is pulled toward old ways, also after a change of direction',
+  8: 'each test of a fetched answer is a full cloud build', 9: 'the vendor changes silently', 10: 'the outcome happens outside any session',
+  11: 'a rerun passes whatever was done', 12: 'fixes that hide a symptom match the most problems', 13: 'order matters in a merge',
+  14: 'storing merged answers fills the library with combinations', 15: 'no test exists for a research conclusion', 16: 'checkers that share a blind spot',
+  17: 'a stored conclusion carries the old framing', 18: 'only meaning is left to match on across stacks', 19: 'a new project has no tests yet',
+  20: 'private details travel with entries', 21: 'nothing sits above the top model', 22: 'an unsolved problem reads as "don\'t try"',
+  23: "the owner's corrections change and conflict over time", 24: 'fetched is not applied', 25: 'a new model changes which entries are needed',
+  26: 'popular entries get reinforced', 27: 'one wrong entry becomes the same bug everywhere', 28: 'fewer problems reach the top model',
+  29: 'the cheap model would have been fine alone', 30: 'untrusted text becomes trusted memory',
+};
+
+// ---------- the merged items ----------
+// b: raw break indices; k: known titles; a: later additions; x: extra walks shown by a walk note
+// ex: examples [break index or 'walk', case, exact quote]; c: contradicted [family, [cases], reason]
+// p: parameters (map.json ids); s: steps; m: main step for sorting
+const I = [];
+const item = (o) => I.push(o);
+// sh: ['no' | 'partly', reason]: the model cannot show the item, or shows only part of it (map refuter pass, MF6, SF8).
+
+// Step 1
+item({ key: 'start_load', m: 1, s: [1, 5], title: 'Too much applies at the start of a task',
+  what: 'At the start of a task many stored entries could apply at once. Loading them all crowds the window; loading a few risks leaving out the one that matters.',
+  b: [], k: [12], a: [], ex: [],
+  c: [['L05', ['L05-3', 'L05-4'], 'Lookups came in the middle of the task at a failed check (L05-3 at transcript line 1152 of 1892; L05-4 from line 1369 of 4070), not at task start.']],
+  p: ['c_carry', 'd_deliver'] });
+item({ key: 'subagent_empty', m: 1, s: [1, 5], title: "Short helper windows start without the session's lessons",
+  what: 'Work is split across many short helper windows. Each starts fresh, so it must look up or relearn what the parent session already knew.',
+  b: [], k: [16], a: [], ex: [],
+  c: [
+    ['L01', [], 'Helper windows in the same folder receive CLAUDE.md and the memory index at transcript line 6. They lack only what the session learned since the last memory write.'],
+    ['L02', ['C1', 'C2', 'C5'], 'Fresh windows found every defect: the adversarial audit, the red team, the adversarial re-read, the root reviews. Emptiness was the asset here.'],
+    ['L03', ['C4'], 'The copies were made in long main sessions (835 and 831 calls). Helper windows were reviewers, and they caught defects.'],
+    ['L05', ['L05-4'], 'The review that refuted the wrong hypothesis was a fresh helper window told to refute. Its empty window was not anchored by the main session\'s guess.'],
+    ['L07', ['L07-2', 'L07-4'], 'Fresh Sonnet gatherers with a pointed brief found the withdrawal and summarised a 972-line design accurately.'],
+    ['L08', ['L08-5'], 'The helper windows carried the shell rule in their briefs. The windows lacking cross-project knowledge were the long-lived Fable sessions.'],
+    ['L10', [], 'MEMORY.md and CLAUDE.md sit at line 6 or 7 of every helper window checked (three sessions). Only index lines arrive; a note\'s body needs a read or a brief.'],
+  ],
+  p: ['d_deliver', 'c_lookup'] });
+
+// Step 2
+item({ key: 'no_signal', m: 2, s: [1, 2, 8], title: 'Nothing fails, so no lookup starts',
+  what: 'Most defects were written while building, with checks green. No error, no failed check, no call for help. The cheap model gets a task, not a problem, and nothing tells it to look.',
+  b: [12, 24, 83, 97, 111], k: [1], a: [],
+  ex: [[24, 'L03:C5', 'c27bb39: "the exact silent-retry-forever the jobs outbox already fixed but that was never carried over"'],
+       [83, 'L08:L08-3', "7f348b2c L955 start_session no model, L995 owner 'you started it with fable 5.1??'"]],
+  c: [
+    ['L01', ['C1a', 'C1b', 'C2a', 'C2b', 'C3a', 'C3b', 'C4a', 'C4b', 'C6'], 'Tool and machine failures were loud and immediate (exit 49, exit 2, tool errors). Only C5, a code defect, was silent.'],
+    ['L04', ['C1', 'C2', 'C3', 'C4'], "The trigger 'before retrying a failed build or deploy' fires at the right moment in every case where a session saw the failure."],
+  ],
+  p: ['t_latent', 'p_visible', 'g_tests_latent'] });
+item({ key: 'after_cost', m: 2, s: [2], title: 'The lookup comes after the failed call is paid',
+  what: 'A lookup started by a failure comes only after the error. The failed call, which can be a long command, is already spent, and each new session or project pays its own first failure.',
+  b: [7, 92], k: [], a: [1],
+  ex: [[7, 'L01:C2a', 'C2: failed commands of 8.6k-18.6k characters, then re-sent in full.'],
+       [92, 'L08:L08-1', "9c3f9742 L16 index line (07:17Z), L240 first clone already uses 'git -c core.longpaths=true'"]],
+  c: [], p: ['t_visible', 'n_cheap'] });
+item({ key: 'cause_elsewhere', m: 2, s: [2, 3, 5], title: 'The cause sits outside the window that fails',
+  what: "The error shows up in one window, but its cause is somewhere else: a parent session's brief, or other sessions running at the same moment. A lookup from the failing window cannot see it.",
+  b: [11, 51], k: [], a: [],
+  ex: [[11, 'L01:C6', 'C6: e24f17dc briefs asked for report.md; eight subagents refused 11-12.'],
+       [51, 'L05:L05-5', 'HANDOFF:132-133 two pytest processes deadlock.']],
+  c: [], p: ['t_visible', 'd_deliver'] });
+item({ key: 'outside_session', m: 2, s: [2, 3], title: 'The failure happens where no session is watching',
+  what: 'Some causes enter, and some failures happen, outside any session: a dependency bump merged on the website, a vendor log, phones in the field. A lookup waits until a later, unrelated session trips over it.',
+  b: [41, 42], k: [], a: [10],
+  ex: [[42, 'L04:C1', '990e5c1, ad14d4f, 82b2731: committer GitHub, 2026-06-16.'],
+       [41, 'L04:C5', "O-03-design.md:3 'Phones were online'."]],
+  c: [], p: ['t_latent', 'l_found'] });
+item({ key: 'operator_words', m: 2, s: [2, 3], title: 'Operator hazards are reached only by the right verb',
+  what: 'A hazard set off by an operator action has no error text. The entry is reachable only through the action words its writer chose; a later session using another verb misses it.',
+  b: [58], k: [], a: [],
+  ex: [[58, 'L05:L05-2', "SHIP-PLAN-2026-11.md:102 and :723 ('Window close, ceilings, re-seed')."]],
+  c: [], p: ['r_similar', 't_latent'] });
+item({ key: 'lookup_cost', m: 2, s: [2, 3, 4, 6], title: 'A lookup can cost as much as fixing it',
+  what: "Each lookup is another round trip over the full window. When recovery takes one call, the error names its fix, or a pushed note already worked, the lookup adds cost and saves little.",
+  b: [8, 44, 113], k: [10], a: [29],
+  ex: [[8, 'L01:C4a', 'Clinic subagent recovered 5 s after the stub error; C4a refuters 7-12 s after git errors'],
+       [113, 'L10:L10-1b', "a31924a: 'Two traps this deliberately respects, both documented in CLAUDE.md'"]],
+  c: [
+    ['L02', ['C1', 'C2', 'C3', 'C4', 'C5', 'C6'], 'Never the binding cost: no lookup fired during the silent phase, so overhead was zero where it mattered.'],
+    ['L03', ['C4'], "The earlier knowledge-store design's four lookup turns per phase are about 0.5 % of the S04 build session's reading."],
+  ],
+  p: ['c_lookup', 'ok_coverage_factor'] });
+
+// Step 3
+item({ key: 'wrong_question', m: 3, s: [3], title: "The query carries the asker's own worry or guess",
+  what: 'The asker words the query from its current worry or guess. The lookup returns the answer to that worry, or confirms the wrong guess, while the real hazard shares few words with it.',
+  b: [33, 78], k: [2], a: [],
+  ex: [[33, 'L03:C3', '834311f "UNIQUE(job_id, kind) IS the idempotency guard, so outbox replays ... can never double-send"'],
+       [78, 'L07:L07-1', "Owner's B03 and card A8-06 say 'usage limit halted'."]],
+  c: [['L05', ['L05-3', 'L05-6'], 'For failures with an error line the query is the exact message. The question was right; the stored answer was the problem.']],
+  p: ['r_similar', 'f_false'] });
+item({ key: 'symptom_vs_mechanism', m: 3, s: [2, 3, 4], title: 'Symptom words miss lessons stored in mechanism words',
+  what: "Lessons are written in the solver's words for how things work, maybe in another part of the code. Later problems arrive in symptom words, or with none. The parts are reachable only after diagnosis.",
+  b: [18, 65], k: [6], a: [18],
+  ex: [[65, 'L06:C1a', "4a40423: patterns 'built for money paths and never generalised to lifecycle paths'; symptom 'The job never left ongoing'."],
+       [18, 'L02:C1', "lifecycle-audit-followups line 8-9: 'built for a money path and never generalised'."]],
+  c: [], p: ['r_similar', 'r_comp_full', 'r_comp_part'] });
+
+// Step 4
+item({ key: 'same_words_other_cause', m: 4, s: [3, 4, 6], title: 'Same words, different cause: a look-alike comes back',
+  what: 'An exact or near-exact symptom match returns an entry whose cause is different: a command-length fault matching a path-length fix, a new stall matching an old, already-fixed one.',
+  b: [5, 52, 99], k: [], a: [],
+  ex: [[5, 'L01:C4b', 'Four ENAMETOOLONG commands: 35,963, 40,362, 54,554, 34,385 characters; two contain no git'],
+       [52, 'L05:L05-3', "m1 log line 104 '(a hung test, a worker, or one test longer than that limit)'."]],
+  c: [['L04', ['C1', 'C2'], "The earlier knowledge-store design's flag for a symptom with several known causes kept the generic build error from returning a confident wrong lead."]],
+  p: ['f_false', 'v_max', 'a_wrong'] });
+item({ key: 'near_match_reverse', m: 4, s: [4, 6], title: 'A near match may need the opposite fix',
+  what: 'The nearest stored piece looks similar, but the new case needs a different or even reversed move. What carries over is a principle, not a solution, and adapting it is the hard part.',
+  b: [26, 89], k: [3, 7], a: [],
+  ex: [[26, 'L03:C5', '436e180 "the ONE exception to \'the queue never drops unsent\'"'],
+       [89, 'L08:L08-4', 'use-the-machine-parallelism.md (latency) vs e24f17dc L7491 arrow.dll/networkit_state.dll']],
+  c: [], p: ['q_similar', 's_similar', 'h_harm'] });
+item({ key: 'per_project_truth', m: 4, s: [4, 6, 10], title: 'One fact, different right answers in each project',
+  what: 'The same error or fact has a different correct remedy per project or host. An exact match returns a remedy right only where it was written, and nothing says whose fact it is.',
+  b: [4, 46, 55, 118], k: [34], a: [2],
+  ex: [[118, 'L10:L10-5', "clinic-s00-readiness-2026-11.md:13 'no uv'; project-windows-git-longpaths.md 'use `node` for JSON'"],
+       [46, 'L04:C4', "provision.sh (bb0aa58): 'there is no default on a real host', 'e.g. 203.0.113.7/32'."]],
+  c: [
+    ['L02', ['C4'], "The clinic's security probe expects a correct password to be refused while locked: FixFlow's lock rule held there. Only its reason, a 4-digit PIN, does not carry over."],
+    ['L09', ['L09-3'], "The fact held in both projects: the same refusal text in the clinic session on 1 Nov and in this repository's helper windows on 12 Nov."],
+  ],
+  p: ['f_false', 'a_wrong', 'h_harm'] });
+item({ key: 'no_cross_project', m: 4, s: [4, 10], title: 'The earlier knowledge-store design has no path between projects',
+  what: "The owner's earlier knowledge-store design is one FixFlow store, with handles and checks tied to that repository. Clinic lessons cannot reach FixFlow through it, though the goal includes reuse across projects.",
+  b: [84], k: [], a: [],
+  ex: [[84, 'L08:L08-1', 'No FixFlow record cites clinic 9982012 or 5816c70.']],
+  c: [], p: ['u_exact', 'u_similar', 'r_similar'] });
+item({ key: 'stored_defect', m: 4, s: [4, 6], title: 'Stored strong-model solutions carry defects nobody has found yet',
+  what: 'A solution stored from a top-tier session can hold a bug no check has caught. A good match returns it with confident reasoning, and copying it spreads the same bug to new places.',
+  b: [10, 14], k: [8], a: [3, 27],
+  ex: [[10, 'L01:C5', 'bfb5714 (Opus 4.8): hmac.compare_digest(x_ops_proxy_token or "", expected).'],
+       [14, 'L02:C3', "834311f: 'so enable_dispatcher stays safe to flip.'"]],
+  c: [], p: ['e_right', 'a_wrong', 'h_harm'] });
+item({ key: 'nearest_sibling_copied', m: 4, s: [4, 6], title: 'New work copies the nearest old piece, flaws included',
+  what: 'The best match for a new piece is the older piece of the same shape. When that piece holds a flaw, matching and copying it spreads the flaw. New work is pulled toward old ways.',
+  b: [27], k: [], a: [7],
+  ex: [[27, 'L03:C4', 'S07 transcript reads kernel.py 18:40:25Z, writes "pg_advisory_xact_lock(2007, hashtext(" 18:48:54Z'],
+       [27, 'L03:C3', 'd1f78cd "DispatchCursor(consumer=consumer, last_seq=0)"']],
+  c: [], p: ['e_right', 'a_wrong', 'f_false'] });
+item({ key: 'half_right_anchor', m: 4, s: [4, 6], title: 'Half-right entries make an open problem look closed',
+  what: 'An entry returned as solved was half right; the defect sat inside the stored fix. A cheap model reading it would conclude the problem was closed and stop looking.',
+  b: [62], k: [21], a: [],
+  ex: [[62, 'L06:C4', "0a40416: 'always self-healing'."],
+       [62, 'L06:C2', "834311f: 'never a duplicate' vs handoff B3: 'The claim row is flush-only'."]],
+  c: [
+    ['L04', ['C4'], "The half-right '172.16.0.0/12' was in Sonnet's window and did not anchor it. A concrete wrong value was easy to refute against the machine's own output."],
+    ['L08', ['L08-2'], 'Helper windows followed the live tool message over the wrong brief. Harm stayed at wasted output, with no lost work.'],
+  ],
+  p: ['a_wrong', 'h_harm'] });
+item({ key: 'partial_matches_disagree', m: 4, s: [4, 6], title: 'Partial matches disagree, and nothing says which governs',
+  what: 'Two or more entries partly match and disagree, or sit in different states: withdrawn, narrowed, pending. They can look like they add up when only one can hold. Nothing tells the cheap model which.',
+  b: [66, 82], k: [13], a: [],
+  ex: [[66, 'L06:C4', "1c546a3: 'traded a DoS for a much worse brute-force hole'."],
+       [82, 'L07:L07-2', 'HB:247 withdrawn, HB:263 narrowed, HV2:371 refuted but unchanged']],
+  c: [['L10', ['L10-3'], "The two Python notes were complementary, and the orchestrator's brief merged them correctly."]],
+  p: ['r_comp_part', 'q_comp', 'f_false'] });
+item({ key: 'two_causes', m: 4, s: [4, 7], title: 'One symptom, two causes: a correct hit stops searching',
+  what: 'One generic build error had two causes. An entry for one cause checks out as applying and gets fixed; the other cause has no entry, and the next build fails again.',
+  b: [43, 115], k: [], a: [],
+  ex: [[43, 'L04:C1', "6928828: 'Two root causes, both introduced after the last successful build'."]],
+  c: [], p: ['r_comp_part', 'q_part'],
+  note: 'Both walks are the same incident (EAS build 15), seen by two families.' });
+item({ key: 'two_cards', m: 4, s: [4, 5], title: 'The answer holds two cards; merges needed four parts',
+  what: 'The earlier knowledge-store design shows at most one lead and one candidate per lookup, and has no merge step. The composite cases needed four patterns or four findings at once.',
+  b: [67], k: [], a: [],
+  ex: [[67, 'L06:C1a', '4a40423 names four patterns.'],
+       [67, 'L06:C2', "Handoff §7 item 4: 'all of it fires on the same single operator action'."]],
+  c: [], p: ['r_comp_full', 'r_comp_part'] });
+item({ key: 'no_join_point', m: 4, s: [4, 6], title: 'Lessons share no step to join on',
+  what: 'A merge was an analogy across parts of the code, such as a claim guard reused for job status changes. No reasoning step was shared, so there was no point where two branches could join.',
+  b: [69], k: [15], a: [],
+  ex: [[69, 'L06:C3', "c1fb346: 'a stock opening is the shelf at the end of its cutoff day, as for cash and pay'."]],
+  c: [['L07', ['L07-3', 'L07-4'], 'In design work the steps carried stable ids, and corrections named what they replaced. Joining by id worked in these records.']],
+  p: ['q_comp', 'r_comp_full'] });
+item({ key: 'empty_start', m: 4, s: [4], title: 'Empty at the start; the first weeks cost more',
+  what: 'A new library holds nothing, so early lookups find nothing while still costing time. Any saving starts only as entries build up.',
+  b: [], k: [9], a: [], ex: [],
+  c: [
+    ['L02', ['C1', 'C2', 'C3', 'C4', 'C5', 'C6'], 'An empty library would have done less harm than a full one: the entries that would have existed were the defects themselves.'],
+    ['L03', ['C1', 'C2', 'C3', 'C4'], 'The needed entries were hours old and in the same project. Freshness bit, not emptiness.'],
+    ['L05', ['L05-4'], 'The right answer existed 3 h 46 min before the session that needed it. The gap was who wrote it and on which branch.'],
+    ['L06', ['C1a'], 'The needed patterns existed six to seven weeks earlier. Matching failed, not coverage.'],
+    ['L09', ['L09-1'], 'The lesson existed from 3 Nov and sat in every slice brief from S04 on. Use was the limit, not emptiness.'],
+  ],
+  p: ['k_fill', 'c_lookup'] });
+item({ key: 'first_time', m: 4, s: [4], title: 'The first time is full price',
+  what: 'A problem with no entry yet is paid in full by whoever meets it first. The entry exists only because that failure happened.',
+  b: [116], k: [11], a: [],
+  ex: [[116, 'L10:L10-1b', "79a8dd4: 'every `eas build` failed schema validation before it started'."]],
+  c: [
+    ['L01', [], 'The first time cost 1 to 8 calls in these cases; the price was small.'],
+    ['L08', ['L08-1', 'L08-4'], 'The first solves were cheap: one retry, two Fable calls, about 8 minutes for the Linux container.'],
+  ],
+  p: ['u_exact', 'k_fill'] });
+item({ key: 'symptom_hiders', m: 4, s: [4, 6], title: 'Fixes that hide a symptom match the most problems',
+  what: 'A fix that silences a symptom fits many different causes. It matches often and gets reused widely, while the causes underneath stay.',
+  b: [], k: [], a: [12], ex: [], c: [], p: ['f_false', 'e_right', 'v_max'] });
+item({ key: 'popular_reinforced', m: 4, s: [4, 10], title: 'Popular entries get fetched more and so look better',
+  what: 'Entries fetched often collect more uses and more apparent confirmations. They rank higher and are fetched even more, whether or not they fit.',
+  b: [], k: [], a: [26], ex: [], c: [], p: ['v_max', 'k_distract'] });
+
+// Step 5
+item({ key: 'parallel_before_entry', m: 5, s: [5, 10], title: 'Parallel windows pay before any entry can exist',
+  what: 'Agents start together or in waves. A lesson learned by one cannot reach siblings already running, and may not reach later briefs. Two sessions can solve the same thing hours apart, one wrongly.',
+  b: [1, 35, 57, 117], k: [31], a: [],
+  ex: [[117, 'L10:L10-5', '86 tool results from 2026-11-03T19:16:34Z to 19:38:53Z'],
+       [57, 'L05:L05-4', "44d115b (Fable 5.1, 01:20 +0500); 6ac4577 (Sonnet 5.5, 05:06 +0500); 030c6cb 'its diagnosis was wrong'."]],
+  c: [
+    ['L04', ['C1'], "C1's fix stranded on a side branch is caught by the earlier knowledge-store design's scan at each phase close."],
+    ['L08', ['L08-1'], 'Two sessions copied an unreviewed note within 8 minutes. It was right and prevented a failure.'],
+  ],
+  p: [],
+  sh: ['partly', 'It acts through how the model counts time. Each period is worked out on the stocks at its start, so nothing written during a period helps that period. No setting sizes it.'] });
+item({ key: 'compaction_drops', m: 5, s: [5], title: 'Compaction drops a fetched entry',
+  what: 'When a long window is compacted, its summary can leave out a fact fetched or learned earlier, and the mistake comes back.',
+  b: [], k: [17], a: [],
+  x: [['L01:C1a', 1, "The summary that said 'no Python' (line 1948) was replaced at 14:56Z by one without it."]],
+  ex: [['walk', 'L01:C1a', "The summary that said 'no Python' (line 1948) was replaced at 14:56Z by one without it."]],
+  c: [
+    ['L03', ['C4'], 'The warning was read nine minutes before the copy, with no compaction between. It was present and still lost.'],
+    ['L04', ['C4'], "The compaction summary kept the subnet fact. Caveat: it was the session's own fact, not a fetched entry."],
+    ['L06', ['C3'], 'Both rules sat in one tool call of the working window and the divergence happened anyway.'],
+    ['L08', ['L08-3', 'L08-5'], 'The rules survived compaction and were still not applied. The loss was in use.'],
+  ],
+  p: ['d_deliver'] });
+
+// Step 6
+item({ key: 'delivered_not_applied', m: 6, s: [5, 6], title: 'In the window is not the same as used',
+  what: "The right lesson was already in the window and the mistake still happened. Working code nearby, a tool's own advice, or a site that looked different outweighed it.",
+  b: [0, 20, 30, 73, 88], k: [], a: [24],
+  ex: [[0, 'L01:C2a', 'Writer e24f17dc fails 8,603 chars on 11-12 with the note in summary line 6882.'],
+       [20, 'L02:C6', "37821f5 (17:50): 'catch { return; // offline - a blank first completion is still valid }'."]],
+  c: [], p: ['q_exact', 'q_similar', 's_exact'] });
+item({ key: 'merge_unchecked', m: 6, s: [4, 6, 7], title: 'Two checked answers do not make a checked merge',
+  what: 'Each reused lesson was right and tested alone. The defect lived only at the seam between them, in a fact no parent entry stated, and tests stayed green.',
+  b: [32, 59], k: [14], a: [],
+  ex: [[59, 'L06:C1b', "da988e2: 'The #163 freeze only catches this once the bill is sent/negotiated/paid.'"],
+       [32, 'L03:C1', '"no test ever sets a non-zero threshold"']],
+  c: [['L01', ['C3b'], 'A Sonnet agent joined two partial facts into a working route, and the join was checked by running it.']],
+  p: ['q_comp', 'g_tests_latent'] });
+item({ key: 'merge_order', m: 6, s: [6], title: 'Order matters when lessons are merged',
+  what: 'Applying the same two lessons in a different order can give a different result. Entries that record only the parts do not record the order.',
+  b: [], k: [], a: [13], ex: [], c: [], p: ['q_comp'] });
+
+// Step 7
+item({ key: 'equal_copies_errors', m: 7, s: [7], title: 'Matching the strong model also matches its mistakes',
+  what: "The goal is output equal to the strong model's. In these cases a top-tier model wrote or endorsed the defect, so an equal output reproduces it. Sometimes strong answers disagreed and the owner settled it.",
+  b: [13, 38, 61, 95], k: [], a: [],
+  x: [['L01:C5', 7, "Tests passed. Output 'equal to the strong model's' was the defect."]],
+  ex: [[38, 'L04:C2', "140428c (Fable 5): 'empty = off'."],
+       [13, 'L02:C4', "f3dfa6f: 'The owner chose to keep the lock'."]],
+  c: [], p: ['o_opus', 'o_fable', 'e_right'] });
+item({ key: 'green_found_later', m: 7, s: [7, 8], title: 'Tests stay green; someone else finds the defect later',
+  what: "The builder's own tests passed. A separate review, an attacking review, a real-database test run, a drill or a technician found the defect later. Failure was not visible from inside the work.",
+  b: [25, 60], k: [23], a: [],
+  ex: [[60, 'L06:C1a', "4a40423 '594 unit + 131 integration', then 370e83a 'found by an adversarial red-team of #162'."],
+       [25, 'L03:C4', 'f_posix_checks-20261104T104717Z.md:876 "the 32-bit hash serialized two unrelated keys"']],
+  c: [['L01', ['C1a', 'C1b', 'C2a', 'C2b', 'C3a', 'C3b', 'C4a', 'C4b', 'C6'], 'Tool and machine failures were loud and immediate (exit 49, exit 2, tool errors). Only C5, a code defect, was silent.']],
+  p: ['g_tests_latent', 'g_review', 'l_found'] });
+item({ key: 'outside_check', m: 7, s: [7], title: 'The real check happens outside: cloud, deploy or field',
+  what: 'Every vendor case passed the local checks and failed at the vendor. The true check is a cloud build, a deploy, a machine rebuild or field data, each a slow outside round trip.',
+  b: [37], k: [], a: [8],
+  ex: [[37, 'L04:C1', "6928828: 'It passed CI because the mobile job runs `expo export`'."],
+       [37, 'L04:C3', "9c561b0: 'CI doesn't build this Dockerfile, so the authoritative check is the re-triggered Railway deploy'."]],
+  c: [], p: ['g_tests_visible', 'c_screen'],
+  sh: ['partly', 'The model shows the slow outside check only through the tests catching less. It cannot show a stored check that passes here and fails outside: its mechanical check never passes a wrong entry.'] });
+item({ key: 'test_certifies', m: 7, s: [6, 7], title: "The entry's own test certifies the defect",
+  what: "Tests written with the work asserted the wrong behaviour or used the bug as the default. Stored as the entry's check, they pass a faithful copy, and reuse multiplies the defect.",
+  b: [15, 100], k: [22], a: [],
+  ex: [[15, 'L02:C2', "HANDOFF s6.4: 'the no bytes case was the tested default'."],
+       [100, 'L09:L09-2', "6a2fd45: 'The two new reversal tests get the same change'"]],
+  c: [], p: ['g_tests_latent', 'e_right'],
+  sh: ['partly', 'The model shows a wrong solve passing the tests and being stored. It cannot show the stored check passing the wrong entry later: its mechanical check accepts every good entry and rejects every wrong one.'] });
+item({ key: 'rerun_passes', m: 7, s: [7, 8], title: 'A rerun passes whatever was done',
+  what: "For a failure that comes and goes, the rerun is the only verdict. It passes with a wrong fix or with no fix, so 'resolved' can be recorded for noise.",
+  b: [48], k: [], a: [11],
+  ex: [[48, 'L05:L05-4', "df1db0b9:1629 'Test results are passing with the sequences normalised' (reverted, 030c6cb)."]],
+  c: [], p: ['g_tests_visible', 'rho_retry', 'e_right'] });
+item({ key: 'no_machine_check', m: 7, s: [7, 9], title: 'Some entries have no check a machine can run',
+  what: 'A race, a hang, production data, a machine or tool fact, or a research conclusion gives no check that reads present before the fix and absent after. Such entries stay unconfirmed or check something else.',
+  b: [47, 87], k: [], a: [15, 19],
+  ex: [[47, 'L05:L05-3', "linux-test-runner/task.md:221: 'the hung test is not identified'."],
+       [87, 'L08:L08-1', 'L08-1 DLL cause is the 208-char clone root, not a commit (development-guide.md:28).']],
+  c: [], p: ['c_check_share', 'a_wrong'] });
+item({ key: 'reviews_pass_wrong', m: 7, s: [7, 8], title: 'Reviews are costly and still pass wrong conclusions',
+  what: 'Where no test exists, a strong-model review is the check. Reviews examined what their brief named and passed conclusions later overturned; only deliberate adversarial passes by top-tier sessions caught them.',
+  b: [21, 54, 72, 112], k: [4], a: [],
+  ex: [[72, 'L07:L07-2', "HB:238 'checked ... by an edge-accuracy check, a refuter and two independent classifiers', then HB:251 'withdrawn'."],
+       [21, 'L02:C4', "f3dfa6f: 'NOT the fix the handoff prescribed'."]],
+  c: [['L01', ['C1a', 'C1b', 'C2a', 'C2b', 'C3a', 'C3b', 'C4a', 'C4b', 'C6'], 'For tool and machine facts the shell or tool decides at no cost: the rerun works or it does not.']],
+  p: ['g_review', 'c_review', 's_review'] });
+item({ key: 'shared_blind_spot', m: 7, s: [7], title: 'Checks built from the conclusion share its blind spot',
+  what: 'The gates and measures meant to check reuse were written from the same conclusion. They accept its failure mode, so reusing the entry passes its own checks.',
+  b: [79], k: [], a: [16],
+  ex: [[79, 'L07:L07-3', "critique-5.md:16: 'P5c's indoor test accepts server verdict inside or unknown ... so no gate catches the loss'."]],
+  c: [], p: ['g_review', 'g_tests_latent'] });
+item({ key: 'correction_other_condition', m: 7, s: [6, 7, 10], title: 'A correction tested elsewhere overturned a right entry',
+  what: "A later check that looked stronger 'refuted' a right claim by testing something else: a text file instead of a report file, one folder instead of all files. The wrong correction then spread.",
+  b: [86, 98], k: [], a: [],
+  ex: [[86, 'L08:L08-2', "cb58bdc7 a8f87cc L257 'Subagents should return findings as text, not write report files'; machine-facts.md:33 probe .txt"],
+       [98, 'L09:L09-4', "refute.txt:33 'the owner's figure is wrong' vs 'waited 2030 s'."]],
+  c: [], p: ['e_right', 'fix_on_found'],
+  note: 'L08-2 and L09-3 are the same incident (the report-file refusal), seen by two families.' });
+item({ key: 'old_fix_check', m: 7, s: [7], title: 'A check built on the old fix misses recurrence',
+  what: "The stored check tests for the old defect. When the same cause returns in a new form, the old fix is present, so the check says 'does not apply'.",
+  b: [39], k: [], a: [],
+  ex: [[39, 'L04:C4', "855acaa: 'it changed at a PC reboot and locked ssh out'."]],
+  c: [], p: [],
+  sh: ['no', "Its mechanism is a check that passes a wrong entry. The model's mechanical check never does that, so raising the share of entries with a check can only help the library."] });
+
+// Step 8
+item({ key: 'tiers_lack_fact', m: 8, s: [1, 8], title: 'Higher tiers lack the missing fact too',
+  what: 'When the gap is a fact or an observation, not reasoning, every tier fails the same way. Climbing hands the same blind spot to a costlier window, and nothing sits above the top model.',
+  b: [6, 50, 85], k: [], a: [21],
+  ex: [[6, 'L01:C2a', 'Heredoc: Sonnet, Opus, Fable 5.1 and 5.2.'],
+       [50, 'L05:L05-3', "linux-test-runner/task.md:221: 'the log shows no failure, only the stall ... the heartbeat watchdog reports no test id'."]],
+  c: [], p: ['o_opus', 'o_fable'] });
+item({ key: 'tier_order', m: 8, s: [7, 8], title: 'Higher tier was not who caught the error',
+  what: 'The ladder assumes higher is more right. Here the top tier wrote or approved wrong answers. Catches came from role, access or running things: a refute brief, the test runner, a raw transcript, the owner.',
+  b: [17, 71, 96], k: [], a: [],
+  ex: [[96, 'L09:L09-2', "Merged-tree check 'failed 2 of 2570' (task.md:821)"],
+       [71, 'L07:L07-1', 'Opus 5.5 agent abd913ed9a816c649 found Event 6008.']],
+  c: [], p: ['o_fable', 'o_opus', 'g_review'] });
+item({ key: 'owner_trade', m: 8, s: [8], title: 'A trade between lessons ends with the owner',
+  what: 'When two right lessons conflict, the answer is a policy choice, such as blocking lockout abuse against blocking PIN guessing. The owner chose, or the choice stayed open; no model tier settles a trade.',
+  b: [63], k: [], a: [],
+  ex: [[63, 'L06:C4', "1c546a3: 'The owner chose to keep the lock'."],
+       [63, 'L06:C2', "Handoff §3 item 3: 'The resume-vs-double-send design decision is still open'."]],
+  c: [], p: ['o_fable'] });
+item({ key: 'error_not_failure', m: 8, s: [8], title: 'An error line is not always a failure',
+  what: 'Probes that try a command with a fallback in the same line print an error and still succeed. Anything counting failures by error text scores these successes of a stored note as misses.',
+  b: [114], k: [], a: [],
+  ex: [[114, 'L10:L10-3', 'agent-a7d5404af4b1e0cff.jsonl:37: \'python3 -c "print(1)" ...; P=<codex path>; "$P" -c\'']],
+  c: [], p: [],
+  note: 'Acts on how failures and misses are counted, not on a branch of the model.',
+  sh: ['no', 'It acts on how failures and misses are counted, not on a branch of the model.'] });
+item({ key: 'every_rung', m: 8, s: [8], title: 'Hard problems pay every rung of the ladder',
+  what: 'A problem that beats the cheap model and then Opus pays for each attempt on the way up before Fable solves it.',
+  b: [], k: [24], a: [], ex: [],
+  c: [
+    ['L02', ['C1', 'C2', 'C3', 'C4', 'C5', 'C6'], 'No case climbed. Nothing failed visibly, so the rung costs never arose.'],
+    ['L03', ['C1', 'C2', 'C3', 'C4', 'C5'], 'No rung was climbed in any case. Defects were found after merge by reviews, audits, test runs or a drill.'],
+    ['L04', ['C2', 'C4'], 'The reasoning was cheap. The cost was the outside round trip (a cloud build, a deploy, a machine rebuild), and no rung changes that.'],
+    ['L07', ['L07-1', 'L07-2', 'L07-3', 'L07-4', 'L07-5', 'L07-6'], 'No case climbed the ladder in order. The cost was review rounds at one tier plus owner turns.'],
+    ['L08', ['L08-1', 'L08-2', 'L08-3', 'L08-4', 'L08-5'], 'No case climbed. Every fix was cheap once known; the cost was not knowing.'],
+    ['L09', ['L09-2'], 'One rung was paid, Fable for about a minute. The cost was two check runs, not a climb.'],
+  ],
+  p: ['n_opus', 'n_fable', 'm_fable'] });
+item({ key: 'handoff', m: 8, s: [8], title: 'The handoff is a polluted window or failed brief',
+  what: 'Passing work up the ladder means sharing a window full of the failed attempt, or a brief written by the model that failed.',
+  b: [], k: [25], a: [], ex: [],
+  c: [
+    ['L06', ['C3'], "The hand-up was the reviewer's brief: a timed sequence and two options. Its fix held at re-review."],
+    ['L09', ['L09-2', 'L09-4'], "In case 2 the handoff was raw test output and Fable fixed it in a minute. In case 4 the critic's output carried its search scope, which exposed the error."],
+  ],
+  p: ['c_handoff', 'o_opus'] });
+item({ key: 'fewer_top', m: 8, s: [8, 9], title: 'Fewer problems reach the top model to be stored',
+  what: 'If the cheap model and the library handle more work, fewer problems reach Opus or Fable. Fewer new solutions are written, and the library grows more slowly.',
+  b: [], k: [], a: [28], ex: [], c: [], p: ['w_write', 'k_fill'] });
+
+// Step 9
+item({ key: 'solved_moves', m: 9, s: [6, 9, 10], title: "'Solved' moves after the entry is written",
+  what: "Fixes passed their checks and were found wrong or incomplete a day, an hour or a review round later. Writing at 'solved' stores the half-right version, sometimes even the wrong file version.",
+  b: [16, 28, 49, 64, 81], k: [26], a: [],
+  ex: [[64, 'L06:C1a', "370e83a, 9 hours after 4a40423: 'found by an adversarial red-team of #162'."],
+       [49, 'L05:L05-1', "8dafcec: 'sendOrQueue's removeItem then deleted the queued REAL completion'."]],
+  c: [], p: ['e_right', 'fix_on_found', 'l_found'] });
+item({ key: 'asides_not_stored', m: 9, s: [9], title: "Asides and observations are never 'a problem solved'",
+  what: 'Many useful facts surface as side stumbles, failures that vanish, or plain measurements. Nothing marks them solved, so a library that stores solutions never writes them.',
+  b: [9, 53, 103], k: [], a: [],
+  ex: [[9, 'L01:C1a', 'Python stub first 10-06; written 11-04 as the last sentence of a git long-paths note.'],
+       [103, 'L09:L09-4', "7f348b2c 2026-11-09T12:52:03Z 'waited 2030 s'"]],
+  c: [], p: ['w_write', 'u_exact'] });
+item({ key: 'writer_unknowing', m: 9, s: [9], title: 'The writer cannot know which details will matter',
+  what: 'The detail that later decided a case was harmless, irrelevant or unseen when the entry was written. Each writer knew only its own episode, so the entry left it out.',
+  b: [29, 70, 94], k: [29], a: [],
+  ex: [[29, 'L03:C3', 'd1f78cd "running a log-only whatsapp consumer"'],
+       [70, 'L06:C1b', "da988e2: 'C1 had THREE doors, not the one the handoff described'."]],
+  c: [], p: ['e_right', 'q_similar'] });
+item({ key: 'writeup_misstates', m: 9, s: [9], title: 'The after-the-fact write-up misstates what happened',
+  what: 'The writer works from memory or a paraphrase, not the raw error. Write-ups said a fix reached the main branch when it had not, or stored a guess about the cause; the errors travelled.',
+  b: [90, 109], k: [27], a: [],
+  ex: [[109, 'L10:L10-1a', 'a6f9048 is not an ancestor of main'],
+       [90, 'L08:L08-2', "subagents-return-text-not-files.md:15 'may depend on the agent type or output size'"]],
+  c: [
+    ['L03', ['C2', 'C3', 'C4'], 'The write-ups were detailed. What was missing was what the writer did not yet know, not the raw reasoning.'],
+    ['L05', ['L05-4'], 'The clinic transcripts keep the thinking blocks, which show the wrong guess forming. It does hold for FixFlow\'s July cases, whose transcripts are gone.'],
+    ['L06', ['C4'], 'The commit body carries the deciding argument word for word.'],
+    ['L07', ['L07-3', 'L07-4'], 'The raw panel, refuter and critic outputs are kept in evidence folders.'],
+  ],
+  p: ['e_right'] });
+item({ key: 'difficulty_rule', m: 9, s: [9], title: 'Writing keys on what was hard for the solver',
+  what: "Entries are written when the strong model struggled. A mistake the cheap model makes but the strong model fixes in a minute counts as 'routine' and is never stored.",
+  b: [106], k: [28], a: [],
+  ex: [[106, 'L09:L09-2', "Root edits 00:34:08-00:34:12Z after failure at 00:33:14Z (7f348b2c); KS L452 'Routine fixes are not recorded'"]],
+  c: [['L01', [], 'The strong models made exactly these mistakes themselves, so the worry that they never meet them did not arise.']],
+  p: ['w_write', 'latent_coverage_factor', 'ok_coverage_factor'] });
+item({ key: 'duplicates_incumbent', m: 9, s: [9], title: 'Solvers already write the lesson where builders look',
+  what: 'In building work the solver already records the lesson in always-loaded project notes, a conventions file or shared code. A library entry is a second copy with its own writing cost and its own drift.',
+  b: [31], k: [], a: [],
+  ex: [[31, 'L03:C1', 'bb23851 adds staff_ledger to CLAUDE.md one minute after 26c9f1e'],
+       [31, 'L03:C5', 'pendingMedia.ts:17, travelSync.ts:17 import isDefinitiveRejection']],
+  c: [], p: ['c_write'] });
+item({ key: 'compacting_capture', m: 9, s: [5, 9], title: 'Writing happens in a full window that may compact',
+  what: 'Lessons are written late in long sessions, when the window is largest. It can compact, or the session can die, between the finding and the write, losing the reasoning behind the rule.',
+  b: [22], k: [30], a: [],
+  ex: [[22, 'L02:C5', '366,229 tokens at line 2097; GC-01 at line 2101; 87,658 at line 2146']],
+  c: [
+    ['L03', ['C1', 'C4', 'C5'], 'Every solver wrote the lesson promptly, in the same commit or the same day.'],
+    ['L07', ['L07-1', 'L07-3', 'L07-6'], 'Capture came within minutes. In L07-1 the sessions did die (power-off) and nothing was lost, because state lived in git and task notes.'],
+    ['L09', ['L09-2'], 'The rule was written 100 seconds before the window compacted. The risk was real, but the write landed.'],
+    ['L10', [], 'The existing notes were written minutes after the event. No case lost a lesson to session death.'],
+  ],
+  p: ['w_write', 'e_right'] });
+item({ key: 'no_becomes_never', m: 9, s: [6, 9, 10], title: "A conditional 'no' hardens into 'never'",
+  what: "A prohibition or negative loses its condition when written or copied. Later work obeys the unconditional form after the condition is met, or treats a scoped 'not found' as 'does not exist'.",
+  b: [80, 91, 105, 108], k: [19], a: [22],
+  ex: [[108, 'L10:L10-1b', "6928828: 're-add the plugin only once a Sentry project + auth token exist'; 140428c: 'must never be added to app.json'"],
+       [105, 'L09:L09-4', "refute.txt:33 ''34 minutes' appears in no file; the owner's figure is wrong'"]],
+  c: [
+    ['L10', ['L10-3'], "As a reading error it did not happen: readers probed despite the stored 'no'. The 'never' came from a writer copying a conditional."],
+    ['L04', ['C1'], 'It happened in the prose notes, not a store, and did no harm yet: the precondition (an auth token) still did not exist.'],
+  ],
+  p: ['h_harm', 'a_wrong', 'delta_stale'] });
+item({ key: 'scope_dropped', m: 9, s: [4, 9, 10], title: 'Scope falls off an entry when written or copied',
+  what: "The words that made a claim true are lost: 'report files' becomes 'file writes'; one note mixes rules of different scope. A hit then reads wider than what was checked.",
+  b: [23, 93, 101], k: [], a: [],
+  ex: [[101, 'L09:L09-3', "orchestration.md:14 'file writes from subagents are refused here'"],
+       [93, 'L08:L08-3', 'tiered-model-orchestration.md (Harness rule 2026-11-03; Gate mechanics test_clinic_sNN; Exception precedent)']],
+  c: [], p: ['e_right', 'f_false', 'a_wrong'] });
+item({ key: 'stated_as_general', m: 9, s: [7, 9], title: 'Few observations get stored as a general rule',
+  what: "An entry claims more than was seen: a shallow probe becomes 'no Python', two observed subnets become 'every boot', an unchecked guess is written in the voice of a finding.",
+  b: [3, 40, 77], k: [5], a: [],
+  ex: [[40, 'L04:C4', "db6c8fa comment: 'gets a new /20 inside 172.16.0.0/12 at every boot'."],
+       [77, 'L07:L07-1', "12:04:19Z: 'a usage limit stopped every session', with no limit check between."]],
+  c: [], p: ['e_right', 'a_wrong'] });
+
+// Step 10
+item({ key: 'world_changes', m: 10, s: [10], title: 'Facts outside the repository change with no event',
+  what: 'Machine, tool, vendor, production-data and owner facts changed with nothing in git. Invalidation that watches files never fires, so a wrong entry keeps its verified status.',
+  b: [2, 36, 56, 75, 107], k: [], a: [6, 9],
+  ex: [[2, 'L01:C1c', "'no gh' committed 53f3a5c 17:34Z; same session ran winget install GitHub.cli 17:40Z."],
+       [36, 'L04:C5', "O-03-design.md:3 'the API answered Railway's edge 404'; :7 'Pings: dropped'."]],
+  c: [], p: ['delta_stale', 'fix_on_found'] });
+item({ key: 'corrections_miss_copies', m: 10, s: [10], title: 'Corrections do not reach the copies',
+  what: 'When a source is corrected, copies in other files and in code keep the old text, and new sessions read the copy. A higher-ranked file kept a line its own audit had refuted.',
+  b: [34, 74, 102, 110], k: [35], a: [],
+  ex: [[74, 'L07:L07-5', "PLAYBOOK.md:84 still says 'Supabase GoTrue'."],
+       [34, 'L03:C4', 'cash.py:409 and references.py:166 still "pg_advisory_xact_lock(%s, hashtext(%s))".']],
+  c: [], p: ['fix_on_found', 'delta_stale'] });
+item({ key: 'later_fix_changes_truth', m: 10, s: [10], title: "A later fix silently changes an older entry's truth",
+  what: 'A fix creates a new rule that older code or older entries already break, with no shared file. Lookups fire on new work, so the old places are never revisited.',
+  b: [19, 68], k: [], a: [4, 5],
+  ex: [[68, 'L06:C1a', "Handoff B2: 'This reopens the exact carry-in loop #162/#163 closed, through the automated path.'"],
+       [19, 'L02:C2', "bee11dc: the selfie finalize 'did not catch the new exception … not by the suite'."]],
+  c: [], p: ['delta_stale', 'l_found'] });
+item({ key: 'own_days_question', m: 10, s: [4, 6, 10], title: "A stored conclusion answers its own day's question",
+  what: "A conclusion fetched later shares words with the new question but not its goal. It frames the answer in the old terms after the owner's direction has moved.",
+  b: [76], k: [18, 20], a: [17],
+  ex: [[76, 'L07:L07-5', "L07-5: the 'GoTrue' plan met a name + PIN roster."],
+       [76, 'L07:L07-2', "L07-2: a code-graph token verdict met 'graphs where branches can be merged'."]],
+  c: [], p: ['delta_stale', 'a_wrong', 'f_false'] });
+item({ key: 'contrary_in_subagents', m: 10, s: [5, 10], title: 'Evidence against an entry stays inside helper windows',
+  what: 'Helper windows met the very failure a stored note said did not exist, adapted, and returned. The main session never saw the errors and saved the wrong note unchanged.',
+  b: [104], k: [], a: [],
+  ex: [[104, 'L09:L09-3', 'report.md refused 06:56:45Z-07:43:46Z (4 Opus, 4 Sonnet); HARNESS-BOTTLENECKS saved 08:07Z.']],
+  c: [], p: ['fix_on_found', 'l_found'] });
+item({ key: 'upkeep', m: 10, s: [9, 10], title: 'Repairing an entry can cost more than the fix',
+  what: "Recording a cheap model's solution, or revising a half-right entry, needs strong-model writers and approvers. For causes that recur in new forms, upkeep can exceed the fix, and it grows with the library.",
+  b: [45], k: [33], a: [],
+  ex: [[45, 'L04:C4', '855acaa: rig.sh 1 line changed.']],
+  c: [], p: [],
+  sh: ['no', 'Repair has no cost of its own in the model: a repaired escape costs the same as one left bad. So upkeep has no term, and the cost of writing an entry does not stand in for it.'] });
+item({ key: 'blame', m: 10, s: [10], title: 'Blame is unclear when a reused entry fails',
+  what: 'When work built on a fetched entry fails, the fault may lie in the entry, the match, the adaptation or the new case. Which one it was decides whether the entry gets corrected.',
+  b: [], k: [32], a: [], ex: [], c: [], p: ['fix_on_found'] });
+item({ key: 'new_model', m: 10, s: [10], title: 'A new model changes which entries are needed',
+  what: "Each model release makes different mistakes. Entries written for the old model's gaps may become dead weight, and the new model's gaps start with no entries.",
+  b: [], k: [], a: [25], ex: [], c: [], p: ['need_visible', 'need_latent', 'delta_stale'] });
+item({ key: 'owner_corrections', m: 10, s: [10], title: "The owner's corrections change and conflict over time",
+  what: 'The owner corrects direction, and later corrections can contradict earlier ones. Entries built on an older correction keep it after the owner has moved on.',
+  b: [], k: [], a: [23], ex: [], c: [], p: ['delta_stale', 'e_right'] });
+item({ key: 'combinations', m: 10, s: [9, 10], title: 'Storing merged answers fills the library with combinations',
+  what: 'If every merge is stored as its own entry, the number of entries grows with the combinations of parts. That adds look-alikes and upkeep.',
+  b: [], k: [], a: [14], ex: [], c: [], p: ['v_max', 'k_distract', 'c_write'] });
+item({ key: 'untrusted_text', m: 10, s: [9, 10], title: 'Untrusted text can become trusted memory',
+  what: 'Text read from a web page, a document or a tool result can end up inside a stored conclusion. Once stored, it is fetched with the authority of a checked entry.',
+  b: [], k: [], a: [30], ex: [], c: [], p: ['e_right', 'w_write'] });
+item({ key: 'private_details', m: 10, s: [10], title: 'Private details travel with entries',
+  what: 'Entries carry paths, names, hosts and project details. When an entry is shared across projects or sessions, those details go with it.',
+  b: [], k: [], a: [20], ex: [], c: [], p: [],
+  sh: ['no', 'Privacy is not a chance or a cost in the model.'] });
+
+// Break titles are the walkers' own. A frequency word in a title rests on the chosen sample,
+// which cannot carry it, so it is dropped here (map refuter pass, MF8).
+const noFreq = (t) => t.replace(/, often by agents\b/g, '').replace(/\boften /g, '');
+
+// ---------- works list ----------
+// [case, text, tag, basis, channel, caveat]
+// tag/basis: 'M'/'seen' when the walk record shows it happen; 'G'/'estimate' when it is the walker's
+// estimate of what would have happened (map refuter pass, MF4). channel: an existing channel that
+// carried the saving (not the library). caveat: what the same walk says against the item.
+const WORKS = [
+  ['L01:C3a', 'A stored pdftoppm route served to the second wave would have saved 2 to 8 calls per agent across four Opus agents.', 'G', 'estimate', null,
+    'The same walk rates capture as broken: no note anywhere ever recorded the route. It rates the trigger as not specified.'],
+  ['L01:C4a', 'One git flag with an exact error template, served before cloning, would have saved the 15 failed clones of 11-04.', 'G', 'estimate', null,
+    "The same walk rates the trigger as not specified and the afterlife as broken: the cause went away about three hours after the note. The walk's own first figure is zero to one call saved per agent."],
+  ['L10:L10-3', 'The pushed Python note worked at no extra cost: three agents carried its remedy in the same command as the probe, on 11-09 and 11-12.', 'M', 'seen', 'a pushed note', null],
+  ['L08:L08-1', 'The memory index put the long-paths fix into a sibling session before its first clone; that clone never failed.', 'M', 'seen', 'the memory index', null],
+  ['L05:L05-4', "A lookup by the failing test's name would have hit the root's entry, saving a wrong fixture commit, its revert, stopped runs and one Opus review.", 'G', 'estimate', null, null],
+  ['L05:L05-3', "The check held: an exact match to an old, fixed cause was tested, came back 'does not apply', and no wrong fix was applied.", 'G', 'estimate', null,
+    "The check that held belongs to the earlier knowledge-store design, not to the owner's library design. The same walk rates the check step as broken: the only verdict on the failure was a rerun."],
+  ['L06:C4', "After the first solve, a do-not-apply entry on the handoff's wrong advice stops a change that would let a 4-digit PIN be guessed without limit. CLAUDE.md already warns.", 'G', 'estimate', 'CLAUDE.md, which already warns', null],
+  ['L06:C2', "The action words 'enable dispatcher' reach the stored hazard, preventing the replay measured at 36 messages about months-old jobs, plus permanent suppressed rows.", 'G', 'estimate', null, null],
+  ['L03:C5', "The builder's own words 'offline presence outbox' reach the right entry; had a lookup fired, it saves three days of stuck badges and a rework commit.", 'G', 'estimate', null, null],
+  ['L09:L09-2', 'A red check handed raw output to Fable, which fixed the defect in about a minute and wrote the rule, with its reason, within two minutes.', 'M', 'seen', "the project's own conventions file",
+    'The same walk says a lookup would have saved nothing at the time: no entry could exist before the first failure, and the fix took about a minute.'],
+  ['L09:L09-1', "The S02 entry, fetched at the S04 check, would have stopped the top tier's wrong premise: one finding's round trip saved.", 'G', 'estimate', null, null],
+  ['L07:L07-4', 'A later change reused two stored traps and avoided at least two failed cloud builds; a later design reused one that cost about 15M helper tokens.', 'M', 'seen', 'CLAUDE.md and the stored design documents', null],
+  ['L07:L07-5', "A design 'no' stored with its reason held for five months and was never argued again.", 'M', 'seen', 'the project documents',
+    'The same walk rates use, capture and afterlife as broken, and notes that an older playbook still names the sign-in system the team turned down.'],
+  ['L10:L10-1a', "The earlier knowledge-store design's scan for fixes not on the main branch fits June exactly: it removes one of build 15's two causes and 16 days of broken main.", 'G', 'estimate', null,
+    "The scan is a mechanism of the earlier knowledge-store design, not of the owner's library design."],
+  ['L10:L10-1b', 'The empty-value check promoted into the shared test run blocks that mistake for every agent and human, with no lookup.', 'M', 'seen', 'a check in the shared test run', null],
+];
+
+// ---------- checks and assembly ----------
+const paramIds = new Set(map.parameters.map((p) => p.id));
+const words = (s) => s.trim().split(/\s+/).filter(Boolean).length;
+const usedB = {}; const usedK = {}; const usedA = {};
+const out = [];
+for (const it of I) {
+  for (const i of it.b) { if (usedB[i] !== undefined) fail('break #' + i + ' used twice: ' + usedB[i] + ', ' + it.key); usedB[i] = it.key; }
+  for (const k of it.k) { if (usedK[k]) fail('known ' + k + ' used twice'); usedK[k] = it.key; if (!KNOWN[k]) fail('no known ' + k); }
+  for (const a of it.a) { if (usedA[a]) fail('added ' + a + ' used twice'); usedA[a] = it.key; if (!ADDED[a]) fail('no added ' + a); }
+  if (words(it.title) > 9) fail(it.key + ': title has ' + words(it.title) + ' words');
+  if (words(it.what) > 35) fail(it.key + ': what has ' + words(it.what) + ' words');
+  if (it.p.length > 3) fail(it.key + ': more than three params');
+  for (const p of it.p) if (!paramIds.has(p)) fail(it.key + ': unknown param ' + p);
+  if (it.p.includes('z_wrongstore')) fail(it.key + ': z_wrongstore no longer exists');
+  for (const st of it.s) if (!(st >= 1 && st <= 10)) fail(it.key + ': bad step ' + st);
+  if (!it.s.includes(it.m)) fail(it.key + ': main step not in steps');
+  // real cases
+  const set = new Set();
+  for (const i of it.b) for (const w of B[i]) set.add(w);
+  for (const [w, step, quote] of (it.x || [])) {
+    if (!WALK[w]) { fail(it.key + ': unknown extra walk ' + w); continue; }
+    const st = WALK[w].steps.find((s) => s.step === step);
+    if (!st || !st.note.includes(quote)) fail(it.key + ': extra walk quote not found in ' + w + ' step ' + step);
+    set.add(w);
+  }
+  const caseIds = [...set].sort();
+  const fams = [...new Set(caseIds.map((w) => WALK[w].family))].sort();
+  // examples
+  const examples = [];
+  if (it.ex.length > 2) fail(it.key + ': more than two examples');
+  for (const [src, cs, quote] of it.ex) {
+    if (!set.has(cs)) fail(it.key + ': example case ' + cs + ' not among its real cases');
+    if (words(quote) > 30) fail(it.key + ': example over 30 words');
+    let source;
+    if (src === 'walk') {
+      const x = (it.x || []).find((e) => e[0] === cs);
+      if (!x || x[2] !== quote) fail(it.key + ': walk example has no matching extra');
+      source = 'walkthroughs.json, walk ' + cs + ', step ' + (x ? x[1] : '?') + ' note';
+    } else {
+      const br = breaks[src];
+      if (!it.b.includes(src)) fail(it.key + ': example break #' + src + ' not merged into this item');
+      if (!(br.evidence + ' ' + br.description).includes(quote)) fail(it.key + ': quote not found in break #' + src + ': ' + quote);
+      source = 'all-breaks.json #' + src + ' (' + br.lane + ', "' + noFreq(br.title) + '"), evidence';
+    }
+    examples.push({ case: cs, family: WALK[cs].family, evidence: quote, source });
+  }
+  // contradicted
+  const contradicted = [];
+  for (const [fam, cases, reason] of it.c) {
+    if (!FAMILY_NAME[fam]) fail(it.key + ': unknown family ' + fam);
+    const full = cases.map((c) => fam + ':' + c);
+    for (const w of full) if (!WALK[w]) fail(it.key + ': unknown contradicting walk ' + w);
+    if (words(reason) > 40) fail(it.key + ': contradiction reason over 40 words');
+    contradicted.push({ family: fam, family_name: FAMILY_NAME[fam], cases: full, reason });
+  }
+  const hasReal = caseIds.length > 0;
+  const hasThought = it.k.length + it.a.length > 0;
+  const origin = hasReal && hasThought ? 'both' : hasReal ? 'real cases' : 'thought experiment only';
+  out.push({
+    key: it.key, main_step: it.m, title: it.title, what: it.what, steps: it.s.slice().sort((a, b) => a - b),
+    real: { cases: caseIds.length, families: fams.length, tag: 'M', family_ids: fams, case_ids: caseIds, examples },
+    contradicted, origin, params: it.p,
+    shown: it.sh ? it.sh[0] : 'yes',
+    not_shown: it.sh ? it.sh[1] : undefined,
+    merged_from: it.b.length + it.k.length + it.a.length,
+    absorbed: {
+      breaks: it.b.map((i) => ({ index: i, family: breaks[i].lane, title: noFreq(breaks[i].title) })),
+      known_titles: it.k.map((k) => k + ' ' + KNOWN[k]),
+      later_additions: it.a.map((a) => ADDED[a]),
+    },
+    note: it.note || undefined,
+  });
+}
+for (let i = 0; i < breaks.length; i++) if (usedB[i] === undefined) fail('break #' + i + ' not placed: ' + breaks[i].title);
+for (const k in KNOWN) if (!usedK[k]) fail('known ' + k + ' not placed');
+for (const a in ADDED) if (!usedA[a]) fail('added ' + a + ' not placed');
+
+out.sort((x, y) => x.main_step - y.main_step || y.real.cases - x.real.cases || y.merged_from - x.merged_from || x.key.localeCompare(y.key));
+out.forEach((x, i) => { x.id = 'LIM-' + String(i + 1).padStart(2, '0'); });
+const items = out.map((x) => {
+  const { id, ...rest } = x;
+  return { id, ...rest };
+});
+
+const works = WORKS.map(([cs, text, tag, basis, channel, caveat]) => {
+  if (!WALK[cs]) fail('works: unknown case ' + cs);
+  if (words(text) > 32) fail('works: over 32 words: ' + text);
+  if (!['M', 'G'].includes(tag) || !['seen', 'estimate'].includes(basis) || (tag === 'M') !== (basis === 'seen')) fail('works: tag and basis disagree for ' + cs);
+  if (caveat && words(caveat) > 45) fail('works: caveat over 45 words for ' + cs);
+  return { case: cs, family: WALK[cs] ? WALK[cs].family : null, tag, basis, channel: channel || undefined, caveat: caveat || undefined, text };
+});
+if (works.length > 15) fail('more than fifteen works');
+
+// totals
+const byStep = {};
+for (const x of items) byStep[x.main_step] = (byStep[x.main_step] || 0) + 1;
+const fromReal = items.filter((x) => x.real.cases > 0).length;
+const thought = items.filter((x) => x.origin === 'thought experiment only').length;
+const contra = items.filter((x) => x.contradicted.length > 0).length;
+const top = items.slice().sort((a, b) => b.real.cases - a.real.cases || b.real.families - a.real.families).slice(0, 8)
+  .map((x) => `${x.id} ${x.title} (${x.real.cases} cases, ${x.real.families} families)`);
+if (items.length < 50 || items.length > 80) fail('item count ' + items.length + ' outside 50 to 80');
+
+const STEP_NAMES = {
+  1: 'A task arrives: what is in the window', 2: 'Trigger: does anything start a lookup, and when', 3: 'Query: what is asked, in what words',
+  4: 'Match: what comes back', 5: 'Delivery: which window receives it, and does it stay', 6: 'Use: the cheap model adapts and applies it',
+  7: "Check: what decides the result equals the strong model's", 8: 'Failure and the ladder: how failure is noticed, what goes up to Opus, then Fable',
+  9: 'Capture: what is written, by whom, when, from what', 10: 'Afterlife: what happens to the entry later',
+};
+
+const doc = {
+  title: 'Library limitations, merged and placed on the map',
+  date: '2026-11-12',
+  status: 'Map evidence. No fixes, no verdicts. Built by docs/program/evidence/library-pathways/build-limitations.js.txt.',
+  how_to_read: [
+    'Each item is one mechanism by which the library design falls short of its goal.',
+    'real.cases counts the walks (of 59) whose walker named this mechanism. real.families counts the ten pathway families those walks belong to.',
+    'The 59 real cases are a chosen sample of problem cases. A count shows that a route exists and where a step breaks. It never shows how often this happens.',
+    'Tag M: counted on this PC from the walk records. No number in this file is a rate.',
+    'contradicted lists families whose real cases showed the item did not happen or mattered less, with the cases on that side. The item stays in the list.',
+    'params are the map.json parameters through which the item acts in the model. An empty list means it acts through none.',
+    'merged_from counts the raw items absorbed: real-case breaks, plus titles from the two thought-experiment lists.',
+    'Items are sorted by main step, then by how many real cases showed them.',
+    'works lists savings the walks saw, or estimated would have come, in a real case. basis "seen" (tag M): the walk record shows it happen. basis "estimate" (tag G): the walker\'s estimate of what would have happened. channel names an existing channel (CLAUDE.md, the memory index, a pushed note, project documents, a check in the shared test run) when that, not the library, carried the saving. caveat gives what the same walk says against the item.',
+    'shown says whether the model can show the item: yes, partly or no. not_shown gives the reason. An item the model cannot show can still matter.',
+    'The walks judged a step as working whenever the earlier knowledge-store design had a mechanism for it (walkthrough workflow, line 162). Text that relies on that design names it.',
+    'Break titles are the walkers\' own; frequency words in them are dropped, because the chosen sample cannot carry them.',
+  ],
+  words: {
+    window: 'what a model can see while it works: the conversation, files read, notes loaded.',
+    entry: 'one stored conclusion in the library.',
+    tier: 'a model level on the ladder: Sonnet (cheap), Opus, Fable (top).',
+    'helper window': 'a short separate session (a subagent) started by a main session.',
+    check: 'whatever decides a result is right: tests, a review, a build, a rerun.',
+  },
+  counting: {
+    unit: 'one walk = one real case (59 in all).',
+    breaks_read: breaks.length,
+    rule: 'A walk counts for an item when a break merged into the item names it in the *-walk.md Breaks section, or a quoted walk note shows it. Two items list an extra walk from a walk note.',
+    per_break_differences: countDiffs,
+    per_break_differences_note: 'L01 counts some breaks per case (C1 to C6) while its walks split cases (C1a, C1b ...). Where they differ, the walks whose notes show the break are counted.',
+    same_incident_in_two_families: ['L04:C1 and L10:L10-1a (EAS build 15)', 'L08:L08-2 and L09:L09-3 (the report-file refusal)', 'L03:C3, L02:C3 and L06:C2 (the WhatsApp dispatcher)'],
+  },
+  steps: STEP_NAMES,
+  families: FAMILY_NAME,
+  summary: {
+    items: items.length,
+    from_real_cases: fromReal,
+    thought_experiment_only: thought,
+    contradicted_items: contra,
+    by_main_step: byStep,
+    top_by_real_cases: top,
+    works_items: works.length,
+    walks_with_at_least_one_item: new Set(items.flatMap((x) => x.real.case_ids)).size,
+  },
+  items,
+  works,
+};
+// drop undefined notes
+const json = JSON.stringify(doc, (k, v) => (v === undefined ? undefined : v), 2);
+
+if (errors.length) {
+  console.log('ERRORS (' + errors.length + '):');
+  errors.forEach((e) => console.log(' - ' + e));
+  process.exitCode = 1;
+} else {
+  fs.writeFileSync(OUT, json + '\n');
+  console.log('wrote ' + OUT);
+}
+console.log('items', items.length, 'from real', fromReal, 'thought only', thought, 'contradicted', contra, 'works', works.length);
+console.log('by main step', JSON.stringify(byStep));
+console.log('per-break count differences', JSON.stringify(countDiffs));
+for (const x of items) console.log(x.id.padEnd(7), String(x.main_step).padStart(2), String(x.real.cases).padStart(3), String(x.real.families).padStart(2), x.origin.padEnd(24), (x.contradicted.length ? 'C' : ' '), x.merged_from, x.title);

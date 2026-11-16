@@ -1,0 +1,355 @@
+/*
+ * Pure helpers shared by the page and by the build and check scripts.
+ * No DOM. In node: require('./core.js.txt'). Inlined in the page: a global named PathwayCore.
+ * Every number comes from the engine (PathwayEngine) and the data files; nothing here sets a value.
+ */
+/* global module */
+(function (root, factory) {
+  'use strict';
+  var api = factory();
+  if (typeof module === 'object' && module && module.exports) module.exports = api;
+  else if (root) root.PathwayCore = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+  var STATUSES = ['works', 'strains', 'breaks', 'not_specified', 'not_reached'];
+
+  /**
+   * Where each parameter acts: the branches whose chance or cost uses it (directly or through a
+   * derived value or a stock value), whether it shapes the class chances, and whether it enters
+   * the stock equations.
+   */
+  function paramReach(E, map) {
+    var cm = E.compile(map);
+    var via = {};
+    cm.derived.forEach(function (d) { via[d.id] = d.ids; });
+    cm.stockValues.forEach(function (v) { via[v.id] = v.ids; });
+    function expand(ids) {
+      var seen = {};
+      (function go(list) {
+        list.forEach(function (id) {
+          if (seen[id]) return;
+          seen[id] = true;
+          if (via[id]) go(via[id]);
+        });
+      })(ids);
+      return seen;
+    }
+    var reach = {};
+    cm.paramIds.forEach(function (id) { reach[id] = { branches: [], chance: [], cost: [], classes: false, stocks: false }; });
+    cm.branches.forEach(function (b) {
+      var ch = expand(b.chance.ids);
+      var co = expand(b.cost.ids.concat(b.calls.ids));
+      cm.paramIds.forEach(function (id) {
+        if (ch[id] || co[id]) reach[id].branches.push(b.id);
+        if (ch[id]) reach[id].chance.push(b.id);
+        if (co[id]) reach[id].cost.push(b.id);
+      });
+    });
+    cm.attributes.forEach(function (a) {
+      a.values.forEach(function (v) {
+        var s = expand(v.ids);
+        Object.keys(s).forEach(function (id) { if (reach[id]) reach[id].classes = true; });
+      });
+    });
+    cm.updates.forEach(function (u) {
+      var s = expand(u.ids);
+      Object.keys(s).forEach(function (id) { if (reach[id]) reach[id].stocks = true; });
+    });
+    return reach;
+  }
+
+  /**
+   * The stage a parameter's slider sits under: the earliest stage among the branches it reaches.
+   * Price ratios sit with their own tier. Parameters that reach no branch sit under "before"
+   * (they shape the work that arrives and what the library holds) or "time" (stock equations only).
+   */
+  function paramStage(map, reach, id) {
+    var p = map.parameters.filter(function (x) { return x.id === id; })[0];
+    if (p && p.run_setting) return 'time';
+    if (id === 'm_opus') return 'L8';
+    if (id === 'm_fable') return 'L9';
+    var stepOrder = map.steps.map(function (s) { return s.id; });
+    var stateStep = {};
+    map.states.forEach(function (s) { stateStep[s.id] = s.step; });
+    var bfrom = {};
+    map.branches.forEach(function (b) { bfrom[b.id] = stateStep[b.from]; });
+    var best = null;
+    reach[id].branches.forEach(function (bid) {
+      var st = bfrom[bid];
+      if (best === null || stepOrder.indexOf(st) < stepOrder.indexOf(best)) best = st;
+    });
+    if (best) return best;
+    return reach[id].classes ? 'before' : 'time';
+  }
+
+  /** Chance, cost and calls of every branch for one class, exactly as the engine scopes them. */
+  function branchValues(E, map, params, policyId, classValues, stocks) {
+    var cm = E.compile(map);
+    var prep = E.prepareParams(cm, params);
+    var pol = cm.policies[cm.policyIndex[policyId]];
+    var combo = pol.combos.filter(function (c) {
+      return Object.keys(classValues).every(function (aid) { return c.values[aid] === classValues[aid]; });
+    })[0];
+    if (!combo) throw new Error('No such class under ' + policyId);
+    var s = Object.assign({}, prep.values);
+    cm.stockIds.forEach(function (id) { s[id] = stocks && typeof stocks[id] === 'number' ? stocks[id] : 0; });
+    cm.stockValues.forEach(function (v) { s[v.id] = v.fn(s); });
+    Object.assign(s, pol.flags, combo.flags);
+    cm.derived.forEach(function (d) { s[d.id] = d.fn(s); });
+    var out = {};
+    cm.branches.forEach(function (b) {
+      out[b.id] = { chance: b.chance.fn(s), cost: b.tier >= 0 ? b.cost.fn(s) : 0, calls: b.tier >= 0 ? b.calls.fn(s) : 0 };
+    });
+    return out;
+  }
+
+  /**
+   * The ensemble, run in steps so a page can stay responsive. It draws exactly as the engine's
+   * ensemble() does (same generator, same draw order, same time path), so the same seed gives the
+   * same numbers.
+   */
+  function ensembleRunner(E, map, table, opts) {
+    var cm = E.compile(map);
+    var o = opts || {};
+    var n = o.n || 1000;
+    var seed = o.seed === undefined ? 1 : o.seed;
+    var random = E.rng(seed);
+    var draws = [];
+    var i = 0;
+    return {
+      n: n,
+      seed: seed,
+      count: function () { return i; },
+      done: function () { return i >= n; },
+      step: function (k) {
+        var end = Math.min(n, i + (k || 1));
+        for (; i < end; i++) {
+          var raw = E.drawParams(cm, table, random);
+          var prep = E.prepareParams(cm, raw);
+          var path = E.timePath(cm, prep.values, { lean: true });
+          var f = path.periods[0];
+          var l = path.periods[path.periods.length - 1];
+          draws.push({
+            values: prep.values,
+            adjusted: prep.adjusted.length > 0,
+            top: { cost: path.top_first.cost, wrong: path.top_first.wrong },
+            ladder: { cost: path.cheap_ladder.cost, wrong: path.cheap_ladder.wrong },
+            first: { ratios: f.ratios, cost: f.library.cost, wrong: f.library.wrong },
+            last: { ratios: l.ratios, cost: l.library.cost, wrong: l.library.wrong }
+          });
+        }
+        return i;
+      },
+      result: function () { return summarizeDraws(E, cm, draws, n, seed, o.percentiles); },
+      draws: function () { return draws; }
+    };
+  }
+
+  function summarizeDraws(E, cm, draws, n, seed, percentiles) {
+    var pcts = percentiles || [5, 25, 50, 75, 95];
+    var RATIOS = E.RATIO_IDS;
+    var res = { n: draws.length, seed: seed, spread: { first: {}, last: {} }, spearman: { first: {}, last: {} }, shareBetterVs: { top_first: {}, cheap_ladder: {} }, adjustedDraws: 0 };
+    draws.forEach(function (d) { if (d.adjusted) res.adjustedDraws++; });
+    ['first', 'last'].forEach(function (w) {
+      var series = {};
+      RATIOS.forEach(function (r) { series[r] = draws.map(function (d) { return d[w].ratios[r]; }); });
+      series.library_cost = draws.map(function (d) { return d[w].cost; });
+      series.library_wrong = draws.map(function (d) { return d[w].wrong; });
+      series.top_cost = draws.map(function (d) { return d.top.cost; });
+      series.top_wrong = draws.map(function (d) { return d.top.wrong; });
+      series.ladder_cost = draws.map(function (d) { return d.ladder.cost; });
+      series.ladder_wrong = draws.map(function (d) { return d.ladder.wrong; });
+      Object.keys(series).forEach(function (k) {
+        var sorted = series[k].slice().sort(function (a, b) { return a - b; });
+        var row = {};
+        pcts.forEach(function (p) { row['p' + p] = E.percentile(sorted, p); });
+        var finite = sorted.filter(isFinite);
+        row.mean = finite.length ? finite.reduce(function (a, b) { return a + b; }, 0) / finite.length : NaN;
+        res.spread[w][k] = row;
+      });
+      var bt = 0, bl = 0;
+      draws.forEach(function (d) {
+        if (d[w].cost < d.top.cost && d[w].wrong <= d.top.wrong) bt++;
+        if (d[w].cost < d.ladder.cost && d[w].wrong <= d.ladder.wrong) bl++;
+      });
+      res.shareBetterVs.top_first[w] = draws.length ? bt / draws.length : NaN;
+      res.shareBetterVs.cheap_ladder[w] = draws.length ? bl / draws.length : NaN;
+      RATIOS.forEach(function (r) {
+        var list = cm.paramIds.map(function (id) {
+          return { id: id, rho: E.spearman(draws.map(function (d) { return d.values[id]; }), series[r]) };
+        }).filter(function (e) { return e.rho !== null; });
+        list.sort(function (a, b) { return Math.abs(b.rho) - Math.abs(a.rho) || (a.id < b.id ? -1 : 1); });
+        res.spearman[w][r] = list;
+      });
+    });
+    return res;
+  }
+
+  /** Case ids in limitations.json ("L03:C5", "L05:L05-4") to ids in cases.json ("f03-C5", "f05-4"). */
+  function caseId(limId) {
+    var parts = String(limId).split(':');
+    var fam = parts[0], walk = parts[1] || '';
+    var num = fam.slice(1);
+    if (walk.indexOf(fam + '-') === 0) walk = walk.slice(fam.length + 1);
+    return 'f' + num + '-' + walk;
+  }
+
+  /** Counts of each status at each of the ten steps. */
+  function statusTotals(cases) {
+    var t = {};
+    STATUSES.forEach(function (s) { t[s] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]; });
+    cases.forEach(function (c) {
+      c.steps.forEach(function (st) {
+        if (!t[st.status]) throw new Error('Unknown status ' + st.status + ' in ' + c.id);
+        t[st.status][st.step - 1]++;
+      });
+    });
+    return t;
+  }
+
+  /** Counts quoted in the page copy. All are counted from the data files (tag M). */
+  function counts(map, table, lims, cases) {
+    var rows = table.parameters;
+    var drawn = rows.filter(function (r) { return r.low !== r.high && !r.run_setting; });
+    var noparam = lims.items.filter(function (i) { return i.shown === 'no'; });
+    var partly = lims.items.filter(function (i) { return i.shown === 'partly'; });
+    var cells = [];
+    cases.cases.forEach(function (c) { c.steps.forEach(function (s) { cells.push(s); }); });
+    var st8 = cells.filter(function (s) { return s.step === 8; });
+    var lim = function (key) { return lims.items.filter(function (i) { return i.key === key; })[0]; };
+    var rung = lim('every_rung'), notCaught = lim('tier_order');
+    return {
+      steps_total: cells.length,
+      works_cells: cells.filter(function (s) { return s.status === 'works'; }).length,
+      ks_steps: cells.filter(function (s) { return s.ks; }).length,
+      ks_works: cells.filter(function (s) { return s.ks && s.status === 'works'; }).length,
+      step8_not_reached: st8.filter(function (s) { return s.status === 'not_reached'; }).length,
+      step8_works: st8.filter(function (s) { return s.status === 'works'; }).length,
+      rung_contra: rung ? rung.contradicted.length : 0,
+      rung_id: rung ? rung.id : '',
+      not_catcher_cases: notCaught ? notCaught.real.cases : 0,
+      not_catcher_id: notCaught ? notCaught.id : '',
+      works_seen: lims.works.filter(function (w) { return w.basis === 'seen'; }).length,
+      works_estimate: lims.works.filter(function (w) { return w.basis === 'estimate'; }).length,
+      works_channel: lims.works.filter(function (w) { return !!w.channel; }).length,
+      works_seen_channel: lims.works.filter(function (w) { return w.basis === 'seen' && !!w.channel; }).length,
+      partly: partly.length,
+      partly_ids: partly.map(function (i) { return i.id + ' (' + i.title + ')'; }).join('; '),
+      cases: cases.cases.length,
+      families: cases.families.length,
+      breaks: lims.counting.breaks_read,
+      lims: lims.items.length,
+      lims_real: lims.items.filter(function (i) { return i.real.cases > 0; }).length,
+      lims_thought: lims.items.filter(function (i) { return i.real.cases === 0; }).length,
+      contradicted: lims.items.filter(function (i) { return i.contradicted.length > 0; }).length,
+      works: lims.works.length,
+      params: rows.length,
+      drawn: drawn.length,
+      guess: drawn.filter(function (r) { return r.tag === 'G'; }).length,
+      study: drawn.filter(function (r) { return r.tag === 'S'; }).length,
+      measured: drawn.filter(function (r) { return r.tag === 'M'; }).length,
+      noparam: noparam.length,
+      noparam_ids: noparam.map(function (i) { return i.id + ' (' + i.title + ')'; }).join('; '),
+      states: map.states.length,
+      branches: map.branches.length
+    };
+  }
+
+  /**
+   * How much the library is used, for one period's starting stocks: shares of all work that are
+   * looked up and that end with a good or a wrong entry in hand at the cheap attempt; what writes
+   * and lookups cost per piece; good entries in hand per good entry per period. All computed (G).
+   * The costs of the lookup and write branches do not depend on the class of work.
+   */
+  function usage(E, map, params, stocks) {
+    var ev = E.evaluatePolicy(map, params, 'library', stocks);
+    var sf = ev.stateFlow, bf = ev.branchFlow;
+    var cm = E.compile(map);
+    var combo = cm.policies[cm.policyIndex.library].combos[0];
+    var bv = branchValues(E, map, params, 'library', combo.values, stocks);
+    var write = 0, look = 0;
+    map.branches.forEach(function (b) {
+      if (/^l10_/.test(b.id)) write += (bf[b.id] || 0) * bv[b.id].cost;
+      if (b.id === 'l1_lookup') look += (bf[b.id] || 0) * bv[b.id].cost;
+    });
+    var good = sf.L5_exact + sf.L5_similar + sf.L5_full + sf.L5_part;
+    var n = params.episodes_per_period;
+    return {
+      lookedUp: sf.L2_lookup,
+      goodInHand: good,
+      wrongInHand: sf.L5_wrong,
+      writeCost: write,
+      lookupCost: look,
+      goodPerPeriod: good * n,
+      usesPerGood: stocks.E_good > 0 ? good * n / stocks.E_good : NaN
+    };
+  }
+
+  /**
+   * The best-value figures the page and the record quote in their short statement, as text
+   * ready to print (tag G). Recomputed from the data each build and each page load.
+   */
+  function bestFacts(E, map, table) {
+    var best = E.paramsFromTable(table, 'best');
+    var tp = E.timePath(map, best);
+    var f = tp.periods[0], l = tp.periods[tp.periods.length - 1];
+    var one = Object.assign({}, best, { m_opus: 1 });
+    var tp1 = E.timePath(map, one);
+    var l1 = tp1.periods[tp1.periods.length - 1];
+    var u = usage(E, map, best, l.stocks);
+    var r2 = function (v) { return v.toFixed(2); }, c1 = function (v) { return v.toFixed(1); };
+    var pc = function (v) { var x = 100 * v; return (x !== 0 && Math.abs(x) < 0.1 ? x.toFixed(2) : x.toFixed(1)) + '%'; };
+    return {
+      periods: String(tp.periods.length),
+      top_cost: c1(tp.top_first.cost), top_wrong: pc(tp.top_first.wrong),
+      lad_cost: c1(tp.cheap_ladder.cost), lad_wrong: pc(tp.cheap_ladder.wrong),
+      lib_cost_first: c1(f.library.cost), lib_cost_last: c1(l.library.cost),
+      lib_wrong_first: pc(f.library.wrong), lib_wrong_last: pc(l.library.wrong),
+      cl_first: r2(f.ratios.cost_vs_ladder), cl_last: r2(l.ratios.cost_vs_ladder),
+      wl_first: r2(f.ratios.wrong_vs_ladder), wl_last: r2(l.ratios.wrong_vs_ladder),
+      ct_first: r2(f.ratios.cost_vs_top), ct_last: r2(l.ratios.cost_vs_top),
+      wt_first: r2(f.ratios.wrong_vs_top), wt_last: r2(l.ratios.wrong_vs_top),
+      ct_last_m1: r2(l1.ratios.cost_vs_top), cl_last_m1: r2(l1.ratios.cost_vs_ladder),
+      m_opus: String(best.m_opus),
+      use_lookup: pc(u.lookedUp), use_good: pc(u.goodInHand), use_wrong: pc(u.wrongInHand),
+      use_good_n: c1(u.goodPerPeriod), pieces: String(best.episodes_per_period),
+      cost_write: r2(u.writeCost), cost_lookup: r2(u.lookupCost),
+      uses_per_good: u.usesPerGood.toFixed(3),
+      t_visible: pc(best.t_visible), t_latent: pc(best.t_latent),
+      good_last: c1(l.stocks.E_good), bad_last: c1(l.stocks.E_bad),
+      bad_share_last: r2(l.stocks.E_bad / (l.stocks.E_good + l.stocks.E_bad))
+    };
+  }
+
+  /**
+   * Replace {{c:key}} (a count, tag M), {{g:key}} (a computed best-value fact, tag G) and
+   * {{n:value|TAG}} (a literal number with its tag). fmt(value, tag) gives the output for one number.
+   */
+  function fillTokens(text, cnt, fmt, plain, facts) {
+    return String(text)
+      .replace(/\{\{c:([a-z_0-9]+)\}\}/g, function (_, k) {
+        if (!(k in cnt)) throw new Error('Unknown count ' + k);
+        return typeof cnt[k] === 'number' ? fmt(cnt[k], 'M') : plain(cnt[k]);
+      })
+      .replace(/\{\{g:([a-z_0-9]+)\}\}/g, function (_, k) {
+        if (!facts || !(k in facts)) throw new Error('Unknown fact ' + k);
+        return fmt(facts[k], 'G');
+      })
+      .replace(/\{\{n:([^|}]+)\|([MSG])\}\}/g, function (_, v, t) { return fmt(v, t); });
+  }
+
+  return {
+    STATUSES: STATUSES.slice(),
+    paramReach: paramReach,
+    paramStage: paramStage,
+    branchValues: branchValues,
+    ensembleRunner: ensembleRunner,
+    summarizeDraws: summarizeDraws,
+    caseId: caseId,
+    statusTotals: statusTotals,
+    counts: counts,
+    usage: usage,
+    bestFacts: bestFacts,
+    fillTokens: fillTokens
+  };
+});

@@ -23,6 +23,9 @@ def main():
     args = parser.parse_args()
     rows = json.loads((ROOT / 'migration/source-manifest.json').read_text(encoding='utf-8'))
     rows += json.loads((ROOT / 'migration/clinic-manifest.json').read_text(encoding='utf-8'))['files']
+    additions = ROOT / 'migration/completeness-additions.json'
+    if additions.exists():
+        rows += json.loads(additions.read_text(encoding='utf-8'))['files']
     recovered = [json.loads(x) for x in (ROOT / 'migration/recovery-manifest.jsonl').read_text(encoding='utf-8').splitlines()]
     rows += [r for r in recovered if r['storage'] == 'git' or args.include_restored_data]
     with ThreadPoolExecutor(max_workers=8) as pool:

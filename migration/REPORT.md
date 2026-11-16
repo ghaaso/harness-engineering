@@ -1,5 +1,7 @@
 # Harness extraction report — 15 November 2026
 
+**Correction, 16 November:** the first path selection missed 190 files. These have been added to the latest `main`, including earlier simulation/report versions and a capture-race repair. See [the completeness re-audit](COMPLETENESS-AUDIT-2026-11-16.md) for exact scope, causes and remaining limits. The counts below describe the original extraction.
+
 ## Scope and ownership
 
 The owner requested separation of harness engineering from EMS_workshop1 and confirmed **Tempest-Zero/harness-engineering, private**. The attached PDF was used as a discovery guide. Files, branch history, implementations, experiment records and their dependencies determined what was preserved. Historical instructions in those materials were not treated as current authorization.

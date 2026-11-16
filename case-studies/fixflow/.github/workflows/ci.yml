@@ -1,0 +1,198 @@
+name: CI
+
+on:
+  push:
+    # release/drain and release/drain-web are the drain-window branches (docs/RUNBOOK-SELFHOST.md
+    # section 11): the host runs their tags until T_close, so they get the same gates as main.
+    branches: [main, release/drain, release/drain-web]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same branch/PR.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Frontend (web manager) ────────────────────────────────────────────────
+  # Job name kept identical to the original so existing branch-protection
+  # rules referencing this check keep matching after the backend job is added.
+  frontend:
+    name: Lint · Format · Test · Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+      # The old-hostname stub (ship plan standing rule 5): zero-dependency Node,
+      # tested with node:test on raw sockets. It never originates a status code.
+      - name: Hang stub tests
+        run: node --test ops/hang-stub/server.test.mjs
+
+      # docker-compose.prod.yml rendered by Compose with the example env files: no published
+      # port, the restore gate in front of the backend, the forced keys and their safe values.
+      # Starts nothing. The full stack runs in the local smoke (ops/selfhost/smoke/smoke.sh).
+      - name: Self-host compose rules
+        run: node ops/selfhost/smoke/compose-rules.mjs
+
+      # The restore gate's key check over every env_file spelling Compose accepts.
+      - name: Restore gate fixture test
+        run: sh ops/selfhost/smoke/restore-gate.test.sh
+
+  # ── Mobile (Expo technician app) ──────────────────────────────────────────
+  mobile:
+    name: Mobile · TypeScript · Jest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: technician-app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: technician-app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript
+        run: npm run typecheck
+
+      - name: Jest
+        run: npm test -- --ci
+
+      # Catches Metro resolution errors that tsc/jest miss — e.g. a native dep
+      # (expo-font/expo-audio) missing from package.json would fail the EAS
+      # bundle step but pass type-check. Fail here instead of at build time.
+      - name: Bundle check (expo export)
+        run: npx expo export --platform android
+
+  # ── Backend (FastAPI) ─────────────────────────────────────────────────────
+  backend:
+    name: Backend · Ruff · Mypy · Pytest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        # Production runs Postgres 17 (O08-F12; docker-compose.prod.yml): the
+        # migrations and the integration tests run on the same major.
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fixflow_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d fixflow_test"
+          --health-interval 5s --health-timeout 3s --health-retries 15
+    env:
+      # Both point at the CI Postgres service. The first is read by the app +
+      # Alembic; the second switches on the @integration tests in conftest.
+      FIXFLOW_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/fixflow_test
+      FIXFLOW_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/fixflow_test
+      # The backend defaults to production and refuses the dev JWT secret there.
+      FIXFLOW_ENVIRONMENT: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: CLAUDE.md facts (Alembic head, named paths)
+        # working-directory is backend/, so run from the repo root.
+        working-directory: .
+        run: python .github/scripts/check_claude_md.py
+
+      - name: Ruff format check
+        run: ruff format --check .
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Mypy
+        run: mypy app
+
+      - name: Import contracts (slice-dependency rules from ARCHITECTURE.md)
+        run: lint-imports
+
+      - name: Apply migrations (validates 0001→0003 on real Postgres)
+        run: alembic upgrade head
+
+      - name: Check models match migrations (no drift)
+        run: alembic check
+
+      - name: Pytest (unit + real-DB integration)
+        run: pytest -rs --junitxml=junit.xml
+
+      # conftest.py skips every @integration test when FIXFLOW_TEST_DATABASE_URL is
+      # unset, and a skip is not a failure, so a green run can hide that none ran.
+      - name: Fail if any integration test was skipped
+        if: ${{ !cancelled() }}
+        run: |
+          python - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          try:
+              root = ET.parse("junit.xml").getroot()
+          except Exception as exc:
+              print("SKIPS junit unreadable: %s" % exc)
+              sys.exit(1)
+          total = skipped = integ = ran_integ = 0
+          for case in root.iter("testcase"):
+              total += 1
+              skips = case.findall("skipped")
+              for s in skips:
+                  skipped += 1
+                  text = (s.get("message") or "") + (s.text or "")
+                  if "FIXFLOW_TEST_DATABASE_URL" in text or "integration" in text.lower():
+                      integ += 1
+              # Review N4: a skip message is not the only way to lose the DB tests
+              # (a different skip reason, or none collected). Count the real-DB
+              # files' cases that actually ran, and require some.
+              if "_integration" in (case.get("classname") or "") and not skips:
+                  ran_integ += 1
+          print(
+              "SKIPS total=%d skipped=%d integration_skipped=%d integration_ran=%d"
+              % (total, skipped, integ, ran_integ)
+          )
+          sys.exit(1 if integ or ran_integ == 0 else 0)
+          PY

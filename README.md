@@ -4,6 +4,8 @@ Research, ideas, orchestration methods, simulations, graph retrieval experiments
 
 This is a private research repository. The original EMS/FixFlow repository remains intact. Original research files retain their paths and bytes; the PDF is an index to the work, not the authority for its findings. Read the protocols, results, refutations, and subsequent corrections together.
 
+**Completeness correction, 16 November:** a broader audit found 190 omitted files, including older simulation/report variants, custom gates and a test fixture. They are now preserved in `main`. Read the [audit and remaining limits](migration/COMPLETENESS-AUDIT-2026-11-16.md); integrity checks alone do not establish exhaustive coverage.
+
 ## Start here
 
 | Area | Entry points |

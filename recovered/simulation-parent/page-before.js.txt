@@ -1,0 +1,1072 @@
+(function () {
+  'use strict';
+  var D = JSON.parse(document.getElementById('lp-data').textContent);
+  var E = window.PathwayEngine, C = window.PathwayCore;
+  var MAP = D.map, TABLE = D.params, LIMS = D.lims, CASES = D.cases, TX = D.text, LY = TX.layout;
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  var esc = function (s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+
+  var ROWS = E.tableRows(TABLE);
+  var PMETA = {}; MAP.parameters.forEach(function (p) { PMETA[p.id] = p; });
+  var REACH = C.paramReach(E, MAP);
+  var CNT = C.counts(MAP, TABLE, LIMS, CASES);
+  var FACTS = C.bestFacts(E, MAP, TABLE);
+  var BEST = E.paramsFromTable(TABLE, 'best');
+  var pname = function (id) { return (PMETA[id] && PMETA[id].name) || id; };
+  var cur = Object.assign({}, BEST);
+  var STATE = {}; MAP.states.forEach(function (s) { STATE[s.id] = s; });
+  var BR = {}; MAP.branches.forEach(function (b) { BR[b.id] = b; });
+  var STEP = {}; MAP.steps.forEach(function (s) { STEP[s.id] = s; });
+  var OUT = {}; MAP.outcomes.forEach(function (o) { OUT[o.id] = o; });
+  var POL = {}; MAP.policies.forEach(function (p) { POL[p.id] = p; });
+  var TIER = {}; MAP.tiers.forEach(function (t) { TIER[t.id] = t; });
+  var PNAME = TX.policy_names, PSHORT = TX.policy_short;
+  var STATUS_WORD = { works: 'works', strains: 'strains', breaks: 'breaks', not_specified: 'not specified', not_reached: 'not reached' };
+  var DSTEP_OF_STAGE = {};
+  Object.keys(TX.design_steps).forEach(function (k) { TX.design_steps[k].forEach(function (st) { (DSTEP_OF_STAGE[st] = DSTEP_OF_STAGE[st] || []).push(+k); }); });
+  var CASE = {}; CASES.cases.forEach(function (c) { CASE[c.id] = c; });
+  var FAM = {}; CASES.families.forEach(function (f) { FAM[f.id] = f; });
+  var LIM_FAM_NAME = {}; Object.keys(LIMS.families).forEach(function (k, i) { LIM_FAM_NAME[k] = CASES.families[i] ? CASES.families[i].name : LIMS.families[k]; });
+  var LIM = {}; LIMS.items.forEach(function (it) { LIM[it.id] = it; });
+  // Fixed at load: the three reference settings, the weight of every limitation, and what sits under each funnel bar.
+  var REFS = E.references(MAP, TABLE);
+  var W8 = E.weights(MAP, TABLE, LIMS.items, { stepLabels: LIMS.steps });
+  var WLIM = {}; W8.limitations.forEach(function (r) { WLIM[r.id] = r; });
+  var WSTEP = {}; W8.steps.forEach(function (r) { WSTEP[r.step] = r; });
+  var WMAX = 1e-12; W8.limitations.concat(W8.steps).forEach(function (r) { WMAX = Math.max(WMAX, Math.abs(r.holds.score)); });
+  var FCOUNT = C.funnelCounts(LIMS, CASES, TX.funnel_steps);
+  var CM = E.compile(MAP);
+
+  // ------------------------------------------------------------ numbers and tags
+  var TAGTIP = { M: 'M: ' + TX.tags.M + '. ' + TX.computed_tag, S: 'S: ' + TX.tags.S + '. ' + TX.computed_tag, G: 'G: ' + TX.tags.G + '. ' + TX.computed_tag };
+  function tagEl(t) { return '<i class="tag ' + t + '" data-tip="' + esc(TAGTIP[t]) + '">' + t + '</i>'; }
+  function fmt(v, kind) {
+    if (typeof v === 'string') return v;
+    if (v === null || v === undefined || !isFinite(v)) return 'none';
+    var a = Math.abs(v);
+    if (kind === 'pct') { var x = v * 100; return (x !== 0 && Math.abs(x) < 0.1 ? x.toFixed(2) : x.toFixed(1)) + '%'; }
+    if (kind === 'ratio') return a >= 10 ? v.toFixed(1) : v.toFixed(2);
+    if (kind === 'cost') return a >= 100 ? v.toFixed(0) : v.toFixed(1);
+    if (kind === 'int') return Math.round(v).toLocaleString('en');
+    if (kind === 'rho') return (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(2);
+    if (kind === 'funnel') return v === 0 ? '0' : a >= 1 ? v.toFixed(1) : a >= 0.01 ? v.toFixed(2) : v.toPrecision(1);
+    if (kind === 'weight') { var y = 100 * v; return (y < 0 ? '−' : '') + (y === 0 ? '0' : Math.abs(y) >= 0.1 ? Math.abs(y).toFixed(1) : Math.abs(y) >= 0.01 ? Math.abs(y).toFixed(2) : Math.abs(y).toPrecision(1)) + '%'; }
+    if (v === 0) return '0';
+    if (a >= 100) return v.toFixed(0);
+    if (a >= 10) return v.toFixed(1);
+    if (a >= 1) return v.toFixed(2);
+    return v.toFixed(3).replace(/0+$/, '').replace(/\.$/, '.0');
+  }
+  function num(v, tag, kind) { return '<span class="n"><b>' + esc(fmt(v, kind)) + '</b>' + tagEl(tag) + '</span>'; }
+  function rich(t) {
+    return C.fillTokens(esc(t), CNT, function (v, tg) { return num(typeof v === 'number' ? v : v, tg, 'int'); }, function (s) { return '<span data-label="1">' + esc(s) + '</span>'; }, FACTS);
+  }
+  function firstSentence(t) { var m = String(t).match(/^.*?[.!?](\s|$)/); return m ? m[0].trim() : t; }
+  function svgTag(x, y, t) {
+    var solid = t === 'M' || t === 'S';
+    return '<g transform="translate(' + x + ',' + y + ')"><rect width="13" height="11" rx="2" fill="' + (solid ? 'currentColor' : 'none') + '" stroke="currentColor" stroke-width="1"' + (t === 'G' ? ' stroke-dasharray="2 1.5"' : '') + '/>' +
+      '<text x="6.5" y="8.4" text-anchor="middle" style="font:700 7.5px var(--font-body);fill:' + (solid ? 'var(--surface)' : 'currentColor') + '">' + t + '</text></g>';
+  }
+  function wrapWords(s, max) {
+    var words = String(s).split(/\s+/), lines = [], line = '';
+    words.forEach(function (w) { if ((line + ' ' + w).trim().length > max && line) { lines.push(line); line = w; } else line = (line + ' ' + w).trim(); });
+    if (line) lines.push(line);
+    return lines;
+  }
+  function stageWords(stage) {
+    var ds = DSTEP_OF_STAGE[stage] || [];
+    if (!ds.length) return '';
+    return ds.length === 1 ? 'design step ' + ds[0] : 'design steps ' + ds.join(', ');
+  }
+
+  // ------------------------------------------------------------ tooltip
+  var pop = document.createElement('div'); pop.className = 'pop'; pop.hidden = true; pop.setAttribute('role', 'status'); document.body.appendChild(pop);
+  var popFor = null;
+  function tipT(el) { return el && el.closest ? el.closest('[data-tip]') : null; }
+  function showPop(el, ev) {
+    popFor = el; pop.innerHTML = el.getAttribute('data-tip'); pop.hidden = false;
+    var r = el.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight;
+    var x = ev && ev.pageX ? ev.pageX + 12 : r.left + window.scrollX;
+    var y = ev && ev.pageY ? ev.pageY + 14 : r.bottom + window.scrollY + 6;
+    x = Math.max(8 + window.scrollX, Math.min(x, window.scrollX + document.documentElement.clientWidth - pw - 8));
+    if (y + ph > window.scrollY + window.innerHeight - 8) y = (ev && ev.pageY ? ev.pageY : r.top + window.scrollY) - ph - 10;
+    pop.style.left = x + 'px'; pop.style.top = y + 'px';
+  }
+  function hidePop() { pop.hidden = true; popFor = null; }
+  document.addEventListener('pointermove', function (e) { if (e.pointerType !== 'mouse') return; var t = tipT(e.target); if (t) showPop(t, e); else if (popFor) hidePop(); });
+  document.addEventListener('focusin', function (e) { var t = tipT(e.target); if (t) showPop(t); });
+  document.addEventListener('focusout', function () { hidePop(); });
+  document.addEventListener('pointerdown', function (e) { if (e.pointerType === 'mouse') return; var t = tipT(e.target); if (t) showPop(t, e); else hidePop(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') hidePop(); });
+
+  // ------------------------------------------------------------ theme (no storage)
+  var themes = ['auto', 'light', 'dark'], ti = 0;
+  $('#themeBtn').addEventListener('click', function () {
+    ti = (ti + 1) % 3;
+    if (themes[ti] === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', themes[ti]);
+    this.textContent = 'Theme: ' + themes[ti];
+  });
+
+  // ------------------------------------------------------------ state
+  var ST = {
+    policy: 'library',
+    cls: { kind: 'visible', need: 'cheap_wrong', held: 'similar', distractor: 'no' },
+    period: null,
+    sortBy: 'chance',
+    sel: null, stepIdx: null, selAuto: true,
+    open: {},
+    lim: null,
+    limOpen: {},
+    caseId: null,
+    fPeriod: 'last',
+    fWhich: MAP.funnels[0].id,
+    ensWhen: 'last',
+    ensTie: 0
+  };
+  var PATH = null, NPER = 1;
+
+  function classFor(pol) {
+    var c = Object.assign({}, ST.cls);
+    var fixed = POL[pol].fixed || {};
+    Object.keys(fixed).forEach(function (k) { c[k] = fixed[k]; });
+    return c;
+  }
+  function stocksAt(p) { return PATH.periods[Math.max(0, Math.min(NPER, p) - 1)].stocks; }
+
+  // ------------------------------------------------------------ the graph
+  function geom(mini) {
+    return mini ? { cw: LY.col_w, rh: 30, x0: LY.x0, y0: 76, nw: 62, nh: 18, head: [12, 22, 33] }
+      : { cw: LY.col_w, rh: LY.row_h, x0: LY.x0, y0: LY.y0, nw: LY.node_w, nh: LY.node_h, head: [17, 29, 43] };
+  }
+  function pos(g, sid) { var p = LY.states[sid]; return { c: p[0], r: p[1], x: g.x0 + p[0] * g.cw, y: g.y0 + p[1] * g.rh }; }
+  function roundPath(pts, rad) {
+    var clean = [pts[0]];
+    for (var i = 1; i < pts.length; i++) { var q = clean[clean.length - 1]; if (Math.abs(pts[i][0] - q[0]) > 0.01 || Math.abs(pts[i][1] - q[1]) > 0.01) clean.push(pts[i]); }
+    var d = 'M' + clean[0][0].toFixed(1) + ' ' + clean[0][1].toFixed(1);
+    for (var k = 1; k < clean.length - 1; k++) {
+      var p0 = clean[k - 1], p1 = clean[k], p2 = clean[k + 1];
+      var d1x = p1[0] - p0[0], d1y = p1[1] - p0[1], d2x = p2[0] - p1[0], d2y = p2[1] - p1[1];
+      var l1 = Math.hypot(d1x, d1y), l2 = Math.hypot(d2x, d2y);
+      var r = Math.min(rad, l1 / 2, l2 / 2);
+      var a = [p1[0] - d1x / l1 * r, p1[1] - d1y / l1 * r], b = [p1[0] + d2x / l2 * r, p1[1] + d2y / l2 * r];
+      d += 'L' + a[0].toFixed(1) + ' ' + a[1].toFixed(1) + 'Q' + p1[0].toFixed(1) + ' ' + p1[1].toFixed(1) + ' ' + b[0].toFixed(1) + ' ' + b[1].toFixed(1);
+    }
+    var z = clean[clean.length - 1];
+    return d + 'L' + z[0].toFixed(1) + ' ' + z[1].toFixed(1);
+  }
+  var PAIR = {};
+  (function () {
+    var groups = {};
+    MAP.branches.forEach(function (b) { var k = b.from + '>' + b.to; (groups[k] = groups[k] || []).push(b.id); });
+    Object.keys(groups).forEach(function (k) { var g = groups[k]; g.forEach(function (id, i) { PAIR[id] = i - (g.length - 1) / 2; }); });
+  })();
+  function edgePath(g, b, mini) {
+    var a = pos(g, b.from), z = pos(g, b.to), o = PAIR[b.id] * (mini ? 2 : 3.6);
+    var x1 = a.x + g.nw / 2, y1 = a.y + o, x2 = z.x - g.nw / 2 - 1, y2 = z.y + o;
+    if (z.c - a.c === 1) { var mx = (x1 + x2) / 2; return 'M' + x1 + ' ' + y1.toFixed(1) + 'C' + mx + ' ' + y1.toFixed(1) + ',' + mx + ' ' + y2.toFixed(1) + ',' + x2 + ' ' + y2.toFixed(1); }
+    var lane = LY.lanes[b.id] !== undefined ? LY.lanes[b.id] : z.r;
+    var yl = g.y0 + lane * g.rh + o, gap = g.cw - g.nw;
+    var xb1 = x1 + gap / 2, xb2 = x2 - gap / 2 + 1;
+    return roundPath([[x1, y1], [xb1, y1], [xb1, yl], [xb2, yl], [xb2, y2], [x2, y2]], mini ? 4 : 6);
+  }
+  var graphUid = 0;
+  /**
+   * opts: { mini, flow: {branch: share} or null, bv: branch values or null, stateFlow, on: Set of branches,
+   *         onStates: Set, cur: branch id, bands: {stage: 1|2}, start: state id }
+   */
+  function drawGraph(el, opts) {
+    var mini = !!opts.mini, g = geom(mini), uid = 'g' + (++graphUid);
+    var W = g.x0 + 15 * g.cw + g.nw / 2 + 14, H = g.y0 + 10.6 * g.rh + 12;
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="The map: states and branches of the library design">';
+    s += '<defs><marker id="' + uid + 'a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="' + (mini ? 6 : 8) + '" markerHeight="' + (mini ? 6 : 8) + '" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>' +
+      '<pattern id="' + uid + 'h1" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="7" stroke="currentColor" stroke-width="1" opacity=".22"/></pattern>' +
+      '<pattern id="' + uid + 'h2" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="4" stroke="currentColor" stroke-width="1.2" opacity=".32"/></pattern></defs>';
+    // stage bands and headers
+    var stageCols = {};
+    MAP.states.forEach(function (st) { var c = LY.states[st.id][0]; var r = stageCols[st.step] = stageCols[st.step] || [99, -1]; r[0] = Math.min(r[0], c); r[1] = Math.max(r[1], c); });
+    MAP.steps.forEach(function (stp, i) {
+      var r = stageCols[stp.id]; if (!r) return;
+      var xa = g.x0 + r[0] * g.cw - g.cw / 2 + 1, xb = g.x0 + r[1] * g.cw + g.cw / 2 - 1;
+      var band = opts.bands && opts.bands[stp.id];
+      if (band) s += '<rect x="' + xa + '" y="2" width="' + (xb - xa) + '" height="' + (H - 4) + '" fill="url(#' + uid + (band === 2 ? 'h2' : 'h1') + ')"/>';
+      if (i > 0) s += '<line class="g-sep" x1="' + xa + '" y1="4" x2="' + xa + '" y2="' + (H - 4) + '"/>';
+      var lines = wrapWords(stp.label, Math.max(12, Math.floor((xb - xa) / (mini ? 5.6 : 6.1))));
+      if (mini) lines = lines.slice(0, 2);
+      lines.forEach(function (ln, k) { s += '<text class="g-step" text-anchor="middle" x="' + ((xa + xb) / 2) + '" y="' + (g.head[0] + k * (mini ? 10 : 12)) + '"' + (mini ? ' style="font-size:8.6px"' : '') + '>' + esc(ln) + '</text>'; });
+      var dw = stageWords(stp.id);
+      if (dw) s += '<text class="g-dstep" data-label="1" text-anchor="middle" x="' + ((xa + xb) / 2) + '" y="' + (g.head[2] + (lines.length > 2 ? 10 : 0)) + '"' + (mini ? ' style="font-size:8px"' : '') + '>' + esc(dw) + '</text>';
+    });
+    // edges
+    var focus = !!(opts.on && opts.on.size);
+    var edges = '', hits = '';
+    MAP.branches.forEach(function (b) {
+      var d = edgePath(g, b, mini);
+      var f = opts.flow ? (opts.flow[b.id] || 0) : null;
+      var zero = f !== null && f < 1e-12;
+      var w = mini ? 1.1 : (f === null ? 1.3 : zero ? 1 : 0.7 + 10 * f);
+      var on = focus && opts.on.has(b.id);
+      if (on && mini) w = 3.2;
+      if (on && !mini) w = Math.max(w, 2.4);
+      var cls = 'g-edge' + (zero && !on ? ' zero' : '') + (on ? ' on' : '');
+      if (opts.cur === b.id) edges += '<path class="g-halo" d="' + d + '" stroke-width="' + (w + 7) + '"/>';
+      edges += '<path class="' + cls + '" d="' + d + '" stroke-width="' + w.toFixed(2) + '"' + (zero && !on ? '' : ' marker-end="url(#' + uid + 'a)"') + (opts.cur === b.id ? ' style="stroke-width:' + (w + 1.5).toFixed(2) + '"' : '') + '/>';
+      var tip = '<b>' + esc(b.label) + '</b><br>Stage: ' + esc(STEP[STATE[b.from].step].label);
+      if (opts.bv) {
+        var v = opts.bv[b.id];
+        tip += '<br>Chance at this branch: ' + num(v.chance, 'G', 'pct');
+        if (f !== null) tip += '<br>Share of this piece taking it: ' + num(f, 'G', 'pct');
+        if (b.tier) tip += '<br>Cost when taken: ' + num(v.cost, 'G', 'cost') + ' cheap-call equivalents, paid at ' + esc(TIER[b.tier].label);
+      }
+      if (opts.limTip && opts.limTip[b.id]) tip += '<br>Uses: ' + esc(opts.limTip[b.id].join(', '));
+      hits += '<path class="g-hit" d="' + d + '" data-tip="' + esc(tip) + '"/>';
+    });
+    s += '<g>' + edges + '</g><g>' + hits + '</g>';
+    // nodes
+    MAP.states.forEach(function (st) {
+      var p = pos(g, st.id), x = p.x - g.nw / 2, y = p.y - g.nh / 2;
+      var cls = 'g-node' + (st.outcome ? ' outcome' : '') + (st.outcome && !OUT[st.id].right ? ' wrongout' : '') + (opts.start === st.id ? ' start' : '') + (opts.onStates && opts.onStates.has(st.id) ? ' on' : '');
+      var tip = '<b>' + esc(st.label) + '</b><br>Stage: ' + esc(STEP[st.step].label) + (stageWords(st.step) ? ' (' + stageWords(st.step) + ')' : '');
+      if (opts.stateFlow) tip += '<br>Share of this piece passing here: ' + num(opts.stateFlow[st.id] || 0, 'G', 'pct');
+      if (opts.start === st.id) tip += '<br>This way of working starts here.';
+      s += '<g class="' + cls + '" data-tip="' + esc(tip) + '"><rect x="' + x + '" y="' + y + '" width="' + g.nw + '" height="' + g.nh + '" rx="' + (mini ? 4 : 6) + '"/>';
+      if (!mini) {
+        var lines = wrapWords(st.label, st.outcome ? 12 : 14).slice(0, 3);
+        var y0 = p.y - (lines.length - 1) * 5.3 + 3.2;
+        lines.forEach(function (ln, k) { s += '<text text-anchor="middle" x="' + p.x + '" y="' + (y0 + k * 10.6).toFixed(1) + '">' + esc(ln) + '</text>'; });
+      }
+      s += '</g>';
+    });
+    s += '</svg>';
+    el.innerHTML = s;
+    el.classList.toggle('focus', focus);
+  }
+
+  // ------------------------------------------------------------ section 1: pickers, graph, piece, tree, stepper
+  var ATTR = {}; MAP.attributes.forEach(function (a) { ATTR[a.id] = a; });
+  var SHORT_VAL = { cheap_ok: 'Right', cheap_wrong: 'Wrong', visible: 'Visible', latent: 'Latent', exact: 'The same problem', similar: 'One entry, adapted', composite: 'Several parts', nothing: 'Nothing', yes: 'Yes', no: 'No' };
+  function seg(name, items, curVal, disabled) {
+    return '<div class="seg" role="group" aria-label="' + esc(name) + '">' + items.map(function (it) {
+      return '<button type="button" data-v="' + esc(it[0]) + '" aria-pressed="' + (it[0] === curVal) + '"' + (disabled ? ' disabled' : '') + (it[2] ? ' data-tip="' + esc(it[2]) + '"' : '') + '>' + esc(it[1]) + '</button>';
+    }).join('') + '</div>';
+  }
+  function renderPickers() {
+    var lib = ST.policy === 'library';
+    var cls = classFor(ST.policy);
+    var h = '<div class="ctl"><span>Way of working</span>' + seg('Way of working', MAP.policies.map(function (p) { return [p.id, PNAME[p.id], TX.policy_says[p.id]]; }), ST.policy) + '</div>';
+    ['kind', 'need', 'held', 'distractor'].forEach(function (aid) {
+      var a = ATTR[aid];
+      var label = aid === 'need' ? 'The cheap model alone would be' : aid === 'held' ? 'What the library holds' : aid === 'distractor' ? 'A look-alike can be retrieved' : 'Kind of problem';
+      h += '<div class="ctl" data-attr="' + aid + '"><span>' + esc(label) + '</span>' + seg(label, a.values.map(function (v) { return [v.id, SHORT_VAL[v.id] || v.label, v.label]; }), cls[aid], !lib && (aid === 'held' || aid === 'distractor')) + '</div>';
+    });
+    h += '<div class="ctl" style="min-width:220px"><span>Library as it stands at period</span><div class="row"><input type="range" id="perPick" min="1" max="' + NPER + '" step="1" value="' + ST.period + '"' + (lib ? '' : ' disabled') + ' aria-label="Period"><b data-label="1" id="perPickV">' + ST.period + ' of ' + NPER + '</b></div></div>';
+    if (!lib) h += '<p class="note" style="flex-basis:100%">' + esc(PNAME[ST.policy]) + ' has no library, so for it the library holds nothing and no look-alike exists.</p>';
+    $('#pickers').innerHTML = h;
+  }
+  $('#pickers').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-v]'); if (!b || b.disabled) return;
+    var ctl = b.closest('.ctl');
+    if (ctl && ctl.dataset.attr) ST.cls[ctl.dataset.attr] = b.dataset.v; else ST.policy = b.dataset.v;
+    ST.selAuto = true; ST.open = {};
+    renderMap();
+  });
+  $('#pickers').addEventListener('input', function (e) {
+    if (e.target.id === 'perPick') { ST.period = +e.target.value; ST.selAuto = true; renderMap(); renderStockFlow(); }
+  });
+
+  var ROUTES = null, BV = null, EVC = null;
+  function renderMap() {
+    renderPickers();
+    var cls = classFor(ST.policy);
+    var stocks = ST.policy === 'library' ? stocksAt(ST.period) : {};
+    EVC = E.evaluateClass(MAP, cur, ST.policy, cls, stocks);
+    BV = C.branchValues(E, MAP, cur, ST.policy, cls, stocks);
+    ROUTES = E.routes(MAP, cur, ST.policy, { classValues: cls, stocks: stocks, sortBy: ST.sortBy });
+    if (ST.selAuto || !ROUTES.routes.some(function (r) { return r.id === ST.sel || r.id.indexOf(ST.sel + '>') === 0; })) {
+      var top = ROUTES.routes.slice().sort(function (a, b) { return b.chance - a.chance; })[0];
+      ST.sel = top ? top.id : null; ST.stepIdx = null; ST.selAuto = false; ST.userSel = false;
+    }
+    paintGraph();
+    renderPiece(cls, stocks);
+    renderTree();
+    renderStepper();
+  }
+  function selBranches() {
+    if (!ST.sel) return [];
+    var list = ST.sel.split('>').map(function (i) { return MAP.branches[+i].id; });
+    return ST.stepIdx === null ? list : list.slice(0, ST.stepIdx + 1);
+  }
+  function paintGraph() {
+    var lit = ST.userSel || ST.stepIdx !== null;
+    var bl = lit ? selBranches() : [];
+    var on = new Set(bl), onS = new Set([POL[ST.policy].start]);
+    bl.forEach(function (bid) { onS.add(BR[bid].from); onS.add(BR[bid].to); });
+    drawGraph($('#graph'), { flow: EVC.branchFlow, stateFlow: EVC.stateFlow, bv: BV, on: on, onStates: onS, cur: ST.stepIdx !== null ? bl[bl.length - 1] : null, start: POL[ST.policy].start });
+  }
+  function outcomeBar(outs) {
+    var parts = [['EQUAL', 'p-light'], ['ESCAPED_FOUND', 'p-hatch'], ['ESCAPED_SILENT', 'p-solid'], ['UNRESOLVED', 'p-dots']];
+    return '<div class="trk">' + parts.map(function (p) { var v = outs[p[0]] || 0; return v > 0 ? '<span class="' + p[1] + '" style="width:' + (100 * v).toFixed(3) + '%" data-tip="' + esc(OUT[p[0]].label + ': ' + num(v, 'G', 'pct')) + '"></span>' : ''; }).join('') + '</div>';
+  }
+  function tierBar(byTier, max) {
+    var parts = [['cheap', 'p-light'], ['opus', 'p-cross'], ['fable', 'p-solid']];
+    return '<div class="trk">' + parts.map(function (p) { var v = byTier[p[0]] || 0; return v > 0 ? '<span class="' + p[1] + '" style="width:' + (100 * v / max).toFixed(3) + '%" data-tip="' + esc(TIER[p[0]].label + ': ' + num(v, 'G', 'cost')) + '"></span>' : ''; }).join('') + '</div>';
+  }
+  var OUT_LEGEND = '<div class="legend-row"><span><i class="sw p-light"></i>Accepted and right</span><span><i class="sw p-hatch"></i>Escaped, found later</span><span><i class="sw p-solid"></i>Escaped, never found</span><span><i class="sw p-dots"></i>Caught, never solved</span></div>';
+  var TIER_LEGEND = '<div class="legend-row"><span><i class="sw p-light"></i>Cheap model</span><span><i class="sw p-cross"></i>Opus</span><span><i class="sw p-solid"></i>Fable</span></div>';
+  function renderPiece(cls, stocks) {
+    var o = EVC.outcomes;
+    var h = '<div class="panel stack"><h3>This piece of work</h3>';
+    h += '<p class="small">Share of all work like this' + (ST.policy === 'library' ? ' at period <b data-label="1">' + ST.period + '</b>' : '') + ': ' + num(EVC.chance, 'G', 'pct') + '.</p>';
+    h += '<div class="bars"><div class="bar"><span class="nm">How it ends<small>' + esc(PNAME[ST.policy]) + '</small></span>' + outcomeBar(o) + '<span class="val">' + num(EVC.wrong, 'G', 'pct') + '<br><small class="muted">wrong</small></span></div>';
+    h += '<div class="bar"><span class="nm">Cost<small>cheap-call equivalents</small></span>' + tierBar(EVC.costByTier, Math.max(EVC.cost, 1e-9)) + '<span class="val">' + num(EVC.cost, 'G', 'cost') + '</span></div></div>' + OUT_LEGEND + TIER_LEGEND;
+    h += '</div>';
+    // the same piece under the three ways of working
+    h += '<div class="panel stack"><h4>The same piece, three ways</h4><table class="ptable"><tr><th>Way of working</th><th>Wrong rate ' + tagEl('G') + '</th><th>Cost ' + tagEl('G') + '</th></tr>';
+    MAP.policies.forEach(function (p) {
+      var c2 = classFor(p.id);
+      var ev = E.evaluateClass(MAP, cur, p.id, c2, p.id === 'library' ? stocks : {});
+      h += '<tr' + (p.id === ST.policy ? ' style="font-weight:700"' : '') + '><td>' + esc(PNAME[p.id]) + '' + '</td><td data-tagged="G">' + esc(fmt(ev.wrong, 'pct')) + '</td><td data-tagged="G">' + esc(fmt(ev.cost, 'cost')) + '</td></tr>';
+    });
+    h += '</table></div>';
+    $('#piece').innerHTML = h;
+  }
+
+  function buildTrie(routes) {
+    var root = { kids: {}, order: [], chance: 0, carried: 0, key: '' };
+    routes.forEach(function (r) {
+      var node = root; node.chance += r.chance; node.carried += r.carried;
+      r.branches.forEach(function (bid, i) {
+        var bi = MAP.branches.indexOf(BR[bid]);
+        var ch = node.kids[bi];
+        if (!ch) { ch = node.kids[bi] = { bid: bid, kids: {}, order: [], chance: 0, carried: 0, key: (node.key ? node.key + '>' : '') + bi }; node.order.push(bi); }
+        ch.chance += r.chance; ch.carried += r.carried; node = ch;
+      });
+      node.route = r;
+    });
+    return root;
+  }
+  function kidsOf(n) { var by = ST.sortBy; return n.order.map(function (k) { return n.kids[k]; }).sort(function (a, b) { return b[by] - a[by]; }); }
+  function chainFrom(n) { var chain = [n]; while (!n.route && n.order.length === 1) { n = n.kids[n.order[0]]; chain.push(n); } return chain; }
+  function renderTree() {
+    var root = buildTrie(ROUTES.routes);
+    var total = root.chance || 1;
+    var head = '<div class="row small" data-tagged="G" style="justify-content:space-between;padding:2px 6px 6px"><span><b data-label="1">' + ROUTES.count + '</b> routes for this piece. Shares are of this piece; costs in cheap-call equivalents. ' + tagEl('G') + '</span><span class="muted">' + (ST.sortBy === 'chance' ? 'share' : 'share × cost') + '</span></div>';
+    function row(n, depth) {
+      var chain = chainFrom(n), end = chain[chain.length - 1];
+      var kids = end.route ? [] : kidsOf(end);
+      var open = ST.open[end.key] !== undefined ? ST.open[end.key] : false;
+      var selected = ST.sel === end.key;
+      var inSel = ST.sel && (ST.sel === end.key || ST.sel.indexOf(end.key + '>') === 0);
+      var label = chain.map(function (c) { return esc(BR[c.bid].label); }).join(' <span class="muted">→</span> ');
+      var val = ST.sortBy === 'chance' ? fmt(end.chance, 'pct') : fmt(end.carried, 'cost');
+      var h = '<li><button type="button" class="trow' + (end.route ? ' leaf' : '') + '" data-key="' + end.key + '"' + (selected ? ' aria-current="true"' : '') + '>' +
+        '<span class="tw">' + (end.route ? '•' : open ? '▾' : '▸') + '</span><span class="tl">' + label;
+      if (end.route) h += '<br><b><i class="ocg ' + end.route.outcome + '"></i>' + esc(OUT[end.route.outcome].label) + '</b> <small>cost ' + esc(fmt(end.route.cost, 'cost')) + '</small>';
+      else h += ' <small>(' + kids.length + ' ways on)</small>';
+      h += '</span><span class="tv">' + esc(val) + '</span></button>';
+      if (!end.route && (open || inSel)) {
+        var big = kids.filter(function (k) { return k.chance / total >= 0.002; }), small = kids.filter(function (k) { return k.chance / total < 0.002; });
+        h += '<ul>' + big.map(function (k) { return row(k, depth + 1); }).join('');
+        if (small.length) {
+          var sk = end.key + '#small', so = !!ST.open[sk], sum = small.reduce(function (a, k) { return a + k.chance; }, 0);
+          h += '<li><button type="button" class="trow" data-small="' + sk + '"><span class="tw">' + (so ? '▾' : '▸') + '</span><span class="tl muted">' + small.length + ' rarer ways on, together</span><span class="tv">' + esc(fmt(sum, 'pct')) + '</span></button>' + (so ? '<ul>' + small.map(function (k) { return row(k, depth + 1); }).join('') + '</ul>' : '') + '</li>';
+        }
+        h += '</ul>';
+      }
+      return h + '</li>';
+    }
+    $('#tree').innerHTML = head + '<ul>' + kidsOf(root).map(function (k) { return row(k, 0); }).join('') + '</ul>';
+    $('#treeTools').innerHTML = '<span class="small muted">Order the tree by</span>' + seg('Order', [['chance', 'Share of this piece'], ['carried', 'Cost it carries (share × cost)']], ST.sortBy);
+  }
+  $('#treeTools').addEventListener('click', function (e) { var b = e.target.closest('button[data-v]'); if (!b) return; ST.sortBy = b.dataset.v; renderTree(); });
+  $('#tree').addEventListener('click', function (e) {
+    var b = e.target.closest('button.trow'); if (!b) return;
+    if (b.dataset.small) { ST.open[b.dataset.small] = !ST.open[b.dataset.small]; renderTree(); return; }
+    var key = b.dataset.key;
+    var isLeaf = b.classList.contains('leaf');
+    if (!isLeaf) { var was = ST.open[key]; ST.open[key] = was === undefined ? !(b.querySelector('.tw').textContent === '▾') : !was; }
+    ST.sel = key; ST.stepIdx = null; ST.userSel = true;
+    paintGraph(); renderTree(); renderStepper();
+  });
+
+  function renderStepper() {
+    var el = $('#stepper');
+    if (!ST.sel) { el.innerHTML = '<span class="lab">Route</span><p>No route.</p>'; return; }
+    var all = ST.sel.split('>').map(function (i) { return MAP.branches[+i].id; });
+    var route = ROUTES.routes.filter(function (r) { return r.id === ST.sel; })[0];
+    var share = 1; all.forEach(function (bid) { share *= BV[bid].chance; });
+    var h = '<span class="lab">' + (route ? 'Selected route' : 'Selected part of a route') + '</span>';
+    h += '<b>' + (route ? esc(OUT[route.outcome].label) + ': ' : '') + '<span data-label="1">' + esc(all.length) + ' branches</span></b>';
+    h += '<p class="small">Share of this piece on it: ' + num(route ? route.chance : share, 'G', 'pct') + (route ? '. Cost along it: ' + num(route.cost, 'G', 'cost') + ' cheap-call equivalents.' : '.') + '</p>';
+    var k = ST.stepIdx;
+    if (k !== null) {
+      var bid = all[k], b = BR[bid], so = 1;
+      for (var i = 0; i <= k; i++) so *= BV[all[i]].chance;
+      h += '<div style="border-top:1px dashed var(--line-2);padding-top:8px"><span class="lab" data-label="1">Branch ' + (k + 1) + ' of ' + all.length + ' &middot; ' + esc(STEP[STATE[b.from].step].label) + '</span>' +
+        '<p><b>' + esc(b.label) + '.</b> From <i>' + esc(STATE[b.from].label.toLowerCase()) + '</i> to <i>' + esc(STATE[b.to].label.toLowerCase()) + '</i>.</p>' +
+        '<p class="small">Chance at this branch: ' + num(BV[bid].chance, 'G', 'pct') + '. ' + (b.tier ? 'Cost when taken: ' + num(BV[bid].cost, 'G', 'cost') + ', paid at ' + esc(TIER[b.tier].label) + '. ' : 'No cost. ') + 'Share of this piece still on the route: ' + num(so, 'G', 'pct') + '.</p></div>';
+    }
+    h += '<div class="row"><button class="btn" type="button" data-step="start">Step through from the start</button><button class="btn" type="button" data-step="back"' + (k === null || k === 0 ? ' disabled' : '') + '>Back</button><button class="btn primary" type="button" data-step="next"' + (k !== null && k >= all.length - 1 ? ' disabled' : '') + '>Next</button><button class="btn" type="button" data-step="all"' + (k === null && ST.userSel ? ' disabled' : '') + '>Light up the whole route</button></div>';
+    el.innerHTML = h;
+  }
+  $('#stepper').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-step]'); if (!b || b.disabled) return;
+    var n = ST.sel.split('>').length, a = b.dataset.step;
+    ST.userSel = true;
+    if (a === 'start') ST.stepIdx = 0;
+    else if (a === 'back') ST.stepIdx = Math.max(0, ST.stepIdx - 1);
+    else if (a === 'next') ST.stepIdx = ST.stepIdx === null ? 0 : Math.min(n - 1, ST.stepIdx + 1);
+    else ST.stepIdx = null;
+    paintGraph(); renderStepper();
+  });
+
+  function renderGraphLegend() {
+    function ln(w, dash) { return '<svg width="34" height="12" aria-hidden="true"><line x1="1" y1="6" x2="33" y2="6" stroke="currentColor" stroke-width="' + w + '"' + (dash ? ' stroke-dasharray="2 4" opacity=".6"' : '') + '/></svg>'; }
+    function box(sw, dash) { return '<svg width="26" height="16" aria-hidden="true"><rect x="2" y="2" width="22" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="' + sw + '"' + (dash ? ' stroke-dasharray="4 2.5"' : '') + '/></svg>'; }
+    $('#graphLegend').innerHTML = '<span class="muted">' + esc(TX.sections.map.graph_note) + '</span><span>' + ln(10.7) + 'all of this piece ' + tagEl('G') + '</span><span>' + ln(1, true) + 'none of it</span><span>' + box(2.4) + 'start</span><span>' + box(2.6) + 'accepted and right</span><span>' + box(2.6, true) + 'a wrong outcome</span>' +
+      '<details class="inline"><summary>How the stages match the ten steps</summary><span data-label="1">' + esc(TX.design_steps_note) + '</span></details>';
+  }
+
+  // ------------------------------------------------------------ section 2: the funnel
+  // Everything drawn comes from PathwayCore.funnelView (the engine's funnel and reference settings)
+  // and PathwayCore.funnelCounts (limitations and cases under each bar). data-v holds the exact value.
+  var FV = null;
+  function renderFunnelControls() {
+    var F = TX.sections.funnel;
+    $('#funnelControls').innerHTML = '<div class="ctl"><span>Which work</span>' + seg('Which work', [[MAP.funnels[0].id, F.which_cheap], [MAP.funnels[1] ? MAP.funnels[1].id : MAP.funnels[0].id, F.which_all]], ST.fWhich) + '</div>' +
+      '<div class="ctl"><span>Period</span>' + seg('Period', [['first', 'First'], ['last', 'Last']], ST.fPeriod) + '</div>' +
+      '<span class="note" id="funnelAt"></span>';
+  }
+  $('#funnelControls').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-v]'); if (!b) return;
+    if (b.dataset.v === 'first' || b.dataset.v === 'last') ST.fPeriod = b.dataset.v; else ST.fWhich = b.dataset.v;
+    renderFunnelControls(); renderFunnel();
+  });
+  function funnelSvg(v) {
+    var bars = v.stages.filter(function (s) { return s.bar; }), extra = v.stages.filter(function (s) { return !s.bar; });
+    var ncol = bars.length + 1, W = 640, L = 8, cw = (W - L - 4) / ncol, T = 34, BH = 170, base = T + BH;
+    var Y = function (x) { return base - Math.max(0, Math.min(100, x)) / 100 * BH; };
+    var s = '<svg viewBox="0 0 ' + W + ' 330" role="img" aria-label="' + esc(v.label) + '">';
+    s += '<text class="lbl" x="' + L + '" y="12">' + esc(v.label) + '</text>' + svgTag(W - 20, 2, 'G');
+    s += '<line x1="' + L + '" x2="' + (W - 4) + '" y1="' + base + '" y2="' + base + '" stroke="currentColor" stroke-width="1"/>';
+    bars.forEach(function (st, i) {
+      var x = L + i * cw, bw = cw - 18, bx = x + 9, cx = x + cw / 2;
+      var fc = FCOUNT.stages[v.stages.indexOf(st)];
+      s += '<g class="fbar" role="button" tabindex="0" data-fi="' + v.stages.indexOf(st) + '" data-stage="' + st.id + '" data-v="' + st.value + '" data-u="' + st.unfavourable + '" data-f="' + st.favourable + '" data-nlims="' + fc.lims.length + '" data-ncases="' + fc.cases.length + '" data-tip="' + esc('<b>' + esc(st.label) + '</b><br>At these settings: ' + num(st.value, 'G', 'funnel') + '<br>Unfavourable setting: ' + num(st.unfavourable, 'G', 'funnel') + '<br>Favourable setting: ' + num(st.favourable, 'G', 'funnel') + '<br>Tap to open its limitations.') + '">';
+      s += '<rect class="fhit" x="' + x + '" y="' + (T - 24) + '" width="' + cw + '" height="' + (330 - T + 20) + '"/>';
+      s += '<rect x="' + bx + '" y="' + T + '" width="' + bw + '" height="' + BH + '" fill="none" stroke="currentColor" stroke-width="1" opacity=".22"/>';
+      var hv = base - Y(st.value);
+      s += '<rect x="' + bx + '" y="' + (base - Math.max(hv, 1)).toFixed(1) + '" width="' + bw + '" height="' + Math.max(hv, 1).toFixed(1) + '" fill="currentColor"/>';
+      if (i > 0) { var pv = bars[i - 1].value; s += '<path d="M' + (bx - 18) + ' ' + Y(pv).toFixed(1) + 'L' + bx + ' ' + Y(st.value).toFixed(1) + '" stroke="currentColor" stroke-width="1" opacity=".35" fill="none"/>'; }
+      s += '<line class="fref" x1="' + (bx - 3) + '" x2="' + (bx + bw + 3) + '" y1="' + Y(st.unfavourable).toFixed(1) + '" y2="' + Y(st.unfavourable).toFixed(1) + '" stroke-dasharray="2 2"/>';
+      s += '<line class="fref" x1="' + (bx - 3) + '" x2="' + (bx + bw + 3) + '" y1="' + Y(st.favourable).toFixed(1) + '" y2="' + Y(st.favourable).toFixed(1) + '" stroke-dasharray="7 3"/>';
+      s += '<text class="fval" x="' + cx + '" y="' + (Math.min(Y(st.value), base - 1) - 5).toFixed(1) + '" text-anchor="middle">' + esc(fmt(st.value, 'funnel')) + '</text>';
+      wrapWords(st.label, 13).slice(0, 4).forEach(function (ln, k) { s += '<text class="flab" x="' + cx + '" y="' + (base + 16 + k * 12) + '" text-anchor="middle">' + esc(ln) + '</text>'; });
+      s += funnelUnder(fc, cx, base + 72);
+      s += '</g>';
+    });
+    var ax = L + bars.length * cw, acx = ax + cw / 2;
+    s += '<g class="fbar after" role="button" tabindex="0" data-fi="after" data-nlims="' + FCOUNT.after.lims.length + '" data-ncases="' + FCOUNT.after.cases.length + '"><rect class="fhit" x="' + ax + '" y="' + (T - 24) + '" width="' + cw + '" height="' + (330 - T + 20) + '"/>' +
+      '<rect x="' + (ax + 9) + '" y="' + T + '" width="' + (cw - 18) + '" height="' + BH + '" fill="none" stroke="currentColor" stroke-dasharray="3 3" opacity=".5"/>';
+    wrapWords(TX.sections.funnel.after_label, 11).forEach(function (ln, k) { s += '<text class="flab" x="' + acx + '" y="' + (base + 16 + k * 12) + '" text-anchor="middle">' + esc(ln) + '</text>'; });
+    s += funnelUnder(FCOUNT.after, acx, base + 72) + '</g>';
+    extra.forEach(function (st, k) {
+      s += '<g data-stage="' + st.id + '" data-v="' + st.value + '" data-u="' + st.unfavourable + '" data-f="' + st.favourable + '"><text class="fval" x="' + acx + '" y="' + (T + 30 + k * 40) + '" text-anchor="middle">' + esc(fmt(st.value, 'funnel')) + '</text>';
+      wrapWords(st.label, 12).forEach(function (ln, j) { s += '<text class="flab" x="' + acx + '" y="' + (T + 44 + k * 40 + j * 11) + '" text-anchor="middle">' + esc(ln) + '</text>'; });
+      s += '</g>';
+    });
+    return s + '</svg>';
+  }
+  function funnelUnder(fc, cx, y) {
+    var s = '';
+    var words = fc.steps.length ? (fc.steps.length === 1 ? 'step ' : 'steps ') + fc.steps.join(', ') : TX.sections.funnel.screen_word;
+    s += '<text class="fstep" x="' + cx + '" y="' + y + '" text-anchor="middle" data-label="1">' + esc(words) + '</text>';
+    if (!fc.steps.length) return s;
+    s += '<text class="fcount" x="' + cx + '" y="' + (y + 15) + '" text-anchor="middle"><tspan font-weight="700">' + fc.lims.length + '</tspan> limitations</text>';
+    s += '<text class="fcount" x="' + cx + '" y="' + (y + 29) + '" text-anchor="middle"><tspan font-weight="700">' + fc.cases.length + '</tspan> cases broke</text>';
+    s += svgTag(cx - 6.5, y + 34, 'M');
+    return s;
+  }
+  function renderFunnel() {
+    FV = C.funnelView(E, MAP, TABLE, cur, { period: ST.fPeriod, which: ST.fWhich, refs: REFS });
+    $('#funnelChart').innerHTML = '<div data-tagged="G">' + funnelSvg(FV) + '</div>';
+    var at = $('#funnelAt');
+    if (at) at.innerHTML = 'Period <b data-label="1">' + (FV.period + 1) + '</b> of <b data-label="1">' + NPER + '</b>, at the settings in “Run it”.';
+  }
+  function renderFunnelLegend() {
+    var F = TX.sections.funnel;
+    function ln(dash) { return '<svg width="30" height="10" aria-hidden="true"><line x1="1" y1="5" x2="29" y2="5" stroke="currentColor" stroke-width="1.5" stroke-dasharray="' + dash + '" opacity=".6"/></svg>'; }
+    $('#funnelLegend').innerHTML = '<span>' + ln('2 2') + 'unfavourable setting</span><span>' + ln('7 3') + 'favourable setting</span><span class="muted">' + esc(F.under) + '</span>' +
+      '<details class="inline"><summary>How bars match the design steps</summary><span data-label="1">' + esc(F.match_note) + '</span></details>';
+  }
+  function openFromFunnel(fi) {
+    var group = fi === 'after' ? FCOUNT.after : FCOUNT.stages[+fi];
+    var steps = group.steps.length ? group.steps : [6];
+    ST.limOpen = {}; ST.lim = null;
+    LIMS.items.forEach(function (it) { if (steps.indexOf(it.main_step) >= 0) ST.limOpen[it.id] = true; });
+    renderLims();
+    var el = document.getElementById('lstep-' + steps[0]);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  $('#funnelChart').addEventListener('click', function (e) { var g = e.target.closest('[data-fi]'); if (g) openFromFunnel(g.getAttribute('data-fi')); });
+  $('#funnelChart').addEventListener('keydown', function (e) { var g = e.target.closest && e.target.closest('[data-fi]'); if (g && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openFromFunnel(g.getAttribute('data-fi')); } });
+
+  // ------------------------------------------------------------ section 2: cases
+  function cell(st) { return '<span class="cell s-' + st + '" role="img" aria-label="' + STATUS_WORD[st] + '"></span>'; }
+  function renderCellLegend() {
+    $('#cellLegend').innerHTML = C.STATUSES.map(function (s) { return '<span>' + cell(s) + STATUS_WORD[s] + '</span>'; }).join('') +
+      '<span class="muted">' + rich(TX.sections.cases.ks_note) + '</span>';
+  }
+  var LIMS_BY_CASE = {};
+  LIMS.items.forEach(function (it) { it.real.case_ids.forEach(function (cid) { var k = C.caseId(cid); (LIMS_BY_CASE[k] = LIMS_BY_CASE[k] || []).push(it.id); }); });
+  function renderGrid() {
+    var steps = LIMS.steps;
+    var h = '<div class="cg-row" style="position:sticky;top:0;background:var(--surface);z-index:1"><span class="cl muted small">Case · design step →</span>' + Object.keys(steps).map(function (k) { return '<span class="cg-head" data-label="1" data-tip="' + esc('Step ' + k + ': ' + steps[k]) + '">' + k + '</span>'; }).join('') + '</div>';
+    CASES.families.forEach(function (f) {
+      h += '<div class="cg-fam" data-tip="' + esc(f.covers) + '">' + esc(f.name) + '</div>';
+      CASES.cases.filter(function (c) { return c.family === f.id; }).forEach(function (c) {
+        var sts = {}; c.steps.forEach(function (s) { sts[s.step] = s.status; });
+        h += '<div class="cg-row case" role="button" tabindex="0" data-case="' + c.id + '"' + (ST.caseId === c.id ? ' aria-current="true"' : '') + '><span class="cl" data-label="1" data-tip="' + esc(c.title) + '">' + (CASES.cases.filter(function (x) { return x.family === c.family; }).indexOf(c) + 1) + '</span>' +
+          Object.keys(steps).map(function (k) { return cell(sts[k]); }).join('') + '</div>';
+      });
+    });
+    var T = C.statusTotals(CASES.cases);
+    h += '<div class="cg-tot" data-tagged="M" id="gridTotals"><div class="small" style="margin-bottom:4px"><b>Totals per step</b> ' + tagEl('M') + ' <span class="muted">(cells of the ' + CNT.cases + ' cases)</span></div>' +
+      C.STATUSES.map(function (s) { return '<div class="cg-row" data-status="' + s + '"><span class="cl">' + cell(s) + ' ' + STATUS_WORD[s] + '</span>' + T[s].map(function (v) { return '<span class="num">' + v + '</span>'; }).join('') + '</div>'; }).join('') + '</div>';
+    $('#cgrid').innerHTML = h;
+  }
+  function selectCase(id, scroll) {
+    ST.caseId = id;
+    $$('#cgrid .cg-row.case').forEach(function (r) { r.setAttribute('aria-current', r.dataset.case === id ? 'true' : 'false'); });
+    renderCase();
+    if (scroll) document.getElementById('cases').scrollIntoView({ behavior: 'smooth' });
+  }
+  $('#cgrid').addEventListener('click', function (e) {
+    var r = e.target.closest('[data-case]'); if (!r) return;
+    selectCase(r.dataset.case);
+    if (window.innerWidth <= 1000) $('#casebox').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  $('#cgrid').addEventListener('keydown', function (e) { if ((e.key === 'Enter' || e.key === ' ') && e.target.dataset.case) { e.preventDefault(); selectCase(e.target.dataset.case); } });
+  function renderCase() {
+    if (!ST.caseId) { $('#casebox').innerHTML = '<p class="muted">' + esc(TX.sections.cases.pick) + '</p>'; return; }
+    var c = CASE[ST.caseId], f = FAM[c.family];
+    var h = '<div data-tagged="M"><span class="eyebrow">' + esc(f.name) + '</span> <span class="idchip" data-label="1">' + esc(c.id) + '</span><h3>' + esc(c.title) + '</h3></div>';
+    h += '<div data-tagged="M" class="stack"><p>' + esc(c.story) + '</p><p class="small muted">When: ' + esc(c.when) + '. Source: <span class="mono">' + esc(c.source) + '</span></p>';
+    h += '<div><h4 style="margin-bottom:6px">The entry, as it would have been written</h4><blockquote>' + esc(c.entry) + '</blockquote></div>';
+    h += '<div><h4 style="margin-bottom:6px">Step by step</h4><ul class="steplist">' + c.steps.map(function (s) {
+      return '<li>' + cell(s.status) + '<div><span class="st" data-label="1">Step ' + s.step + ' · ' + esc(STATUS_WORD[s.status]) + '</span>' + (s.ks ? '<span class="kmark" data-tip="' + esc('The walk note for this step names the owner’s earlier knowledge-store design. That design is not the library mapped here.') + '">judged with the earlier design</span>' : '') + '<br><b>' + esc(LIMS.steps[s.step]) + '.</b> ' + esc(s.note) + '</div></li>';
+    }).join('') + '</ul></div>';
+    if (c.worked) h += '<p><b>Saving the walk saw or estimated.</b> ' + esc(c.worked) + '</p>';
+    var lims = LIMS_BY_CASE[c.id] || [];
+    if (lims.length) h += '<p class="small"><b>Limitations this case showed:</b> ' + lims.map(function (id) { return '<button type="button" class="linkbtn" data-golim="' + id + '">' + esc(LIM[id].title) + '</button>'; }).join('; ') + '</p>';
+    h += '<p class="small muted">' + esc(TX.sections.cases.numbers_tag) + ' ' + tagEl('M') + ' ' + tagEl('G') + '</p></div>';
+    $('#casebox').innerHTML = h;
+  }
+  document.addEventListener('click', function (e) {
+    var g = e.target.closest('[data-golim]'); if (g) { selectLim(g.dataset.golim, true); return; }
+    var c = e.target.closest('[data-gocase]'); if (c) { selectCase(c.dataset.gocase, true); }
+  });
+
+  // ------------------------------------------------------------ section 4: limitations, by step
+  // Weights come from PathwayEngine.weights() once at load (W8). data-w holds the exact score.
+  var BRANCH_LABEL = function (bid) { return BR[bid].label + ' (' + STEP[STATE[BR[bid].from].step].label + ')'; };
+  function pchip(id) {
+    var row = ROWS[id], m = PMETA[id], sd = row.side === 'library' ? 'Library unknown; good end ' + row.good_end + '.' : 'Not a library unknown; stays at best in the weight.';
+    return '<span class="pchip' + (row.side === 'library' ? ' lib' : '') + '" data-tip="' + esc('<b>' + esc(pname(id)) + '</b><br>' + esc(m.meaning) + '<br>Range ' + num(row.low, row.tag) + ' to ' + num(row.high, row.tag) + '<br>' + esc(sd) + '<br><span class="muted">Name in the files: ' + id + '</span>') + '">' + esc(pname(id)) + tagEl(row.tag) + '</span>';
+  }
+  function famNames(list) { return list.map(function (cn) { return LIM_FAM_NAME[cn.family] || cn.family_name; }).join(', '); }
+  function limBranches(it) {
+    var set = {}, tip = {};
+    (it.params || []).forEach(function (p) { REACH[p].branches.forEach(function (b) { set[b] = 1; (tip[b] = tip[b] || []).push(pname(p)); }); });
+    return { list: Object.keys(set), tip: tip };
+  }
+  function wbar(score) {
+    var w = (100 * Math.abs(score) / WMAX).toFixed(1);
+    return '<span class="wb" aria-hidden="true"><i class="' + (score < 0 ? 'neg p-hatch' : 'pos p-solid') + '" style="width:' + w + '%"></i></span>';
+  }
+  function wcell(score, attrs) {
+    return '<span class="wv" data-tagged="G"' + (attrs || '') + ' data-w="' + score + '">' + wbar(score) + '<b>' + esc(fmt(score, 'weight')) + '</b></span>';
+  }
+  function renderRanks() {
+    var S = TX.sections.lims;
+    var top = W8.ranking.slice(0, 5).map(function (r) { return '<button type="button" class="rkrow" data-golim="' + r.id + '"><span class="rt">' + esc(LIM[r.id].title) + '</span>' + wcell(r.score) + '</button>'; }).join('');
+    var steps = W8.stepRanking.slice(0, 5).map(function (r) { return '<button type="button" class="rkrow" data-gostep="' + r.step + '"><span class="rt"><span data-label="1">Step ' + r.step + '</span> · ' + esc(LIMS.steps[r.step].split(':')[0]) + '</span>' + wcell(r.score, ' data-wstep="' + r.step + '"') + '</button>'; }).join('');
+    var seq = '<details class="inline"><summary>' + esc(S.sequence_title) + '</summary><p class="small muted">' + esc(S.sequence_note) + '</p><div class="seq" data-tagged="G">' + W8.sequence.map(function (q, i) {
+      return '<span data-label="1">' + (i + 1) + '. step ' + q.step + '</span><span>' + esc(fmt(q.cumulative.score, 'weight')) + '</span>';
+    }).join('') + '</div></details>';
+    $('#limRanks').innerHTML = '<div class="rkbox"><h3>' + esc(S.rank_single) + ' ' + tagEl('G') + '</h3>' + top + '</div><div class="rkbox"><h3>' + esc(S.rank_steps) + ' ' + tagEl('G') + '</h3>' + steps + seq + '</div>';
+  }
+  function limDetail(it) {
+    var w = WLIM[it.id], br = limBranches(it), S = TX.sections.lims;
+    var h = '<div class="more"><p>' + esc(it.what) + '</p>' + (it.note ? '<p class="muted" data-tagged="M">' + esc(it.note) + '</p>' : '');
+    if (it.real.examples && it.real.examples.length) h += '<div><b>Examples</b><ul class="ex">' + it.real.examples.map(function (x) { var k2 = C.caseId(x.case); return '<li data-tagged="M"><button type="button" class="linkbtn" data-gocase="' + k2 + '" data-label="1">' + esc(CASE[k2] ? CASE[k2].title : k2) + '</button>: <span class="mono">' + esc(x.evidence) + '</span></li>'; }).join('') + '</ul></div>';
+    if (it.contradicted.length) h += '<div><b>Where real cases went the other way</b><ul class="ex">' + it.contradicted.map(function (cn) { return '<li data-tagged="M">' + esc(LIM_FAM_NAME[cn.family] || cn.family_name) + ': ' + esc(cn.reason) + '</li>'; }).join('') + '</ul></div>';
+    if (it.shown && it.shown !== 'yes') h += '<p><b>' + esc(it.shown === 'no' ? S.shown_no : S.shown_partly) + '</b> ' + esc(it.not_shown || '') + '</p>';
+    h += '<p><b>Unknowns:</b> ' + (it.params.length ? it.params.map(pchip).join(' ') : 'none in the model.') + '</p>';
+    if (it.params.length) {
+      if (!w.moved.length) h += '<p class="small">' + esc(S.zero) + '</p>';
+      else h += '<table class="ptable wtab" data-tagged="G"><tr><th>When its library unknowns move ' + tagEl('G') + '</th><th>before</th><th>after</th></tr>' +
+        [['cost_vs_ladder', 'Cost against the ladder'], ['wrong_vs_ladder', 'Wrong rate against the ladder'], ['cost_vs_top', 'Cost against the strong model'], ['wrong_vs_top', 'Wrong rate against the strong model']].map(function (r) {
+          return '<tr><td>' + esc(r[1]) + '</td><td>' + esc(fmt(W8.base.ratios[r[0]], 'ratio')) + '</td><td>' + esc(fmt(w.values.ratios[r[0]], 'ratio')) + '</td></tr>';
+        }).join('') + '<tr><td>Funnel’s last number, of a hundred</td><td>' + esc(fmt(W8.base.funnel_end, 'funnel')) + '</td><td>' + esc(fmt(w.values.funnel_end, 'funnel')) + '</td></tr></table>';
+    }
+    h += '<p class="small"><b>Steps it touches:</b> <span data-label="1">' + it.steps.join(', ') + '</span>. <b>On the map:</b> ' + (br.list.length ? '<span data-label="1">' + br.list.length + '</span> branches use its unknowns.' : 'no branch uses its unknowns.') + classNote(it) + '</p>';
+    if (it.real.case_ids.length) h += '<p class="small"><b>Real cases:</b> ' + it.real.case_ids.map(function (cid) { var k2 = C.caseId(cid); return '<button type="button" class="linkbtn" data-gocase="' + k2 + '" data-label="1">' + k2 + '</button>'; }).join(', ') + '</p>';
+    if (ST.lim === it.id && br.list.length) h += '<div class="graph mini chart-scroll" id="mini-' + it.id + '"></div><p class="small muted">' + esc(S.map_note) + '</p>';
+    return h + '<p class="small muted">Name in the files: <span class="mono" data-label="1">' + it.id + '</span></p></div>';
+  }
+  function renderLims() {
+    var groups = {};
+    LIMS.items.forEach(function (it) { (groups[it.main_step] = groups[it.main_step] || []).push(it); });
+    var h = '<div class="lhead" aria-hidden="true"><span>Limitation</span><span>cases ' + tagEl('M') + '</span><span>families ' + tagEl('M') + '</span><span>other way ' + tagEl('M') + '</span><span>weight ' + tagEl('G') + '</span></div>';
+    Object.keys(LIMS.steps).forEach(function (k) {
+      var list = groups[k] || [], ws = WSTEP[+k];
+      var allOpen = list.length && list.every(function (it) { return ST.limOpen[it.id]; });
+      h += '<div class="stepgrp" id="lstep-' + k + '"><button type="button" class="sghead" data-openstep="' + k + '" aria-expanded="' + allOpen + '"><span><span data-label="1">Step ' + k + '</span> · ' + esc(LIMS.steps[k].split(':')[0]) + ' <small class="muted" data-tagged="M">(' + list.length + ')</small></span>' + (ws ? wcell(ws.holds.score, ' data-wstep="' + k + '"') : '') + '</button>';
+      list.forEach(function (it) {
+        var open = !!ST.limOpen[it.id], w = WLIM[it.id];
+        h += '<div class="lim' + (open ? ' open' : '') + '" data-lim="' + it.id + '"><button type="button" class="lrow" aria-expanded="' + open + '">' +
+          '<span class="lt">' + esc(it.title) + (it.real.cases ? '' : ' <small class="muted">thought experiment</small>') + '</span>' +
+          '<span class="lc" data-tagged="M">' + (it.real.cases || '') + '</span><span class="lc" data-tagged="M">' + (it.real.families || '') + '</span><span class="lc" data-tagged="M">' + (it.contradicted.length || '') + '</span>' +
+          wcell(w.holds.score) + '</button>' + (open ? limDetail(it) : '') + '</div>';
+      });
+      h += '</div>';
+    });
+    $('#limlist').innerHTML = h;
+    if (ST.lim && ST.limOpen[ST.lim]) paintMini(LIM[ST.lim]);
+    $('#workslist').innerHTML = LIMS.works.map(function (w, i) {
+      var k = C.caseId(w.case), c = CASE[k], open = !!ST.limOpen['work' + i];
+      return '<div class="work' + (open ? ' open' : '') + '" data-tagged="' + w.tag + '"><button type="button" class="lrow wrow" data-work="' + i + '" aria-expanded="' + open + '"><span class="lt">' + esc(c.title) + '</span><span class="small">' + (w.basis === 'seen' ? 'seen' : 'estimate') + tagEl(w.tag) + (w.channel ? ' · ' + esc(TX.sections.lims.channel) : '') + '</span></button>' +
+        (open ? '<div class="more"><span>' + esc(w.text) + ' ' + tagEl(w.tag) + '</span>' + (w.channel ? '<span class="wch">Carried by ' + esc(w.channel) + ', a channel that exists today.</span>' : '') + (w.caveat ? '<span class="wcav">' + esc(w.caveat) + '</span>' : '') +
+          '<span class="small muted">' + esc(FAM[c.family].name) + ' · <button type="button" class="linkbtn" data-gocase="' + k + '" data-label="1">' + k + '</button></span></div>' : '') + '</div>';
+    }).join('');
+  }
+  function classNote(it) {
+    var cls = (it.params || []).filter(function (p) { return REACH[p].classes; }).map(pname);
+    var stk = (it.params || []).filter(function (p) { return REACH[p].stocks && !REACH[p].branches.length; }).map(pname);
+    var s = '';
+    if (cls.length) s += ' ' + esc(cls.join(', ')) + ' also ' + (cls.length === 1 ? 'shapes' : 'shape') + ' which work arrives and what the library holds.';
+    if (stk.length) s += ' ' + esc(stk.join(', ')) + ' ' + (stk.length === 1 ? 'acts' : 'act') + ' on the stock of entries over time.';
+    return s;
+  }
+  function paintMini(it) {
+    var el = document.getElementById('mini-' + it.id); if (!el) return;
+    var bands = {};
+    it.steps.forEach(function (k) { (TX.design_steps[k] || []).forEach(function (st) { bands[st] = Math.max(bands[st] || 0, 1); }); });
+    (TX.design_steps[it.main_step] || []).forEach(function (st) { bands[st] = 2; });
+    var br = limBranches(it), on = new Set(br.list), onS = new Set();
+    br.list.forEach(function (b) { onS.add(BR[b].from); onS.add(BR[b].to); });
+    drawGraph(el, { mini: true, on: on, onStates: onS, bands: bands, limTip: br.tip });
+  }
+  function selectLim(id, scroll) {
+    if (scroll) { ST.limOpen[id] = true; ST.lim = id; }
+    else { ST.limOpen[id] = !ST.limOpen[id]; ST.lim = ST.limOpen[id] ? id : null; }
+    renderLims();
+    if (scroll) { var el = document.querySelector('[data-lim="' + id + '"]'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+  }
+  function toggleStep(k, scroll) {
+    var list = LIMS.items.filter(function (it) { return String(it.main_step) === String(k); });
+    var allOpen = list.every(function (it) { return ST.limOpen[it.id]; });
+    list.forEach(function (it) { ST.limOpen[it.id] = scroll ? true : !allOpen; });
+    ST.lim = null;
+    renderLims();
+    if (scroll) { var el = document.getElementById('lstep-' + k); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  }
+  $('#limlist').addEventListener('click', function (e) {
+    if (e.target.closest('.linkbtn,.pchip,.more')) return;
+    var s = e.target.closest('[data-openstep]'); if (s) { toggleStep(s.dataset.openstep); return; }
+    var r = e.target.closest('[data-lim]'); if (r) selectLim(r.dataset.lim);
+  });
+  $('#workslist').addEventListener('click', function (e) {
+    if (e.target.closest('.linkbtn')) return;
+    var r = e.target.closest('[data-work]'); if (!r) return;
+    ST.limOpen['work' + r.dataset.work] = !ST.limOpen['work' + r.dataset.work]; renderLims();
+  });
+  $('#limRanks').addEventListener('click', function (e) {
+    var s = e.target.closest('[data-gostep]'); if (s) toggleStep(s.dataset.gostep, true);
+  });
+
+  // ------------------------------------------------------------ section 4: run it
+  var GROUPS = ['before'].concat(MAP.steps.filter(function (s) { return s.id !== 'outcome'; }).map(function (s) { return s.id; })).concat(['time']);
+  var GROUP_TITLE = function (g) {
+    if (g === 'before') return 'Before the steps: the work that arrives and what the library can hold';
+    if (g === 'time') return 'Over time: the stock of entries and the horizon';
+    return STEP[g].label + (stageWords(g) ? ' (' + stageWords(g) + ')' : '');
+  };
+  var PSTAGE = {}; MAP.parameters.forEach(function (p) { PSTAGE[p.id] = C.paramStage(MAP, REACH, p.id); });
+  function stepOf(row) { return row.run_setting || PMETA[row.id].integer ? 1 : (row.high - row.low) / 200; }
+  function renderSliders() {
+    var h = '';
+    GROUPS.forEach(function (g) {
+      var ids = MAP.parameters.filter(function (p) { return PSTAGE[p.id] === g; }).map(function (p) { return p.id; });
+      if (!ids.length) return;
+      h += '<details class="sgroup" data-g="' + g + '"' + (g === 'before' ? ' open' : '') + '><summary><span data-label="1">' + esc(GROUP_TITLE(g)) + '</span><small data-label="1">' + ids.length + ' settings</small></summary><div class="sl">';
+      ids.forEach(function (id) {
+        var row = ROWS[id], m = PMETA[id], fixed = row.low === row.high;
+        h += '<div class="slider" data-id="' + id + '"><div class="sh"><span><b data-label="definition">' + esc(pname(id)) + '</b><br><span class="small muted" data-label="definition">' + esc(m.meaning) + '</span></span><span class="sv" id="sv-' + id + '"></span></div>' +
+          (fixed ? '<p class="small muted">Fixed: its range is one value, so it has no slider and the runs never vary it.' + (id === 'm_opus' ? ' ' + esc(TX.sections.run.top_sub) + ' The ratio box on the right shows the cost ratio at one as well.' : '') + '</p>' :
+            '<input type="range" min="' + row.low + '" max="' + row.high + '" step="' + stepOf(row) + '" value="' + cur[id] + '" aria-label="' + esc(pname(id)) + '">') +
+          '<div class="sm"><span data-tagged="' + row.tag + '">' + (fixed ? '' : 'range ' + esc(fmt(row.low)) + ' to ' + esc(fmt(row.high)) + ', best ' + esc(fmt(row.best)) + tagEl(row.tag)) + (row.run_setting || m.run_setting ? ' · a chosen horizon, never drawn' : '') + '</span><span><span class="small muted">name in the files</span> <code class="mono">' + esc(id) + '</code> <button type="button" class="srcbtn" data-src="' + id + '" aria-expanded="false">source</button></span></div>' +
+          '<div class="srctext" id="src-' + id + '" hidden data-tagged="' + row.tag + '"><b>Tag ' + row.tag + '.</b> ' + esc(row.source) + (row.note ? '<br>' + esc(row.note) : '') + '</div></div>';
+      });
+      h += '</div></details>';
+    });
+    $('#sliders').innerHTML = h;
+    updateSliderLabels();
+  }
+  function updateSliderLabels() {
+    var changed = 0;
+    MAP.parameters.forEach(function (p) {
+      var row = ROWS[p.id], ch = Math.abs(cur[p.id] - row.best) > 1e-12;
+      if (ch) changed++;
+      var el = document.getElementById('sv-' + p.id); if (!el) return;
+      el.innerHTML = num(cur[p.id], ch ? 'G' : row.tag, p.integer ? 'int' : 'auto');
+      el.closest('.slider').classList.toggle('changed', ch);
+    });
+    $('#changedNote').innerHTML = changed ? '<b data-label="1">' + changed + '</b> moved from best values. A moved value is your guess, so it shows G.' : 'All settings at their best values.';
+  }
+  $('#sliders').addEventListener('click', function (e) {
+    var b = e.target.closest('.srcbtn'); if (!b) return;
+    var t = document.getElementById('src-' + b.dataset.src); t.hidden = !t.hidden; b.setAttribute('aria-expanded', String(!t.hidden));
+  });
+  var raf = 0;
+  $('#sliders').addEventListener('input', function (e) {
+    var s = e.target.closest('.slider'); if (!s) return;
+    cur[s.dataset.id] = +e.target.value;
+    updateSliderLabels();
+    if (!raf) raf = requestAnimationFrame(function () { raf = 0; recompute(); });
+  });
+  $('#resetBtn').addEventListener('click', function () { cur = Object.assign({}, BEST); renderSliders(); recompute(); });
+
+  function recompute() {
+    PATH = E.timePath(MAP, cur);
+    NPER = PATH.periods.length;
+    if (ST.period === null || ST.period > NPER) ST.period = NPER;
+    renderMap();
+    renderFunnel();
+    renderOutputs();
+    renderStockFlow();
+  }
+
+  function renderOutputs() {
+    var top = PATH.top_first, lad = PATH.cheap_ladder, first = PATH.periods[0], last = PATH.periods[NPER - 1];
+    var rows = [['top_first', top], ['cheap_ladder', lad], ['library', last.library]];
+    var maxC = Math.max(top.cost, lad.cost, last.library.cost, first.library.cost);
+    var h = '<h3>Three ways of working, at these settings</h3><p class="note">' + esc(TX.sections.run.outputs_note) + '</p>';
+    h += '<table class="ptable"><tr><th>Way of working</th><th>Cost per piece ' + tagEl('G') + '</th><th>Wrong rate ' + tagEl('G') + '</th></tr>';
+    rows.forEach(function (r) {
+      var lib = r[0] === 'library';
+      h += '<tr><td><b>' + esc(PNAME[r[0]]) + '</b></td><td data-tagged="G">' + esc(fmt(r[1].cost, 'cost')) + (lib ? '<br><small class="muted">first period ' + esc(fmt(first.library.cost, 'cost')) + '</small>' : '') + '</td><td data-tagged="G">' + esc(fmt(r[1].wrong, 'pct')) + (lib ? '<br><small class="muted">first period ' + esc(fmt(first.library.wrong, 'pct')) + '</small>' : '') + '</td></tr>';
+    });
+    h += '</table>';
+    $('#policyOut').innerHTML = h;
+
+    var R = last.ratios, F = first.ratios;
+    function box(goal, title, sub, c, w, c1, w1) {
+      return '<div class="ratio' + (goal ? ' goal' : '') + '"><h4>' + esc(title) + '</h4><p class="small muted">' + esc(sub) + '</p><div class="rv"><span>Cost ratio</span><span>Wrong-rate ratio</span><b>' + num(c, 'G', 'ratio') + '</b><b>' + num(w, 'G', 'ratio') + '</b>' +
+        '<small class="muted">first period ' + esc(fmt(c1, 'ratio')) + '</small><small class="muted">first period ' + esc(fmt(w1, 'ratio')) + '</small></div></div>';
+    }
+    var one = E.timePath(MAP, Object.assign({}, cur, { m_opus: 1 }));
+    var R1 = one.periods[one.periods.length - 1].ratios;
+    var RS = TX.sections.run;
+    $('#ratioOut').innerHTML = '<h3>The library over each, last period</h3><div class="ratios" data-tagged="G">' +
+      box(false, 'Against ' + PNAME.cheap_ladder.toLowerCase(), TX.todays_notes, R.cost_vs_ladder, R.wrong_vs_ladder, F.cost_vs_ladder, F.wrong_vs_ladder) +
+      box(true, 'Against ' + PNAME.top_first.toLowerCase(), RS.top_sub + ' With an Opus price ratio of one, cost: ' + fmt(R1.cost_vs_top, 'ratio') + '.', R.cost_vs_top, R.wrong_vs_top, F.cost_vs_top, F.wrong_vs_top) + '</div>';
+    var U = C.usage(E, MAP, cur, last.stocks);
+    var ucell = function (label, v, kind) { return '<div><span class="small muted">' + esc(label) + '</span><b>' + esc(fmt(v, kind)) + '</b></div>'; };
+    $('#usageTitle').innerHTML = esc(RS.usage_title) + ' ' + tagEl('G');
+    $('#usageOut').innerHTML = '<div class="usage">' +
+      ucell('Work that is looked up', U.lookedUp, 'pct') +
+      ucell('Work with a good entry in hand at the cheap attempt', U.goodInHand, 'pct') +
+      ucell('Work with a wrong entry in hand at the cheap attempt', U.wrongInHand, 'pct') +
+      ucell('Writing entries, cheap-call equivalents per piece of work', U.writeCost, 'auto') +
+      ucell('Lookups, cheap-call equivalents per piece of work', U.lookupCost, 'auto') +
+      ucell('Good entries in hand per good entry per period', U.usesPerGood, 'auto') + '</div>';
+    $('#liveLine').innerHTML = '<span class="muted">Last period, library over:</span> <span>ladder: cost <b>' + esc(fmt(R.cost_vs_ladder, 'ratio')) + '</b>, wrong <b>' + esc(fmt(R.wrong_vs_ladder, 'ratio')) + '</b></span> <span>strong directly: cost <b>' + esc(fmt(R.cost_vs_top, 'ratio')) + '</b>, wrong <b>' + esc(fmt(R.wrong_vs_top, 'ratio')) + '</b></span> ' + tagEl('G');
+    $('#ratioCharts').innerHTML = ratioChart('Against the cheap model with the ladder', 'cost_vs_ladder', 'wrong_vs_ladder') + ratioChart('Against the strong model directly', 'cost_vs_top', 'wrong_vs_top');
+  }
+  // The three reference settings (engine references(), fixed by the table, not by the sliders).
+  function renderRefs() {
+    var RS = TX.sections.run, WH = ['unfavourable', 'best', 'favourable'];
+    var row = function (label, get, kind, attr) {
+      return '<tr><td>' + esc(label) + '</td>' + WH.map(function (w) { var v = get(REFS[w].last); return '<td data-ref="' + w + '" data-' + attr + '="' + v + '">' + esc(fmt(v, kind)) + '</td>'; }).join('') + '</tr>';
+    };
+    var note = function (t) { return '<tr class="cav"><td colspan="4">' + t + '</td></tr>'; };
+    $('#refOut').innerHTML = '<h3>Three reference settings</h3><p class="note">' + esc(RS.refs_note) + '</p><div class="chart-scroll"><table class="ptable reft" data-tagged="G"><tr><th>Library over ' + tagEl('G') + '</th><th>Unfavourable</th><th>Best</th><th>Favourable</th></tr>' +
+      row('Cost against the ladder', function (b) { return b.ratios.cost_vs_ladder; }, 'ratio', 'cost_vs_ladder') +
+      row('Wrong rate against the ladder', function (b) { return b.ratios.wrong_vs_ladder; }, 'ratio', 'wrong_vs_ladder') +
+      note(esc(TX.todays_notes)) +
+      row('Cost against the strong model', function (b) { return b.ratios.cost_vs_top; }, 'ratio', 'cost_vs_top') +
+      row('Wrong rate against the strong model', function (b) { return b.ratios.wrong_vs_top; }, 'ratio', 'wrong_vs_top') +
+      note(rich(TX.opus_line)) +
+      row('Funnel’s last number, of a hundred', function (b) { return b.funnel_end; }, 'funnel', 'funnel_end') +
+      '</table></div>';
+  }
+  function niceTicks(lo, hi, n) {
+    var span = hi - lo || 1, step = Math.pow(10, Math.floor(Math.log10(span / n))), err = span / n / step;
+    if (err >= 7.5) step *= 10; else if (err >= 3.5) step *= 5; else if (err >= 1.5) step *= 2;
+    var t = [], v = Math.ceil(lo / step) * step;
+    for (; v <= hi + step * 1e-9; v += step) t.push(+v.toFixed(10));
+    return t;
+  }
+  function ratioChart(title, kc, kw) {
+    var W = 420, H = 210, L = 44, Rm = 12, T = 30, B = 34;
+    var xs = PATH.periods.map(function (p) { return p.period + 1; });
+    var cs = PATH.periods.map(function (p) { return p.ratios[kc]; }), ws = PATH.periods.map(function (p) { return p.ratios[kw]; });
+    var all = cs.concat(ws).filter(isFinite).concat([1]);
+    var lo = Math.min.apply(null, all), hi = Math.max.apply(null, all), pad = (hi - lo) * 0.12 || 0.05;
+    lo -= pad; hi += pad;
+    var X = function (v) { return L + (v - 1) / Math.max(1, NPER - 1) * (W - L - Rm); }, Y = function (v) { return T + (hi - Math.min(hi, Math.max(lo, v))) / (hi - lo) * (H - T - B); };
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + esc(title) + ': ratios by period">';
+    s += '<text class="lbl-strong" x="' + L + '" y="14">' + esc(title) + '</text>' + svgTag(W - 26, 4, 'G');
+    niceTicks(lo, hi, 4).forEach(function (t) { s += '<line x1="' + L + '" x2="' + (W - Rm) + '" y1="' + Y(t) + '" y2="' + Y(t) + '" stroke="var(--line)"/><text class="lbl" x="' + (L - 6) + '" y="' + (Y(t) + 3.5) + '" text-anchor="end">' + fmt(t, 'ratio') + '</text>'; });
+    s += '<line x1="' + L + '" x2="' + (W - Rm) + '" y1="' + Y(1) + '" y2="' + Y(1) + '" stroke="currentColor" stroke-width="1" stroke-dasharray="1 3"/><text class="lbl" x="' + (W - Rm) + '" y="' + (Y(1) - 4) + '" text-anchor="end">equal</text>';
+    niceTicks(1, NPER, 6).filter(function (t) { return t === Math.round(t); }).forEach(function (t) { s += '<text class="lbl" x="' + X(t) + '" y="' + (H - B + 14) + '" text-anchor="middle">' + t + '</text>'; });
+    s += '<text class="lbl" x="' + ((L + W - Rm) / 2) + '" y="' + (H - 4) + '" text-anchor="middle">period (30 days each)</text>';
+    function line(v, dash) { return '<path d="' + v.map(function (y, i) { return (i ? 'L' : 'M') + X(xs[i]).toFixed(1) + ' ' + Y(y).toFixed(1); }).join('') + '" fill="none" stroke="currentColor" stroke-width="2.2"' + (dash ? ' stroke-dasharray="6 4"' : '') + '/>'; }
+    s += line(cs, false) + line(ws, true);
+    s += '<line x1="' + (L + 6) + '" x2="' + (L + 30) + '" y1="22" y2="22" stroke="currentColor" stroke-width="2.2"/><text class="lbl" x="' + (L + 34) + '" y="25">cost</text><line x1="' + (L + 70) + '" x2="' + (L + 94) + '" y1="22" y2="22" stroke="currentColor" stroke-width="2.2" stroke-dasharray="6 4"/><text class="lbl" x="' + (L + 98) + '" y="25">wrong rate</text>';
+    return '<div class="chartbox" data-tagged="G">' + s.replace('<text class="lbl-strong"', '<text class="lbl-strong" dy="0"') + '</svg></div>';
+  }
+
+  // the stock-and-flow drawing
+  function spark(vals, x, y, w, h, at) {
+    var mx = Math.max.apply(null, vals.concat([1e-9]));
+    var d = vals.map(function (v, i) { return (i ? 'L' : 'M') + (x + i / Math.max(1, vals.length - 1) * w).toFixed(1) + ' ' + (y + h - v / mx * h).toFixed(1); }).join('');
+    var ax = x + (at - 1) / Math.max(1, vals.length - 1) * w;
+    return '<path d="' + d + '" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".7"/><circle cx="' + ax.toFixed(1) + '" cy="' + (y + h - vals[at - 1] / mx * h).toFixed(1) + '" r="2.6" fill="currentColor"/>';
+  }
+  var playTimer = null;
+  function renderStockFlow() {
+    var p = ST.period, row = PATH.periods[p - 1], m = row.library.measures, ep = cur.episodes_per_period;
+    var good = row.stocks.E_good, bad = row.stocks.E_bad;
+    var fGood = ep * m.W_good, fBadR = ep * m.W_bad_right, fBadE = ep * m.W_bad_escape, fRep = ep * m.W_repair, fStale = cur.delta_stale * good, fRet = cur.retire_bad * bad;
+    var climb = m.P_strong_right + m.P_strong_escaped;
+    var sv = row.stockValues;
+    var W = 960, H = 400;
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Stock and flow drawing of good and bad entries"><defs><marker id="sfa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker><marker id="sfi" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 1L9 5L0 9" fill="none" stroke="currentColor" stroke-width="1.6"/></marker></defs>';
+    function valve(x, y, vert) { return vert ? '<path d="M' + (x - 8) + ' ' + (y - 6) + 'L' + (x + 8) + ' ' + (y + 6) + 'L' + (x - 8) + ' ' + (y + 6) + 'L' + (x + 8) + ' ' + (y - 6) + 'z" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>' : '<path d="M' + (x - 6) + ' ' + (y - 8) + 'L' + (x + 6) + ' ' + (y + 8) + 'L' + (x + 6) + ' ' + (y - 8) + 'L' + (x - 6) + ' ' + (y + 8) + 'z" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>'; }
+    function cloud(x, y) { return '<path d="M' + (x - 14) + ' ' + (y + 7) + 'a8 8 0 0 1 2 -14a9 9 0 0 1 16 -2a8 8 0 0 1 7 14a7 7 0 0 1 -5 7h-18a7 7 0 0 1 -2 -5z" fill="var(--surface)" stroke="currentColor" stroke-width="1.3"/>'; }
+    function fw(v) { return Math.max(2.5, Math.min(14, 2.5 + Math.sqrt(Math.max(0, v)) * 1.1)); }
+    function link(d, sign, sx, sy) { return '<path d="' + d + '" fill="none" stroke="currentColor" stroke-width="1.1" marker-end="url(#sfi)" opacity=".85"/><text class="lbl-strong" x="' + sx + '" y="' + sy + '">' + sign + '</text>'; }
+    function loopB(id, x, y) { return '<g><circle cx="' + x + '" cy="' + y + '" r="13" fill="var(--surface)" stroke="currentColor" stroke-width="1.3"/><text class="lbl-strong" text-anchor="middle" x="' + x + '" y="' + (y + 4) + '">' + id + '</text>' + '<path d="M' + (x + 9) + ' ' + (y - 13) + 'a13 13 0 1 1 -8 -1" fill="none" stroke="currentColor" stroke-width="1" marker-end="url(#sfi)" opacity=".7"/></g>'; }
+    function val(x, y, v, kind, anchor) { return '<text class="flowv" x="' + x + '" y="' + y + '" text-anchor="' + (anchor || 'middle') + '">' + esc(fmt(v, kind || 'cost')) + '</text>'; }
+    var gx = 160, bx = 560, sy = 160, sw = 190, sh = 80;
+    var goods = PATH.periods.map(function (r) { return r.stocks.E_good; }), bads = PATH.periods.map(function (r) { return r.stocks.E_bad; });
+    // stocks
+    [[gx, 'Good entries', good, goods], [bx, 'Bad entries (wrong or stale)', bad, bads]].forEach(function (k) {
+      s += '<rect x="' + k[0] + '" y="' + sy + '" width="' + sw + '" height="' + sh + '" rx="3" fill="var(--surface)" stroke="currentColor" stroke-width="2.2"/>' +
+        '<text class="stockn" x="' + (k[0] + 10) + '" y="' + (sy + 18) + '">' + esc(k[1]) + '</text><text class="stockv" x="' + (k[0] + 10) + '" y="' + (sy + 42) + '">' + esc(fmt(k[2], 'cost')) + '</text>' + svgTag(k[0] + 62, sy + 31, 'G') +
+        spark(k[3], k[0] + 96, sy + 30, 84, 38, p);
+    });
+    // inflows from clouds
+    s += cloud(gx + 95, 34) + '<line x1="' + (gx + 95) + '" y1="46" x2="' + (gx + 95) + '" y2="' + (sy - 2) + '" stroke="currentColor" stroke-width="' + fw(fGood) + '" marker-end="url(#sfa)"/>' + valve(gx + 95, 100, true) +
+      '<text class="lbl" x="' + (gx + 110) + '" y="92">written as good</text>' + val(gx + 110, 108, fGood, 'cost', 'start') + '<text class="lbl" x="' + (gx + 110) + '" y="121">per period</text>';
+    s += cloud(bx + 95, 34) + '<line x1="' + (bx + 95) + '" y1="46" x2="' + (bx + 95) + '" y2="' + (sy - 2) + '" stroke="currentColor" stroke-width="' + fw(fBadR + fBadE) + '" marker-end="url(#sfa)"/>' + valve(bx + 95, 100, true) +
+      '<text class="lbl" x="' + (bx + 80) + '" y="80" text-anchor="end">written as bad</text>' + val(bx + 80, 95, fBadR + fBadE, 'cost', 'end') + '<text class="lbl" x="' + (bx + 80) + '" y="109" text-anchor="end">after right solves ' + esc(fmt(fBadR, 'cost')) + '</text><text class="lbl" x="' + (bx + 80) + '" y="122" text-anchor="end">after escapes ' + esc(fmt(fBadE, 'cost')) + '</text>';
+    // staleness good -> bad, repair bad -> good
+    s += '<line x1="' + (gx + sw) + '" y1="' + (sy + 22) + '" x2="' + (bx - 2) + '" y2="' + (sy + 22) + '" stroke="currentColor" stroke-width="' + fw(fStale) + '" marker-end="url(#sfa)"/>' + valve((gx + sw + bx) / 2, sy + 22) +
+      '<text class="lbl" x="' + ((gx + sw + bx) / 2) + '" y="' + (sy + 42) + '" text-anchor="middle">go stale ' + esc(fmt(fStale, 'cost')) + ' per period</text>';
+    s += '<line x1="' + bx + '" y1="' + (sy + 60) + '" x2="' + (gx + sw + 2) + '" y2="' + (sy + 60) + '" stroke="currentColor" stroke-width="' + fw(fRep) + '" marker-end="url(#sfa)"/>' + valve((gx + sw + bx) / 2, sy + 60) +
+      '<text class="lbl" x="' + ((gx + sw + bx) / 2) + '" y="' + (sy + 86) + '" text-anchor="middle">repaired when an escape is found ' + esc(fmt(fRep, 'cost')) + '</text>';
+    // bad entries retired: out of the bad stock to a cloud
+    s += '<line x1="' + (bx + sw) + '" y1="' + (sy + 14) + '" x2="' + (W - 52) + '" y2="' + (sy + 14) + '" stroke="currentColor" stroke-width="' + fw(fRet) + '" marker-end="url(#sfa)"/>' + valve(bx + sw + 48, sy + 14) + cloud(W - 30, sy + 14) +
+      '<text class="lbl" x="' + (bx + sw + 70) + '" y="' + (sy - 2) + '">retired</text>' + val(bx + sw + 70, sy + 34, fRet, 'cost', 'start');
+    // auxiliaries
+    var ay = 300;
+    var aux = [[120, 'How full the library is', sv.fill, 'pct'], [455, 'Share of entries that are bad', sv.wrong_share, 'pct'], [790, 'Chance a look-alike can be found', sv.distract, 'pct']];
+    aux.forEach(function (a) { s += '<text class="auxv" x="' + a[0] + '" y="' + ay + '" text-anchor="middle">' + esc(a[1]) + '</text><text class="flowv" x="' + a[0] + '" y="' + (ay + 15) + '" text-anchor="middle">' + esc(fmt(a[2], a[3])) + '</text>'; });
+    s += '<text class="auxv" x="455" y="330" text-anchor="middle">Share of work that climbs to Opus or Fable</text><text class="flowv" x="455" y="388" text-anchor="middle">' + esc(fmt(climb, 'pct')) + '</text>';
+    // information links with signs
+    s += link('M' + (gx + 40) + ' ' + (sy + sh) + 'C' + (gx + 20) + ' 270,140 270,125 286', '+', 108, 270);
+    s += link('M' + (gx + 150) + ' ' + (sy + sh) + 'C' + (gx + 170) + ' 280,400 280,420 288', '−', 392, 276);
+    s += link('M' + (bx + 30) + ' ' + (sy + sh) + 'C' + (bx + 10) + ' 280,510 280,490 288', '+', 520, 272);
+    s += link('M' + (bx + 160) + ' ' + (sy + sh) + 'C' + (bx + 180) + ' 270,780 270,785 286', '+', 790, 270);
+    s += link('M' + (gx + 180) + ' ' + (sy + sh) + 'C' + (gx + 250) + ' 300,650 250,770 288', '+', 640, 262);
+    s += link('M120 322C120 360,300 375,346 377', '−', 300, 362);
+    s += link('M455 322L455 358', '+', 462, 340);
+    s += link('M790 322C790 360,620 375,566 377', '+', 610, 362);
+    s += link('M352 384C40 400,30 110,' + (gx + 82) + ' 100', '+', 46, 200);
+    s += link('M558 384C870 400,872 110,' + (bx + 108) + ' 100', '+', 858, 200);
+    s += link('M' + (gx + sw - 12) + ' ' + (sy) + 'C' + (gx + sw - 2) + ' 128,' + ((gx + sw + bx) / 2 - 10) + ' 132,' + ((gx + sw + bx) / 2 - 5) + ' ' + (sy + 10), '+', gx + sw - 22, sy - 14);
+    s += loopB('B1', 215, 300) + loopB('R1', 548, 335) + loopB('R2', 680, 322) + loopB('B2', 420, 132);
+    s += svgTag(W - 22, 6, 'G') + '</svg>';
+    $('#sfd').innerHTML = '<div data-tagged="G">' + s + '</div>';
+    $('#sfdControls').innerHTML = '<div class="ctl" style="min-width:240px;flex:1"><span>Period</span><div class="row"><input type="range" id="perSfd" min="1" max="' + NPER + '" step="1" value="' + p + '" aria-label="Period" style="flex:1"><b data-label="1">' + p + ' of ' + NPER + '</b></div></div>' +
+      '<button class="btn" type="button" id="playBtn">' + (playTimer ? 'Stop' : 'Play the periods') + '</button>' +
+      '<p class="note" style="flex-basis:100%">Stocks at the start of the period. Flows during it, in entries per period. Every number here is computed ' + tagEl('G') + '.</p>';
+  }
+  $('#sfdControls').addEventListener('input', function (e) { if (e.target.id === 'perSfd') { ST.period = +e.target.value; ST.selAuto = true; renderStockFlow(); renderMap(); } });
+  $('#sfdControls').addEventListener('click', function (e) {
+    if (e.target.id !== 'playBtn') return;
+    if (playTimer) { clearInterval(playTimer); playTimer = null; renderStockFlow(); return; }
+    ST.period = 1; ST.selAuto = true; renderMap();
+    playTimer = setInterval(function () {
+      if (ST.period >= NPER) { clearInterval(playTimer); playTimer = null; renderStockFlow(); return; }
+      ST.period++; ST.selAuto = true; renderMap(); renderStockFlow();
+    }, 500);
+    renderStockFlow();
+  });
+  function renderLoops() {
+    $('#loops').innerHTML = TX.loops.map(function (l) {
+      return '<details class="loopc"><summary><span class="lpbadge" data-label="1">' + l.id + '</span><b>' + esc(l.name) + '</b></summary><p class="small muted">' + (l.kind === 'R' ? 'Reinforcing: feeds itself.' : 'Balancing: holds itself back.') + '</p><p>' + esc(l.text) + '</p></details>';
+    }).join('');
+  }
+
+  // ------------------------------------------------------------ section 6: many runs, at three ties
+  var TIES = (MAP.ensemble_ties && MAP.ensemble_ties.levels) || [0, 0.5, 1];
+  var ENSR = null, RUNS = null, ENS = null;
+  var RLAB = { cost_vs_ladder: 'Cost ratio', wrong_vs_ladder: 'Wrong-rate ratio', cost_vs_top: 'Cost ratio', wrong_vs_top: 'Wrong-rate ratio' };
+  function renderEnsControls() {
+    var M = TX.sections.many;
+    $('#ensControls').innerHTML = '<div class="ctl"><span>Runs at each tie</span><select id="ensN" data-label="1"><option>300</option><option>1000</option><option>2000</option></select></div>' +
+      '<div class="ctl"><span data-tip="' + esc('A whole number that fixes the random draws. The same seed always gives the same runs.') + '">Seed</span><input type="number" id="ensSeed" value="20261112" style="width:9rem"></div>' +
+      '<button class="btn primary" type="button" id="ensRun">Run at all three ties</button>' +
+      '<div class="ctl"><span>Progress</span><div class="row"><div class="progress"><i id="ensBar"></i></div><span class="small" id="ensTxt" data-label="1">not run yet</span></div></div>' +
+      '<p class="note" style="flex-basis:100%">' + rich('{{c:guess}} of the {{c:drawn}} drawn unknowns are guesses.') + ' ' + esc(M.tie) + ' ' + esc(M.follows) + '</p>';
+  }
+  document.addEventListener('click', function (e) {
+    if (e.target.id === 'ensRun') runEnsemble();
+    var w = e.target.closest('#ensWhen button[data-v]'); if (w) { ST.ensWhen = w.dataset.v; renderEnsemble(); }
+    var t = e.target.closest('#ensTie button[data-v]'); if (t) { ST.ensTie = +t.dataset.v; renderEnsemble(); }
+  });
+  function runEnsemble() {
+    if (RUNS) return;
+    var n = +$('#ensN').value, seed = Math.round(+$('#ensSeed').value) || 0;
+    RUNS = TIES.map(function (tie) { return C.ensembleRunner(E, MAP, TABLE, { n: n, seed: seed, tie: tie }); });
+    $('#ensRun').disabled = true;
+    // Yield through a message channel, not setTimeout: timers are clamped or throttled in some panes
+    // and background tabs. Each slice holds the thread for at most about 40 ms.
+    var ch = typeof MessageChannel === 'function' ? new MessageChannel() : null;
+    var later = ch ? function (f) { ch.port1.onmessage = function () { f(); }; ch.port2.postMessage(0); } : function (f) { setTimeout(f, 0); };
+    var total = n * TIES.length;
+    (function tick() {
+      var t0 = performance.now();
+      var r = RUNS.filter(function (x) { return !x.done(); })[0];
+      while (r && performance.now() - t0 < 40) { r.step(1); if (r.done()) r = RUNS.filter(function (x) { return !x.done(); })[0]; }
+      var k = RUNS.reduce(function (a, x) { return a + x.count(); }, 0);
+      $('#ensBar').style.width = (100 * k / total) + '%';
+      $('#ensTxt').textContent = k + ' of ' + total + ' runs';
+      if (r) { later(tick); return; }
+      if (ch) { ch.port1.close(); ch.port2.close(); }
+      ENSR = {};
+      RUNS.forEach(function (x) { var res = x.result(); res.draws = x.draws(); ENSR[x.tie] = res; });
+      RUNS = null;
+      $('#ensRun').disabled = false;
+      renderEnsemble();
+    })();
+  }
+  function spreadChart(title, ids, S) {
+    var W = 520, H = 130, L = 118, Rm = 16, T = 28;
+    var vals = []; ids.forEach(function (r) { vals.push(S[r].p5, S[r].p95); }); vals.push(1);
+    vals = vals.filter(isFinite);
+    var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals), pad = (hi - lo) * 0.08 || 0.05; lo -= pad; hi += pad;
+    var X = function (v) { return L + (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo) * (W - L - Rm); };
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + esc(title) + '"><text class="lbl-strong" x="4" y="14">' + esc(title) + '</text>' + svgTag(W - 22, 4, 'G');
+    niceTicks(lo, hi, 5).forEach(function (t) { s += '<line x1="' + X(t) + '" x2="' + X(t) + '" y1="' + T + '" y2="' + (H - 22) + '" stroke="var(--line)"/><text class="lbl" x="' + X(t) + '" y="' + (H - 8) + '" text-anchor="middle">' + fmt(t, 'ratio') + '</text>'; });
+    s += '<line x1="' + X(1) + '" x2="' + X(1) + '" y1="' + (T - 4) + '" y2="' + (H - 22) + '" stroke="currentColor" stroke-dasharray="1 3"/><text class="lbl" x="' + (X(1) + 3) + '" y="' + (T - 2) + '">equal</text>';
+    ids.forEach(function (r, i) {
+      var y = T + 18 + i * 38, q = S[r];
+      s += '<text class="lbl" x="' + (L - 8) + '" y="' + (y + 4) + '" text-anchor="end" style="fill:var(--ink)">' + esc(RLAB[r]) + '</text>' +
+        '<line x1="' + X(q.p5) + '" x2="' + X(q.p95) + '" y1="' + y + '" y2="' + y + '" stroke="currentColor" stroke-width="1.3"/>' +
+        '<line x1="' + X(q.p5) + '" x2="' + X(q.p5) + '" y1="' + (y - 6) + '" y2="' + (y + 6) + '" stroke="currentColor"/><line x1="' + X(q.p95) + '" x2="' + X(q.p95) + '" y1="' + (y - 6) + '" y2="' + (y + 6) + '" stroke="currentColor"/>' +
+        '<rect x="' + X(q.p25) + '" y="' + (y - 9) + '" width="' + Math.max(1.5, X(q.p75) - X(q.p25)) + '" height="18" fill="var(--surface)" stroke="currentColor" stroke-width="1.6"' + (r.indexOf('wrong') === 0 ? ' stroke-dasharray="4 2.5"' : '') + '/>' +
+        '<line x1="' + X(q.p50) + '" x2="' + X(q.p50) + '" y1="' + (y - 9) + '" y2="' + (y + 9) + '" stroke="currentColor" stroke-width="3"/>';
+    });
+    return '<div class="chartbox spread chart-scroll" data-tagged="G">' + s + '</svg></div>';
+  }
+  function scatter(title, kc, kw, w) {
+    var W = 420, H = 300, L = 46, Rm = 12, T = 26, B = 40;
+    var xs = ENS.draws.map(function (d) { return d[w].ratios[kc]; }), ys = ENS.draws.map(function (d) { return d[w].ratios[kw]; });
+    var sx = xs.filter(isFinite).slice().sort(function (a, b) { return a - b; }), sy = ys.filter(isFinite).slice().sort(function (a, b) { return a - b; });
+    var x0 = Math.min(E.percentile(sx, 0.5), 1), x1 = Math.max(E.percentile(sx, 99.5), 1), y0 = Math.min(E.percentile(sy, 0.5), 1), y1 = Math.max(E.percentile(sy, 99.5), 1);
+    var px = (x1 - x0) * 0.06 || 0.02, py = (y1 - y0) * 0.06 || 0.02; x0 -= px; x1 += px; y0 -= py; y1 += py;
+    var clipped = 0;
+    var X = function (v) { return L + (v - x0) / (x1 - x0) * (W - L - Rm); }, Y = function (v) { return T + (y1 - v) / (y1 - y0) * (H - T - B); };
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + esc(title) + '"><text class="lbl-strong" x="' + L + '" y="14">' + esc(title) + '</text>' + svgTag(W - 22, 4, 'G');
+    niceTicks(x0, x1, 5).forEach(function (t) { s += '<line x1="' + X(t) + '" x2="' + X(t) + '" y1="' + T + '" y2="' + (H - B) + '" stroke="var(--line)"/><text class="lbl" x="' + X(t) + '" y="' + (H - B + 14) + '" text-anchor="middle">' + fmt(t, 'ratio') + '</text>'; });
+    niceTicks(y0, y1, 5).forEach(function (t) { s += '<line x1="' + L + '" x2="' + (W - Rm) + '" y1="' + Y(t) + '" y2="' + Y(t) + '" stroke="var(--line)"/><text class="lbl" x="' + (L - 5) + '" y="' + (Y(t) + 3.5) + '" text-anchor="end">' + fmt(t, 'ratio') + '</text>'; });
+    s += '<line x1="' + X(1) + '" x2="' + X(1) + '" y1="' + T + '" y2="' + (H - B) + '" stroke="currentColor" stroke-dasharray="1 3"/><line x1="' + L + '" x2="' + (W - Rm) + '" y1="' + Y(1) + '" y2="' + Y(1) + '" stroke="currentColor" stroke-dasharray="1 3"/>';
+    var dots = '';
+    for (var i = 0; i < xs.length; i++) {
+      var a = xs[i], b = ys[i]; if (!isFinite(a) || !isFinite(b)) { clipped++; continue; }
+      if (a < x0 || a > x1 || b < y0 || b > y1) clipped++;
+      dots += '<circle cx="' + X(Math.max(x0, Math.min(x1, a))).toFixed(1) + '" cy="' + Y(Math.max(y0, Math.min(y1, b))).toFixed(1) + '" r="1.7"/>';
+    }
+    s += '<g fill="currentColor" opacity=".35">' + dots + '</g>';
+    s += '<text class="lbl" x="' + ((L + W - Rm) / 2) + '" y="' + (H - 8) + '" text-anchor="middle">cost ratio (left of the dotted line: cheaper)</text>';
+    s += '<text class="lbl" transform="translate(12 ' + ((T + H - B) / 2) + ') rotate(-90)" text-anchor="middle">wrong-rate ratio (below: fewer wrong)</text>';
+    return '<div class="chartbox" data-tagged="G">' + s + '</svg>' + (clipped ? '<p class="small muted">' + clipped + ' runs lie beyond the edges and sit on the edge.</p>' : '') + '</div>';
+  }
+  function rankList(title, r, w) {
+    var list = ENS.spearman[w][r].slice(0, 8);
+    return '<div class="chartbox" data-tagged="G"><h4 style="margin-bottom:6px">' + esc(title) + ' ' + tagEl('G') + '</h4>' + list.map(function (e) {
+      var row = ROWS[e.id], a = Math.abs(e.rho);
+      return '<div class="rk" data-tip="' + esc('<b>' + esc(pname(e.id)) + '</b><br>' + esc(PMETA[e.id].meaning) + '<br><span class="muted">Name in the files: ' + e.id + '</span>') + '"><span class="rn">' + esc(pname(e.id)) + tagEl(row.tag) + '</span><span class="rb"><i class="' + (e.rho >= 0 ? 'p-solid' : 'p-hatch') + '" style="width:' + (100 * a).toFixed(1) + '%"></i></span><span class="rv">' + esc(fmt(e.rho, 'rho')) + '</span></div>';
+    }).join('') + '</div>';
+  }
+  function tieTable(w) {
+    var mid = function (S, k, kind) { var q = S[k]; return '<b>' + esc(fmt(q.p50, kind)) + '</b><br><small class="muted">' + esc(fmt(q.p5, kind)) + ' to ' + esc(fmt(q.p95, kind)) + '</small>'; };
+    var rows = [['cost_vs_ladder', 'Cost against the ladder', 'ratio'], ['wrong_vs_ladder', 'Wrong rate against the ladder', 'ratio'], ['cost_vs_top', 'Cost against the strong model', 'ratio'], ['wrong_vs_top', 'Wrong rate against the strong model', 'ratio']];
+    if (CM.funnelEnd) rows.push(['funnel_end', 'Funnel’s last number, of a hundred', 'funnel']);
+    var h = '<div class="chart-scroll"><table class="ptable tiet" data-tagged="G"><tr><th>Middle run, and 5 to 95 in 100 ' + tagEl('G') + '</th>' + TIES.map(function (t) { return '<th>tie ' + t + '</th>'; }).join('') + '</tr>';
+    rows.forEach(function (r) { h += '<tr><td>' + esc(r[1]) + '</td>' + TIES.map(function (t) { return '<td data-tie="' + t + '">' + mid(ENSR[t].spread[w], r[0], r[2]) + '</td>'; }).join('') + '</tr>'; });
+    h += '<tr><td>Runs cheaper with a wrong rate no higher, against the ladder</td>' + TIES.map(function (t) { return '<td>' + esc(fmt(ENSR[t].shareBetterVs.cheap_ladder[w], 'pct')) + '</td>'; }).join('') + '</tr>';
+    h += '<tr><td>The same, against the strong model</td>' + TIES.map(function (t) { return '<td>' + esc(fmt(ENSR[t].shareBetterVs.top_first[w], 'pct')) + '</td>'; }).join('') + '</tr></table></div>';
+    return h;
+  }
+  function renderEnsemble() {
+    var out = $('#ensOut');
+    if (!ENSR) { out.innerHTML = '<p class="note">Press the button. The page stays usable while it runs.</p>'; return; }
+    var w = ST.ensWhen;
+    ENS = ENSR[ST.ensTie];
+    var S = ENS.spread[w];
+    var noise = 2 / Math.sqrt(ENS.n);
+    var h = '<div class="row"><span class="small muted">Show the</span>' + seg('Period', [['first', 'first period'], ['last', 'last period']], w).replace('class="seg"', 'class="seg" id="ensWhen"') + '<span class="small muted" data-label="1">' + ENS.n + ' runs at each tie, seed ' + ENS.seed + '</span></div>';
+    h += tieTable(w);
+    h += '<div class="row" data-label="1"><span class="small muted">Details for</span>' + seg('Tie', TIES.map(function (t) { return [String(t), 'tie ' + t]; }), String(ST.ensTie)).replace('class="seg"', 'class="seg" id="ensTie"') + '</div>';
+    h += '<p class="note" data-label="definition">Box: the middle half of the runs. Thick tick: the middle run. Whiskers: 5 and 95 in every hundred. Dashed box: wrong-rate ratio.</p>';
+    h += '<div class="charts2 fit">' + spreadChart('Against the cheap model with the ladder', ['cost_vs_ladder', 'wrong_vs_ladder'], S) + spreadChart('Against the strong model directly', ['cost_vs_top', 'wrong_vs_top'], S) + '</div>';
+    h += '<h3>Cost ratio against wrong-rate ratio, one dot per run</h3><div class="charts2">' + scatter('Against the cheap model with the ladder', 'cost_vs_ladder', 'wrong_vs_ladder', w) + scatter('Against the strong model directly', 'cost_vs_top', 'wrong_vs_top', w) + '</div>';
+    h += '<h3>Which unknowns move each ratio most</h3><p class="note">' + esc(TX.sections.many.rank_read) + ' Values closer than about ' + num(noise, 'G', 'ratio') + ' are not well separated. Solid bar: rises with it. Hatched: falls.</p>';
+    h += '<div class="ranks">' + rankList('Cost, against the ladder', 'cost_vs_ladder', w) + rankList('Wrong rate, against the ladder', 'wrong_vs_ladder', w) + rankList('Cost, against the strong model', 'cost_vs_top', w) + rankList('Wrong rate, against the strong model', 'wrong_vs_top', w) + '</div>';
+    out.innerHTML = h;
+  }
+
+  // ------------------------------------------------------------ static text
+  function renderStatic() {
+    // Above the map: a title, two sentences and the tags on one line. Nothing else.
+    $('#hero').innerHTML = '<h1>' + esc(TX.title) + '</h1><p class="lede">' + TX.hero.map(rich).join(' ') + '</p>' +
+      '<p class="taglegend">' + ['M', 'S', 'G'].map(function (t) { return '<span>' + tagEl(t) + ' ' + esc(TX.tags[t]) + '</span>'; }).join('') + '</p>';
+    var S = TX.sections;
+    $('#mapTitle').textContent = S.map.title; $('#mapLede').innerHTML = rich(S.map.lede);
+    $('#funnelTitle').textContent = S.funnel.title; $('#funnelLede').innerHTML = rich(S.funnel.lede) + ' ' + esc(S.funnel.marks);
+    $('#casesTitle').textContent = S.cases.title; $('#casesLede').innerHTML = rich(S.cases.lede); $('#casesWarn').innerHTML = rich(S.cases.warning);
+    $('#limsTitle').textContent = S.lims.title; $('#limsLede').innerHTML = rich(S.lims.lede); $('#weightDef').innerHTML = esc(S.lims.weight_def) + ' ' + tagEl('G');
+    $('#worksTitle').textContent = S.lims.works_title; $('#worksLede').innerHTML = rich(S.lims.works_lede);
+    $('#runTitle').textContent = S.run.title; $('#runLede').innerHTML = rich(S.run.lede);
+    $('#manyTitle').textContent = S.many.title; $('#manyLede').innerHTML = rich(S.many.lede);
+    $('#leavesTitle').textContent = S.leaves.title; $('#leavesLede').innerHTML = rich(S.leaves.lede);
+    $('#leavesList').innerHTML = TX.leaves_out.map(function (l) { return '<details class="leftout"><summary>' + esc(l.t) + '</summary><span>' + rich(l.x) + '</span></details>'; }).join('');
+    $('#wordsList').innerHTML = '<dl>' + TX.words.map(function (w) { return '<div><dt>' + esc(w[0]) + '</dt><dd>' + esc(w[1]) + '</dd></div>'; }).join('') + '</dl>';
+    $('#foot').innerHTML = '<p data-label="1">Built ' + esc(D.build.date) + ' from <span class="mono">docs/program/library-pathways/</span> (map version ' + esc(MAP.version) + ') by <span class="mono">build-page.js.txt</span>. Record: <span class="mono">docs/program/LIBRARY-PATHWAYS-2026-11.md</span>.</p>';
+  }
+
+  // ------------------------------------------------------------ start
+  renderStatic();
+  renderGraphLegend();
+  renderFunnelControls();
+  renderFunnelLegend();
+  renderCellLegend();
+  renderGrid();
+  renderCase();
+  renderRanks();
+  renderLims();
+  renderRefs();
+  renderSliders();
+  renderLoops();
+  renderEnsControls();
+  renderEnsemble();
+  recompute();
+  window.__lp = { E: E, C: C, best: BEST, cur: function () { return cur; }, path: function () { return PATH; }, funnel: function () { return FV; }, weights: W8, refs: REFS, counts: FCOUNT };
+})();

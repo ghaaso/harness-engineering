@@ -1,0 +1,35 @@
+const problems = [];
+Object.keys(NAMES).forEach(id => { if (!map.parameters.some(p => p.id === id)) problems.push('name for unknown parameter ' + id); });
+map.parameters.forEach(p => { if (!NAMES[p.id]) problems.push('no name for ' + p.id); });
+const seen = {};
+Object.values(NAMES).forEach(n => { if (seen[n]) problems.push('two parameters share the name ' + n); seen[n] = 1; });
+
+// Edit the text line by line so the file keeps its hand layout.
+const fix = t => t
+  .replace(/\bOne episode: a fix-sized piece of work\b/g, 'One piece of work: a fix-sized task')
+  .replace(/\bAn episode\b/g, 'A piece of work').replace(/\ban episode\b/g, 'a piece of work')
+  .replace(/\bEpisodes\b/g, 'Pieces of work').replace(/\bepisodes\b/g, 'pieces of work')
+  .replace(/\bEpisode\b/g, 'Piece of work').replace(/\bepisode\b/g, 'piece of work');
+const TEXT_VALUE = /("(?:unit|meaning|label|note|revision_note|limitations_note|update_note|title)": ")((?:[^"\\]|\\.)*)(")/g;
+const NL = String.fromCharCode(10);
+let raw = fs.readFileSync(FILE, 'utf8');
+let changed = 0, named = 0;
+raw = raw.split(NL).map(line => {
+  let l = line;
+  const m = /^(\s*\{ "id": "([A-Za-z_]+)", )("name": "[^"]*", )?("group": )/.exec(l);
+  if (m && NAMES[m[2]]) { l = l.replace(m[0], m[1] + '"name": ' + JSON.stringify(NAMES[m[2]]) + ', ' + m[4]); named++; }
+  // only inside a text value, never in an expression
+  l = l.replace(TEXT_VALUE, (all, a, v, z) => { const n = fix(v); if (n !== v) changed++; return a + n + z; });
+  return l;
+}).join(NL);
+const next = JSON.parse(raw);
+next.parameters.forEach(p => {
+  if (p.name !== NAMES[p.id]) problems.push('name not set for ' + p.id);
+  if (p.meaning.trim().split(/\s+/).length >= 25) problems.push('meaning of 25 words or more: ' + p.id);
+});
+const sig = m => JSON.stringify({ b: m.branches.map(b => [b.id, b.from, b.to, b.chance, b.cost, b.calls, b.tier]), s: m.states.map(x => x.id), d: m.derived, st: m.stocks, ms: m.measures.map(x => [x.id, x.flow_on, x.flow_into]), p: m.parameters.map(p => [p.id, p.kind, p.group, !!p.pure_cost, !!p.run_setting]), a: m.attributes.map(a => a.values.map(v => [v.id, v.chance, v.expr])), c: m.class_chance, pol: m.policies });
+const stripText = m => JSON.parse(JSON.stringify(m), (k, v) => (['label', 'note', 'update_note', 'name'].includes(k) ? undefined : v));
+if (sig(stripText(map)) !== sig(stripText(next))) problems.push('the model itself changed; nothing written');
+if (problems.length) { console.error(problems.join(NL)); process.exit(1); }
+fs.writeFileSync(FILE, raw);
+console.log('map.json: ' + named + ' parameter names set; ' + changed + ' text values reworded; model unchanged');

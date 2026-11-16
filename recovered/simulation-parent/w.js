@@ -1,0 +1,12 @@
+const E=require(process.cwd()+'/engine.js'),M=require(process.cwd()+'/map.json'),T=require(process.cwd()+'/params.json'),L=require(process.cwd()+'/limitations.json');
+const W=E.weights(M,T,L.items,{stepLabels:L.steps});const nm=id=>M.parameters.find(p=>p.id===id).name;
+const pc=v=>(100*v).toFixed(2)+'%';
+console.log('not measured:',W.limitations.filter(r=>!r.measured).map(r=>r.id+':'+r.not_measured).join(' '));
+console.log('negative:',W.limitations.filter(r=>r.measured&&r.holds.score<0).map(r=>r.id+' '+pc(r.holds.score)).join(', '));
+console.log('steps:',W.steps.map(s=>s.step+' '+(s.measured?pc(s.holds.score):'NM')+' moved '+s.moved.length+' other '+s.left_at_best.length).join(' | '));
+console.log('unknowns raising:',W.unknowns.filter(u=>u.holds.score<0).map(u=>nm(u.id)+' '+pc(u.holds.score)+' cl '+(-u.holds.cost_vs_ladder).toFixed(4)).join('; '));
+console.log('fav',pc(W.favourable.holds.score),'seq end',pc(W.sequence[W.sequence.length-1].cumulative.score),'unnamed',W.unnamed.ids.map(nm).join(', '),'unnamed alone',pc(W.unnamed.holds.score), W.unnamed.values.ratios.cost_vs_ladder);
+W.ranking.slice(0,10).forEach(r=>{const x=W.limitations.find(l=>l.id===r.id);console.log(r.id,pc(r.score),x.parts.map(p=>nm(p.id)+' '+pc(p.holds.score)).join(' | '))});
+console.log('seq',W.sequence.map(q=>q.step+' '+pc(q.cumulative.score)).join(', '));
+const B=E.paramsFromTable(T,'best');const v=E.variant(M,B,'opus_one');console.log('opus one',v.last.ratios.cost_vs_top, v.first.ratios.cost_vs_top);
+const tp=E.timePath(M,B);const ms=tp.periods[11].library.measures;console.log(['use_looked_up','use_good_in_hand','use_wrong_in_hand','use_lookup_cost','use_write_cost','P_climbs','fw_right'].map(k=>k+' '+ms[k]).join('\n'));

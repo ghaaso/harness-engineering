@@ -1,0 +1,205 @@
+=== project-fixflow-ship-plan.md
+---
+name: project-fixflow-ship-plan
+description: "State of the ship-to-client program as of 2026-11-13 — production still dead, owner's P0a still not done, plan now v9 with a parallel-execution section 7 (lane sessions, build-ahead, lab); code lanes started 2026-11-13; state lives in the repo"
+metadata:
+  node_type: memory
+  type: project
+  originSessionId: e24f17dc-4aea-4914-a9d1-280a723d620e
+  modified: 2026-11-13T08:23:55.548Z
+---
+
+**Program (started 2026-10-31):** ship FixFlow to the client with field-reliable geofencing/location/offline sync, a manager-approved "pakka khata" hop into Odoo (app stays the "kacha khata"), no security holes, acceptable latency, and a self-hosted destination.
+
+**State lives in the repo, not here.** Plan branch `docs/orchestration-design-2026-10` (PR #182, not on `main`): `docs/program/SHIP-PLAN-2026-11.md` — §0 rules, §7 (from line 1557) the v9 parallel-execution amendment, §7.8 its record; `docs/program/W0-results.md` — the P0a step table, owner decisions, deploy-train table and the **lane board** (which phase runs in which session, which PR); `docs/program/ship/` — the owner page built from `program.json`. Design notes `docs/program/w2/O-*.md` end with dated amendments that override their bodies.
+
+**How it runs since 2026-11-13 (owner's instruction that day: parallelise, use the machine, do not accept bottlenecks without pushing on them):** a coordinator session (Fable) on the plan branch owns the plan, W0-results and the merge-readiness call and never implements; each phase is a **lane session** (Opus lead, its own worktree cut from `main`, implements the Opus-owned work itself, Sonnet subagents for tests/screens/docs, a fresh-context Opus reviewer) ending in a draft PR titled `[P..]`. Briefs point lanes at the plan, design notes and the PR #185 skills by absolute path because none of that is on `main`. Phases may be **built** before their Entry line is met (§7.2) but the merge-hold list and standing rules 1–7 are untouched. Lane sessions must be started in a user-initiated turn (a turn woken by a background notification may be refused a start). A message sent to a busy lane session is delivered when its turn ends, so a correction lands as a follow-up turn. When a lane reports READY the coordinator dispatches the binding Opus review itself (plan §7.1) and reads the diff before calling a PR merge-ready. Replace a shared script by atomic rename, never by overwriting it while lanes may be running it. Plan commits are tagged (`plan-v9`, `plan-v9.1`, …).
+
+**Production (measured 2026-11-13):** both Railway hostnames still answer the edge 404. The owner's **P0a** has not started; it is the critical path (nothing reaches a phone or host without it). Prepared for it: `docs/program/lab/p0a/` scripts, a hold-notice draft in `docs/program/notices/fleet-hold.md` (not sent). Supabase's current docs say a one-year restore window; only the dashboard date is authoritative.
+
+**Gates:** `docs/program/lab/ff-gates.sh backend|mobile|web <lane> <worktree>` (per-lane database, skip-aware, logs under `C:/Users/User/.fixflow-cache/gate-logs/`), `ff-slot.sh` (3-slot RAM lock). Baseline on `main` 2026-11-13: backend 757 tests / 0 skipped (7.4 min cold), web 106, mobile 334.
+
+**This machine:** Ryzen 9 7900X (24 threads), 31 GB RAM — **RAM is the binding resource** (about 8 GB free with three lanes running; cap concurrent lane sessions near six), RTX 5070, Docker Desktop (WSL2 VM 15.5 GB). `docker network create` fails (address pools exhausted by another project's networks): use the default bridge or `--network container:<name>`; never prune networks or restart Docker — other sessions run containers here. No `/dev/kvm` in the Docker VM; Windows Hypervisor Platform is enabled (a native emulator can run). A third-party antivirus (360 Total Security) is the active scanner and intermittently blocks creation of system-named DLLs during archive extraction (JDK `ucrtbase.dll`, emulator `d3dcompiler_47.dll`): verify every extracted file, retry, never touch antivirus settings (owner's decision). Android toolchain (owner's yes 2026-11-13) lives in the user folder `C:/Users/User/.fixflow-cache/android` (installer: `docs/program/lab/android-toolchain-install.ps1`; load with `source .../env.sh`); check what is actually on disk before relying on it — the installer once printed "INSTALL OK" with nothing installed. With eight lane sessions: 5.5 GB free, commit 41.5/50 GB; the Docker VM hoards page cache (drop it with a privileged `echo 1 > /proc/sys/vm/drop_caches` container). No eas/railway/psql on PATH. With `MSYS_NO_PATHCONV=1`, git and docker need `C:/` paths. `gh` at `C:\Program Files\GitHub CLI\gh.exe`, logged in as Tempest-Zero.
+
+**Open with the owner (2026-11-13):** who merges merge-ready PRs; installing the Android toolchain for the device lab; merging docs-only PRs #182 and #185; closing superseded draft PR #180.
+
+**Why:** the owner was stuck for months, then lost twelve more days because the first phase was theirs and every code phase queued behind it.
+
+**How to apply:** start any session on this program by reading plan §0 and §7 and the W0-results lane board; follow [[feedback-model-routing]]; never deploy before T_close (standing rule 3); owner-facing output is a visual page ([[user-prefers-visuals]], [[feedback-readable-without-removing]]); verify a plan rewrite by content, not by commit message.
+
+=== project-knowledge-store-track.md
+---
+name: project-knowledge-store-track
+description: "Knowledge-store design track (PR #183) — v1.3.1 complete on 2026-11-03 (owner critique folded in as KS-O1..O20, then an owner-approved refuter pass over its three mechanisms folded in as KS-P1..P27); what it decided, where the evidence is, what the owner must answer before anything is built"
+metadata:
+  node_type: memory
+  type: project
+  originSessionId: f3bbe503-2a20-4258-976b-7d457d3bf63a
+  modified: 2026-11-03T16:12:58.345Z
+---
+
+Knowledge-store track (a shared, queryable store of solved defects and traps for the agents): PR #183, branch `claude/knowledge-store-research-9c609c` (based on `main`, independent of ship-plan PR #182, which it cites by `git show docs/orchestration-design-2026-10:<path>`). Deliverable `docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md` at **v1.3.1 (commit 6fba000, 2026-11-03): complete.** Evidence under `docs/program/evidence/knowledge-store/{sweep,panel,refute,critique-2026-11-03,refute-v1.3}/` with one recursive `manifest.sha256`. Left as a draft PR for the owner to merge.
+
+**What it decided:** SQLite via `node:sqlite` (already in Node 24 on the dev box; zero install) as the query engine; an append-only git journal of immutable event files at `C:\Users\User\.fixflow-ks\` (never AppData: MSIX virtualisation) as the truth, mirrored only to the VPS over SSH; a thin `tools/ks` CLI; declarative probes with control pairs and preconditions as the gate; pull-only; phases KS-0 (free recurrence audit) → KS-1..KS-4 → KS-5 pilot (stop point) → Docker/wire-in/sync/checkpoint only on a go. Panel: proposal A won, D's topology grafted, B rejected. Refuters KS-F1..F20; critic KS-K1..K24; owner critique KS-O1..O20 (§12.7); refuter pass over the critique's mechanisms KS-P1..P27 (§12.8).
+
+**v1.3 (owner critique) and v1.3.1 (refuters over it), both 2026-11-03.** The critique's four points were adjudicated (point 2, a code trigger for silent do-not-apply entries, mostly right; the others partly right) and folded in: no lexer before the pilot (code reader = D5b at KS-6b), `ks lookup --diff` over the PR's real diff, `applies` for do-not-apply entries through `proposed_change`, a writer for `v_missed_existing`. The refuter pass (wf_2e148d62-c8f, 6 narrowed verdicts, 53 of 73 attacks fell) then narrowed all three: an exact `-U0` diff rule over code/config files with author-named handles behind a history selectivity gate (the v1.3 rule would have warned on 48.7 % of past commits), one line per warning, explicit base/head and `<merged>^1`, exit 5 `cli_outdated`, four runs per phase, adversarial planted diffs and a false-fire ceiling in D8; a four-outcome do-not-apply rule with inconclusive treated as an unverified warning (the second door is only caught by D17's CI caller-pin test, now decoupled from the pilot and reconciled with ship phase P7b-1's `set_pin` change); a corpus generation on the lookup row, blind reviewer re-rulings, an IDF-weighted classifier, a windowed binomial rule for D16 (not expected to fire before KS-9), journaled views that report unknown instead of zero; new decision D22 (`guarded_refs`, default off). §12.7 lines are kept and annotated, never rewritten.
+
+**Why:** the owner wants cheap agents to find and verify past diagnoses instead of re-solving; memoization with invalidation, prior art repurposed, not invented; critiques and the design's own mechanisms are adjudicated and refuted, never taken blindly.
+
+**How to apply:** nothing to resume on this track. The owner's next move is D1 (run the audit) and, after it, D1b (a second yes before any build); "accept all defaults" = audit then stop; D17's caller-pin test can land as its own small repository PR before P7b-1 whenever the owner wants. Do not touch the ship plan from this track; the §7.6 hook text is proposed and applied only after the pilot (KS-7). The research session that holds the context is local_44495218-a418-49d5-82d1-fa0e7269d633; its scratchpad `sections/` + `assemble.mjs` + `edits4.mjs`/`edits5a.mjs`/`edits5b.mjs` regenerate the doc. If a KS phase session starts: read §0, §10 (its phase) and §3–§7; KS sessions never run while a ship phase waits on Opus. See [[project-fixflow-ship-plan]].
+
+=== project-skills-packages-track.md
+---
+name: project-skills-packages-track
+description: "The 13 skill packages + 11 agent definitions from design §9 landed on draft PR #185 (2026-11-04); where the conventions, upstreams, verdicts and loose ends live"
+metadata:
+  node_type: memory
+  type: project
+  originSessionId: c1797e48-a50d-4211-bcb0-c92d7dca8e04
+  modified: 2026-11-04T08:16:42.963Z
+---
+
+Draft PR #185 (branch `claude/wizardly-hertz-02c46a`, commit 1ac6b15, 2026-11-04) adds
+`.claude/skills/<13 packages>/` and `.claude/agents/fixflow-*.md` (11 definitions) per the
+owner's conventions in `.claude/skills/README.md` (the contract: SKILL.md + UPSTREAM.md +
+LICENSE-<upstream> + references/, FixFlow facts cited path:line, `[owner]` steps, tier per design
+§3, < ~150 KB). Also adds `.claude` to `.prettierignore` (format:check policed the README).
+
+**Why:** design doc §9 (PR #182) asked the owner to source these skills; the orchestration and
+plan docs live only on PR #182 (head 3415b5e), so every package cites them by repo path and the
+citations resolve once #182 merges.
+
+**How to apply:** workflow scripts may pass `agentType: "fixflow-<role>"` only for definitions
+that exist on the branch in use; `fixflow-orchestration/SKILL.md` carries the registry. Each
+package's `UPSTREAM.md` holds the upstream commit SHA, licence and Rejected list — re-fetch
+upstreams from there, never re-locate. Loose ends: a stale private artifact
+https://claude.ai/artifact/74mAEQo1kuM4KD9iKspdLd (offline-sync-review first draft) awaits the
+owner's delete; `technician-app/package.json:9` still carries an `expo run:android` script.
+Related: [[project-fixflow-ship-plan]], [[project-windows-git-longpaths]].
+
+=== feedback-architecture-not-status.md
+---
+name: feedback-architecture-not-status
+description: "When the owner asks for a harness or system design, deliver the architecture itself as a system-dynamics picture (parts, stocks and flows, feedback loops, a runnable model), not a status-and-decisions page organised around a problem list"
+metadata:
+  node_type: memory
+  type: feedback
+  originSessionId: 701c2346-b7e4-4d4c-9b66-800d834d86a3
+  modified: 2026-11-11T10:32:05.981Z
+---
+
+On 2026-11-11 the owner rejected the first harness v2 page. In their words: it "has all the unnecessary info like reporting where things stand etc instead of the final harness architecture", it showed "no system dynamics representation", and its coloured tiles and cards were "terrible representations of what I want to showcase". They also said "I'm sick of repeating" the goal and "I'm not listing all that we have to add, you figure it out".
+
+What they wanted, stated once already as the goal in [[project-harness-bottlenecks]]: the final harness architecture, with (1) the self-evolving library that minimises token use, (2) parallel work maximised by reasoning about it at plan-making time, as a check on the plan, (3) the other token-efficiency methods, shown together as one system.
+
+**Why (my reading):** the first page followed the commissioning brief's deliverable list (bottleneck map, phases, decisions board) and treated the library and parallel planning as out of scope because the compile's verdicts were cautious about them. The owner's goal outranks a brief's deliverable list. They read a problem map and a decisions board as status reporting.
+
+**How to apply:**
+- For a design, lead with the thing designed: its parts and what flows between them, then how it behaves over time. Use system-dynamics notation the owner asked for by name: stocks as boxes, flows with valves, feedback loops marked R and B, and a model the reader can run. Diagrams in plain ink; no decorative tiles or colour-coded cards.
+- Keep status, problem lists and decision boards on a secondary page, linked, never the main view.
+- When the owner names a goal (here: the self-evolving library, plan-time parallelization, token minimisation), design it in and state its evidence honestly (unproven, measured ceiling), instead of filing it under "not built".
+- Work out what a complete design needs without asking the owner to list it.
+- The page that replaced it: `docs/program/harness-v2/index.html` from `architecture.json` ([[reference-local-page-build-and-preview]]). Related: [[user-prefers-visuals]].
+
+=== feedback-test-the-best-form.md
+---
+name: feedback-test-the-best-form
+description: "Before judging an idea the owner proposes, research and build its best form and test it fairly; a quick naive prototype against a strong baseline is not a test"
+metadata:
+  node_type: memory
+  type: feedback
+  originSessionId: 0bf1c4f3-76dc-4144-995c-2af5a213db41
+  modified: 2026-11-12T13:20:31.476Z
+---
+
+On 2026-11-12 the owner rejected my test of their graph-database idea. I had built a quick file-level import graph as a JSON list, compared it with the same edges in SQLite on one query, and judged usefulness from 200 searches sampled from another project. The owner's objections, in their words: "the type of graph we make makes a huge difference including the algorithms we use on it we dont get anything for free", "a merely self made graph vs a established relational engine is not a fair enough comparison", "are you properly scoring the two answers and the value they carry?", "doesnt how many hops we set the traversal to also impact this?", and "First research on the best advanced optimized way of making it and then start testing it".
+
+**Why:** the owner had asked the same question three times and each of my answers defended a prior verdict with a test that favoured it. A weak version of an idea losing to a strong baseline proves nothing, and the owner reads it as not having taken the idea seriously.
+
+**How to apply:** when the owner proposes an approach and I doubt it, (1) research the strongest known way to build it first, (2) cater it to the repo in question, (3) compare like with like (established engine against established engine, tuned on both sides), (4) define the scoring of answer value before building, (5) sweep the parameters that matter (hop count here) instead of fixing one, (6) run it on the project the owner names, and say plainly if that project lacks the data. Do not give the owner a comparison before a refuter has seen its baseline. My interpretation: this applies to any "would X help" question, not only graphs. Related: [[project-harness-bottlenecks]], [[feedback-architecture-not-status]].
+
+**Addendum (2026-11-12, same day): fix the obstacle, do not record a handicap.** When LadybugDB's algorithm extension failed to load on Windows, I planned to compute ranking outside the engine and note "not built in on this PC". The owner: "if they dont work on windows run a linux machiune we have the resources why are you compromising instead of fixing problems thatll ruin the experiment". **How to apply:** an environment obstacle that would handicap one arm of an experiment gets fixed with the resources on hand before anything is written down as a limitation. On this PC that means a Linux container (Docker Desktop with WSL2 is installed; it is not running by default) and running every arm's engine measurements in that same environment so the comparison stays like for like. Report a limitation only after the fix has been tried and failed. My interpretation: the owner treats Docker and Linux on this PC as already-approved resources for experiments, though new engine or model downloads still get named with source and size.
+
+**Second instance (2026-11-12, the library review, [[project-library-plausibility-review]]).** I priced the owner's reasoning-cache library as exact repeats of solved problems in a thin, pre-development record, then reported that price as the ceiling of the idea ("your work rarely repeats", "Sonnet can't borrow Opus's judgment", "cap the window instead"). The owner: "You're thinking very narrowly and instead of seeing if these problems are workable or not you just deny the possibility"; the repo has "barely even started development"; low repetition now says nothing about repetition across projects or over time; entries were verified when written and cache invalidation is a mature field; the intended mechanism is semantic and technical matching of similar problems, not exact repeats; and a window cap has long-run costs (mistakes, summary loss). **How to apply:** (1) a base rate measured on an early or unrepresentative record is a fact about the record, never about the idea: say so in the headline, not only in the limits; (2) when asked to critique a design, still answer "is each problem workable, and how" and name the use cases with the most potential before any verdict; (3) price the owner's actual mechanism (here similarity-based reuse), not the narrower one on paper; (4) do not recommend an alternative (a window cap) as if it were free when its quality cost is unmeasured; (5) a short summary must keep the uncertainty, not drop it.
+
+**Third push, same day.** After I conceded, the owner still found the answer too absolute: "We need to define the cases before giving absolute opinions like you're giving which is disappointing", "Dont look at things so narrowly", and one of my suggested use cases was "what i didnt say and seems like a dumb idea". **How to apply:** (6) answer per case, with the conditions under which each holds, before any overall opinion; (7) an average hides the tail: check the top tier and the hard cases where the gap is total, not only the mean gap; (8) restate the owner's goal in their words before judging against it (here: equal output on a cheaper model, to cut cost); (9) a limitation that is really the system's intake (a new hard problem gets escalated and stored) is not an objection; (10) do not add my own redesign of their idea unless asked; engage with the mechanism they proposed (here: merging partial solutions through a graph).
+
+**Fourth push, same day: the method the owner wants for a design.** "I feel like im the only one being sensible, pushing back at you giving good ideas while you're just sitting there either being wrong or repeating my ideas back to me"; "First we'd have to identify the actual limitations of this design not what you've been doing so far, and then focus on solving them until we reach something absolutely unsolvable or gains become near to zero". **How to apply:** for any design the owner cares about, run limitation, then best known fix, then what is left, then fix that, and stop a chain only at something unsolvable (say why) or near-zero gain (give the estimate). A limitation is a mechanism-level obstacle, never a base-rate doubt about whether it will pay. Bring my own concrete additions (data structure, named algorithm, who runs it, cost, cheapest test) and prior art from other fields; agreeing with the owner or restating their idea is not a contribution. This supersedes item (10) when the owner asks for ideas.
+
+**Fifth push, same day: discuss before fixing, and find limitations by simulation.** I launched a nine-agent solve round and the owner cut in: "hey reason and discuss the limitations with me before attempting a fix". I stopped it. Then, on my abstract list of eleven limitations: "i think thats mostly right but i think you're still missing more, simulate the whole process of how the proposed design works and you'll start to see where it causes issues or breaks. Which part of the design and what not". **How to apply:** (a) no fixes and no solve workflows until the owner has agreed the list of limitations; the discussion is with the owner, in conversation turns, not delegated; (b) to find a design's limitations, walk one concrete case through every step and ask at each step who acts, what is in its window at that moment, what it cannot know yet, and what happens in parallel and later; group what breaks by part of the design. The walkthrough found about twice as many limitations as the abstract list, mostly in capture, the escalation ladder, delivery into short subagent windows, and merging.
+
+=== feedback-dont-narrow-the-question.md
+---
+name: feedback-dont-narrow-the-question
+description: When the owner asks whether an architecture helps, test the architecture he described with an agent in the loop; do not shrink it to the part that is easy to score
+metadata:
+  type: feedback
+---
+
+On 2026-11-13, after the graph test reported "the graph engines gave the same answers as SQLite", the owner said: "if our experiments are all failing then how the hell does graphify show such good results and it has a ton of stars in its repo, are we using strictly graphs or knowledge graphs or TKGs i suspect you're still being narrow minded with the architecture you have flaws in your reasoning and especially your assumptions".
+
+He was right on the main point. His question from the start was about a knowledge layer: semantic relations, spatial and temporal topology, caching and invalidation, so an agent fetches small context fast instead of re-reading files. I tested a storage-engine contest on a parser-built property graph, scored on "which files changed together", with no agent, no model-extracted meaning, no summaries, no temporal validity and no cached conclusions. My own research verifier had warned before the test that the co-change label cannot credit what a graph is for; I went ahead.
+
+**Why:** (my interpretation) I kept choosing the version of the question that could be scored cleanly from git history, and each narrowing looked rigorous on its own. A clean answer to a narrower question reads to him as the experiment failing, and as me not listening.
+
+**How to apply:**
+- Before designing a test, write the owner's question in his words and list every part of it (here: semantic relations, temporal, caching, invalidation, token use by an agent). Each part is either tested or named as not tested, up front, to him.
+- If a popular tool claims the effect (graphify), put the tool itself in the test as shipped, and find out what its number measures (graphify's 71.5x is tokens per graph query against reading every raw file of a 52-file mixed corpus, self-measured) before either dismissing it or citing it.
+- The baseline that matters is an agent with ordinary search tools, measured end to end in tokens and correctness. A scripted retrieval score is a component test, never the verdict.
+- When a verifier or critic warns that the label cannot credit the idea under test, that is a stop, not a footnote.
+- Report a narrow result as narrow in the first sentence. Related: [[feedback-test-the-best-form]], [[project-harness-bottlenecks]].
+
+=== feedback-build-on-prior-sweeps.md
+---
+name: feedback-build-on-prior-sweeps
+description: When the owner says earlier research is already compiled, fold it into the new work; never treat it as covered by citing ids
+metadata:
+  type: feedback
+---
+
+When the owner says a prior sweep is "already compiled, I won't repeat that", they mean: use it as an input and show how every item fits the new question. Citing a few ids and moving on is not processing it.
+
+**Why:** On 2026-11-11 the bottleneck compile cited 11 of about 90 surviving Horthy and BAML ideas "by id, not repeated". The owner caught it before the harness design started. The real mapping changed the picture: the sweeps had been scored against FixFlow's W1–W5, a different lens, so their verdicts did not carry over ([[project-harness-bottlenecks]], [[project-harness-ideas-track]]).
+
+**How to apply:** Before calling earlier research covered, check what question it was scored against. If the lens differs, re-map every kept item and re-screen the dropped ones under the new lens, then say plainly which items add nothing.
+
+=== reference-bash-tool-limits.md
+---
+name: reference-bash-tool-limits
+description: Bash tool quirks on this Windows setup — commands over about 8 KB are cut, and double backslashes in heredocs collapse
+metadata:
+  type: reference
+---
+
+Two Bash tool quirks seen on this PC (Git Bash), 2026-11-11:
+
+- A single Bash command longer than roughly 8 KB is truncated silently; a heredoc then runs to end of input and the file is cut mid-line. Write long files in parts of under about 6 KB and append, then check the tail.
+- A double backslash inside a heredoc arrives as a single one, even with a quoted delimiter. In generated JavaScript use String.fromCharCode(92) or a character class instead of an escaped backslash.
+
+Related: [[project-windows-git-longpaths]].
+
+=== project-windows-git-longpaths.md
+---
+name: project-windows-git-longpaths
+description: "On this Windows box, git clones into the session scratchpad fail with \"Filename too long\"; use git -c core.longpaths=true per command, cone-mode sparse checkout with directory names"
+metadata:
+  node_type: memory
+  type: project
+  originSessionId: c1797e48-a50d-4211-bcb0-c92d7dca8e04
+  modified: 2026-11-04T07:09:40.606Z
+---
+
+Git clones into the Claude scratchpad directory (path ~170 chars) fail on this machine with
+`error: unable to open loose object … Filename too long` / `fatal: fetch-pack: invalid
+index-pack output` (seen 2026-11-04, 15 of 15 clones).
+
+**Why:** Windows MAX_PATH (260) plus the long scratchpad prefix; the owner's global git config
+does not set `core.longpaths`, and nothing may be installed or reconfigured on the machine
+without an owner decision.
+
+**How to apply:** prefix each git command with the per-command option instead of changing
+config: `git -c core.longpaths=true clone --filter=blob:none --depth 1 --sparse <url> <dest>`
+then `git -c core.longpaths=true sparse-checkout set <dir> <dir>` (cone mode; root files such as
+LICENSE/README come along; single-file sparse patterns silently fail here). `python` is not on
+PATH in Git Bash (Windows Store alias) — use `node` for JSON. Related: [[project-fixflow-ship-plan]].
+
