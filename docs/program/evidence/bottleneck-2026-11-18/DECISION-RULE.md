@@ -9,7 +9,7 @@
 - `own-data.md`: which resource limited which of 25 past jobs of ours.
 - The earlier reading on several writers of one file: library records r57-0301 to r57-0306.
 
-Library records for this page: r57-0405 to r57-0407 (the rule), r57-0511 (the measurements it needs),
+Library records for this page: r57-0406 to r57-0408 (the rule), r57-0511 (the measurements it needs),
 r57-0705 (where it is). Objective, as ruled (r57-0003): quality first, then the least time, memory and tokens.
 
 Two words used below. A **unit** is one piece of work that is started at one moment: an agent's piece, a
@@ -68,8 +68,15 @@ measurement before it predicts.)
 | The check | Time of one check (596 s, one run); time a unit spends outside it; the lane's slots (2 today); the wait | Case A, one task split into pieces that each pass one check: the square root of (time outside / time inside). Case B, one check per change: slots x (time outside + time inside) / time inside; past that, workers only queue | Suleman 2008: within 1 % of the best count (narrowed: a simulator, a section inside one program). Case B: a textbook queueing bound, reasoned | Wait yes. Time outside the check no |
 | Memory bandwidth | A bus or cache-miss counter | 100 / the bus share of one worker; pair heavy with light | Suleman; Merkel: 2.7 to 3.9 times slower (confirmed, chips of 2010) | No. No sign our commands are bound by it |
 | Shared files | Conflicts per file or function; claims held | See "Several writers" below | MOCC, Moenkeberg-Weikum (both narrowed) | No |
-| Token allowance | Share of the week and of the 5-hour window used; tokens per unit by class | The units whose expected tokens fit what is left at the planned pace; a cap per window | Quota per period (narrowed), token bucket (quoted). The mapping to our windows is reasoning: no paper | Week share yes. Tokens per unit no |
+| Token allowance | Share of the week and of the 5-hour window used; tokens per unit by class | The units the window can still pay for, above a reserve. A budget, not a rate: see the note under this table | Quota per period (narrowed), token bucket (quoted). The mapping to our windows is reasoning: no paper | Week share yes. Tokens per unit no |
 | Ready work | Units ready to start | Their number | | Yes |
+
+**Tokens are a budget, not a rate (reasoned, not measured).** Units that run side by side cost the same
+tokens in total as the same units one after another. So the allowance does not limit how many run at once
+until a window is nearly spent; our four token episodes were such moments. What it decides is how many
+units can be done before the reset, and on which model. Side-by-side work costs extra tokens in two ways
+only: work that is redone after a conflict, and a waiting session that re-reads its context. It saves some:
+a coordinator that gets several helpers back in one turn pays for fewer turns.
 
 **Step 2. Width = the smallest of these.** Two resources within one unit of each other count as two at once.
 If "ready work" is the smallest, capacity is idle: start more work (r57-0006). The minimum is argued by
@@ -99,7 +106,7 @@ At agent speed that is hours, so it can only confirm the rule, not drive it.
 | Memory | Admits only what fits with a reserve; counts paused agents; at the floor stops the least important unit | Collapse is analytic. Caps from measured use: slack 23 to 31 % against 46 to 60 % by hand | Quoted |
 | The check | Keeps it busy; short jobs first; starts no worker past the check's width; makes the check wider or shorter | Widths within 1 % of best in a simulator. Test selection: r57-0306. Suite files side by side: untested (r57-0403) | Quoted for the width; the rest untested here |
 | Shared files | Per file: own copies, or one owner (below) | 1.5 times better mean response than the best fixed level, one bank trace | Quoted, narrowed |
-| Token allowance | Charges every token to its unit; paces spending to the window; cheaper model where the gap is small | Nothing for a window of hours or days | Reasoned |
+| Token allowance | Charges every token to its unit; admits only what the window can still pay for; cheaper model where the gap is small; one owner where a conflict is likely, so nothing is redone | Nothing for a window of hours or days | Reasoned |
 | Two at once | Smallest width; next unit by fit on all resources. Never "share whatever is the bottleneck now" | That rule gave 75 Mbps against 160 in one run with two flows | Quoted, one run |
 | None | Starts one more unit per event until a width binds | | Quoted (additive increase) |
 | PC blocks program starts | Outside the rule | | |
