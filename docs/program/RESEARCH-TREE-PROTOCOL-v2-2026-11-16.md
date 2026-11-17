@@ -987,9 +987,13 @@ RUN-FULL.md's estimate, made for 4 workers and 8,000 MB: groups 1 to 5 (everythi
 fields with 2 faults) in about 4 hours, groups 1 to 9 in about 2 to 2.5 days, the whole matrix in about
 2.5 to 3 weeks, with the last two groups ending mostly BOUNDED. With 3 workers and 6,000 MB it is slower
 and more parts end BOUNDED; a BOUNDED part is reported and can be rerun alone at a larger size, it is
-never cut down. Its table is therefore not in this section; it is committed with the results. The run
+never cut down. Its tables for groups 1 to 5 are in point 11. The run
 is a process of the session that started it: if that session or the PC stops, the same command picks
 it up.
+
+**Changed the same afternoon, on the owner's decision:** the full run was stopped at about 15:25, after
+group 1 and five of the nine parts of group 2, and replaced by a run of groups 1 to 5 only, with as many
+workers as the machine carries. Its outcome is in point 11.
 
 Open defects, none fixed in any stage record:
 
@@ -1009,8 +1013,8 @@ Open defects, none fixed in any stage record:
 
 R57 reads "A counterexample blocks the change" and "Current verdict: blocked, until the extended model
 holds" (534-536). R55 makes gate.mjs pass only when R57 passes, and R10 admits nothing without the gate.
-The protocol stays blocked by its own R57 until the full run holds and the oracles are modelled as
-built.
+The protocol stays blocked by its own R57 until the model holds with the oracles modelled as built
+(point 11 holds only for the idealised design; point 12 says at which sizes it is to be checked).
 
 **3. The lane and the no-burst rule.** Both were added after the second stall; the lane's log starts at
 03:11.
@@ -1029,7 +1033,10 @@ built.
   PowerShell call where the value can be had without one. Test folders run with `--test-concurrency=1`.
 - **Why.** Both stalls began while an agent ran the self-test script over many cases: bursts of
   short-lived processes, the first also with a PowerShell query per script start. The library review
-  (LR-3) and the runner check (RC-1) each found such a burst in code and removed it.
+  (LR-3) and the runner check (RC-1) each found such a burst in code and removed it. *Corrected on
+  2026-11-17, evening:* the check of the freezes found that what failed was the start of new programs,
+  not memory (point 4, last bullets); what blocks the starts is not established. The lane and the
+  no-burst rule stay as care for the machine, not as a proven remedy.
 - **The recorder** (`tools/recorder.ps1`). Every 2 s it writes free memory, total CPU, the process count
   and the counts of node and powershell processes to `lane/recorder.log`, flushed. Its governor acts when
   free memory is under 2,500 MB, more than 60 node or 40 powershell processes run, or CPU is at 97 % or
@@ -1042,40 +1049,78 @@ built.
 
 - **01:42, a PC hard reset.** Running: an agent's self-test over many cases (memory note), and the first
   model-review attempt, whose runner sized its pool at 11 workers of 670 MB (model-fidelity, which names
-  these pools as "the loads that came before the stalls"). No machine record of the minutes before
-  exists. A resume afterwards re-ran finished agents and overwrote 20 revised specs; it was stopped and
+  these pools as "the loads that came before the stalls", a cause the check of the freezes found wrong
+  or partial). No recorder samples exist; the app's log shows a blocked program start from 01:26, and
+  the boot was at 01:44. A resume afterwards re-ran finished agents and overwrote 20 revised specs; it was stopped and
   the specs restored from snapshot commit 8e0a694.
-- **02:34, a second stall.** Every process crawled for about 20 minutes until the owner restarted the PC
-  (memory note). Running: the self-test over many cases again. No machine record exists.
+- **02:34, a second stall.** The memory note says every process crawled for about 20 minutes until the
+  owner restarted the PC; the check of the freezes found instead that new program starts were blocked
+  while running programs went on (the app's log, from 02:50; boot at 02:55). Running: the self-test over
+  many cases again. No recorder samples exist.
 - **Tested after the stalls.** `ps_scaling.mjs` times the library's process-list query run 1, 2, 4 and
   8 at once; `burst_probe.mjs` times writing and reading 25 to 200 new script files against data files.
   The memory note records the model checker, concurrent process queries and bursts of new script files
   as "ruled out by test"; the figures are not recorded, and no test of the model checker is among the
   coordinator's scripts. These tests show only that each load alone, at the sizes tried, did not
   reproduce a stall. (`mem_crash.js` is not a test: it wrote the memory notes.) Not proven: the cause of
-  either stall. The antivirus (360 Total Security, Defender off) cannot be inspected.
-- **About 05:10 to 05:27, the coordinating session stopped; the PC did not.** The recorder's samples run
+  either stall. The antivirus (360 Total Security) was examined by the check of the
+  freezes and uninstalled the same day (below).
+- **About 05:10 to 05:27, the coordinating session stopped; the PC ran on until it failed on the way
+  into sleep at 07:34 to 07:44 (below).** The recorder's samples run
   on through 07:34; in the lines read: 0 to 14 % CPU, at least 18,400 MB free, no GOVERNOR line. The lane
   log: at 05:11:19 the whole U2 suite (six test files, label fix-U2) and at 05:11:58 admit with stop
   (fix-U1-full-admit-stop) started; both timed out at 300 s (05:16:19, 05:16:58) with no end line after;
   a waiter (fix-U3-st-canary) gave up as busy at 05:27:04 after 900 s. The fix-U2 command that ended in
   43 s at 05:10:57 was fsck.test.mjs alone. From 05:12:34 the recorder counts 14 node processes at 0 to
   2 % CPU; fix-U3's record gives the count falling to 13, 12 and 11 at 05:28, 05:35 and 05:56. The memory
-  note says the session stopped during a wait with its context about 90 % full. The recorder's log ends
-  at 07:34:27 and resumes at 12:07:46; why is not recorded.
+  note said the session stopped during a wait with its context about 90 % full; that reading is withdrawn
+  (see the correction below). The recorder's log ends at 07:34:27, when Windows began a transition into
+  sleep, and resumes at 12:07:46.
 - **The three fix stages disagree on the timeouts**, each as its own opinion. fix-U1: run alone, admit
   takes 50 s and stop 51 s; the hang was in stop T2b's PowerShell process reads; "likely ... a system-wide
   WMI/PowerShell stall, not a hanging test". fix-U2 and fix-U3: the processes were blocked, most likely on
   output pipes the stopped session no longer drained (the lane uses inherited stdio); fix-U3 adds that
   the timeouts fired but taskkill did not end them (no end line). Not proven either way. Memory exhaustion and CPU saturation were not observed; no test
-  ruled anything out. Whether the full context caused the stop is not proven; the token count at the
-  stop is not recorded.
+  ruled anything out. The token count at the stop is not recorded.
 - **13:57, a helper stalled for 22 minutes in the closing round** (coordinator's record). Its long test
   command had been moved to the background by the harness after 180 s without the helper asking for it,
   and the completion notice it waited for did not come; the coordinator saw it in the lane log and
   resumed it. The closing note records the same move twice in that helper. Cause not examined.
   Consequence for the briefs: "never put a command in the background" cannot be kept by a helper alone
   when a lane command runs longer than 180 s.
+- **15:43:26, a fourth interruption.** The ladder run of point 11 was in its first tier: 16 workers, the
+  processor mostly at 85 to 99 % (mean 89 %). Its summary stops at 15:43:26. The recorder goes on until
+  15:45:34 and shows about 19,300 MB free, 1 to 6 % CPU and the run's node processes still alive. The PC
+  was hard-reset at 15:45, and restarted at 17:13 after the owner had uninstalled the antivirus. The run
+  was picked up at 17:19 and lost no result.
+- **Corrected on 2026-11-17, evening, after a check of the freezes** (seven agents, two of them
+  refuters; the record is `docs/program/evidence/pc-freezes-2026-11-17/VERDICT.md`, and it holds where
+  it and the bullets above differ). Established:
+  - It is not a memory shortage. At all four interruptions 11.8 to 19.3 GB was free.
+  - What fails is the start of a new program. In three of the four, the first call that never returned
+    was a short command (a program start); calls answered inside the app go on for a few seconds;
+    programs already running carry on; the app's own main process is stuck in a start (`spawn:git`,
+    `spawn:taskkill`), which is its "not responding" window.
+  - The app's log (`%LOCALAPPDATA%\Claude\logs\main.log`) shows the same block four times on this
+    day, at 01:26, 02:50, 05:12 and 15:43 (the times in the bullets above come from the memory note
+    and the recorder), and on 2, 6, 13, 14 and 15 November.
+  - So the stop at about 05:12 was a blocked program start; the verdict counts the earlier reading (the
+    session's full context) among the causes that were wrong or partial. The stuck start came back at
+    05:37:31 as access denied.
+  - The restart of 07:44 was Windows failing on the way into sleep (the transition began at 07:34:27;
+    bugcheck 0xA0; a crash file was written at 07:44:54), not a reset by the owner.
+- **Not established: what causes the block.** The antivirus (360 Total Security) slowed every
+  PowerShell start thirteen-fold and was the only third-party security product; the owner uninstalled
+  it and restarted the PC at 17:13. Whether it caused the blocks is not proven: several days of the
+  usual work are the test, and one recurrence refutes it. Against it: 18 unclean restarts happened in
+  the 13 days before it was installed. A second kind of trouble exists around sleep (20 of 52 unclean
+  restarts in 56 days carry a sleep flag). Three causes named on this day were wrong
+  or partial: the model checker's load, the coordinating session's full context, PowerShell starts
+  feeding the antivirus. Interruptions 1 and 2 show the same signature but have no recorder samples
+  and cannot be attributed.
+- **What this changes above.** The opinions of the three fix stages are superseded as causes. The
+  lane's missing end lines at 05:16 fit a blocked start, since its timeout path starts `taskkill`; that
+  is an inference, no record shows it.
 
 **5. The rule that follows: hand over while the context is small.**
 
@@ -1095,9 +1140,10 @@ state into the memory note and went on.
   starts no long wait above W*_coord: it hands over first. The successor starts from files (the status
   file, `coord.json`, the stage records), never from the old context. [In the tree: watch.mjs exits
   class 16 at W*_coord, audit.mjs flags turns above 1.5·W*_coord, handover.mjs raises ce, the owner
-  starts the successor. Outside it: the session, through the app's usage tool, or the owner.] Because
-  the session that coordinated this build stopped with its context about 90 % full; that the full
-  context caused the stop is not proven.
+  starts the successor. Outside it: the session, through the app's usage tool, or the owner.] Its first
+  reason is withdrawn (corrected 2026-11-17, evening): the stop at about 05:12 was a blocked program
+  start (point 4); the full-context reading is not supported. What carries the rule is the design's own
+  figure (R12, R50) and the measurement above.
 - **Consequence.** W*_coord already counts a fixed first-call context (P = 79,000 in `cost-inputs.json`);
   the 75,000 measured here fits inside it and leaves about 58,000 tokens of work before the hand-over.
   This session passed W*_coord during set-up, by reading notes, folder listings and the script into its
@@ -1229,3 +1275,116 @@ outside this table.
 Harness facts still only believed: agent files restrict a helper's tools; hooks and permission rules
 are enforced; a background script alone keeps the PC awake; something visible names a session's folder;
 a long foreground command stays in the foreground (point 4, 13:57).
+
+**11. The model run of groups 1 to 5 (2026-11-17, afternoon and evening).**
+
+- **The decision.** The owner decided to end the run after group 5 and asked for every core to be used.
+  The model changes next (four fixes are to be modelled as built, point 2), and the larger groups would
+  have to be run again after that. Groups 6 to 11 of `model/RUN-FULL.md` were not run.
+- **How it was run.** The runner unchanged, as a ladder of memory sizes (`model/RUN-LADDER.md`,
+  `model/ladder2.sh`): 500 MB with up to 16 workers, then the parts that did not fit again at 1,150 MB
+  (9 workers by free memory), at 2,600 MB (4) and at 6,000 MB (2). A part ends complete at the size
+  where it fitted, or BOUNDED at 6,000 MB. None is cut down or skipped; the attempts at the smaller sizes
+  are kept in `model/results-ladder/`. Group 2 (A-FENCE-CE) did not go through the ladder: it ran at
+  1,500 MB and then at 6,000 MB, five parts in the full run and four in the last tier; the full run's log
+  (`results/run-full.out`) holds its attempts that are not under `results-ladder/`.
+- **Time.** The ladder ran from 15:29 to 15:43 and, after the interruption of point 4, from 17:19 to
+  18:49: about 104 minutes for groups 3 to 5 and four parts of group 2. The other five parts of group 2
+  had taken about 29 minutes of the full run, and group 1 four minutes, at three workers. In all about
+  2 h 15 min, against RUN-FULL.md's estimate of about 4 hours for groups 1 to 5 at four workers.
+- **Sizes.** Of 5,163 parts, 1,118 were complete from the first run (at 1,500 MB) and 3,914 fitted in
+  500 MB; 92 needed 1,150 MB (two more ran there without a try at 500 MB, in the first ladder script, at
+  peaks of 345 and 359 MB), 26 needed 2,600 MB and 2 needed 6,000 MB (the larger of the two: 28.1 million
+  states, 3,115 MB counted by the checker). Nine stayed BOUNDED at 6,000 MB, at 45 to 47 million states
+  each: the nine parts of A-FENCE-CE.
+- **Totals.** 59 configurations, 5,163 parts: 5,154 complete, 9 BOUNDED, none failed; 3.43 billion states, 53,447 cpu-seconds.
+
+The adopted design (D, before the six fixes of point 2) and the design with them (DF). Every row is complete.
+
+| Size | D: states | D: properties that fail (shortest trace, steps) | DF: states | DF: fails |
+|---|---|---|---|---|
+| 2 fields, 2 faults, R = 1 | 4.5 M | Slots(6), ReadyNotDiscarded(6), NoFalseSuspicion(6), NoDeadlock(2), AlwaysCanResolve(2), NoBusyLoop(6), EventuallyResolves(12) | 3.7 M | none |
+| 2 fields, 2 faults, R = 2 | 4.6 M | Slots(6), ReadyNotDiscarded(6), NoFalseSuspicion(6), NoDeadlock(2), AlwaysCanResolve(2), NoBusyLoop(6), EventuallyResolves(12) | 3.7 M | none |
+| 2 fields, 3 faults, R = 1 | 79.6 M | Slots(6), ReadyNotDiscarded(6), NoFalseSuspicion(6), NoDeadlock(2), AlwaysCanResolve(2), NoBusyLoop(6), EventuallyResolves(12) | 57.7 M | none |
+| 2 fields, 3 faults, R = 2 | 83.0 M | Slots(6), ReadyNotDiscarded(6), NoFalseSuspicion(6), NoDeadlock(2), AlwaysCanResolve(2), NoBusyLoop(6), EventuallyResolves(12) | 59.7 M | none |
+| 3 fields, 2 faults, R = 1 | 29.4 M | Slots(6), ReadyNotDiscarded(6), NoFalseSuspicion(6), NoDeadlock(2), AlwaysCanResolve(2), NoBusyLoop(7), EventuallyResolves(12) | 22.9 M | none |
+| 3 fields, 2 faults, R = 2 | 29.7 M | Slots(6), ReadyNotDiscarded(6), NoFalseSuspicion(6), NoDeadlock(2), AlwaysCanResolve(2), NoBusyLoop(7), EventuallyResolves(12) | 23.0 M | none |
+| 2 fields, 4 faults, at most one of each kind, R = 1 | 372.7 M | Slots(6), ReadyNotDiscarded(6), NoFalseSuspicion(8), NoDeadlock(2), AlwaysCanResolve(2), NoBusyLoop(6), EventuallyResolves(12) | 266.7 M | none |
+| 2 fields, 4 faults, at most one of each kind, R = 2 | 391.5 M | Slots(6), ReadyNotDiscarded(6), NoFalseSuspicion(8), NoDeadlock(2), AlwaysCanResolve(2), NoBusyLoop(6), EventuallyResolves(12) | 278.5 M | none |
+
+Two more rows at 2 fields and 2 faults, both complete. D2-K2-R1-NOKILLWAKE (the adopted design under the
+reading that a killed background command does not wake its session): fails Slots(6), ReadyNotDiscarded(6), NoFalseSuspicion(6), NoDeadlock(2), AlwaysCanResolve(2), EventuallyResolves(12).
+DFPLUS-RECHECK (the design with the fixes and one more, a re-check at endturn): fails none, so that extra
+fix is not shown to be needed.
+
+The design with the fixes with one safeguard taken out, at 2 and at 3 faults (2 fields, R = 1). Every row is
+complete at both sizes.
+
+| Taken out | What it is | With 2 faults: fails | With 3 faults: fails |
+|---|---|---|---|
+| A-ACK | endturn writes acked_seq = ledger head at endturn | AlwaysCanResolve(8), EventuallyResolves(10) | AlwaysCanResolve(8), EventuallyResolves(10) |
+| A-ADMIT-LIVE | admission counts table rows, not live processes | Slots(6) | Slots(6) |
+| A-ALARM | no alarm (the watcher is the only wake source) | NoDeadlock(2), AlwaysCanResolve(2) | NoDeadlock(2), AlwaysCanResolve(2) |
+| A-CUT | restore reads the whole staging (no cut at the fence) | NoStaleAccepted(10) | NoStaleAccepted(10) |
+| A-DRAIN | no drain: failure restarts go on while draining, and the hand-over waits only until the table shows nothing running (zombies ignored) | nothing | nothing |
+| A-FENCE-EPOCH | commit.mjs does not compare epochs; the coordinator commits the READY a note names | NoStaleAccepted(8), AlwaysCanResolve(13), EventuallyResolves(18) | NoStaleAccepted(8), AlwaysCanResolve(11), EventuallyResolves(12) |
+| A-PROGRESS | suspicion by liveness, not by progress V | EventuallyResolves(9) | EventuallyResolves(9) |
+| A-READY | replace does not re-check for a READY of the current epoch | ReadyNotDiscarded(6) | ReadyNotDiscarded(6) |
+| A-RECONCILE | no status --reconcile at turn start | Slots(3), OneSessionPerAttempt(3) | Slots(3), OneSessionPerAttempt(3), AlwaysCanResolve(8), EventuallyResolves(15) |
+| A-RESTART-LIMIT | replace.mjs never takes the limit path (restarts are not counted against R) | RestartLimit(16) | RestartLimit(15) |
+| A-STOP-LIMIT | limit path exits before the fence and the stop | FailedTaskStopped(16) | FailedTaskStopped(15), AlwaysCanResolve(14), EventuallyResolves(21) |
+| A-WATCHER-LOCK | no watcher.lock; endturn starts a watcher when none of its ce has a fresh tick | SingleWatcher(6), NoFalseSuspicion(11) | SingleWatcher(6), NoFalseSuspicion(11) |
+| A-WX | COMMIT written without exclusive create | nothing | nothing |
+| A-WX+RECONCILE | COMMIT without exclusive create and no reconcile | AtMostOneCommit(6), Slots(3), OneSessionPerAttempt(3) | AtMostOneCommit(6), Slots(3), OneSessionPerAttempt(3), AlwaysCanResolve(8), EventuallyResolves(15) |
+| X-ADMIT-RESERVE | the fix FIX_ADMIT_RESERVE | Slots(6) | Slots(6) |
+| X-ARM-AT-START | the fix FIX_ARM_AT_START | NoDeadlock(2), AlwaysCanResolve(2) | NoDeadlock(2), AlwaysCanResolve(2) |
+| X-ARM-BY-WRITE | the fix FIX_ARM_BY_WRITE | NoBusyLoop(5) | NoBusyLoop(5) |
+| X-PAUSE-DISCOUNT | the fix FIX_PAUSE_DISCOUNT | NoFalseSuspicion(6) | NoFalseSuspicion(6) |
+| X-READY-ALL | the fix FIX_READY_ALL | ReadyNotDiscarded(6) | ReadyNotDiscarded(6) |
+| X-WATCHER-ACTIONABLE | the fix FIX_WATCHER_ACTIONABLE | AlwaysCanResolve(11), EventuallyResolves(13) | AlwaysCanResolve(10), EventuallyResolves(12) |
+
+What the run shows, and what it does not:
+
+- **With the six fixes the model of the idealised design holds all 14 properties at every size that was
+  run**: 2 fields with 2, 3 and 4 faults (4 faults: at most one of each kind) and 3 fields with 2 faults,
+  each with R = 1 and R = 2. Idealised means that four of the fixes, reconcile and the --ce fence are
+  oracles in the model and that several of the 14 properties are weak (point 2). New against point 2: R = 2, three
+  faults complete instead of bounded, four faults, and 3 fields.
+- **Without them the adopted design fails the same seven properties at every size.**
+- **Each of the six fixes is needed in the model**: every X- row fails at 2 and at 3 faults.
+- **2 of the 20 rows fail nothing at either size: A-DRAIN and A-WX.** The model does not show these safeguards to
+  be needed. For A-WX the fidelity review gave the reason: the mechanism behind AtMostOneCommit is never
+  exercised, because the model's reconcile has a branch the contract lacks (it marks a row committed
+  from the COMMIT record). Without that branch A-WX fails AtMostOneCommit in 6 steps (the review's
+  RV-WX-ONLY), and with reconcile taken out as well (A-WX+RECONCILE) it fails in this run. This is a
+  statement about the model, not a finding that the safeguards can go.
+- **A-FENCE-CE** (no --ce check, 1 fault) fails Slots(12), TwoCoordinatorsAct(2), OneSessionPerAttempt(12); 11 properties are
+  undecided, because all nine parts stopped at 6,000 MB after about 46 million states each. The fidelity
+  review says its state space has no end, so a larger size would not finish it.
+- **Not shown.** Point 2 stands: four of the fixes, reconcile and the --ce fence are oracles in this
+  model, and with them as built the design with the fixes fails. So this run tests the idealised design
+  and R57 stays blocked. Not run: 3 fields with 3 or 4 faults, two faults of a kind,
+  and A-FENCE-CE with 2 and 3 faults.
+- **A correction of an earlier record.** The message of commit 164df64 says the design without the fixes
+  fails five properties. It fails seven.
+
+The results are in `research-tree/model/results/` (one file per part, with the shortest trace of every
+failing property; `SUMMARY.md`; `DIGEST.md`) and `research-tree/model/results-ladder/`.
+
+**12. The owner's ruling on testing (2026-11-17, about 17:50).**
+
+Recorded from the coordinating session's notes (`feedback-no-useless-testing` and the hand-over note of the
+build); its message with the ruling did not reach the session that writes this. The owner: "we also want
+to avoid useless extensive testing that wastes a shit ton of our time". Four cuts were put to him, and he
+answered "Yes, cut them":
+
+1. The corrected design is model-checked only at the sizes where its fixes act, not on the whole matrix.
+   R57's full run no longer means the 77 configurations of `model/RUN-FULL.md`. The run of groups 1 to 5
+   (point 11) stays; groups 6 to 11 are not planned.
+2. One attack round per fix; another only for a finding that would break it.
+3. Before the pilot, only three checks with the real app: the guard hook fires for helpers; a stop ends a
+   session with its helpers; a background command's exit wakes the coordinator. The other tests of
+   point 10 run only if the pilot shows a need.
+4. The full test suite runs once, at the end of a change.
+
+The six questions of point 9 are not touched by this ruling and are still open.

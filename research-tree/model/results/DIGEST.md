@@ -1,3 +1,5 @@
+READ FIRST: the design with the fixes is modelled with oracles (four of the fixes, reconcile and the --ce fence), and several of the 14 properties are weak; see section 16, points 2 and 11, of the version 2 protocol. These tables are about that idealised model. R57 stays blocked.
+
 TOTALS: 59 configurations, 5163 parts: 5154 complete, 9 cut off, 0 failed, 0 not run; 3.43 G states; 53447 cpu-s
 
 | Configuration | What it is | Parts | States | Outcome | Properties that fail (shortest trace, steps) |
