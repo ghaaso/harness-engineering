@@ -37,3 +37,13 @@ once("D",
 
 fs.writeFileSync(DST, s);
 console.log("patched: " + DST + " (" + s.length + " chars)");
+
+// E (added 14:10 after the check of section 16): the library's branch follows the same rule as the units'
+s = fs.readFileSync(DST, "utf8");
+once("E",
+  "  if (!rv || rv.from_file || !(rv.findings.length || rv.mutations.some(m => !m.a_test_failed))) return { review: rv, fix: rv && rv.from_file ? { from_file: DONE + '/lib-fix.json' } : null }",
+  "  if (!rv) return { review: rv, fix: null }\n" +
+  "  if (rv.from_file && doneSet.has('lib:fix')) return { review: rv, fix: { from_file: DONE + '/lib-fix.json' } }\n" +
+  "  if (!rv.from_file && !(rv.findings.length || rv.mutations.some(m => !m.a_test_failed))) return { review: rv, fix: null }");
+fs.writeFileSync(DST, s);
+console.log("patch E applied");

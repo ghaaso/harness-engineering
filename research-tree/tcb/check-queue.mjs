@@ -482,9 +482,19 @@ async function main(ctx) {
   return out;
 }
 
-const isMain = process.argv[1] !== undefined && (() => {
-  const a = path.resolve(process.argv[1]);
-  const b = path.resolve(fileURLToPath(import.meta.url));
-  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+// Node sets import.meta.url to the realpath of the entry, so argv[1] is compared by its realpath too:
+// started through a junction or a symlink the script must still run (a lexical compare would skip
+// main() and exit 0 with nothing printed). Same comparison as guard-hook.mjs.
+const isMain = (() => {
+  if (import.meta.main === true) return true;
+  try {
+    if (typeof process.argv[1] !== 'string') return false;
+    const key = (p) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
+    const self = key(fileURLToPath(import.meta.url));
+    if (key(process.argv[1]) === self) return true;
+    return key(fs.realpathSync(path.resolve(process.argv[1]))) === self;
+  } catch {
+    return false;
+  }
 })();
 if (isMain) runMain(import.meta.url, SCRIPT, main);

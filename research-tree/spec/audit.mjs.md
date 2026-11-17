@@ -48,7 +48,9 @@ substrings.
    profile's `read_prefixes` rendered with `{root}`, `{attempt}`, `{batch}`. Relative paths resolve against `F`;
    comparison through lib `isUnder` (case, slashes, junctions). Reads = every tool use of kind `read` in the main and
    helper transcripts (Read, Glob, Grep with their `path`, default `.` = `F`); a directory is allowed when it is
-   an allowed root or under one. Everything else is `undeclared` (sorted, unique, root-relative where possible).
+   an allowed root or under one. A `{batch}` prefix allows one batch per transcript (CONTRACT §3.21): the first
+   `queue/<b>/` (one holding `batch.json`) that transcript read; a read of another batch is undeclared. Everything
+   else is `undeclared` (sorted, unique, root-relative where possible).
 3. Protected writes: every `write` access (Write, Edit, MultiEdit, NotebookEdit) whose resolved path is under
    `<root>/` + a prefix of `tcb_paths_protected` (`tcb/`, `sealed/`, `review-in/`, `.claude/`, `run/`, `store/`,
    `.git/`), or under `F/staging/harvested/` (harvest's, §8.7), or has a path segment whose `lib.segmentName` is
@@ -79,10 +81,17 @@ substrings.
 `--session` -> `sessionTranscripts`. Protected writes as in 3 (exit 3); every call whose `context > coord_over_factor *
 W_star_coord` (1.5 x 133,200 = 199,800) goes to `calls_over: [{id, ts, context}]` (a turn here is one model call);
 `peak_context`; reads of `wt/*/staging/` (untrusted) as `udi_reads`; Bash not `node tcb/<name>.mjs` (flat layout, not `lib.mjs`) as `out_of_profile`.
-File `run/audit/coordinator-ce<ce>.json`. Exit 1 `over-window` only if `W_star_coord` is a gate and `calls_over` is non-empty.
+Helper reads (CONTRACT §3.21): a helper transcript that read under `queue/<b>/` counts as a checker (its agent type is
+not in its own transcript, so "checker" here means "read a batch"); its reads must fall under
+`tcb/profiles/checker.json` `read_prefixes` (default `{root}/queue/{batch}/`) with `{batch}` bound to the first batch
+it read, so a second batch, the seed key under `sealed/` or any other read is listed; any other helper is listed only
+for a read under `sealed/`. The list is `checker_reads: [{helper, path}]` (sorted) and makes exit 1 `tainted`
+(`detail.checker_reads`).
+File `run/audit/coordinator-ce<ce>.json` (with `checker_reads`). Exit 1 `over-window` only if `W_star_coord` is a gate and `calls_over` is non-empty.
 
 ## Exit codes
-0 clean (task) / within window (coordinator); 1 tainted, with code `tainted` (reads, denylist, first context) or
+0 clean (task) / within window (coordinator); 1 tainted, with code `tainted` (reads, denylist, first context;
+coordinator form: `checker_reads`) or
 `over-window`; 1 also `no-task`; 2 a missing session, manifest, transcript or profile, and `format-unknown`;
 3 `protected-write` (wins over 1); 64 stale ce; 65 stale epoch; 66 usage; 67 table corrupt; 70; 75 busy lock.
 
@@ -115,6 +124,12 @@ File `run/audit/coordinator-ce<ce>.json`. Exit 1 `over-window` only if `W_star_c
 - T14 Coordinator form: calls with contexts 150,000 and 250,000 and `W_star_coord` a gate -> `calls_over` one entry,
   exit 1 `over-window`; with the threshold `value: null` -> exit 0 and the same `calls_over` as a reading; a Write
   to `tcb/` -> exit 3; Bash `git status` -> `out_of_profile`, `node tcb/status.mjs` is not.
+- T14b Coordinator form, helper reads: one batch's files only -> `checker_reads: []`, exit 0; a second batch, the seed
+  key `sealed/seeds/<b>.json` after the batch, or another file besides the batch -> that path in `checker_reads`,
+  exit 1 `tainted`; the seed key read with no batch read -> listed; a helper that read neither a batch nor `sealed/`
+  -> not listed.
+- T3b Task form with a `{batch}` prefix: reads of one batch are declared; a read of a second batch is undeclared
+  (exit 1 `tainted`).
 - T15 `--epoch` older than the row's -> 65, nothing written; stale `--ce` -> 64; busy lock -> 75; unknown task -> 1.
 - T16 No bound session -> 2; transcript missing -> 2; a transcript of only garbage lines -> 2 `format-unknown`; for
   each, no audit file and a `check` line with result `not_run` and an `incident` line.

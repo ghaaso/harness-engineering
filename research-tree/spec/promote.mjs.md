@@ -83,8 +83,8 @@ changes.
    Either → one line reason `unqualified-revert`, `classes: [<class>]`, status `witnessed` when the
    card's own confirmation relies on the class, else the card's current status (the line then only
    reopens the clearing, §3.15; a confirmation that relies on other classes stands). Nothing to
-   revert → exit 0, no line. (CONTRACT §3.15 says status `witnessed` for every such line; for a
-   clearing-only revert that would knock down a confirmation that does not rely on the class.)
+   revert → exit 0, no line. (CONTRACT §3.15 states the same rule: status `witnessed` for every such
+   line would, for a clearing-only revert, knock down a confirmation that does not rely on the class.)
 
 ## Exit codes
 0 written or nothing to do; 1 a verdict missing, off-enum or conflicting, `checker-out-of-role`,

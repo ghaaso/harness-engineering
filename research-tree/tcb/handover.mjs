@@ -437,11 +437,17 @@ async function main(ctx) {
 }
 
 // Run only as a script, so that a test can import doRaise without starting main.
+// Node sets import.meta.url to the realpath of the entry, so argv[1] is compared by its realpath too:
+// started through a junction or a symlink the script must still run (a lexical compare would skip
+// main() and exit 0 with nothing printed). Same comparison as guard-hook.mjs.
 function isMainModule() {
+  if (import.meta.main === true) return true;
   try {
-    const self = path.resolve(fileURLToPath(import.meta.url));
-    const argv1 = process.argv[1] ? path.resolve(process.argv[1]) : '';
-    return process.platform === 'win32' ? self.toLowerCase() === argv1.toLowerCase() : self === argv1;
+    if (typeof process.argv[1] !== 'string') return false;
+    const key = (p) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
+    const self = key(fileURLToPath(import.meta.url));
+    if (key(process.argv[1]) === self) return true;
+    return key(fs.realpathSync(path.resolve(process.argv[1]))) === self;
   } catch {
     return false;
   }

@@ -51,7 +51,7 @@ creates the empty table). 3 For each planned entry: absent row → add `{state p
 epoch 0, reason null, session null, restarts 0, handovers 0, parks 0, limit false, fails [],
 attempts [], commits {}}` plus the entry's task, field, stage, role, tier, steps, deps,
 question_ids, e_task; present and equal in those fields → unchanged; present and different →
-refuse the whole plan, exit 1 `plan-differs`, no write. 4 A dep naming no task, or a cycle, → exit
+refuse the whole plan, exit 1 `plan-differs`, no table write (only the refusal `incident`). 4 A dep naming no task, or a cycle, → exit
 1 `plan-invalid`, no write. 5 `writeTasks` once with `expectRev`; append `plan` {added} when rows
 were added.
 
@@ -103,7 +103,11 @@ epoch, todo: uncovered, covered}. 8 Fresh-review only: build `review-in/T/` once
 from `plan/our-work/` with `sealed/plants/T/<relpath>` replacing a planted file; `snapshots/
 <text_sha>.txt` from each pack card's last witness record), then copy it into `in/`. 9 Brief:
 `tcb/briefs/<role>.md` with the eight §5 placeholders filled (a placeholder left unfilled → exit 2
-`brief-placeholder`). 10 Settings: `tcb/settings/<role>.json` with `{root}`, `{attempt}`, `{task}`,
+`brief-placeholder`). `{{role}}` is the row's role except `control`, which renders as the neutral
+label `solo` (review U5-B-1: no brief says that anything is tested); only the brief is relabelled:
+the manifest (and `in/manifest.json`) keeps `role: control`, and the rendered settings' hook command
+keeps `--role control`, so whether the session can learn its arm from those files is the harness's
+matter (needs the app). 10 Settings: `tcb/settings/<role>.json` with `{root}`, `{attempt}`, `{task}`,
 `{epoch}`, `{node}` (= `process.execPath`) substituted, nothing else (CONTRACT §3.21; an unknown
 `{...}` left → exit 2 `settings-placeholder`); hash → `settings_sha`. Agent files: copy
 `tcb/agents/<type>.md` for each type in the profile's `agent_types` into `.claude/agents/`.
@@ -137,8 +141,9 @@ F6, A4, A7, E5×E8; second model check M6 (READY re-check for every reason).
 - T1 plan: a `tasks-plan.json` with two tasks → two rows at planned/none/epoch 0 with their `tier`,
   rev+1, one `plan` line, exit 0, `result.added` both; a repeat → exit 0, `added` [], `unchanged`
   both, file byte-identical, no new line.
-- T2 plan: an entry differing from an existing row in `e_task` → exit 1 `plan-differs`, table and
-  ledger unchanged; a dep naming an unknown task → exit 1 `plan-invalid`.
+- T2 plan: an entry differing from an existing row in `e_task` → exit 1 `plan-differs`, table
+  unchanged, the ledger gains only the one refusal `incident` (Writes, R58) and no second `plan`
+  line; a dep naming an unknown task → exit 1 `plan-invalid`.
 - T3 fence first: planned row → epoch 1, step `stopped`, state active, one `attempts` entry with
   folder `wt/<task>-e1`; one `fence` line `{reason:first, from:0, to:1, host:false}`; ledger verifies.
 - T4 fence stall on a bound row (epoch 1, restarts 0, R 1), `--tick 7`: epoch 2, step fenced,
@@ -175,6 +180,8 @@ F6, A4, A7, E5×E8; second model check M6 (READY re-check for every reason).
   starts with the quoted absolute node path, `.claude/agents/reader.md` equal to `tcb/agents/
   reader.md`; `store/objects/m_*.json` hash equals its name and lists every `in/` file and the agent
   file; the row's `attemptOf(row,e).manifest` is that id; one `admit` line.
+- T13b start of a `control` row (child brief by fallback): `in/brief.md` says `role solo` and never
+  the word `control`; `in/manifest.json` keeps `role: control`.
 - T14 start restart: attempt 1 cut `{a.card.json: 100 bytes}`, file since grown to 180 bytes and a
   new file added after the fence → `in/checkpoint/prefix/a.card.json` has exactly the first 100
   bytes; the new file is absent; a rewritten file appears in `result.checkpoint.mismatched`.

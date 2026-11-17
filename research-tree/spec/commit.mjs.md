@@ -55,7 +55,8 @@ Nothing under `.git`.
    origin `session`/`checkpoint`: `source.url` appears verbatim in what some attempt's transcripts
    (the session's and its helpers') show was found, never in what the session wrote itself
    (`url-not-in-transcript`, R34; review U2-F2): the URL a WebFetch was sent to (`access.urls`, not
-   its `prompt`); the result text of a WebFetch, WebSearch or Agent/Task call; a structured result in
+   its `prompt`); the result text of a WebFetch, WebSearch or Agent/Task call, and the `urls` of
+   such a result (CONTRACT §4.8: the URLs of its full text, past the 2,000-character cut); a structured result in
    a helper transcript, or in the session's own transcript only when tied to an Agent/Task call. Never
    a Write/Edit/Bash input or result, a Read result, a search query, or the session's own
    StructuredOutput.
@@ -133,6 +134,8 @@ record {record_sha, outputs_sha, n, state, git: null}.
   12.5%" with card value 12.47 → no flag; text "rose 14%" with value 12.47, baseline 10 → `number-uncited`.
 - T6 session card whose URL is in no transcript → `url-not-in-transcript`; the same URL inside a helper's
   tool result → accepted, origin `session`; a file under `staging/harvested/` → origin `harvested`.
+- T6b A URL found only past the 2,000-character cut of a helper's WebFetch result → accepted (through
+  the result's `urls`); a URL in no result → still `url-not-in-transcript`.
 - T7 `supersedes` without `supersede_reason` → `supersede-reason`; naming an absent card →
   `supersedes-missing`.
 - T8 a cite `s_0123456789abcdef` → exit 3 `seed-id`, no object stored, `incident` line.

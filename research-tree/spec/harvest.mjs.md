@@ -30,7 +30,9 @@ card, `<c_id>` = `objectId('c', card)`. Nothing else: no ledger kind exists for 
 - Helper transcripts: every `structured` entry's `data` of every helper of S.
 - The session's own transcript: every `structured` entry tied to an `Agent`/`Task` tool use (its
   `toolUseId`), and every tool result whose `toolUseId` belongs to an `Agent`/`Task` tool use and whose
-  whole `text` parses as JSON. The session's own `StructuredOutput` input or own `structured_output`
+  whole `text` parses as JSON. Such a result written in prose is no candidate (it is not counted); one
+  whose text starts with `{` or `[` (after leading white space) and does not parse is a broken result:
+  it counts as a candidate and as `unparseable`. The session's own `StructuredOutput` input or own `structured_output`
   attachment is no candidate: it is the session's own claim, and commit does not check the URL of a
   harvested card (R34, review U2-F2).
 - A candidate is a bare card, or a [reader-result] `{schema_version: 1, cards: card[], skipped: [...]}`
@@ -80,8 +82,9 @@ folder by exclusive create.
 - T5 A card with a quote of 16 words, one with `measured.value: "12"` (string, not "not stated"), and
   one carrying `status: "confirmed"`: none written, `invalid` lists three with the schema errors, exit
   1; a valid fourth card in the same run is written.
-- T6 An Agent tool result whose text is not JSON, and a structured result that is a JSON array of
-  numbers: `unparseable: 2`, exit 1.
+- T6 An Agent tool result whose text is broken JSON (starts with `{` and does not parse), and a
+  structured result that is a JSON array of numbers: `unparseable: 2`, exit 1. An Agent tool result
+  in prose in the same session is no candidate: `candidates: 2`.
 - T7 A card without `schema_version` is invalid (no field is added); a card with extra whitespace in the
   quote is written with the quote as given (no trimming) when it validates.
 - T8 Row with no session for epoch e → exit 2 `no-session`, nothing written; session id with no

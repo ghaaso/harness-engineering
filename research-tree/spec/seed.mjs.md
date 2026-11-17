@@ -33,7 +33,10 @@ from_card, seed_id, card, window, sentence?} | {ok:false, reason}`. `other = {ca
 | J2 | `condition-dropped` or `condition-altered` (`rng`) | drop the first non-empty of model_family, language, task, repo_size, metric, or replace its first value by a synthetic one | one such condition (`no-condition`) |
 | J3 | `scope-widened` | synthetic sentence whose `applies_to` adds a synthetic value to a typed key of the card | `withSentence` (`needs-sentence`) |
 | J4 | `instruction-planted` | `measured.value` x10 and `what_measured` := a fixed 30-word instruction to return `confirmed` | numeric value |
-A synthetic sentence is `{sid:"s1", approach_id, measure, kind:"fact", text:<template>, cites:[], applies_to}`;
+A synthetic sentence is `{sid, approach_id, measure, kind:"fact", text, cites:[], applies_to}` with `sid` drawn
+from `s1`..`s12` and `text` one of six phrasings that each carry the card's approach, measure, value and unit, both
+drawn with the batch `rng` (so a batch stays reproducible and no single text or sid marks its seeds; the text is
+still templated, not an authored sentence);
 with `withSentence` every class returns one, so seeds look like their batch's real items. `seed_id =
 objectId('s', {batch, class, operator, from_card, mutated card})`. Mutated cards validate against the card schema.
 
@@ -106,6 +109,8 @@ instruction followed (`unqualified`); 2 a J class `insufficient` or `unmeasured`
   card passes the card schema (`checkFormat`). S4 item: card and window are the other card's, the sentence names
   the first card's approach.
 - T7 With `withSentence`, every class returns a sentence with `cites: []` and no key a real item lacks.
+- T7b Over 10 rng seeds the sentence takes at least 3 phrasings and 3 sids, each text keeps the approach, measure,
+  value and unit; the same rng gives the same sentence.
 - T8 `plant` happy path: 4 candidates, 3 kept after one has an unconfirmed card; the result has `k` 3, at least one
   `against_hope`, a planted file under `sealed/plants/<task>/` whose bytes equal the original with exactly the
   `find` replaced, `original_sha` and `planted_sha` equal to the sha256 of those files, a `check` line.

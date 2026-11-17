@@ -4,7 +4,8 @@ const SRC = "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4
 const DST = "C:/Users/User/Documents/projects/harness-engineering/research-tree";
 const skip = new Set(["tmp", "review-tmp", "work", "logs", "model-review"]);
 // by path, not by name (fixtures have their own wt folders): e2e/w is the end-to-end run's temporary run root (about 1,900 files and a nested .git per run); a top-level wt is a stray attempt folder
-const skipRel = new Set(["e2e/w", "wt"]);
+// model/results holds one small file per part (9,154 when the full run ends): it is saved by hand when a group ends, not at every snapshot
+const skipRel = new Set(["e2e/w", "wt", "model/results"]);
 let n = 0, bytes = 0, same = 0;
 const walk = (d, rel) => {
   for (const f of fs.readdirSync(d, { withFileTypes: true })) {

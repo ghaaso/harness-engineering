@@ -38,9 +38,13 @@ node <root>/tcb/selftest.mjs canary --root <dir> --ce <n> --transcript <path> --
 ## Fixture case format (one folder per case; the contract's [fixture-case])
 `tcb/fixtures/<script>/<case>/case.json`: `{schema_version: 1, script, kind: good|bad, fault_class:
 slug, args: string[], stdin?: relpath, serve?: {"/<path>": relpath}, thresholds?: {name: value},
-expect: {exit, code?, result?: object (deep subset), stdout_empty?: bool, stderr_prefix?: string,
+git?: bool, expect: {exit, code?, result?: object (deep subset), stdout_empty?: bool, stderr_prefix?: string,
 files?: {relpath: "absent"|"present"|sha256}}}`, plus an optional `root/` folder of synthetic run
 root files. Placeholders in `args`: `{root}` (the case root), `{server}` (the case server's origin).
+`git: true` makes the case root a git repository whose one commit holds the case root's `tcb/` (the
+data files, after the overrides and the overlay) and sets `run/coord.json` `tcb_commit` to that
+commit when the overlay wrote a `coord.json`; it is how an `fsck` case can pass fsck's tcb check
+(step 4). A `git` that is not a boolean is `bad-case`.
 A `good` case expects exit 0; a `bad` case any non-zero exit it names. `expect.code` matches when it
 equals the `code` of some entry of the §1.3 line's `reasons` (the specific causes; the line's own
 `code` is the slug of the exit, CONTRACT §1.3).
@@ -86,7 +90,12 @@ expect file under `<root>/tcb/fixtures/selftest/`.
    its previous case has fully ended (child exited, pipes closed, server closed, any kill finished).
    Per case, just before it runs: make the case root with its data-only `tcb/` (above); write the
    `thresholds` overrides into that copy only, with `transcripts_root` = `<case root>/transcripts`
-   unless the case sets it (no case reads the owner's real transcripts); overlay `root/`; start a
+   unless the case sets it (no case reads the owner's real transcripts); overlay `root/`; for a
+   `git: true` case write `.gitattributes` (`* -text`) and run `git init`, `git add .gitattributes tcb`,
+   `git commit` and `git rev-parse HEAD` in the case root, one call at a time, `shell: false`, with
+   hooks off (`core.hooksPath=NUL`), no system or global git config, `core.autocrlf=false`, and a
+   60 s limit per call, then set `tcb_commit` (a failing git call fails the case with
+   `why: "harness: git-case"`); start a
    loopback server for `serve` (selftest's own, in-process, closed after the case; CONTRACT §6);
    spawn `process.execPath <root>/tcb/<script>.mjs <args>` (the live script, not a copy) with `cwd` =
    the case root, `shell: false`, `windowsHide: true`, `stdin` piped from the case file or closed.

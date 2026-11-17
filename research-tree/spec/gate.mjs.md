@@ -21,7 +21,7 @@ Objects are stored by commit.mjs as `d_` objects (kind = the object's `kind`). I
   flow = `spoofing, tampering, repudiation, information_disclosure, denial_of_service, elevation_of_privilege`.
 - `hazards.schema.json`: `{kind:"hazards", cut_sha, parent: d id|null, hazards: [{hazard_id: ^h[0-9]{1,4}$, supersedes: hazard_id|null, classical_name ≤12w, statement ≤40w, severity: high|medium|low, p_ids: string[] (^[A-Z]{1,2}[0-9]{1,2}$), covered_by: string[] (^R[0-9]{1,2}$), status: covered|partial|gap}], map: [{source: {kind: uca|cell, id}, hazard_id, borderline: bool, alt_hazard_id: hazard_id|null}]}`.
   `source.id` is a `uca_id` or `<row_id>/<col>`. The object has no `accepted` or `owner_quote`: acceptance is only a ledger `owner` line (`act: accept`, `subject: hazard:<hazard_id>`, quote ≤500 chars, written by status.mjs) so the mapper cannot grant it.
-  Append-only: a newer hazards object (its `parent`) keeps every parent `hazard_id`; changes go through a new id with `supersedes`.
+  Append-only: a newer hazards object (its `parent`) keeps every parent `hazard_id` with the same `classical_name`, `statement` and `severity` (only `status`, `covered_by` and `p_ids` may change under an id, review U5-GT-2, so an owner accept of the old text never covers new text); other changes go through a new id with `supersedes`.
 
 ## Reads
 Ledger (last `cut` line; `audit`, `owner` lines); `completeness/cut-<sha12>.md`; `run/tasks.json`; `store/commits/*`, objects through commit records only (re-check each `sha256`, `getObject`); `completeness/model/result.json` `{result: pass|fail|not_run, sha}`;
@@ -46,7 +46,7 @@ stdout `result`: cut: `{cut_sha, path, sections_kept, ids_removed, bytes}`; chec
 ## Rules (reason slugs)
 - Matrix full (R55): every stpa action has an entry of each type N,U,T,D (`stpa-type-missing`); fmea has ≥1 row of each kind (`fmea-kind-missing`) and exactly one cell per (row, column of its kind), none empty or with both fields (`fmea-cell-empty`, `fmea-cell-both`, `fmea-row-unknown`, `fmea-column-unknown`); `matrix.empty_cells` = missing + empty cells, `matrix.full` = no defect.
 - Every hazardous uca and every cell with a `finding` has a `map` entry (`unmapped-findings`); every `map` and `alt_hazard_id` names a hazard of the object (`map-hazard-missing`); the hazards object keeps its parent's ids (`hazards-not-append-only`).
-- Every problem id `P1`..`P21` appears in some hazard's `p_ids` (`p-id-missing`; `p_ids_missing` lists them).
+- Every problem id `P1`..`P21` and every gap id `G1`..`G12` (the design's gap rows are problem rows too, R55; review U5-GT-1) appears in some hazard's `p_ids` (`p-id-missing`; `p_ids_missing` lists them, the P ids first, then the G ids, each in number order). Other ids in `p_ids` (for example `N` rows) are allowed and not required.
 - Every `severity: high` hazard is `covered` with non-empty `covered_by`, or has a ledger `owner` accept line for it (`high-uncovered`; `high_uncovered` lists ids). `partial` and `gap` count as uncovered.
 
 ## Exit codes
@@ -57,14 +57,14 @@ stdout `result`: cut: `{cut_sha, path, sections_kept, ids_removed, bytes}`; chec
 - T2 Output contains no match of the id pattern and no `()`, `[]`, `, ,`; the rule text of R10 survives; every "Where the classical assumptions fail" paragraph is gone and the paragraph after it stays; section 10 keeps its `**Scripts**` list and drops `**Files:**` onwards.
 - T3 `cut` twice: exit 0, no second ledger line; the design edited in a dropped section gives the same sha; edited in a kept section gives a new sha and a new file; an existing `cut-<sha12>.md` with other bytes: exit 3.
 - T4 `cut` with a missing design file: 2; with a design lacking section 5: 2 `section-missing`; `--design` under `wt/`: 66; stale ce: 64 and nothing written.
-- T5 Complete fixtures (stpa, fmea, hazards committed through commit records for design-check tasks with clean audit lines, model pass, all P ids covered): `check` exits 0, `gate.json` `result: pass`, `cut_sha` and `hazards_sha` equal the current cut and `sha256hex(canonical hazards)`, `model: "pass"`, ledger `check` and `gate` lines.
+- T5 Complete fixtures (stpa, fmea, hazards committed through commit records for design-check tasks with clean audit lines, model pass, all P and G ids covered): `check` exits 0, `gate.json` `result: pass`, `cut_sha` and `hazards_sha` equal the current cut and `sha256hex(canonical hazards)`, `model: "pass"`, ledger `check` and `gate` lines.
 - T6 Missing STPA entry type (an action with no `T` entry): exit 1 `stpa-type-missing`, `matrix.full false`, `empty_cells` counts it. A missing FMEA cell, a cell with both fields, a row of unknown kind column, a kind with no row: exit 1 with the slugs.
 - T7 A hazardous uca or a finding cell absent from `map`: `unmapped-findings`; a map entry naming `h99`: `map-hazard-missing`.
-- T8 `P7` in no hazard: exit 1 `p-id-missing`, `p_ids_missing: ["P7"]`.
+- T8 `P7` in no hazard: exit 1 `p-id-missing`, `p_ids_missing: ["P7"]`. `G5` and `G12` in no hazard (all P ids present): exit 1 `p-id-missing`, `p_ids_missing: ["G5", "G12"]`.
 - T9 High hazard with status `gap`, `partial`, or `covered` with empty `covered_by`: `high-uncovered` with its id; the same hazard with a ledger `owner` accept line (subject `hazard:h3`) passes; an accept line for another hazard, or `act: ruling`, does not; a medium gap does not fail.
-- T10 Parent chain: a child hazards object dropping a parent id: `hazards-not-append-only`; keeping it with a `supersedes` replacement passes.
+- T10 Parent chain: a child hazards object dropping a parent id: `hazards-not-append-only`; keeping it with a `supersedes` replacement passes; keeping the id but changing its `classical_name`, `statement` or `severity`: `hazards-not-append-only` (each of the three); a change of `status` or `covered_by` under the id passes.
 - T11 No committed stpa task: exit 2 `stpa-missing`; committed for another cut: `stpa-stale`; same for fmea and mapper; all not_run, `gate.json` written with `result: not_run` and null shas where absent.
-- T12 Audit line with `label: tainted` for the stpa task: exit 1 `analysis-tainted`; no audit line: exit 2 `audit-missing`; the mapper needs none.
+- T12 Audit line with `label: tainted` for the stpa task: exit 1 `analysis-tainted`; no audit line: exit 2 `audit-missing`; the mapper needs none. The audit binds to the committed epoch: committed at epoch 2 with a clean audit of epoch 1 only: exit 2 `audit-missing`; a tainted epoch-2 line then a clean epoch-1 line: exit 1; a clean epoch-2 line passes.
 - T13 Model result missing: 2 `model-missing`; `not_run`: `model-not-run`; `fail`: exit 1 `model-fail`; garbage JSON: 2.
 - T14 Cut file edited after `cut`: exit 1 `cut-mismatch`; cut file deleted: 2 `cut-missing`.
 - T15 A commit record whose object bytes were edited: exit 3 `object-mismatch`; an `s_` id in an output list: 3; ledger with a broken hash: 3.

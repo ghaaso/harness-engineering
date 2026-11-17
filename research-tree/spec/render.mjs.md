@@ -66,7 +66,9 @@ and `generated_at` (= `--now`). The same inputs and `--now` give byte-identical 
    `weights` from thresholds), `time {first_ts, last_ts, wall_s, quiet_s, active_s, quiet_gaps}` from ledger `ts`
    (first `bind`/`started` of the task to its last line; a gap of more than threshold `sleep_gap_ms` (600000, guess) between consecutive
    ledger lines is shown apart as `quiet_gaps`, which cannot tell sleep from no events), `throughput_per_h`
-   (covered ids per `active_s` hour), `efficiency_per_mtok` (ids covered by a `confirmed` card per million tokens),
+   (covered ids per **wall** hour, `wall_s`, R20 "per hour": a step writes no ledger line while it works, so a ledger
+   silence cannot be told from work; `quiet_s`, `active_s` and `quiet_gaps` are readings only; null when `time` is
+   null or `wall_s` is 0), `efficiency_per_mtok` (ids covered by a `confirmed` card per million tokens),
    `hallucinations {witness_rejections, checker_rejections (verdicts number_mismatch, baseline_swapped,
    conditions_mismatch, outside_conditions), checker_unclear, citation_failures (`flagged` entries of `intake` lines
    plus rejected codes `uncited-fact`, `cite-outside-pack`, `bad-sid`)}`; per field also `cards {n, pending, witnessed,
@@ -113,8 +115,11 @@ refusal); 2 `labels.json`, store, thresholds or ledger missing/unparseable (`not
 - T14 Measures: transcripts with usage 1000 input, 4000 read, 200 write, 500 output (weights 0.05, 1.25, 5, the shipped values) ->
   `total` 5700, `token_cost` 1000+200+250+2500 = 3950; helper transcript tokens are included; a task whose session
   transcript is missing has `complete: false` and renders.
-- T15 `throughput_per_h` = covered ids / `active_s` hours (ledger `ts` 2 h apart, 3 ids -> 1.5); `quiet_gaps` lists a
-  gap above `sleep_gap_ms` and `active_s` excludes it; no `bind` line -> `time: null`, throughput `null`.
+- T15 `throughput_per_h` = covered ids / `wall_s` hours (ledger `ts` 2 h apart, 3 ids -> 1.5); `quiet_gaps` lists a
+  gap above `sleep_gap_ms` and `active_s` excludes it, throughput does not (wall 4800 s with a 3600 s gap, 3 ids ->
+  2.25); no `bind` line -> `time: null`, throughput `null`.
+- T15b A bind line and one line two hours later: `active_s` 0, throughput 1.5 (not null); an hour of silence and
+  five seconds of lines: 3 ids / (3605 s / 3600), never a per-`active_s` rate.
 - T16 `efficiency_per_mtok` counts only ids covered by a `confirmed` card; 0 tokens -> `null`.
 - T17 Hallucinations: 2 witness `rejected` records, verdicts number_mismatch and unclear, one `flagged` entry, one
   rejected `cite-outside-pack` -> `witness_rejections` 2, `checker_rejections` 1, `checker_unclear` 1, `citation_failures` 2.

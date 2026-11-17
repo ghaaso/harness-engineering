@@ -10,7 +10,7 @@ Source tree (this build): `tcb-build/tcb/` = the run root's `tcb/`.
 `tcb/profiles/<role>.json`, `tcb/settings/<role>.json` (harness settings templates, incl.
 `coordinator.json`), `tcb/settings/user-deny.json`, `tcb/briefs/<role>.md`, `tcb/agents/<name>.md`,
 `tcb/thresholds.json`, `tcb/cost-inputs.json`, `tcb/denylist.txt`, `tcb/fixtures/<script>/<case>/`,
-`tcb/test/<script>.test.mjs`, `tcb/test/helpers.mjs`, `tcb/README.md`.
+`tcb/test/<script>.test.mjs`, `tcb/test/main-guard.test.mjs`, `tcb/test/helpers.mjs`, `tcb/README.md`.
 Node 24, ES modules, `node:` built-ins only, Windows 11 / NTFS.
 
 ## 1. Conventions
@@ -28,6 +28,11 @@ node <root>/tcb/<name>.mjs [<mode>] --root <dir> [--ce <n>] [--task <id> --epoch
   reads or writes is resolved under it (the transcripts and process information excepted, §6).
   Everything under `tcb/` is read from `<root>/tcb/`; tests build that folder in their temp root.
 - A script refuses to run (exit **3**, `run-from-attempt`) when its own file lies under `<root>/wt/`.
+- A script that guards its entry decides it is the main module by `import.meta.main`, else by
+  `process.argv[1]` against its own file (`import.meta.url`), first as written and then by the real
+  path of `argv[1]`; any error answers false. A plain path compare is wrong: Node gives the entry's
+  `import.meta.url` as its real path, so a script started through a junction or symlink would exit
+  0 having done nothing (pinned for all 24 scripts by `tcb/test/main-guard.test.mjs`).
 - `--ce <n>` is required by every script that writes anything under the run root, the ledger
   included. It is compared with `run/coord.json` `ce` **inside the run lock**, before the first write;
   a difference exits **64** and writes nothing. Read-only modes take no `--ce`. Exceptions:
@@ -376,7 +381,7 @@ line's prev is 64 zeros. Kinds and their `data`:
 | `unit-costs` | cost (`from-transcripts`) | sha256, unattributed_share, trusted |
 | `coord-init`, `ce-raise`, `coord-bind` | handover | tcb_commit; from, to; session |
 | `owner`, `intent-open`, `intent-done`, `meter` | status | act: approve|accept|resume|drop|ruling, subject, quote (≤500 chars); key; key; pct, self_reported: true |
-| `lock-break`, `torn-tail`, `incident` | lib; lib; any | stale {pid, start_time, nonce, script}; bytes; class: refusal|timeout|restart|not-run, detail (R58; a tamper exit's detail is {tamper: true, script, code}, §1.4) |
+| `lock-break`, `torn-tail`, `incident` | lib; lib; any | stale {pid, start_time, nonce, script}, unreadable? {bytes, sha256} (§4.4); bytes; class: refusal|timeout|restart|not-run, detail (R58; a tamper exit's detail is {tamper: true, script, code}, §1.4) |
 
 Fixed `check` subjects (check: subject): witness: `witness`; tms: `labels`; render: `views`; audit:
 `<task>-e<e>` or `coordinator-ce<ce>`; certify: `<review id>`; plant: `<task>`; seed-score:
@@ -456,9 +461,12 @@ number-without-quote|no-snapshot|pdf|empty-text|card-changed, source_changed: bo
 `{seq, card_id, card_sha, status: witnessed|rejected|unverifiable|confirmed, reason: slug,
 witness_seq?, check: {batch, item, verdict, node?: "<obj_id>#<sid>"}?, classes?: J[] (the classes a
 confirmation relies on: J1, J2, J4 for a card item; J1-J4 for a sentence item), at}`. The last line
-per card is its status; no line = `pending`. A revert after an unqualified class Jk is a line with
-status `witnessed`, reason `unqualified-revert`, `classes: [Jk]`, for every confirmation whose
-`classes` include Jk.
+per card is its status; no line = `pending`. A revert after an unqualified class Jk is one line per
+card with reason `unqualified-revert`, `classes: [Jk]`, for every card whose own confirmation or
+some confirmed `sentence-check` clearing relies on Jk (not already reverted for Jk); its status is
+`witnessed` when the card's own confirmation relies on Jk, else the card's current status (the
+line then only reopens the clearing; a confirmation that relies on other classes stands;
+`spec/promote.mjs.md` revert step 2).
 
 **R18 flag clearing** (`lib.flagCleared`, used by tms and certify alike). An `intake` flag on
 sentence (object o, sid s) is cleared when, for every card the sentence cites, a status line exists
@@ -520,7 +528,9 @@ what the ledger names.
 `{schema_version, cut_sha: 64 hex|null, hazards_sha: 64 hex|null, model_result_sha?, matrix: {full:
 bool, empty_cells: int}, p_ids_missing: string[], high_uncovered: string[], model: pass|fail|not_run,
 action_lines: [{measure, line, value?, result: pass|fail|reading}], result: pass|fail|not_run,
-reasons: slug[]}` (a sha is null on not_run when its input is absent). Admission accepts it only when
+reasons: slug[]}` (a sha is null on not_run when its input is absent). `p_ids_missing` lists the
+required ids that no hazard's `p_ids` names: the problem ids `P1`..`P21` and the gap ids `G1`..`G12`
+(R55: the gaps are problem rows too). Admission accepts it only when
 `result` is pass and both shas equal `lib.currentDesign(root)`'s `cut_sha` and `hazards_sha` (R55).
 Missing = not-run.
 
@@ -555,7 +565,7 @@ value `tcb/thresholds.json` ships:
 | f5_given | false | owner | fetch_max_bytes / fetch_timeout_ms | 10485760 / 30000 | guess |
 | fetch_max_redirects | 5 | guess | hook_deadline_ms | 5000 | guess |
 | selftest_case_ms | 60000 | guess | sleep_gap_ms | 600000 | guess |
-| lock_retries | 300 | guess (about 30 s at 100 ms) | | | |
+| lock_retries | 300 | guess (about 30 s at 100 ms) | intake_step_timeout_ms | 1800000 | guess (watch.mjs falls back to it when absent) |
 | allow_loopback | false | owner (tests set it) | transcripts_root | `C:/Users/User/.claude/projects` | measured (fact 5) |
 | proc_exe | `C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe` | measured (test seam) | user_files | `["C:/Users/User/.claude/CLAUDE.md", "C:/Users/User/.claude/settings.json"]` | owner (R22) |
 | tcb_paths_protected | `["tcb/","sealed/","review-in/",".claude/","run/","store/",".git/"]` | R29 | weights | {read:0.05,write:1.25,out:5} | measured (pricing ratios, cost inputs tag M) |
@@ -637,7 +647,9 @@ as written there; the spec is the single place of their fields.
   `sealed/blind/<plan-sha12>.json`: as `spec/compare.mjs.md`.
 - [heldout] `sealed/heldout/<field>.json`: as `spec/protocol-freeze.mjs.md`.
 - [selftest] `run/selftest.json` and [fixture-case] `tcb/fixtures/<script>/<case>/case.json`: as
-  `spec/selftest.mjs.md`; every unit's fixtures use that case format.
+  `spec/selftest.mjs.md`; every unit's fixtures use that case format. Its optional `git: true`
+  makes the case root a git repository whose one commit holds the case's `tcb/` and sets
+  `run/coord.json` `tcb_commit` to it (the only way an `fsck` case can pass the tcb check).
 - [stop-sample] `run/stop-sample/<task>-e<e>.json` (stop): `{schema_version, task, epoch, target,
   tick, sizes: {<path relative to transcripts_root>: bytes}}`.
 - [unit-costs] `plan/unit-costs.json`: as `spec/cost.mjs.md`.
@@ -717,7 +729,10 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
   ledger, validating and releasing call none; `proc` is used only to judge another process (the
   holder of a lock that is already there). Scripts pass `retries` = threshold `lock_retries` (300;
   tests of exit 75 set it to 3).
-  - Busy: retry `retries` times `retryMs` apart, then `lock-busy` 75.
+  - Busy: retry `retries` times `retryMs` apart, then `lock-busy` 75. Within one acquisition
+    `proc.alive` is asked about the holder only, at least once and never more than once per try;
+    the library asks once per holder nonce and keeps the verdict, so a holder that dies during the
+    wait ends in `lock-busy` 75 and the caller retries (fail-safe).
   - Stale: only when `proc.alive(pid, start_time)` is `false` (dead, or that pid now has another start
     time). `null` (unknown, or no `proc`, or `alive` throws) counts as alive. Start times are compared
     with a tolerance of two seconds (`sameStartTime`, `START_TOLERANCE_MS` = 2000; §4.9), never by
@@ -727,6 +742,11 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
     `fs.linkSync(renamed, lock)` (fails rather than replace) and unlink the renamed file; if the link
     fails because a lock exists, keep the file as `<name>.<nonce>.orphan` and log an `incident`
     at the next acquisition. Then start over.
+  - Unreadable (empty, or no lock record; e.g. a reset between the `wx` create and the write): never
+    judged by `proc`. When `retries` ≥ `LOCK_UNREADABLE_MIN_RETRIES` (50) and the lock's bytes stay
+    unchanged for the whole budget, it is broken with the same rename / re-read / create protocol,
+    and the `lock-break` line carries `stale` with all four fields null plus `unreadable: {bytes,
+    sha256}` of the old bytes; bytes that change, or a smaller budget, leave it (`lock-busy` 75).
 - `handle.assertHeld()`: re-reads the lock file; another nonce → `lock-lost` 75. Called by lib before
   every write it makes under a lock. `handle.release()`: unlinks only a file holding its own nonce;
   idempotent.
@@ -778,7 +798,9 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
   `u` flag), `minimum`, `maximum`, `exclusiveMinimum`, `$ref` (`#/$defs/x` and
   `<name>.schema.json#/$defs/x` resolved from `tcb/schemas/`), `$defs`, `anyOf`, `oneOf`, `allOf`,
   plus the extension `x-maxWords`. `$schema`, `$id`, `title`, `description`, `x-version` are
-  ignored; any other keyword → `schema-keyword` 70 (the subset is closed). `path` is a JSON pointer.
+  ignored; any other keyword → `schema-keyword` 70 (the subset is closed). `path` is a JSON pointer;
+  for an array keyword (`minItems`, `maxItems`, `uniqueItems`) it is the array itself (a duplicate's
+  index is in the `message`).
 - `loadSchema(root, name)` (cached); `checkFormat(root, name, value)`: `schema_version` must equal the
   schema's `x-version` (`schema-version` 1), then `validate` (`schema-invalid` 1, errors in detail).
 
@@ -812,7 +834,11 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
   - a **tool result** is every `tool_result` block: `{toolUseId, isError, ts, text, permission?:
     {decision, source}}` (`text`: the first 2,000 characters of its text content; `permission` from
     the record's permission decision when present, believed). A long helper result is read from the
-    helper's own transcript (its `structured`), never from this cut text.
+    helper's own transcript (its `structured`), never from this cut text. Each tool result also has
+    a non-enumerable `urls` (absent from JSON and deep equality): the distinct `http(s)` URLs of its
+    **full** text, in order of first appearance, trailing `.,;:!?` dropped, URLs over 2,048
+    characters skipped, at most 500; commit's URL evidence (R34) reads it, so a URL past the
+    2,000-character cut still counts.
   - **turnEnds**: for each run of assistant records that ends before the next `type:"user"` record
     that is not a tool result (or at the end of the file), `{ts, text}` = the joined `text` blocks of
     the run's last assistant record (audit's notes rule, R30).
@@ -836,15 +862,18 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
   .ToUniversalTime().ToString('o')}}) | ConvertTo-Json -Compress -Depth 2"` → `[{pid, ppid, name, exe,
   cmdline, start_time}]` (a single object is normalised to a one-element array; `start_time` has
   the form `YYYY-MM-DDTHH:MM:SS.fffffffZ`); failure → `proc-unavailable` 2.
-  `alive` → true, false, or null when PowerShell fails; the recorded start time matches the reported
-  one when `sameStartTime` holds. `boot()` →
+  `alive` → true, false, or null when PowerShell fails; the listed process is the holder when its
+  reported start is at most the recorded start + `START_TOLERANCE_MS` (one-sided,
+  `aliveFromQuery(out, startTime)`, review LR-2: the recorded start comes from the holder's own
+  clock after Windows created it, so a slow start-up is alive and a pid reused by a later process
+  is not). `boot()` →
   `(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')`, or null
   on failure (taken in the same PowerShell call as a `list` when both are needed).
 - `sameStartTime(a, b) → boolean`: equal strings match; otherwise both must parse as ISO 8601 and lie
   at most `START_TOLERANCE_MS` = 2000 ms apart (a process's own-clock start and the CreationDate
   Windows reports differ by its start-up time); a missing or unparseable value never matches another.
-  Every comparison of a recorded start time with one read from PowerShell uses it: `alive`,
-  `killOwnTree` and the stale-lock break (§4.4).
+  `killOwnTree` and the stale-lock break's re-read (§4.4) use it; `alive` uses the one-sided rule
+  above.
 - `selfInfo(proc) → {pid, start_time}` (computed once per process from its own clock, §4.4; no
   PowerShell call, `proc` unused); `descendants(list, pid) → pid[]`: a child
   counts only when `child.start_time >= parent.start_time` (Windows never clears a dead parent's
@@ -878,7 +907,7 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
   (todo), stop and replace (overflow ids), watch (stall) and status: **research** and **control**:
   `covered` = `row.question_ids` carried by a card of this task (named by an `intake` line of the
   task, any epoch, or a commit record of the task) whose last status is witnessed or confirmed, or,
-  while `f5Given` is false, any such stored card; `V` = |uncovered|. **review / fresh-review**: the
+  while `f5Given` is false, any other stored card whose last status is witnessed or confirmed; `V` = |uncovered|. **review / fresh-review**: the
   latest review object named by an `intake` line of the current epoch (none: the approaches of the
   frozen protocol's `outlist_vocab.approaches`, all open); `V` = approaches with no entry in its
   `verdicts` + its cited cards whose last status is pending or witnessed; `covered`/`uncovered` as for
@@ -896,7 +925,9 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
   `rejected` with reason `number-without-quote`) and whose last status line has no `check`, or has
   reason `unqualified`/`unqualified-revert` while `store/qualification.json` now marks J1, J2 and J4
   qualified; `in_flight` = a real item of an earlier batch with no status line carrying that batch.
-  Used by check-queue (intake mode) and watch (class 14).
+  The earlier batches are read from their sealed keys `sealed/seeds/<b>.json`; a batch whose
+  `queue/<b>/` folder exists without `batch.json` (a crashed write) is ignored, and a sealed key with
+  no `queue/<b>/` folder still counts. Used by check-queue (intake mode) and watch (class 14).
 - `flagCleared(root, flag) → bool`: §3.15's R18 rule, for tms and certify.
 - `checkerVerdicts(parsed[], itemIds) → {verdicts: {<item>: verdict|unclear}, reasons: {<item>:
   slug}, duplicates, unknown_items}`: one structured result `{verdicts: [...]}` or a bare verdict; an
@@ -982,7 +1013,8 @@ pass|fail|not_run, sha} and treats missing as not-run.
 ## 7. Tests
 
 - One file per script, `tcb/test/<script>.test.mjs`, plus `tcb/test/lib.test.mjs` (from
-  `spec/lib.md`); `node --test <file>`; `node:test` and `node:assert/strict` only.
+  `spec/lib.md`) and `tcb/test/main-guard.test.mjs` (every script started through one junction
+  still answers, §1.1); `node --test <file>`; `node:test` and `node:assert/strict` only.
 - Each test builds its own run root with `helpers.makeRoot()` under `tcb-build/tmp` and removes it in
   `after`/`finally`. Scripts are run as child processes with `--root <temp>`, `--now`, `--free-mb`,
   `--boot` and short `--interval-ms`/`--sleep-ms`; library functions are called directly with a

@@ -11,7 +11,9 @@ that reason (CONTRACT §7).
   `start`, `epoch` the integer 2, `dry-run` true.
 - T2 `parseArgs` throws `usage` 66 on an unknown flag, a missing required flag, a mode not in
   `modes`, and `--epoch two` for an int flag; a flag required only in another mode is not required.
-  The §1.5 patterns refuse DOS device names: `--task nul`, `--task con-research`, `--task com1` → 66.
+  The §1.5 patterns refuse DOS device names: `--task nul`, `--task com1`, `--task con`, `prn`, `aux`,
+  `lpt9` → 66; `--task con-research` is accepted (§1.5 refuses a device name only as the whole name
+  or before a `.`). A relative `--root` → 66 (§1.1).
 - T3 A repeated list flag (`--card a --card b`) gives `["a","b"]`.
 - T4 `runMain` prints exactly one line of JSON on stdout with every §1.3 key, and exits with the
   returned code; nothing else is written to stdout.
@@ -113,6 +115,14 @@ that reason (CONTRACT §7).
   provider, or an `alive` that throws, the same lock stays (busy, not broken).
 - T36f A lock whose holder is a real process the test spawned and ended is broken with `realProc`
   (one real verification).
+- T36j An empty or truncated-JSON `run.lock` stays with `retries` 3 (`lock-busy` 75); with `retries`
+  50 (`LOCK_UNREADABLE_MIN_RETRIES`) and the bytes unchanged throughout, it is broken with no process
+  query, no `.stale` leftover, and a `lock-break` line with `stale` all null plus
+  `unreadable: {bytes, sha256}` of the old bytes.
+- T36k An unreadable lock that becomes a live record during the budget is not broken (75).
+- T36l `aliveFromQuery`: `NONE` is false; a process created before the recorded start (a slow
+  start-up) is the holder; one created more than `START_TOLERANCE_MS` after it (pid reuse) is not;
+  output this query never gives is null.
 - T37 `withRunLock` with `ce` = coord's ce runs `fn` and releases; with a different ce it throws
   `stale-ce` 64 without calling `fn` and still releases; `fn` throwing still releases.
 - T38 `checkCe`: missing `coord.json` throws `no-coordinator` 2; unparseable throws `table-corrupt`
@@ -132,7 +142,8 @@ that reason (CONTRACT §7).
 - T45 `verifyLedger` reports `ok:false` with `brokenAt` for: an edited middle line, a deleted middle
   line (seq gap), two lines swapped, and a recomputed-but-relinked rewrite only when `prev` breaks;
   a fully recomputed chain passes (tamper-evident only against a noted head, R31).
-- T46 Concurrency: 8 child processes each append 50 lines through `withRunLock` (`retries: 1000`, so
+- T46 Concurrency: 2 child processes each append 200 lines through `withRunLock` (two, to keep within
+  the machine's limit of four Node processes at once: runner, test file, two workers; `retries: 1000`, so
   a slow machine never turns waiting into 75); the result has 400 lines, seq 1..400 with no gap or
   duplicate, and verifies.
 - T47 `ledgerHead` of an empty or absent ledger is `{seq:0, hash: 64 zeros}`; otherwise the last line.
@@ -208,6 +219,9 @@ that reason (CONTRACT §7).
   of §4.8; a non-string `file_path` gives an empty `paths`.
 - T76 Tool results pair with their tool use by `tool_use_id`, carry `is_error`, and `text` is cut at
   2,000 characters.
+- T76b A tool result carries the URLs of its full text as a non-enumerable `urls`, also a URL past
+  the 2,000-character cut: distinct, in order, trailing punctuation dropped; `urls` is not an
+  enumerable key.
 - T77 `structured` holds the input of a `StructuredOutput` tool use and the `data` of an
   `attachment` record of type `structured_output`.
 - T78 A torn last line is skipped with `torn:true`; a bad middle line is counted in `badLines`;
