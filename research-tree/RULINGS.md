@@ -1,0 +1,72 @@
+# Research tree: the owner's rulings
+
+Open this to report to the owner or to check how he has ruled the work is done. The board is `research-tree/START-HERE.md`.
+
+## How the owner has ruled this is worked
+
+Rules 1 to 7 of `CLAUDE.md` apply. These are the ones that were broken, in his words where quoted.
+
+- **The objective is given.** Quality first, then the least time, memory and tokens: the seven
+  measures. "As little as possible while maximizing the quality of output."
+- **Do not put design questions to the owner.** "How would my opinion weigh more than proven
+  algorithms and cs theory?" A mechanism comes from the recorded research. A parameter is computed
+  from measurements against the objective: "the optimal parameters are not decided by what my
+  favorite one is". A missing fact is measured. He is shown results and reasoning, not choices.
+- **Use the algorithm that fits best, from what is already researched.** "You're not just supposed
+  to use a goddamn algorithm out of the blue."
+- **Open the record at the start.** "Properly document and fetch the right things and save them,
+  not go by session memory." A compaction is not an excuse.
+- **The right model for the job.** Use the smaller model wherever "the bigger model and smaller
+  model output is the same".
+- **Parallel by default.** "Just use subagents": work that is reading and writing is split and run
+  at the same time. He should never have to ask whether parallelism is maximized.
+- **A test runs only if its result can change what we do next** (protocol version 2, section 16
+  point 12, with the four cuts he approved).
+- **No round of work he has not asked for.**
+- **One session, one purpose.** When it is achieved, a fresh child session carries on from files.
+- **Be honest about what is not sure.** Say "not sure" with the reason, and measure.
+- **Clean up.** End every process a session started before it reports.
+
+## How the work is run
+
+- The tiers, the effort levels and what each tier is never used for are in section 3 of `docs/ORCHESTRATION-DESIGN-2026-10.md`. What of that method was run and what is only designed is in `docs/program/evidence/harness-method-status-2026-11-18/README.md`. The skill and agent types written on 2026-11-18 were discarded on the owner's order.
+- Independent pieces start in one message. One writer per file.
+- How many lanes run is computed by the plan check from four limits (collisions, the check, the
+  review, the token window), in `research-tree/BUILD-PLAN.md`.
+- Read the plan's usage before a fan-out and name a cap.
+- **The ceiling is a recorded figure, not a feeling.** The design record derives a hand-over window
+  of about 133,000 tokens for a coordinator and 115,000 to 155,000 for a research child
+  (`DESIGN-RECORD.md`, section 7). The R57 coordinator ran to 404,000 and then to 527,000. Hand over
+  at the derived window.
+- Heavy commands, such as a test suite or a model check, go through `research-tree/tools/lane.mjs`,
+  one at a time (the build session's rule of 2026-11-17).
+- A session ends by updating the table "Where it stands" on the board and committing.
+- Measured on 2026-11-18: five Sonnet readers at once, 767,000 tokens together, four minutes, less
+  than one point of the week's usage.
+
+## Not enforced yet
+
+Only the model tier is mechanical: it is in the agent definitions. Everything
+else on the board is text that a session has to follow, and the R57 round shows that text gets
+ignored. Two hooks would enforce the two rules that cost the most: refuse a helper that is not one of
+the four tree types, and stop a coordinator past its window. They are not built. (See the last line
+under "What went wrong": the harness design keeps hooks off and enforces by scripts, so this
+proposal is withdrawn.)
+
+## What went wrong in the R57 round
+
+- The round was proposed by the build session. The owner had not asked for it.
+- It was run from a session started in the product folder, which loads the product's instructions,
+  skills and agents and not this repository's `CLAUDE.md`.
+- 13 of its 14 helpers ran on the most expensive helper model, and they ran in sequence where they
+  could have run together.
+- Its coordinator ran to about 404,000 tokens after a refused hand-over.
+- Three attack passes ran where the owner's ruling says one.
+- It never opened the foundations folder. Every open branch between two variants of a fix was written
+  down as "the owner's choice", and 29 of them were put to him on a page. He rejected that.
+- Cost: about 7.7 million helper tokens. The week's usage went from 26 % to 39 % in those seven hours,
+  all sessions together. No script was changed.
+- The session took a derived skill for the orchestration document and never opened
+  `docs/ORCHESTRATION-DESIGN-2026-10.md` or `docs/program/HARNESS-V2-DESIGN-2026-11.md`.
+- It put everything on one page that every session would read.
+- It proposed hooks, although the harness design says hooks stay off and enforcement is by scripts.
