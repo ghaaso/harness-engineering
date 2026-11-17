@@ -48,13 +48,13 @@ it); a script the session is told to call (holds only if a hook requires it).
 
 ## 3. The orchestration design (run on 2026-11-01)
 
-- Ran and worked, 12 rules: Haiku for extraction into a fixed schema; Sonnet for maps, gates, citation
+- Ran and worked, 14 rules: Haiku for extraction into a fixed schema; Sonnet for maps, gates, citation
   checks and web collection; Opus for analysis and for skeptics; the main session for routing and the two
   gates; the citation check; the web re-check; the return contract.
-- Ran and failed or was changed, 11 rules: the cap of 12 skeptics was used up by the first four analysts,
+- Ran and failed or was changed, 9 rules: the cap of 12 skeptics was used up by the first four analysts,
   and the claims that mattered most overflowed; the overflow was then ruled "corroborated" where the design
   says "unverified"; the owner pre-flight was skipped and Docker was down.
-- Never run, 24 rules: among them the effort levels, the explorer agent, the circuit breaker, resume.
+- Never run, 25 rules: among them the effort levels, the explorer agent, the circuit breaker, resume.
 - Measured against it: an agent's fixed overhead is about 60,000 tokens, not the 7,500 the design states.
 
 ## 4. The harness v2 design

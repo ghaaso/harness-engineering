@@ -129,3 +129,18 @@ Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. Not on this boa
 - Memory or tokens of any run but one suite run; the processor share of one job: not measured (r57-0123).
 - Time and tokens of the attack rounds of the R57 round: no record.
 - Whether the tier hook fires in sessions started in other folders: not tested (r57-0120, r57-0122).
+
+## Added after recall test 2 (three situations the table lacked)
+
+| You are about to | Records |
+|---|---|
+| Choose or check the model of a helper | r57-0150 (the routes), r57-0120 (the hook), r57-0108 |
+| Stop a helper writing outside its files | r57-0105 (seen working once), r57-0402 |
+| Start a session in a new folder | r57-0026, r57-0122 |
+
+- r57-0026 [owner] Every folder a harness session starts in carries the tier hook; check before starting.
+- r57-0122 [observed] `tools/ensure-tier-hook.sh <folder>` checks and installs the hook; not outside this repository without `--force`.
+- r57-0123 [measured] Over 25 episodes the limit changed from job to job: queue 8, blocked starts 6, memory 4, tokens 4, processor 3.
+- r57-0124 [measured] Recall test 2: 5 of 9 sure, 3 partly, 1 rightly "not recorded"; the format is judged ready to fill.
+- r57-0509 [open] Two Opus orchestrators are collecting the bottleneck literature.
+- r57-0510 [open] The library is being filled by Haiku extractors, one evidence file each, then a citation check.

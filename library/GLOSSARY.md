@@ -25,3 +25,5 @@
 **decision sheet** = the page "R57 Decision Sheet" that asked the owner 29 questions; he rejected it; never use it (r57-0704).
 **tier hook** = the PreToolUse hook that refuses a helper or child session on the wrong model for its kind of job (r57-0120).
 **top session** = the session the owner talks to; a **child session** was started by another session from a brief. If unsure, you are a child.
+- **kind of job**: the first word of a helper's description or of a session's title, followed by a colon, for example `extract: rows of one file`. The kinds and the model each runs on are in record r57-0150; the hook of r57-0120 refuses a start without one.
+- **the check, in time**: one run of the tree's test suite took 596 s when it was measured once (r57-0103). A review has no measured duration.
