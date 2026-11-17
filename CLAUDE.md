@@ -26,9 +26,16 @@ say what was not tested, and do not rule a family of methods out after one exper
    fresh child sessions with a brief that points at files.
 6. **For the owner:** plain words, the answer first, short. Results are shown as a page he can look at;
    markdown is the record behind it.
+7. **Design questions are not put to the owner.** A mechanism comes from the recorded research, a
+   parameter is computed from measurements against the seven measures, and a missing fact is measured.
+   He is shown results and reasoning, not choices. Open the record from the files before deciding; do
+   not work from memory of it. Do no round of work he has not asked for. (Added 2026-11-18 after a
+   round that broke this: `research-tree/START-HERE.md`.)
 
 ## Where things are
 
+- **The research tree: read `research-tree/START-HERE.md` first.** Where it stands, what to open
+  before designing anything, the owner's rulings on how it is worked, and the next steps.
 - `docs/program/`: the documents and pages. Start with `HARNESS-BOTTLENECKS-2026-11.md` (what was
   built and measured), `TOKEN-BOTTLENECK-2026-11.md` (where tokens go), `GRAPH-TEST-RESULT-2026-11.md`,
   `evidence/harness-bottlenecks/graph2/embeddings/COORDINATOR-REPORT.md` (the embeddings test and its
