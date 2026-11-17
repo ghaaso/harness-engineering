@@ -1068,3 +1068,121 @@ test('X4 a review step with no review object among the intake outputs: exit 1 no
 // ---- needs the app ----
 
 test('N1 a real reader url appears in the child or helper transcript in the 4.8 shape', { skip: 'needs the app: CONTRACT 7 item 7, real transcripts' }, () => {});
+
+// ---------------------------------------------------------------------------------------------
+// Review U2 fixes (review-U2.json): F2, F3, F4, F5
+// ---------------------------------------------------------------------------------------------
+
+// U2-F2: R34 asks that the URL was found; a session that writes a card puts the URL into its own Write
+// input (and can read the file back, name it in a WebFetch prompt or a search query, or repeat it in its
+// own structured output). None of those count; a search result does.
+test('X5 R34: a url only in the session own Write input, Read result, WebFetch prompt, search query or own StructuredOutput is rejected; a search result counts', () => {
+  const ctx = setup({ urls: [A_URL] });
+  const a = fixture('_card-a.json');
+  const b = fixture('_card-b.json');
+  const A = objId('c', a);
+  const B = objId('c', b);
+  ctx.stage('cards/a.card.json', a);
+  const pb = ctx.stage('cards/b.card.json', b);
+  const t = transcript(SESSION, ctx.dir());
+  t.call({ tools: [{ name: 'WebFetch', input: { url: A_URL, prompt: 'read the page' } }] });
+  const [wid, rid, fid, sid, oid] = t.call({
+    tools: [
+      { name: 'Write', input: { file_path: pb, content: JSON.stringify(b, null, 2) } },
+      { name: 'Read', input: { file_path: pb } },
+      { name: 'WebFetch', input: { url: 'https://example.test/other', prompt: 'does this page mention ' + B_URL } },
+      { name: 'WebSearch', input: { query: B_URL } },
+      { name: 'StructuredOutput', input: { schema_version: 1, cards: [b], skipped: [] } },
+    ],
+  });
+  t.result(wid, 'File written: ' + pb);
+  t.result(rid, JSON.stringify(b, null, 2));
+  t.result(fid, 'the page holds nothing on that');
+  t.result(sid, 'no results');
+  t.result(oid, 'ok');
+  t.write(mainTranscriptPath(ctx.root, SESSION));
+  doIntake(ctx, 1);
+  assert.deepEqual(rejectedOf(ctx), ['staging/cards/b.card.json|url-not-in-transcript']);
+  assert.deepEqual(storedIds(ctx.root), [A]);
+  // a helper whose web search returned the url: accepted
+  const h = transcript(SESSION, ctx.dir(), { sidechain: true });
+  const [qid] = h.call({ tools: [{ name: 'WebSearch', input: { query: 'cached prefix throughput' } }] });
+  h.result(qid, 'Result 1: ' + B_URL + ' a synthetic paper on throughput');
+  h.write(helperTranscriptPath(ctx.root, SESSION, 'h1'));
+  doIntake(ctx, 0);
+  assert.deepEqual(storedIds(ctx.root), [A, B].sort());
+  ledgerOk(ctx.root);
+});
+
+// U2-F3: a same-run parent must itself be accepted; a parent that was rejected leaves the child
+// unstored (fk-parent), so fsck never meets a dangling parent.
+test('X6 a pack or review whose parent is a same-run candidate that was rejected is fk-parent; a parent accepted in the same run is fine', () => {
+  const ctx = setup();
+  const a = fixture('_card-a.json');
+  const A = objId('c', a);
+  ctx.stage('cards/a.card.json', a);
+  const bad = mkPackFor(ctx, [A], [sent('s1', [A])], { questions_sha: '0'.repeat(64) });
+  const P1 = objId('p', bad);
+  const child = mkPackFor(ctx, [A], [sent('s1', [A])], { parent: P1 });
+  const P2 = objId('p', child);
+  const good = mkPackFor(ctx, [A], [sent('s1', [A], { text: 'A cached prefix raised throughput, a second synthetic sentence.' })]);
+  const P3 = objId('p', good);
+  const goodChild = mkPackFor(ctx, [A], [sent('s1', [A], { text: 'A cached prefix raised throughput, a third synthetic sentence.' })], { parent: P3 });
+  const P4 = objId('p', goodChild);
+  ctx.stage('packs/p1.json', bad);
+  ctx.stage('packs/p2.json', child);
+  ctx.stage('packs/p3.json', good);
+  ctx.stage('packs/p4.json', goodChild);
+  const r1 = mkReviewFor('p_0123456789abcdef', [A]);
+  const R1 = objId('r', r1);
+  const r2 = mkReviewFor(P3, [A], { parent: R1 });
+  ctx.stage('reviews/r1.json', r1);
+  ctx.stage('reviews/r2.json', r2);
+  doIntake(ctx, 1);
+  assert.deepEqual(rejectedOf(ctx), [
+    'staging/packs/p1.json|questions-sha',
+    'staging/packs/p2.json|fk-parent',
+    'staging/reviews/r1.json|fk-pack',
+    'staging/reviews/r2.json|fk-parent',
+  ]);
+  assert.deepEqual(storedIds(ctx.root), [A, P3, P4].sort());
+  assert.ok(!storedIds(ctx.root).includes(P2));
+  ledgerOk(ctx.root);
+});
+
+// U2-F4: view/ is in the untrusted attempt folder; a junction there must not make commit write elsewhere.
+test('X7 view/ replaced by a junction out of the attempt: exit 3 untrusted-path, nothing stored, nothing written behind it, incident line', (t) => {
+  const ctx = setup({ urls: [A_URL] });
+  ctx.stage('cards/a.card.json', fixture('_card-a.json'));
+  const out = path.join(ctx.root, 'outside-target');
+  fs.mkdirSync(out, { recursive: true });
+  const view = path.join(ctx.dir(), 'view');
+  fs.rmSync(view, { recursive: true, force: true });
+  if (!makeJunction(out, view)) return t.skip('cannot create a junction on this machine');
+  const j = doIntake(ctx, 3);
+  assertFirstReason(j, 'untrusted-path');
+  assert.deepEqual(fs.readdirSync(out), [], 'nothing was written behind the junction');
+  assert.deepEqual(storedIds(ctx.root), []);
+  const inc = ledgerKind(ctx.root, 'incident');
+  assert.equal(inc.length, 1);
+  assert.equal(inc[0].data.detail.code, 'untrusted-path');
+  ledgerOk(ctx.root);
+});
+
+// U2-F5: a printed sign must match the sign of the cited value.
+test('X8 number-uncited respects a printed sign: "+12.5%" against -12.47 is flagged; "-12.5%" and an unsigned "12.5%" are not', () => {
+  const ctx = setup();
+  const a = cardWith('_card-a.json', (c) => { c.measured.value = -12.47; c.measured.effect = 'worsens'; });
+  const A = objId('c', a);
+  ctx.stage('cards/a.card.json', a);
+  const plus = mkPackFor(ctx, [A], [sent('s1', [A], { text: 'Throughput changed by +12.5% on refactoring tasks.' })]);
+  const minus = mkPackFor(ctx, [A], [sent('s1', [A], { text: 'Throughput changed by -12.5% on refactoring tasks.' })]);
+  const bare = mkPackFor(ctx, [A], [sent('s1', [A], { text: 'Throughput fell 12.5% on refactoring tasks.' })]);
+  ctx.stage('packs/plus.json', plus);
+  ctx.stage('packs/minus.json', minus);
+  ctx.stage('packs/bare.json', bare);
+  doIntake(ctx, 0);
+  const flags = ledgerKind(ctx.root, 'intake')[0].data.flagged.filter((x) => x.code === 'number-uncited').map((x) => x.id);
+  assert.deepEqual(flags, [objId('p', plus)]);
+  ledgerOk(ctx.root);
+});

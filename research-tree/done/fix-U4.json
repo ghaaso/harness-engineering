@@ -1,0 +1,77 @@
+{
+  "fixed": [
+    {
+      "finding_id": "U4-F1",
+      "what": "render.mjs: throughput_per_h is now covered ids per WALL hour (R20 says 'per hour'); a step writes no ledger line while it works, so a ledger silence cannot be told from work. quiet_gaps, quiet_s and active_s stay as readings. null only when wall_s is 0 or there is no bind line. The transcript-timestamp option was not taken (larger spec change).",
+      "test_added": "render.test.mjs T15b (bind and one line 2 h later: throughput 1.5, was null; one hour of silence plus 5 s: 3/(3605/3600), was 2160); T15 second case now expects 2.25 (was 9). Both fail with the old active_s division (mutation run)."
+    },
+    {
+      "finding_id": "U4-F2",
+      "what": "seed.mjs certificatePool: one certificate per task (the latest by the ledger's 'certificate' line naming it; an id the ledger never names loses; ties go to the greater id). contra_k is counted only from sealed/plants/<task>.json of tasks that have a pooled certificate, so numerator and denominator cover the same set.",
+      "test_added": "seed.test.mjs T18b: two certificates of one task pool once, the ledger order beats the id order, a planted task without certificate stays out of contra_k, contra_found <= contra_k, and the no-ledger tie-break. Fails under three separate mutations (contra_k filter removed, one-per-task removed, ledger order removed)."
+    },
+    {
+      "finding_id": "U4-F3",
+      "what": "seed.mjs syntheticSentence now takes the batch rng: six phrasings carrying the same facts (approach, measure, value, unit) and a drawn sid s1..s12 instead of a constant text and sid 's1'. check-queue passes the same rng, so a batch stays reproducible. Limit: the text is still templated, not an authored sentence; a seed built from a real sentence would change what the checker is asked to verify, so it was not done.",
+      "test_added": "seed.test.mjs T7b (phrasing and sid vary over 10 rng seeds, facts kept, same rng same sentence; T7 now matches /^s[0-9]+$/); check-queue.test.mjs T6b (the 8 seeded items of one freeze batch carry at least 3 phrasings and 2 sids)."
+    },
+    {
+      "finding_id": "U4-F4",
+      "what": "audit.mjs coordinator form: each helper transcript is checked. A helper that read under queue/<b>/ is a checker; its reads are checked against tcb/profiles/checker.json read_prefixes with {batch} bound to the first batch it read (default '{root}/queue/{batch}/'); a helper with no batch read is flagged only for a read under sealed/. Offenders go to audit.checker_reads [{helper, path}], exit 1 with reason code 'tainted' (detail.checker_reads). Task form: a {batch} prefix now allows only the first batch read per transcript; a second batch is 'undeclared'. Limit: a helper's agent type is not in its own transcript, so 'checker' means 'read a batch'.",
+      "test_added": "audit.test.mjs T14b (clean one batch; second batch; seed key after the batch; other file besides the batch; key alone; non-checker helper clean) and T3b (task form, second batch undeclared). Both fail with the new checks removed."
+    },
+    {
+      "finding_id": "U4-F5",
+      "what": "render.mjs isExcludedCard: with f5_given true only witnessed or confirmed cards are trusted; pending, unverifiable, rejected and superseded cards are shown under Excluded with their label and no longer feed synthesis effects or 'weak: disagreement'. With f5_given false (nothing can be witnessed) the committed basis stays: only rejected/superseded are excluded, matching the coverage basis.",
+      "test_added": "render.test.mjs T10b (pending and unverifiable variants: not in the body, listed under Excluded with the label, key row not weak and not naming the card). T2 now confirms its card, since a pending one is excluded. Fails with the old rule."
+    },
+    {
+      "finding_id": "U4-F6",
+      "what": "render.mjs: with f5_given true isCounted also requires label != superseded; the confirmed-ids set (efficiency) does the same, which the review had not named but the test showed (a superseded confirmed card still counted as a confirmed answer).",
+      "test_added": "render.test.mjs T11b (card labelled superseded: coverage covered/not_covered, covered_ids 1, confirmed_ids 0). Fails with either of the two mutations."
+    },
+    {
+      "finding_id": "U4-F7",
+      "what": "No code change (the shuffle was right); test gap closed.",
+      "test_added": "check-queue.test.mjs T5b: two freeze batches (second with --requeue) with fixed --rng-seed; at least one has a seed before the last real item. Fails when const order = all."
+    },
+    {
+      "finding_id": "U4-F8",
+      "what": "No code change; test gap closed. Test holds run.lock with a test-spawned process, starts audit async, raises the row epoch to 2 while it waits, releases.",
+      "test_added": "audit.test.mjs T15b: exit 65, reason stale-epoch, no audit file, nothing else written. Fails when 'await recheck(h)' is removed."
+    },
+    {
+      "finding_id": "U4-F9",
+      "what": "No code change; test gap closed for render and audit with the same lock-holder pattern (coord.json ce raised while the script waits).",
+      "test_added": "render.test.mjs T23b and audit.test.mjs T15c: exit 64 stale-ce, nothing written. Both fail when the in-lock checkCe is removed."
+    },
+    {
+      "finding_id": "U4-F10",
+      "what": "No code change; test gap closed.",
+      "test_added": "audit.test.mjs T10 gains a turn 'TURN-END f1\\nextra note' counted as bad (notes_bad 2 and 4 now). Fails when the rule becomes 'any line is the turn end'."
+    },
+    {
+      "finding_id": "U4-F11",
+      "what": "No code change; test gap closed.",
+      "test_added": "render.test.mjs T7: the commit record's sha256 of a card output is edited with the object bytes untouched: exit 3 object-mismatch, why sha256-differs-from-commit-record, no view written. Fails when the comparison is removed."
+    },
+    {
+      "finding_id": "U4-F12",
+      "what": "No code change; test gap closed.",
+      "test_added": "seed.test.mjs T2b: the same rng seed with a window that contains the first drawn quote (upper-cased) must give another quote that is not in the window. Fails when the check is removed."
+    }
+  ],
+  "not_fixed": [],
+  "tests": {
+    "command": "node tools/lane.mjs --label fix-U4-final --timeout-s 500 -- node --test --test-concurrency=1 tcb/test/render.test.mjs tcb/test/audit.test.mjs tcb/test/seed.test.mjs tcb/test/check-queue.test.mjs",
+    "passed": 106,
+    "failed": 0,
+    "skipped": 13,
+    "output_tail": "tests 119, pass 106, fail 0, cancelled 0, skipped 13 (needs-app), duration_ms 67793. Mutation check on one shared copy under tmp/mut (since removed): 13 mutations applied together (F1, F5, F6 x2, sha compare, render in-lock ce, audit epoch recheck, audit in-lock ce, TURN-END any line, checker reads reason, task-form batch binding, S1 window check, synthetic sentence constant, shuffle) failed exactly the 15 tests meant to catch them; three F2 mutations run separately each failed T18b."
+  },
+  "lib_change_requests": [
+    "No lib.mjs change needed.",
+    "Spec (not lib): spec/render.mjs.md lines 66-69 and T15 say throughput is per active_s hour; the code now divides by wall hours (R20 says 'per hour'). Please amend the spec text. Likewise spec/audit.mjs.md coordinator steps should list checker_reads (a helper that read a batch is limited to that batch; sealed/ reads by any helper are listed) and the task form's one-batch-per-transcript rule, and spec/seed.mjs.md section on the synthetic sentence ('sid s1, text: template') should read 'drawn sid and one of several phrasings'.",
+    "Open point for the contract: a helper transcript does not carry its agent type, so audit treats 'read a batch' as 'is a checker'. If the harness later writes the type beside the helper file, audit can use it instead."
+  ]
+}

@@ -281,8 +281,14 @@ async function modeRequest(env, T, E) {
       const att = lib.attemptOf(row, k);
       if (!pre || pre.k !== k) throw tcbError('rev-moved', 65, { task: T });
       const session = att.session ?? pre.tt.folderSessions[0] ?? null;
+      // Review U1-F5 (R9, R10): an admitted attempt (it has a manifest) may have a session the
+      // coordinator already started whose transcript is not visible yet. Without a session it is
+      // still stop-requested (session null), and verify observes the folder's transcripts and
+      // processes over stop_verify_deltas ticks. Only an attempt that was never admitted, or whose
+      // stop an earlier verify already confirmed, is confirmed at once.
+      const mayRun = !!att.manifest && att.stop !== 'confirmed';
 
-      if (session) {
+      if (session || mayRun) {
         if (handle) {
           lib.updateRow(root, handle, { task: T, epoch: E, steps: [row.step], states: [row.state] }, (copy) => {
             const i = attemptIndex(copy, k);
@@ -295,7 +301,7 @@ async function modeRequest(env, T, E) {
         return { exit: 0, result: { task: T, epoch: E, target: k, session, step: 'stop-requested', state: row.state }, reasons: [] };
       }
 
-      // Nothing ran: no session and no transcript. The stop is confirmed at once.
+      // Nothing ran: never admitted (or already confirmed), no session and no transcript. Confirmed at once.
       let newRow = null;
       if (handle) {
         const out = lib.updateRow(root, handle, { task: T, epoch: E, steps: [row.step], states: [row.state] }, (copy) => {

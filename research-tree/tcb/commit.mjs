@@ -138,7 +138,7 @@ function numbersIn(text) {
   for (const m of text.matchAll(NUM_RE)) {
     const neg = m[1] === '-' || m[1] === '−';
     const n = Number(`${neg ? '-' : ''}${m[2].replace(/,/g, '')}${m[3] ? `.${m[3]}` : ''}`);
-    if (Number.isFinite(n)) out.push({ n, d: m[3] ? m[3].length : 0 });
+    if (Number.isFinite(n)) out.push({ n, d: m[3] ? m[3].length : 0, signed: m[1] !== '' });
   }
   return out;
 }
@@ -174,6 +174,7 @@ function maxSeq(lines, pred) {
 async function loadTranscripts(transcriptsRoot, row) {
   const bySession = new Map();
   const byEpoch = new Map();
+  const mains = new Set(); // the parsed session transcripts themselves (not their helpers)
   for (const a of (row && row.attempts) || []) {
     let entry;
     try {
@@ -185,9 +186,13 @@ async function loadTranscripts(transcriptsRoot, row) {
     if (!s) continue;
     if (!bySession.has(s)) {
       const st = await lib.sessionTranscripts(transcriptsRoot, s);
-      const files = [st && st.main, ...((st && st.helpers) || [])].filter(Boolean);
       const parsed = [];
-      for (const f of files) parsed.push(await lib.parseTranscript(f));
+      if (st && st.main) {
+        const p = await lib.parseTranscript(st.main);
+        mains.add(p);
+        parsed.push(p);
+      }
+      for (const f of (st && st.helpers) || []) parsed.push(await lib.parseTranscript(f));
       bySession.set(s, parsed);
     }
     byEpoch.set(entry.epoch, bySession.get(s));
@@ -197,12 +202,34 @@ async function loadTranscripts(transcriptsRoot, row) {
   for (const parsed of bySession.values()) {
     for (const p of parsed) {
       n++;
-      for (const u of p.toolUses || []) collectStrings(u.input, strings);
-      for (const r of p.toolResults || []) if (typeof r.text === 'string') strings.push(r.text);
-      for (const s of p.structured || []) collectStrings(s.data, strings);
+      urlEvidence(p, mains.has(p), strings);
     }
   }
   return { byEpoch, strings, n };
+}
+
+// R34 evidence that a URL was found, from one transcript (U2-F2). Only what the session did not write
+// itself counts: the URL a WebFetch was sent to (access.urls, never its free `prompt`), the results of
+// WebFetch and WebSearch calls, the results of Agent/Task calls (a helper's answer), and the structured
+// results of helper transcripts. Never a Write/Edit/Bash input or result, a Read result (the session can
+// read back a file it wrote), a search query, or the session's own StructuredOutput: a session that
+// writes a card puts its URL into exactly those.
+function urlEvidence(p, isMain, out) {
+  const kindOf = new Map();
+  for (const u of p.toolUses || []) {
+    const kind = (u.access && u.access.kind) || lib.toolAccess(u.name, u.input).kind;
+    if (typeof u.id === 'string') kindOf.set(u.id, kind);
+    if (kind === 'fetch') for (const url of (u.access && u.access.urls) || []) if (typeof url === 'string') out.push(url);
+  }
+  for (const r of p.toolResults || []) {
+    const kind = kindOf.get(r.toolUseId);
+    if ((kind === 'fetch' || kind === 'search' || kind === 'agent') && typeof r.text === 'string') out.push(r.text);
+  }
+  for (const s of p.structured || []) {
+    // In a session's own transcript a structured result counts only when it is tied to an Agent/Task
+    // call (a helper's result relayed by the harness), never the session's own output.
+    if (!isMain || (typeof s.toolUseId === 'string' && kindOf.get(s.toolUseId) === 'agent')) collectStrings(s.data, out);
+  }
 }
 
 // Walk `staging/` and `in/checkpoint/` with lib.walkFiles; returns the parsed candidates. Throws
@@ -268,6 +295,13 @@ async function intakePass(env, handle) {
   const seeded = pre.files.filter((f) => f.ok && hasSeedId(f.value)).map((f) => f.file);
   if (seeded.length) throw tcbError('seed-id', 3, { files: seeded });
 
+  // The attempt folder is written by an untrusted session: `view/` may be a junction out of it, and the
+  // views would then replace files wherever it points (U2-F4). Checked before anything is stored, read
+  // or written (exit 3, nothing stored, incident line).
+  const attemptDir = L.attempt(task, epoch);
+  const viewDir = path.join(attemptDir, 'view');
+  await assertViewDir(root, attemptDir, viewDir);
+
   // Step 3: kind, name and schema.
   const cands = [];
   for (const f of pre.files) {
@@ -305,6 +339,29 @@ async function intakePass(env, handle) {
   const stored = (id, prefix) => typeof id === 'string' && id.startsWith(`${prefix}_`) && fs.existsSync(objPath(id));
   const rowQ = new Set((row && row.question_ids) || []);
   const deferred = new Set(); // ids left unstored for want of a transcript (and what depends on them)
+  // Keep the candidates whose `parent` is stored or another candidate kept here (fixpoint); a parent
+  // left unstored for want of a transcript defers the child, anything else is `fk-parent`.
+  const keepParents = (list, prefix) => {
+    let cur = list;
+    for (let changed = true; changed; ) {
+      changed = false;
+      const ids = new Set(cur.map((c) => c.id));
+      const keep = [];
+      for (const c of cur) {
+        const t = c.value.parent;
+        if (t == null || stored(t, prefix) || (ids.has(t) && t !== c.id)) keep.push(c);
+        else {
+          changed = true;
+          if (deferred.has(t)) {
+            notRun.push({ file: c.file, code: 'no-transcript' });
+            deferred.add(c.id);
+          } else reject(c, 'fk-parent');
+        }
+      }
+      cur = keep;
+    }
+    return cur;
+  };
 
   // Step 5: cards.
   const cardC = cands.filter((c) => c.kind === 'card');
@@ -353,7 +410,7 @@ async function intakePass(env, handle) {
   const packC = cands.filter((c) => c.kind === 'pack');
   const packCandIds = new Set(packC.map((c) => c.id));
   const indexWords = packC.some((c) => Array.isArray(c.value.index) && c.value.index.length) ? T.get('index_words') : null;
-  const okPacks = [];
+  let okPacks = [];
   for (const c of packC) {
     const v = c.value;
     const cardSet = new Set(Array.isArray(v.cards) ? v.cards : []);
@@ -377,12 +434,15 @@ async function intakePass(env, handle) {
     } else if (code) reject(c, code);
     else okPacks.push(c);
   }
+  // A same-run parent must itself be accepted, not merely staged (U2-F3): otherwise the child is stored
+  // with a dangling parent and the next fsck stops all work (fk-missing). Fixpoint over chains.
+  okPacks = keepParents(okPacks, 'p');
   const packById = new Map(okPacks.map((c) => [c.id, c]));
 
   // Step 6: reviews.
   const reviewC = cands.filter((c) => c.kind === 'review');
   const reviewCandIds = new Set(reviewC.map((c) => c.id));
-  const okReviews = [];
+  let okReviews = [];
   for (const c of reviewC) {
     const v = c.value;
     let pack = null;
@@ -410,6 +470,7 @@ async function intakePass(env, handle) {
     } else if (code) reject(c, code);
     else okReviews.push(c);
   }
+  okReviews = keepParents(okReviews, 'r'); // a same-run parent must be accepted too (U2-F3)
 
   // Design-check outputs: the schema is their whole check.
   const okDesign = cands.filter((c) => c.kind === 'stpa' || c.kind === 'fmea' || c.kind === 'hazards');
@@ -449,10 +510,13 @@ async function intakePass(env, handle) {
         if (typeof m.value === 'number') values.push(m.value);
         if (typeof m.baseline === 'number') values.push(m.baseline);
       }
-      for (const { n, d } of numbersIn(s.text)) {
+      for (const { n, d, signed } of numbersIn(s.text)) {
+        // An unsigned number in prose matches either sign ("fell 12.5%" for -12.47); a printed sign
+        // must match the value's sign too ("+12.5%" against -12.47 is uncited, U2-F5).
         const hit = values.some((v) => {
           const r = roundTo(v, d);
-          return Math.abs(Math.abs(r) - Math.abs(n)) <= 1e-9 * Math.max(1, Math.abs(n));
+          const diff = signed ? Math.abs(r - n) : Math.abs(Math.abs(r) - Math.abs(n));
+          return diff <= 1e-9 * Math.max(1, Math.abs(n));
         });
         if (!hit) addFlag(c.id, s.sid, 'number-uncited');
       }
@@ -488,8 +552,6 @@ async function intakePass(env, handle) {
   const myIntake = lines.filter((l) => l.kind === 'intake' && l.task === task && l.epoch === epoch);
   const listed = new Map();
   for (const l of myIntake) for (const o of (l.data && l.data.objects) || []) if (!listed.has(o.id)) listed.set(o.id, o);
-  const attemptDir = L.attempt(task, epoch);
-  const viewDir = path.join(attemptDir, 'view');
   const committedPath = path.join(viewDir, 'committed.json');
   const rejectedPath = path.join(viewDir, 'rejected.json');
   let prevFiles = new Map();
@@ -505,6 +567,10 @@ async function intakePass(env, handle) {
   const committed = [...committedMap.values()].sort((a, b) => (a.id < b.id ? -1 : 1));
 
   if (!dry) {
+    if (!fs.existsSync(viewDir)) {
+      fs.mkdirSync(viewDir, { recursive: true });
+      await assertViewDir(root, attemptDir, viewDir);
+    }
     await writeIfChanged(rejectedPath, { schema_version: 1, task, epoch, rejected });
     await writeIfChanged(committedPath, { schema_version: 1, task, epoch, committed });
   }
@@ -557,6 +623,27 @@ function sentenceCode(sentences, cardSet) {
   for (const s of sentences) if (s.kind === 'fact' && !(Array.isArray(s.cites) && s.cites.length)) return 'uncited-fact';
   for (const s of sentences) for (const id of s.cites || []) if (!cardSet.has(id)) return 'cite-outside-pack';
   return null;
+}
+
+// `wt/<task>-e<e>/` and its `view/` must be real folders inside the run root's `wt/` (no link or
+// junction at either level); else exit 3 `untrusted-path`. An absent `view/` passes (it is created
+// later and checked again).
+async function assertViewDir(root, attemptDir, viewDir) {
+  const lst = (p) => {
+    try {
+      return fs.lstatSync(p);
+    } catch {
+      return null;
+    }
+  };
+  const a = lst(attemptDir);
+  if (a && (a.isSymbolicLink() || !a.isDirectory() || !(await lib.isUnder(attemptDir, path.join(root, 'wt'))))) {
+    throw tcbError('untrusted-path', 3, { path: 'attempt' });
+  }
+  const v = lst(viewDir);
+  if (v && (v.isSymbolicLink() || !v.isDirectory() || !(await lib.isUnder(viewDir, attemptDir)))) {
+    throw tcbError('untrusted-path', 3, { path: 'view' });
+  }
 }
 
 async function writeIfChanged(file, value) {

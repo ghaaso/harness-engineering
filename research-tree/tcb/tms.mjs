@@ -29,6 +29,7 @@ function pathsOf(root) {
     objects: path.join(root, 'store', 'objects'),
     commits: path.join(root, 'store', 'commits'),
     cardStatus: path.join(root, 'store', 'status', 'card_status.jsonl'),
+    ledger: path.join(root, 'run', 'ledger.jsonl'),
     labels: path.join(root, 'views', 'labels.json'),
     repair: path.join(root, 'views', 'repair.json'),
   };
@@ -146,6 +147,36 @@ function covers(appliesTo, conditions) {
     }
   }
   return true;
+}
+
+// What compute() reads, as one hash: the status file, the ledger (flags, queue lines, protocols), the
+// object and commit listings (both immutable once written, so their names suffice) and the previous
+// labels.json (newly reopened). Taken before compute and again under the lock: a change in between
+// means the labels were computed from older inputs, so they are computed again under the lock (U2-F8).
+function inputsFingerprint(root, P) {
+  const fileSha = (f) => {
+    try {
+      return lib.sha256hex(fs.readFileSync(f));
+    } catch {
+      return null;
+    }
+  };
+  const names = (d) => {
+    try {
+      return fs.readdirSync(d).sort();
+    } catch {
+      return [];
+    }
+  };
+  return lib.sha256hex(
+    lib.canonicalize([
+      fileSha(P.cardStatus),
+      fileSha(P.ledger),
+      names(P.objects),
+      names(P.commits),
+      fileSha(P.labels),
+    ]),
+  );
 }
 
 function compute(root, flags, P) {
@@ -287,7 +318,9 @@ function compute(root, flags, P) {
       else if (L === 'pending' || L === 'witnessed') add('PENDING', 'support-unchecked', c);
       else if (L === 'unverifiable') add('JUDGMENT', 'support-unverifiable', c);
       const ls = lastStatus.get(c);
-      if (ls && ls.check && ls.check.verdict === 'unclear') add('JUDGMENT', 'support-unclear', c);
+      // promote records a card-item `outside_conditions` or `unclear` verdict as reason `unclear`
+      // and keeps the verdict itself in `check.verdict` (spec/promote.mjs.md step 6): both are unclear.
+      if (ls && ls.check && (ls.check.verdict === 'unclear' || ls.reason === 'unclear')) add('JUDGMENT', 'support-unclear', c);
     }
     const packId = obj.kind === 'pack' ? objId : obj.pack;
     if (repairedPacks.has(packId)) add('STALE', 'pack-repaired', null);
@@ -533,21 +566,29 @@ lib.runMain(import.meta.url, SCRIPT, async (ctx) => {
   };
 
   try {
-    const c = compute(root, flags, P);
-    const labelsBytes = lib.canonicalize(c.labels) + '\n';
-    const repairBytes = lib.canonicalize(c.repair) + '\n';
-    const labelsSha = lib.sha256hex(labelsBytes);
-    const result = c.badTargets.length || c.reopenedAll.length ? 'fail' : 'pass';
-    const checkReasons = [];
-    if (c.badTargets.length) checkReasons.push({ code: 'stale-or-pending', detail: c.badTargets });
-    if (c.reopenedAll.length) checkReasons.push({ code: 'dismissals-reopened', detail: c.reopenedAll });
-    if (c.newlyReopened.length) checkReasons.push({ code: 'reopened', detail: c.newlyReopened });
+    const derive = (c) => {
+      const labelsBytes = lib.canonicalize(c.labels) + '\n';
+      const repairBytes = lib.canonicalize(c.repair) + '\n';
+      const labelsSha = lib.sha256hex(labelsBytes);
+      const result = c.badTargets.length || c.reopenedAll.length ? 'fail' : 'pass';
+      const checkReasons = [];
+      if (c.badTargets.length) checkReasons.push({ code: 'stale-or-pending', detail: c.badTargets });
+      if (c.reopenedAll.length) checkReasons.push({ code: 'dismissals-reopened', detail: c.reopenedAll });
+      if (c.newlyReopened.length) checkReasons.push({ code: 'reopened', detail: c.newlyReopened });
+      return { c, labelsBytes, repairBytes, labelsSha, result, checkReasons };
+    };
+    const fp0 = inputsFingerprint(root, P);
+    let d = derive(compute(root, flags, P));
 
     let wrote = false;
     if (dryRun) {
       lib.checkCe(root, ce);
     } else {
       await lib.withRunLock(root, { script: SCRIPT, ce, proc: getProc(), now, retries }, async (h) => {
+        // An input moved between the unlocked read and the lock: compute again from what is there now,
+        // so an older run never overwrites newer labels (no subprocess runs in compute).
+        if (inputsFingerprint(root, P) !== fp0) d = derive(compute(root, flags, P));
+        const { c, labelsBytes, repairBytes, labelsSha, result, checkReasons } = d;
         if (h && typeof h.assertHeld === 'function') h.assertHeld();
         lib.writeAtomic(P.labels, labelsBytes);
         if (h && typeof h.assertHeld === 'function') h.assertHeld();
@@ -572,6 +613,7 @@ lib.runMain(import.meta.url, SCRIPT, async (ctx) => {
       });
     }
 
+    const { c, labelsSha } = d;
     let exit = 0;
     const reasons = [];
     if (c.newlyReopened.length) {

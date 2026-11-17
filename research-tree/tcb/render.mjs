@@ -325,12 +325,16 @@ async function main(ctx) {
   const statusOf = (id) => lastStatus.get(id)?.status ?? 'pending';
   const cardLabel = (id) => labels.cards?.[id]?.label ?? '?';
   const nodeLabel = (key) => labels.nodes?.[key]?.label ?? '?';
-  const isExcludedCard = (id) => ['rejected', 'superseded'].includes(cardLabel(id));
   const f5 = th.get('f5_given') === true;
   const basis = f5 ? 'witnessed-or-confirmed' : 'committed';
+  // R24: with F5 given, only a witnessed or confirmed card is trusted; a pending, unverifiable,
+  // rejected or superseded card is shown under "excluded" with its label, never in the trusted body.
+  // Without F5 nothing can be witnessed, so a committed card is the trusted basis (as for coverage).
+  const isExcludedCard = (id) => (f5 ? !['witnessed', 'confirmed'].includes(cardLabel(id)) : ['rejected', 'superseded'].includes(cardLabel(id)));
   const isCounted = (id) => {
     const st = statusOf(id);
-    if (f5) return st === 'witnessed' || st === 'confirmed';
+    // R16: a replaced card never counts, whatever its own status says.
+    if (f5) return (st === 'witnessed' || st === 'confirmed') && cardLabel(id) !== 'superseded';
     return st !== 'rejected' && cardLabel(id) !== 'superseded';
   };
 
@@ -637,9 +641,11 @@ async function main(ctx) {
     const confirmed = new Set();
     for (const row of rows) {
       for (const q of taskIds(row, isCounted)) covered.add(q);
-      for (const q of taskIds(row, (id) => statusOf(id) === 'confirmed')) confirmed.add(q);
+      for (const q of taskIds(row, (id) => statusOf(id) === 'confirmed' && cardLabel(id) !== 'superseded')) confirmed.add(q);
     }
-    const throughput = time && time.active_s > 0 ? covered.size / (time.active_s / 3600) : null;
+    // R20: "approved ids covered ... per hour". Over wall hours: a step writes no ledger line while it
+    // works, so a ledger gap cannot tell sleep from work; quiet_gaps and active_s stay readings only.
+    const throughput = time && time.wall_s > 0 ? covered.size / (time.wall_s / 3600) : null;
     const efficiency = tok.total > 0 ? confirmed.size / (tok.total / 1e6) : null;
     // hallucinations
     const inSet = (cardId) => taskSet.has(cardTask.get(cardId));

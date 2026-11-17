@@ -533,4 +533,33 @@ const NEEDS_APP = 'needs the app';
 test('NA1 the old coordinator, woken by a late exit after the raise, is refused by every writing script and ends its turn', { skip: `${NEEDS_APP}: item 5, needs the harness's background command delivery` }, () => {});
 test('NA2 the owner starts the successor from the brief', { skip: `${NEEDS_APP}: the owner's step in a real session` }, () => {});
 test('NA3 the old watcher and alarm, left alive, reach their next ce check and exit 64', { skip: `${NEEDS_APP}: needs a real watcher and alarm running across a raise (item 5)` }, () => {});
-test('NA4 a row that reaches admitted, started or bound between the pre-check and the lock is refused inside the lock', { skip: `${NEEDS_APP}: a race between two real sessions cannot be ordered from a test` }, () => {});
+// Review U1-F8: the in-lock quiescence re-check, reached through doRaise's beforeLock seam (the
+// script's own command line never passes hooks). The race itself is ordered by the hook.
+test('T7b a row that reaches admitted between the pre-check and the lock is refused inside the lock: exit 6 not-quiescent, coord unchanged, one incident', async () => {
+  const lib = await getLib();
+  const { doRaise } = await import(pathToFileURL(path.join(TCB_SRC, 'handover.mjs')).href);
+  await withRoot({}, async (ctx) => {
+    drainLine(ctx.root);
+    const t = 'f1-research';
+    setTasks(ctx, [row(t, { state: 'active', step: 'stopped' })]); // quiescent at the pre-check
+    const before = fs.readFileSync(coordPath(ctx));
+    const scriptUrl = pathToFileURL(path.join(TCB_SRC, 'handover.mjs')).href;
+    const hctx = { script: 'handover', writerSha: lib.scriptSha(scriptUrl), ledgerSeq: [], mode: 'raise' };
+    let hookRan = false;
+    const out = await doRaise(hctx, ctx.root, { root: ctx.root, ce: 1, now: NOW }, false, {
+      beforeLock: () => {
+        hookRan = true;
+        setTasks(ctx, [row(t, { state: 'active', step: 'admitted' })]);
+      },
+    });
+    assert.equal(hookRan, true, 'the pre-check passed and the hook ran');
+    assert.equal(out.exit, 6, JSON.stringify(out));
+    assert.equal(out.reasons[0].code, 'not-quiescent');
+    assert.deepEqual(out.reasons[0].detail.tasks, [t]);
+    assert.ok(before.equals(fs.readFileSync(coordPath(ctx))), 'coord.json unchanged');
+    assert.equal(ledgerLines(ctx.root, 'ce-raise').length, 0);
+    const inc = ledgerLines(ctx.root, 'incident');
+    assert.equal(inc.length, 1);
+    assert.equal(inc[0].data.detail.code, 'not-quiescent');
+  });
+});

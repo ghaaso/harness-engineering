@@ -51,6 +51,12 @@ node <root>/tcb/scripts/<name>.mjs [<mode>] --root <dir> [--ce <n>] [--task <id>
   ticks, and a tick is one completed sleep of Δ in the watcher's loop, never a clock difference (so
   a sleep across PC suspend is one tick). Whether a failure is `host` compares boot identifiers by
   equality (§3.6), never clock arithmetic.
+- **The one exception, one-sided (decision 40, model fix M5):** a watcher tick whose wall gap since
+  the previous evaluation (this tick's `now` minus the stored `last_tick_at`) exceeds 2Δ is a
+  *paused* tick and is not counted toward `hang_ticks` (the counter is left as it was, neither
+  raised nor reset). A clock can therefore only withhold a hang count, never add one: a gap that is
+  negative, unparseable or ≤ 2Δ counts the tick as usual. `ticks_total` and every other tick count
+  still advance on a paused tick.
 - Durations that a script waits in-process are only the watcher's Δ and `watch.mjs --alarm`; both
   come from `tcb/thresholds.json` and can be overridden by `--interval-ms` / `--sleep-ms` in tests.
   No other script sleeps. Scripts that may run longer than 60 s (`watch.mjs` in every mode,
@@ -77,13 +83,13 @@ node <root>/tcb/scripts/<name>.mjs [<mode>] --root <dir> [--ce <n>] [--task <id>
 | Code | Slug | Meaning |
 |---|---|---|
 | 0 | `ok` | Done, passed, or an identical repeat that changed nothing |
-| 1 | `fail` | A definite no: a check failed, or the action is refused for a reason a retry will not fix (limit reached and task failed; stop unconfirmed; endturn finds a wake source missing) |
+| 1 | `fail` | A definite no: a check failed, or the action is refused for a reason a retry will not fix (limit reached and task failed; stop unconfirmed; endturn or reconcile finds a wake source missing) |
 | 2 | `not-run` | Could not decide: an input is missing or unreadable, a precondition is absent (F5 not given, transcript not found, PowerShell failed). Gates count it as fail (R40) |
 | 3 | `tamper` | Integrity breach: tcb differs from the owner's commit, ledger chain broken, object bytes differ from their name, a write into a protected path, a card changed after witnessing, a seed id outside the seed store, a script run from an attempt folder. All work stops (R28) |
-| 5 | `ready-wins` | `replace.mjs fence` with a failure reason found a READY of the current epoch: commit first (R7) |
+| 5 | `ready-wins` | `replace.mjs fence` with any reason but `first` and `tainted` (a planned hand-over, a park, a cut and a drop included; decision 40, M6) found a READY of the current epoch: commit first (R7) |
 | 6 | `deferred` | Refused for now; retry on a later turn with the same call (admission refused, not quiescent, intake already running). The row stays at its step, no new fence, no count (R3) |
 | 10 | `reopened` | A dismissal was reopened (tms, R38); also a watcher wake class |
-| 11-16 | watcher, non-urgent | 11 `ready`, 12 `repair`, 13 `soft-limit`, 14 `checker-batch`, 15 `window-limit`, 16 `drain` |
+| 11-17 | watcher, non-urgent | 11 `ready`, 12 `repair`, 13 `soft-limit`, 14 `checker-batch`, 15 `window-limit`, 16 `drain`, 17 `act-due` (the planner's own predicate holds: a row the coordinator can act on, a free slot for a waiting row, a drain ready to hand over, a run with every row terminal, or an `event` line above `acked_seq` whose condition has cleared; decision 40, M3) |
 | 20-27 | watcher, urgent | 20 `stall`, 21 `hang`, 22 `loop`, 23 `hard-limit`, 24 `memory`, 25 `stop-unconfirmed` (zombie spend past Z), 26 `common-cause`, 27 `tamper-seen` |
 | 30 | `alarm` | `watch.mjs --alarm`: the long silence elapsed |
 | 64 | `stale-ce` | `--ce` differs from `run/coord.json` (also: a watcher or alarm superseded by a newer ce) |
@@ -94,7 +100,7 @@ node <root>/tcb/scripts/<name>.mjs [<mode>] --root <dir> [--ce <n>] [--task <id>
 | 75 | `lock-busy` | `run/run.lock` still held after the bounded retry (or lost while held) |
 
 Watcher precedence when several classes are present (first wins): 64, 27, 26, 25, 24, 23, 22, 21, 20,
-11, 12, 10, 13, 15, 16, 14. Urgent classes exit at the tick that sees them; non-urgent ones wait up to
+11, 12, 10, 13, 15, 16, 14, 17. Urgent classes exit at the tick that sees them; non-urgent ones wait up to
 `coalesce_ticks` ticks for others (R4). A READY of the current epoch voids stall, hang and loop for
 that epoch (R5).
 
@@ -324,7 +330,7 @@ since its last attempt (`committed`, or `cut`/`dropped` before any start) it tar
 |---|---|---|
 | planned / none | `replace fence --reason first` | active / `stopped` (nothing to stop), epoch 1 |
 | planned / none, or active / stopped | `replace fence --reason cut\|drop` | no new attempt, epoch unchanged, step `stopped`, state `cut` (replace writes the `overflow` line) or `dropped`. Nothing runs, so nothing is stopped |
-| active / bound, started, admitted; parked / stopped | `replace fence --reason <r>` | step `fenced`, epoch e+1 (CAS: only if still e); staging cut and `spend_at_fence` recorded. Failure reason other than `tainted`: READY of e present → exit 5, no change (a READY never wins over a taint); restarts = R already → fence applied, `limit` true, exit 1 `limit`; else restarts+1 unless host. `handover`/`memory` with handovers+parks ≥ H_max → exit 1 `hmax`, no change |
+| active / bound, started, admitted; parked / stopped | `replace fence --reason <r>` | step `fenced`, epoch e+1 (CAS: only if still e); staging cut and `spend_at_fence` recorded. Any reason other than `tainted` (failure reasons, `handover`, `memory`, `cut`, `drop`; decision 40, M6): READY of e present under the lock → exit 5, no change (a READY never wins over a taint); restarts = R already → fence applied, `limit` true, exit 1 `limit`; else restarts+1 unless host. `handover`/`memory` with handovers+parks ≥ H_max → exit 1 `hmax`, no change |
 | active / fenced | `stop request` | `stop-requested` if attempt e−1 has a session (or a folder transcript), else `stopped` |
 | active / stop-requested | (coordinator stops the session) then `stop verify`, repeated | first call samples and exits 6; a later call, once `stop_verify_deltas` watcher ticks have passed, → `stopped` if confirmed; else stays, `stop` = unconfirmed, exit 1 |
 | committed / bound | `stop request`, then (coordinator closes the session) `stop verify`, repeated | step `stop-requested` → `stopped`, state stays `committed`, attempt e's `stop` = confirmed (frees its slot, decision 17) |
@@ -393,7 +399,10 @@ does not apply); `not_run` lists (check, subject) whose last `check` line is not
 
 ### 3.9 Coordinator files
 - [coord] `run/coord.json`: `{ce: int ≥1, session?, started_at, tcb_commit: 40 hex}`.
-- [acked] `run/acked.json`: `{ce, acked_seq: int, at}`.
+- [acked] `run/acked.json`: `{ce, acked_seq: int, at}`. Its bytes are also the alarm's **arm
+  token** (decision 40, M1): every `status --endturn` rewrites it (a new `at`), and a running alarm
+  that finds the file's sha256 changed since its last look sleeps again instead of exiting. No
+  other writer; the format is unchanged.
 - [alarm] `run/alarm.json`: `{pid, start_time, ce, armed_at, sleep_ms}`.
 - [intent] `run/intents/<key>.json`: `{key, ce, subject, text_sha, created_at}`; `.done`: `{key, done_at}`.
 
@@ -407,7 +416,10 @@ task's counters. A class instance's **key** is `<class>|<task or ->|<epoch or ->
 `onset_tick` is the tick at which the condition became present after being absent (kept in
 `active` while present, removed when absent). The watcher appends one `event` line per key and
 exits for a key only while that line's seq > `acked_seq`; a condition that clears for a tick and
-returns gets a new onset and raises again.
+returns gets a new onset and raises again. For class 17 `act-due` the second part names the act
+too: `17|<task or ->:<act>|<epoch or ->|<onset_tick>` (acts: `replace-fence`, `replace-start`,
+`stop-request`, `stop-session`, `stop-verify@<sample tick or ->`, `start-session`, `bind`,
+`handover`, `run-terminal`, `events`), so a row whose next act changes raises again.
 `parse-state` = `{end_byte, last_call: {id, usage}?, calls, input, cache_read, cache_write, output,
 last_context, peak_context, loop: {sig, run}}`: each tick parses only from `end_byte`
 (`parseTranscript(..., {fromByte, lastCall})`); a file shorter than `end_byte` is re-parsed from 0.
@@ -746,7 +758,9 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
 - `fence(root, handle, {task, expectEpoch, reason, host, tick, readyCheck, cut, spendAtFence, R,
   Hmax}) → {row, from, to, restartCharged, limit}`: the §3.6 fence rows on `updateRow`. For a failure
   reason other than `tainted` it calls `readyCheck()` under the lock first; true → `ready-wins` 5 with
-  no change. `handover`/`memory` at `handovers + parks ≥ Hmax` → `hmax` 1, no change. The limit path
+  no change. (Decision 40, M6: the rule is every reason but `first` and `tainted` on a row with a
+  running attempt; until the library's check is widened, `replace.mjs fence` makes the same
+  re-check itself under the same lock before it calls `fence`.) `handover`/`memory` at `handovers + parks ≥ Hmax` → `hmax` 1, no change. The limit path
   applies the fence and returns `limit:true` (the caller exits 1). `cut`/`drop` on a row at planned/none
   or active/stopped takes the no-attempt row of §3.6 (state `cut`/`dropped`, epoch unchanged).
 - `stagingCut(attemptDir) → {files: {relpath: {len, sha256}}, links: relpath[]}`: every regular file
@@ -914,8 +928,8 @@ the coordinator rely on are fixed here; everything else is in its spec.
 | U1a | replace.mjs | The one start and restart path: the step machine's fence, start and bind; builds attempt folders, settings, agent files, manifest, brief, inputs, checkpoint, todo and `review-in/` | `plan`; `fence --task --epoch --reason [--tick]`; `start --task --epoch` (admission through admit.mjs's exported `decide`); `bind --task --epoch --session` | 0, 1 (`limit`, `hmax`), 2, 3, 5, 6 |
 | U1a | admit.mjs | Admission decision (R10): deps, protocol hash, gate, selftest, fresh fsck, slots over live processes, memory, reservation, gate A, halt, drain; design-check tasks skip the gate | `check [--task]` (read-only); exports `decide(facts) → {admit, reasons, reservation}` (pure) | 0, 6, 2 |
 | U1a | stop.mjs | Fence-first stop: records the request, verifies non-growth over `stop_verify_deltas` watcher ticks without sleeping, reports (never kills) processes that name the attempt, counts zombie spend | `request --task --epoch`; `verify --task --epoch` (repeated: samples, then compares) | 0, 1, 2, 6 |
-| U1b | watch.mjs | The watcher: ticks, counters, V, spend, loop, memory, windows, events, wake by exit | (default) `--ce`; `--once` (one tick, tests); `--alarm --ce [--sleep-ms]`; `--intake --ce` (harvest, commit intake, snap, witness, promote `--from witness`, tms, status, one at a time; spawned detached, not awaited) | 10-16, 20-27, 30, 0 (`--once` quiet, alarm superseded, intake done), 3 (a tamper exit inside intake), 70 |
-| U1b | status.mjs | Builds `run/status.json`; reconciles started steps; end-of-turn check; owner, intent and meter lines | (default); `--reconcile`; `--endturn --acked-seq`; `intent open|done --key`; `owner --act --subject --quote-file`; `meter --pct` | 0, 1 (endturn), 2 |
+| U1b | watch.mjs | The watcher: ticks, counters, V, spend, loop, memory, windows, events, wake by exit | (default) `--ce`; `--once` (one tick, tests); `--alarm --ce [--sleep-ms]`; `--intake --ce` (harvest, commit intake, snap, witness, promote `--from witness`, tms, status, one at a time; spawned detached, not awaited) | 10-17, 20-27, 30, 0 (`--once` quiet, alarm superseded, intake done), 3 (a tamper exit inside intake), 70 |
+| U1b | status.mjs | Builds `run/status.json`; reconciles started steps; end-of-turn check; owner, intent and meter lines | (default); `--reconcile`; `--endturn --acked-seq`; `intent open|done --key`; `owner --act --subject --quote-file`; `meter --pct` | 0, 1 (endturn; reconcile `alarm-missing`), 2 |
 | U1b | handover.mjs | Coordinator epochs: first coordinator, ce raise after the drain, binding the successor | `init --tcb-commit [--session]`; `raise --ce`; `bind --ce --session` | 0, 6 (not quiescent / no drain), 1, 2 (`missing`, `proc-unavailable`, `no-coordinator`) |
 | U2a | commit.mjs | The acceptor: validates staging, stores objects, flags R18 (d)(e), writes commit records (no git in the pilot) | `intake --task --epoch`; `record --task --epoch --step` | 0, 1, 2, 3, 6 (`intake-new`, `fsck-stale`, `audit-missing`, `cards-pending`) |
 | U2a | harvest.mjs | Copies readers' schema-checked results from transcripts into `staging/harvested/`, re-validated against tcb's card schema | `--task --epoch` | 0, 1 (some invalid), 2, 3 (`untrusted-path`, `harvested-differs`) |
@@ -997,7 +1011,7 @@ pass|fail|not_run, sha} and treats missing as not-run.
 Settled here where the sources leave it open or disagree (D = the design, L = a layer draft).
 1. One exit table (§1.4) replaces the layers' per-script codes; 64 stale ce and 75 lock busy keep
    the design's numbers. Reason: two scripts must read one code the same way.
-2. Watcher wake classes are exit codes 10-16 and 20-27 with a fixed precedence; 64 on a newer ce.
+2. Watcher wake classes are exit codes 10-17 and 20-27 with a fixed precedence; 64 on a newer ce.
    Reason: "the exit code names the most urgent class" needs one order.
 3. Events are `event` ledger lines; there is no `events.jsonl`. Reason: R6 acts on "ledger events
    after the last seq"; one sequence, one hash chain.
@@ -1006,7 +1020,9 @@ Settled here where the sources leave it open or disagree (D = the design, L = a 
 5. The alarm re-arms itself: a new `watch.mjs --alarm` registers in `alarm.json` and kills nothing;
    the previous alarm, on waking, finds another pid in `alarm.json` and exits 0 `superseded`;
    `status --endturn` only checks. Reason: only a process the coordinator starts can wake it, so
-   endturn cannot start the alarm; a kill is not needed for a sleeper that ends itself.
+   endturn cannot start the alarm; a kill is not needed for a sleeper that ends itself. (Amended by
+   decision 40: a live alarm is re-armed by the `acked.json` token, never replaced, and
+   `status --reconcile` asks for an alarm at the start of the turn.)
 6. Commit records are per (task, step), `store/commits/<task>.<step>.json`, with the steps listed
    in the row. Reason: under F1(a) one task commits a pack and then a same-window review.
 7. A session's write area is `staging/` minus `staging/harvested/` (harvest's); rejections go to
@@ -1090,3 +1106,25 @@ Settled here where the sources leave it open or disagree (D = the design, L = a 
     be certified.
 39. `B_tokens`/`r_tokens` null is a reading (R45), not a refusal. Reason: the contract's R45 rule
     wins over the briefs owner's note.
+40. Six fixes from the second model check of the coordination rules (165 M states; each fix's
+    ablation breaks the named property). **M1** (NoBusyLoop): the coordinator never kills its own
+    wake source; a live alarm is re-armed by the token it reads, `run/acked.json` (§3.9), which
+    every endturn rewrites; the alarm sleeps again while the token has changed and exits 30 only
+    after a whole period without one. (Never killing was already decisions 5 and 29; the token is
+    new.) **M2** (NoDeadlock): `status --reconcile`, the first act of every turn, checks the alarm
+    of this ce and exits 1 `alarm-missing` when none lives (also when the process list is
+    unavailable), so the coordinator starts `watch.mjs --alarm` before anything else and a turn
+    that dies before its endturn still leaves a wake source. **M3** (AlwaysCanResolve,
+    EventuallyResolves): the watcher raises class 17 `act-due` on the planner's own predicate (the
+    `next` of status §3.8 for each row, `owner` excluded; `replace-fence`/`replace-start` only with
+    a free slot and neither halted nor draining; `stop-verify` once its sample is
+    `stop_verify_deltas` ticks old; an admitted row whose folder has a transcript is `bind`; a drain
+    of this ce with no slot used; every row terminal; an `event` line above `acked_seq` whose key
+    is no longer active). It is keyed and acknowledged like every class (§3.10), so a condition
+    the coordinator has acknowledged and cannot act on stays quiet. The slot count here uses
+    `slotCount` with an empty process list (no PowerShell per tick; it can only find a slot free
+    too early, which costs one acknowledged wake). **M4** (Slots): admission counts rows admitted
+    but not yet started as reservations: already so in `slotCount` (§4.10, an admitted current
+    attempt always counts one slot); only a test was missing. **M5** (NoFalseSuspicion): the
+    pause discount of §1.2. **M6** (ReadyNotDiscarded): the READY re-check of `fence` applies to
+    every reason but `first` and `tainted` (§1.4 exit 5, §3.6).

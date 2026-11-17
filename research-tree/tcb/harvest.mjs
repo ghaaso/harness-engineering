@@ -136,10 +136,17 @@ async function main(ctx) {
   }
   if (mainT) {
     const p = await parseOne(mainT);
-    for (const s of p.structured || []) raw.push({ source: { file: rel(mainT), line: s.line ?? null }, value: s.data, parsed: true });
     const agentIds = new Set(
       (p.toolUses || []).filter((u) => u.name === 'Agent' || u.name === 'Task').map((u) => u.id),
     );
+    // The session's own structured output is the session's own claim, and commit does not check the
+    // URL of a harvested card (R34), so it is no candidate (review U2-F2): only a structured result tied
+    // to an Agent/Task call (a helper's result relayed by the harness) is taken from this transcript.
+    for (const s of p.structured || []) {
+      if (typeof s.toolUseId === 'string' && agentIds.has(s.toolUseId)) {
+        raw.push({ source: { file: rel(mainT), line: s.line ?? null }, value: s.data, parsed: true });
+      }
+    }
     for (const r of p.toolResults || []) {
       if (!agentIds.has(r.toolUseId)) continue;
       raw.push({ source: { file: rel(mainT), line: r.line ?? null }, text: typeof r.text === 'string' ? r.text : '' });

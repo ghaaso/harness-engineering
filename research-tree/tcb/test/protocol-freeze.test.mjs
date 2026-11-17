@@ -391,6 +391,29 @@ test('T8 approval: each of six failures is exit 1 with nothing written but one i
   assertRefused(root, before, { frozenBefore: 1 });
 });
 
+test('T8b an owner line that names the approved content (draft_sha256) covers only that content; a line without the field is not bound', () => {
+  const contentSha = (d) => { const { approval, ...rest } = d; return sha(canon(rest)); };
+  const draft = mkProtocol();
+  const edited = mkProtocol();
+  edited.criteria.include.push({ code: 'I2', text: 'synthetic rule added after the approval' });
+  // approved content differs from the draft being frozen: refused, nothing frozen
+  let root = world({ approved: false });
+  addLedger(root, 'owner', { act: 'approve', subject: 'protocol:f1', quote: QUOTE, draft_sha256: contentSha(edited) });
+  let before = readLedger(root).length;
+  const j = shape(freeze(root), SCRIPT, 1);
+  assertReason(j, 'approval-unrecorded');
+  assertRefused(root, before);
+  // approved content equals the draft: frozen
+  root = world({ approved: false });
+  addLedger(root, 'owner', { act: 'approve', subject: 'protocol:f1', quote: QUOTE, draft_sha256: contentSha(draft) });
+  shape(freeze(root), SCRIPT, 0);
+  // an older line for other content and a newer one for this content: the newer one covers it
+  root = world({ approved: false });
+  addLedger(root, 'owner', { act: 'approve', subject: 'protocol:f1', quote: QUOTE, draft_sha256: contentSha(edited) });
+  addLedger(root, 'owner', { act: 'approve', subject: 'protocol:f1', quote: QUOTE, draft_sha256: contentSha(draft) });
+  shape(freeze(root), SCRIPT, 0);
+});
+
 test('T9 keys: format, prefix, duplicate, two owners, no owner, cross-self fail; a valid cross-field entry freezes', () => {
   const f2 = { kind: 'protocol', field: 'f2', question_ids: ['f2-g1-01'] };
   const cases = [

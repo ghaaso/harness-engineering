@@ -405,6 +405,14 @@ test('T3 anon twice: byte-identical files and no new ledger line; the order depe
   assert.notEqual(w.plan.sha, w2.plan.sha);
   assert.deepEqual(Object.values(k2.items).map((x) => x.arm).sort(), Object.values(k1.items).map((x) => x.arm).sort());
   assert.deepEqual(Object.keys(k2.items), Object.keys(k1.items));
+  // CM-4: the seed cannot be recomputed from values the coordinator can read (the plan hash, the arm names)
+  for (const [k, p] of [[k1, w.plan.sha], [k2, w2.plan.sha]]) {
+    assert.match(k.rng_seed, /^[0-9a-f]{64}$/);
+    assert.notEqual(k.rng_seed, sha('blind:' + p), 'the seed is not derived from the plan hash');
+  }
+  assert.notEqual(k1.rng_seed, k2.rng_seed, 'two runs draw two seeds');
+  // a repeat on the same root keeps the key bytes (so the same seed)
+  assert.equal(keyOf(w.root, w.plan.sha).rng_seed, k1.rng_seed);
 });
 
 test('T4 anon without a frozen plan, or with the frozen file edited, is exit 2 plan-not-frozen and writes nothing', () => {
@@ -657,6 +665,34 @@ test('T11 tokens: count and weighted equal the hand sum over a session and its h
   assert.notEqual(cm.arms.T.tokens, null);
 });
 
+test('T11b a task with no row, or an attempt with no transcript, is transcript-missing and never zero tokens; a session with no transcript falls back to its folder', () => {
+  const call = { id: 'm1', ts: '2026-11-17T10:01:00.000Z', input: 100, output: 10 };
+  const expectMissing = (rows, label) => {
+    const w = fourArms({ rows });
+    shape(score(w.root), SCRIPT, 0);
+    const c = cmpOf(w.root);
+    assert.equal(c.arms.S1.tokens, null, label + ': S1 tokens are null');
+    assert.ok(c.reasons.includes('transcript-missing:s1-research'), label + ': reason named');
+    assert.equal(c.prediction.actual, null, label + ': the prediction has no actual');
+  };
+  // (a) no row at all for the task
+  expectMissing(ROWS().filter((r) => r.task !== 's1-research'), 'no row');
+  // (b) an attempt with neither a session nor a folder
+  expectMissing(ROWS({ 's1-research': [{ epoch: 1, stop: 'confirmed' }] }), 'bare attempt');
+  // (c) a folder attempt with no transcript under it
+  expectMissing(ROWS({ 's1-research': [{ epoch: 1, folder: 'wt/s1-research-e1', stop: 'confirmed' }] }), 'empty folder');
+  // (d) a session whose transcript is absent, with a folder that has one: the folder is read
+  const w = fourArms({ rows: ROWS({ 's1-research': [{ epoch: 1, folder: 'wt/s1-research-e1', session: SIDS, stop: 'confirmed' }] }) });
+  const folderAbs = path.resolve(w.root, 'wt', 's1-research-e1');
+  // the harness names a session's project directory after its folder (every non-alphanumeric character becomes '-')
+  writeTranscript(path.join(w.root, 'transcripts', folderAbs.replace(/[^A-Za-z0-9]/g, '-'), `${SID1}.jsonl`), { sessionId: SID1, cwd: folderAbs, calls: [call] });
+  shape(score(w.root), SCRIPT, 0);
+  const c = cmpOf(w.root);
+  assert.notEqual(c.arms.S1.tokens, null, 'the folder fallback found the transcript');
+  assert.equal(c.arms.S1.tokens.count, 110);
+  assert.ok(!c.reasons.includes('transcript-missing:s1-research'));
+});
+
 test('T12 confirmed_per_extra_million_tokens for a positive token difference only; prediction ratio and within_2x', () => {
   const world = (tTokens, sTokens, predicted) => {
     const w = twoArms([0, 1], [0]);
@@ -728,6 +764,9 @@ test('T13 scorer transcript: the guess rate against the threshold, rubric totals
     items.map((id, i) => ({ item: i === 0 ? 'b9' : id, rubric: rub(1, 1, 1, 1), guess_arm: right(id) })),
     items.map((id, i) => ({ item: id, rubric: rub(i === 0 ? 5 : 1, 1, 1, 1), guess_arm: right(id) })),
     items.map((id, i) => ({ item: id, rubric: i === 0 ? { specificity: 1, support: 1, scope: 1 } : rub(1, 1, 1, 1), guess_arm: right(id) })),
+    // CM-3: an item left out (one confident item would give rate 1), and a guess that is not one of the arms
+    items.slice(0, 1).map((id) => ({ item: id, rubric: rub(1, 1, 1, 1), guess_arm: right(id) })),
+    items.map((id, i) => ({ item: id, rubric: rub(1, 1, 1, 1), guess_arm: i === 0 ? 'not-an-arm' : right(id) })),
   ];
   bad.forEach((scores, n) => {
     shape(score(w.root, ['--scorer-transcript', scorerFile(w, scores, `bad${n}.jsonl`)]), SCRIPT, 0);
@@ -791,6 +830,18 @@ test('T16 a cite with an s_ id, or an object whose bytes were edited, is exit 3 
   assert.ok(!fs.existsSync(path.join(w2.root, 'views', 'comparison.json')));
   assertReason(shape(anon(w2.root), SCRIPT, 3), 'object-mismatch');
   assert.ok(!fs.existsSync(path.join(w2.root, 'views', 'blind')));
+  // CM-3 (survivor CM3): the commit record names another valid review object but keeps the old sha256
+  const w3 = baseRoot();
+  const arm3 = commitArm(w3.root, { reviewTask: 'f1-review-r1', cards: [w3.A], sentences: [SENT('s1', [w3.A.id])] });
+  setPlan(w3.root, { R1: { review: 'f1-review-r1.review' } });
+  const other = putObj(w3.root, mkReview({ task: 'f1-review-r1', pack: arm3.P.id, sentences: [SENT('s1', [w3.A.id], { text: 'another valid review' })] }));
+  const recFile = path.join(w3.root, 'store', 'commits', 'f1-review-r1.review.json');
+  const rec = readJson(recFile);
+  assert.equal(rec.outputs[0].id, arm3.R.id);
+  rec.outputs[0].id = other.id; // the sha256 field still holds the old review's hash
+  fs.writeFileSync(recFile, canon(rec));
+  assertReason(shape(score(w3.root), SCRIPT, 3), 'object-mismatch');
+  assert.ok(!fs.existsSync(path.join(w3.root, 'views', 'comparison.json')));
 });
 
 test('T17 u for R_same counts fact sentences with no cite in the pack', () => {
@@ -881,5 +932,58 @@ test('T22 the script copied under <root>/wt/ is exit 3; every outcome prints one
 // ---------------------------------------------------------------------------------------------
 // Needs the app
 // ---------------------------------------------------------------------------------------------
+test('T23 anon with an arm named in the plan but not committed is exit 2 arms-not-committed and writes no key, so a later full anon still works', () => {
+  const w = fourArms();
+  setPlan(w.root, { ...ARMS4, S2: { pack: 's2-research.pack', review: 's2-research.review' } });
+  const snap = snapshot(w.root);
+  assertReason(shape(anon(w.root), SCRIPT, 2), 'arms-not-committed');
+  assert.deepEqual(snapshot(w.root), snap);
+  assert.deepEqual(fs.readdirSync(path.join(w.root, 'sealed', 'blind')), []);
+  // S2 gets committed: the same plan now blinds all five arms
+  commitArm(w.root, { packTask: 's2-research', reviewTask: 's2-research', cards: [w.A, w.B], sentences: [SENT('s1', [w.A.id], { text: 'synthetic finding epsilon' })] });
+  const j = shape(anon(w.root), SCRIPT, 0);
+  assert.equal(j.result.n_items, 5);
+});
+
+test('T24 the plan binding is re-checked under the lock: a plan amend that lands while the run waits for the lock gives exit 75 or the new plan, never a label bound to the old one', async () => {
+  const w = fourArms({ params: { lock_retries: 300 } });
+  const holder = holdLock(w.root);
+  const child = spawn(process.execPath, [findScript(SCRIPT), 'score', '--root', w.root, '--ce', '1', '--now', NOW], { cwd: w.root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  let out = '';
+  child.stdout.on('data', (d) => { out += d; });
+  child.stderr.on('data', () => {});
+  const done = new Promise((resolve) => child.on('close', resolve));
+  try {
+    // the script reads the ledger, computes, then waits for the lock the test holds
+    await new Promise((resolve) => setTimeout(resolve, 3500));
+    const plan2 = mkPlan(ARMS4, { predicted: 3000000 });
+    const bytes = canon(plan2);
+    const h2 = sha(bytes);
+    const rel = `plan/frozen/analysis-plan-${h2.slice(0, 12)}.json`;
+    fs.writeFileSync(path.join(w.root, rel), bytes);
+    addLedger(w.root, 'protocol-amend', { name: 'analysis-plan', sha256: h2, path: rel, old_sha: w.plan.sha, reason_code: 'fix' });
+  } finally {
+    holder.release();
+  }
+  const code = await done;
+  if (code === 0) {
+    // the run had not read the ledger yet: it bound the amended plan
+    assert.equal(cmpOf(w.root).plan_sha256, h2Of(w.root));
+  } else {
+    assert.equal(code, 75, 'a run that read the old ledger must give up: ' + out.slice(0, 400));
+    assert.ok(!fs.existsSync(path.join(w.root, 'views', 'comparison.json')), 'nothing written');
+    assert.equal(compareChecks(w.root).length, 0, 'no check line');
+  }
+  // a run after the amend binds the new plan
+  shape(score(w.root), SCRIPT, 0);
+  assert.equal(cmpOf(w.root).plan_sha256, h2Of(w.root));
+  assert.notEqual(cmpOf(w.root).plan_sha256, w.plan.sha);
+});
+// the sha of the plan the ledger's last plan line names
+function h2Of(root) {
+  const last = readLedger(root).filter((l) => (l.kind === 'plan-freeze' || l.kind === 'protocol-amend') && l.data.name === 'analysis-plan').pop();
+  return last.data.sha256;
+}
+
 test('NA1 a real scorer helper\'s result is extractable from its transcript (structured shape, CONTRACT 7 item 7) and its guess_arm is honest', { skip: 'needs the app' }, () => {});
 test('NA2 the scorer cannot read sealed/ (role profile enforcement, CONTRACT 7 items 1-3)', { skip: 'needs the app' }, () => {});

@@ -279,7 +279,7 @@ function goodHazards(cut, parent = null) {
     schema_version: 1, kind: 'hazards', cut_sha: cut, parent,
     hazards: [
       { hazard_id: 'h1', supersedes: null, classical_name: 'lost update', statement: 'a synthetic high hazard statement', severity: 'high', p_ids: ps(1, 10), covered_by: ['R1'], status: 'covered' },
-      { hazard_id: 'h2', supersedes: null, classical_name: 'stale read', statement: 'a synthetic medium hazard statement', severity: 'medium', p_ids: ps(11, 21), covered_by: ['R2'], status: 'partial' },
+      { hazard_id: 'h2', supersedes: null, classical_name: 'stale read', statement: 'a synthetic medium hazard statement', severity: 'medium', p_ids: [...ps(11, 21), ...Array.from({ length: 12 }, (_, i) => `G${i + 1}`)], covered_by: ['R2'], status: 'partial' },
     ],
     map: [
       { source: { kind: 'uca', id: 'act1-n' }, hazard_id: 'h1', borderline: false, alt_hazard_id: null },
@@ -482,6 +482,10 @@ test('T8 a problem id in no hazard is p-id-missing and is listed', () => {
   const j = shape(check(w.root), SCRIPT, 1);
   assertReason(j, 'p-id-missing');
   assert.deepEqual(gateOf(w.root).p_ids_missing, ['P7']);
+  // U5-GT-1: the gaps G1-G12 are problem rows too; a mapper that leaves one out does not pass
+  const g = gateWorld({ haz: (h) => { h.hazards[1].p_ids = h.hazards[1].p_ids.filter((p) => p !== 'G5' && p !== 'G12'); } });
+  assertReason(shape(check(g.root), SCRIPT, 1), 'p-id-missing');
+  assert.deepEqual(gateOf(g.root).p_ids_missing, ['G5', 'G12']);
 });
 
 test('T9 a high hazard that is a gap, partial or covered without covered_by fails; an owner accept line for it passes; others do not; a medium gap does not fail', () => {
@@ -525,6 +529,32 @@ test('T10 a child hazards object that drops a parent id is hazards-not-append-on
   ok.add('mapper', 'hazards', 'mapper-a', c2);
   writeTasks(ok.root, ok.rows);
   shape(check(ok.root), SCRIPT, 0);
+  // U5-GT-2: an id keeps its meaning. A child that rewrites the statement, the name or the severity under the old id
+  // is not an append; changing only status, covered_by or p_ids is.
+  const rewrites = [
+    ['statement', (h) => { h.statement = 'a synthetic statement rewritten under the old id'; }],
+    ['classical_name', (h) => { h.classical_name = 'a renamed failure class'; }],
+    ['severity', (h) => { h.severity = 'low'; }],
+  ];
+  for (const [what, edit] of rewrites) {
+    const rw = gateWorld({ noMapper: true });
+    const par = putObj(rw.root, goodHazards(rw.cut));
+    const ch = goodHazards(rw.cut, par.id);
+    edit(ch.hazards.find((h) => h.hazard_id === 'h1'));
+    rw.add('mapper', 'hazards', 'mapper-a', ch);
+    writeTasks(rw.root, rw.rows);
+    const jr = shape(check(rw.root), SCRIPT, 1);
+    assertReason(jr, 'hazards-not-append-only');
+    assert.ok(JSON.stringify(jr).includes('h1'), what + ': the rewritten id is named');
+  }
+  const same = gateWorld({ noMapper: true });
+  const sp = putObj(same.root, goodHazards(same.cut));
+  const sc = goodHazards(same.cut, sp.id);
+  sc.hazards[1].status = 'covered';
+  sc.hazards[1].covered_by = ['R2', 'R3'];
+  same.add('mapper', 'hazards', 'mapper-a', sc);
+  writeTasks(same.root, same.rows);
+  shape(check(same.root), SCRIPT, 0);
 });
 
 test('T11 a role with no committed task is exit 2 <role>-missing; committed for another cut is <role>-stale; gate.json is still written with null shas where absent', () => {
@@ -562,6 +592,26 @@ test('T12 a tainted audit line for the stpa task is exit 1 analysis-tainted; no 
   w = gateWorld();
   shape(check(w.root), SCRIPT, 0);
   assert.ok(!readLedger(w.root).some((l) => l.kind === 'audit' && l.task === 'mapper-a'), 'no audit line exists for the mapper');
+  // U5-GT-3: the audit must be of the committed epoch; an audit of another epoch of the same task is no audit
+  const auditLine = (root, label, epoch) => addLedger(root, 'audit', { label, undeclared: [], protected_writes: [], first_context: 0, notes_bad: false }, { task: 'stpa-a', epoch });
+  w = gateWorld({ noStpa: true });
+  w.add('stpa', 'stpa', 'stpa-a', goodStpa(w.cut), { audit: null, epoch: 2 });
+  writeTasks(w.root, w.rows);
+  auditLine(w.root, 'clean', 1);
+  assertReason(shape(check(w.root), SCRIPT, 2), 'audit-missing');
+  // a clean audit of the old epoch after a tainted audit of the committed epoch does not clear it
+  w = gateWorld({ noStpa: true });
+  w.add('stpa', 'stpa', 'stpa-a', goodStpa(w.cut), { audit: null, epoch: 2 });
+  writeTasks(w.root, w.rows);
+  auditLine(w.root, 'tainted', 2);
+  auditLine(w.root, 'clean', 1);
+  assertReason(shape(check(w.root), SCRIPT, 1), 'analysis-tainted');
+  // and the committed epoch's own clean audit passes
+  w = gateWorld({ noStpa: true });
+  w.add('stpa', 'stpa', 'stpa-a', goodStpa(w.cut), { audit: null, epoch: 2 });
+  writeTasks(w.root, w.rows);
+  auditLine(w.root, 'clean', 2);
+  shape(check(w.root), SCRIPT, 0);
 });
 
 test('T13 the protocol model result: missing and not_run are exit 2, fail is exit 1, garbage JSON is exit 2', () => {

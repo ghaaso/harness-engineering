@@ -10,6 +10,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import cp from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import * as LIB from '../lib.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BUILD = path.resolve(HERE, '..', '..');
@@ -28,6 +29,10 @@ const SLUG = {
   22: 'loop', 23: 'hard-limit', 24: 'memory', 25: 'stop-unconfirmed', 26: 'common-cause', 27: 'tamper-seen',
   30: 'alarm', 64: 'stale-ce', 65: 'stale-epoch', 66: 'usage', 67: 'table-corrupt', 70: 'internal', 75: 'lock-busy',
 };
+// Exit 17 `act-due` (CONTRACT 1.4, decision 40, M3). The stdout `code` comes from lib.EXIT; until the
+// library names 17 (a requested lib change) it prints `internal`, and this table follows the library
+// so that the check becomes strict by itself once the slug is there.
+SLUG[17] = LIB.EXIT && LIB.EXIT['act-due'] === 17 ? 'act-due' : 'internal';
 
 // ---------------------------------------------------------------- small utilities
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
@@ -603,7 +608,10 @@ test('T10 common cause: fails 40 ticks apart (W_cc_ticks 30) give nothing', asyn
       failRow('f1-research', [{ epoch: 1, class: 'stall', host: false, tick: 60 }]),
       failRow('f2-research', [{ epoch: 1, class: 'hang', host: false, tick: 100 }]),
     ]);
-    assertLine(tick(ctx), 0);
+    // The two stopped rows with a free slot are an act due (17, M3); the point here is that no 26 comes.
+    const j = assertLine(tick(ctx), 17);
+    assert.ok(!j.result.classes.includes(26), 'no common-cause class');
+    assert.equal(eventsOf(ctx.root, 'common-cause', 26).length, 0);
     assert.equal(ledgerLines(ctx.root, 'halt').length, 0);
   });
 });
@@ -615,8 +623,51 @@ test('T10 common cause: a host fail is not counted', async () => {
       failRow('f1-research', [{ epoch: 1, class: 'crash', host: true, tick: 95 }]),
       failRow('f2-research', [{ epoch: 1, class: 'hang', host: false, tick: 100 }]),
     ]);
-    assertLine(tick(ctx), 0);
+    // The two stopped rows with a free slot are an act due (17, M3); the point here is that no 26 comes.
+    const j = assertLine(tick(ctx), 17);
+    assert.ok(!j.result.classes.includes(26), 'no common-cause class');
+    assert.equal(eventsOf(ctx.root, 'common-cause', 26).length, 0);
     assert.equal(ledgerLines(ctx.root, 'halt').length, 0);
+  });
+});
+
+// Review U1-F4: the W_cc window is measured against ticks_total, not only between the fails.
+test('T10 common cause: two fails 5 ticks apart but long past (ticks 10 and 15, ticks_total 100) give no 26', async () => {
+  await withRoot({ thr: { W_cc_ticks: 30 } }, async (ctx) => {
+    forgeWatcher(ctx, 100);
+    setTasks(ctx, [
+      failRow('f1-research', [{ epoch: 1, class: 'stall', host: false, tick: 10 }]),
+      failRow('f2-research', [{ epoch: 1, class: 'hang', host: false, tick: 15 }]),
+    ]);
+    const j = assertLine(tick(ctx), 17); // the two stopped rows are an act due; no common cause
+    assert.ok(!j.result.classes.includes(26), 'no common-cause class');
+    assert.equal(eventsOf(ctx.root, 'common-cause', 26).length, 0);
+    assert.equal(ledgerLines(ctx.root, 'halt').length, 0);
+  });
+});
+
+// Review U1-F4: an owner resume takes effect; the same fails do not halt again, a new fail does.
+test('T10 common cause: after an owner resume the same fails write no second halt line; a new fail halts again', async () => {
+  await withRoot({ thr: { W_cc_ticks: 30 } }, async (ctx) => {
+    forgeWatcher(ctx, 100);
+    const f1 = { epoch: 1, class: 'stall', host: false, tick: 95 };
+    const f2 = { epoch: 1, class: 'hang', host: false, tick: 100 };
+    setTasks(ctx, [failRow('f1-research', [f1]), failRow('f2-research', [f2])]);
+    assertLine(tick(ctx), 26);
+    assert.equal(ledgerLines(ctx.root, 'halt').length, 1);
+    addLine(ctx.root, { kind: 'owner', data: { act: 'resume', subject: 'run', quote: 'resume the run' } });
+    const r2 = tick(ctx); // ticks_total 102: both fails still inside W_cc_ticks
+    assert.ok(r2.json, `one JSON line: ${r2.stdout} ${r2.stderr}`);
+    assert.equal(ledgerLines(ctx.root, 'halt').length, 1, 'the resume stands: no second halt for the same fails');
+    const r3 = tick(ctx);
+    assert.ok(r3.json, `one JSON line: ${r3.stdout} ${r3.stderr}`);
+    assert.equal(ledgerLines(ctx.root, 'halt').length, 1, 'still none on a later tick');
+    const f3 = { epoch: 1, class: 'loop', host: false, tick: 103 };
+    setTasks(ctx, [failRow('f1-research', [f1]), failRow('f2-research', [f2]), failRow('f3-research', [f3])], 2);
+    tick(ctx);
+    const halts = ledgerLines(ctx.root, 'halt');
+    assert.equal(halts.length, 2, 'a fail no halt has named yet halts again');
+    assert.ok(halts[1].data.fails.some((f) => f.tick === 103));
   });
 });
 
@@ -728,6 +779,32 @@ test('T15 coord ce raised before the tick: exit 64, no ledger line, watcher.json
     assertLine(tick(ctx), 64);
     assert.equal(fs.readFileSync(path.join(ctx.root, 'run', 'watcher.json'), 'utf8'), before);
     assert.equal(ledgerLines(ctx.root).length, lines);
+  });
+});
+
+// Review U1-F3: a default-mode watcher re-checks the ce at the start of every tick, so the watcher
+// of an old ce ends (64) and releases watcher.lock instead of looping on.
+test('T15 default-mode watcher: coord ce raised after its first tick -> exit 64, watcher.lock released, no tick after', async () => {
+  await withRoot({}, async (ctx) => {
+    const wjPath = path.join(ctx.root, 'run', 'watcher.json');
+    const { child, done } = startScript(ctx.root, 'watch', [...baseArgs(ctx), '--interval-ms', '50', '--no-intake']);
+    let res = null;
+    try {
+      await waitFor(() => fs.existsSync(wjPath) && (() => { try { return J(wjPath).ticks_total >= 1; } catch { return false; } })(), { timeout: 60000 });
+      w(path.join(ctx.root, 'run', 'coord.json'), { schema_version: 1, ce: 2, started_at: NOW, tcb_commit: COMMIT });
+      const atRaise = J(wjPath).ticks_total;
+      res = await Promise.race([done, sleep(20000).then(() => null)]);
+      assert.ok(res, 'the watcher of the old ce did not end within 20 s');
+      assertLine(res, 64);
+      assert.equal(hasWatcherLock(ctx), false, 'watcher.lock released');
+      // A tick already past its ce check when the raise landed may still write once; no later one.
+      assert.ok(J(wjPath).ticks_total <= atRaise + 1, `ticks after the raise: ${J(wjPath).ticks_total - atRaise}`);
+    } finally {
+      if (!res) {
+        try { child.kill(); } catch { /* gone */ }
+        await done;
+      }
+    }
   });
 });
 
@@ -846,6 +923,22 @@ test('T19 intake: a step exiting 3 ends the intake with 3', async () => {
   const o = await intakeCase({ exit: { witness: 3 } });
   assertLine(o.r, 3);
   assert.deepEqual(o.log, ['harvest', 'commit', 'witness']);
+});
+
+// Review U1-F6: a step that never exits is ended by its timeout, counted as exit 70 with one
+// not-run incident {script, exit 70, timeout true}, and the intake goes on with the next step.
+test('T19 intake: a step that does not exit within intake_step_timeout_ms is ended, one incident, the next steps run', async () => {
+  const o = await intakeCase({ hold: { harvest: true } }, {}, { intake_step_timeout_ms: 1500 });
+  const j = assertLine(o.r, 0);
+  assert.deepEqual(o.log, ['harvest', 'commit', 'witness', 'promote', 'tms', 'status']);
+  assert.equal(o.incidents.length, 1);
+  assert.equal(o.incidents[0].data.class, 'not-run');
+  assert.match(String(o.incidents[0].data.detail.script), /harvest/);
+  assert.equal(o.incidents[0].data.detail.exit, 70);
+  assert.equal(o.incidents[0].data.detail.timeout, true);
+  assert.equal(j.result.steps[0].exit, 70);
+  assert.equal(j.result.steps[0].timeout, true);
+  assert.equal(j.result.steps[1].timeout, undefined);
 });
 
 test('T19 intake: snap --new runs only when f5_given is true', async () => {
@@ -1094,6 +1187,168 @@ test('X8 coordinator window at W_quality exits 15 (before 16), with the drain li
 
 // ------------------------------------------------ cannot be tested without the app
 const NEEDS_APP = 'needs the app';
+// =============================================================== second model check (CONTRACT decision 40)
+const ackUpTo = (ctx, seq) => w(path.join(ctx.root, 'run', 'acked.json'), { schema_version: 1, ce: 1, acked_seq: seq, at: NOW });
+const actEvents = (ctx, act) => eventsOf(ctx.root, 'act-due', 17).filter((l) => act === undefined || l.data?.detail?.act === act);
+const actsOf = (j) => (j.reasons ?? []).filter((x) => x.code === 'act-due').map((x) => x.detail?.act);
+
+test('M1 alarm: an endturn during the sleep re-arms the running alarm by its token; nothing is killed or replaced', async () => {
+  await withRoot({}, async (ctx) => {
+    // 8 s: room for the endturn (node start and one PowerShell call) to land inside the first sleep.
+    const a = startScript(ctx.root, 'watch', alarmArgs(ctx, 8000));
+    await waitFor(() => fs.existsSync(alarmFile(ctx)));
+    const before = fs.readFileSync(alarmFile(ctx));
+    // The real endturn: it rewrites acked.json (the arm token) and starts or kills nothing.
+    const e = run(ctx.root, 'status', ['--endturn', '--acked-seq', '0', '--root', ctx.root, '--ce', '1', '--now', NOW]);
+    assert.ok(e.json && [0, 1].includes(e.exit), `endturn ran: ${e.stdout} ${e.stderr}`);
+    assert.ok(fs.existsSync(path.join(ctx.root, 'run', 'acked.json')), 'endturn wrote the token');
+    assert.equal(a.child.exitCode, null, 'endturn did not end the alarm');
+    const r = await a.done;
+    const j = assertLine(r, 30);
+    assert.equal(j.result.rearms, 1, 'the alarm slept one more period after the token changed (without M1: 0)');
+    assert.equal(j.result.superseded, false);
+    assert.ok(before.equals(fs.readFileSync(alarmFile(ctx))), 'alarm.json still names the same alarm, unchanged');
+  });
+});
+
+test('M1 alarm: with no endturn during the sleep it fires after one period (rearms 0)', async () => {
+  await withRoot({}, async (ctx) => {
+    ackUpTo(ctx, 0);
+    const j = assertLine(run(ctx.root, 'watch', alarmArgs(ctx, 200)), 30);
+    assert.equal(j.result.rearms, 0);
+  });
+});
+
+test('M3 act due: a planned row with a free slot exits 17 replace-fence; once acknowledged it stays quiet', async () => {
+  await withRoot({ thr: { coalesce_ticks: 0 } }, async (ctx) => {
+    setTasks(ctx, [row('f1-research', { state: 'planned', step: 'none', epoch: 0, attempts: [] })]);
+    const j = assertLine(tick(ctx), 17);
+    assert.deepEqual(actsOf(j), ['replace-fence']);
+    const ev = actEvents(ctx, 'replace-fence');
+    assert.equal(ev.length, 1);
+    assert.equal(ev[0].data.urgent, false);
+    assert.match(ev[0].data.key, /^17\|f1-research:replace-fence\|0\|\d+$/);
+    ackUpTo(ctx, ev[0].seq);
+    assertLine(tick(ctx), 0);
+    assert.equal(actEvents(ctx).length, 1, 'no new line while the acknowledged act persists');
+  });
+});
+
+test('M3 act due: with every slot used a planned row raises nothing; a third slot makes it due', async () => {
+  const rows = () => [row('f1-research'), row('f2-research'), row('f3-research', { state: 'planned', step: 'none', epoch: 0, attempts: [] })];
+  await withRoot({ thr: { coalesce_ticks: 0, N_max: 2 } }, async (ctx) => {
+    setTasks(ctx, rows());
+    assertLine(tick(ctx), 0);
+    assert.equal(actEvents(ctx).length, 0, 'two bound rows fill N_max 2');
+  });
+  await withRoot({ thr: { coalesce_ticks: 0, N_max: 3 } }, async (ctx) => {
+    setTasks(ctx, rows());
+    assert.deepEqual(actsOf(assertLine(tick(ctx), 17)), ['replace-fence']);
+  });
+});
+
+test('M3 act due: a fenced row is stop-request; failed and limit rows raise no row act', async () => {
+  await withRoot({ thr: { coalesce_ticks: 0 } }, async (ctx) => {
+    setTasks(ctx, [row('f1-research', { step: 'fenced', epoch: 2 })]);
+    assert.deepEqual(actsOf(assertLine(tick(ctx), 17)), ['stop-request']);
+  });
+  await withRoot({ thr: { coalesce_ticks: 0 } }, async (ctx) => {
+    setTasks(ctx, [row('f1-research', { step: 'fenced', epoch: 2, limit: true })]);
+    assertLine(tick(ctx), 0);
+    assert.equal(actEvents(ctx).length, 0, 'a limit row is the owner\'s');
+  });
+  await withRoot({ thr: { coalesce_ticks: 0 } }, async (ctx) => {
+    setTasks(ctx, [row('f1-research', { state: 'failed', step: 'stopped', epoch: 2 })]);
+    const j = assertLine(tick(ctx), 17);
+    assert.deepEqual(actsOf(j), ['run-terminal'], 'only the run-level act: every row terminal');
+    assert.equal(actEvents(ctx).filter((l) => l.task === 'f1-research').length, 0);
+  });
+});
+
+test('M3 act due: stop-verify only once the sample is stop_verify_deltas ticks old', async () => {
+  await withRoot({ thr: { coalesce_ticks: 0, stop_verify_deltas: 2 } }, async (ctx) => {
+    const task = 'f1-research';
+    forgeWatcher(ctx, 100);
+    setTasks(ctx, [row(task, { step: 'stop-requested', epoch: 2, attempts: [att(task, 1, { stop: 'requested' }), att(task, 2)] })]);
+    w(path.join(ctx.root, 'run', 'stop-sample', `${task}-e1.json`), { schema_version: 1, task, epoch: 1, target: 1, tick: 100, sizes: {} });
+    assertLine(tick(ctx), 0); // tick 101: the verify could only defer
+    assert.equal(actEvents(ctx).length, 0);
+    const j = assertLine(tick(ctx), 17); // tick 102
+    assert.deepEqual(actsOf(j), ['stop-verify@100']);
+  });
+  await withRoot({ thr: { coalesce_ticks: 0 } }, async (ctx) => {
+    const task = 'f1-research';
+    setTasks(ctx, [row(task, { step: 'stop-requested', epoch: 2, attempts: [att(task, 1, { stop: 'requested' }), att(task, 2)] })]);
+    assert.deepEqual(actsOf(assertLine(tick(ctx), 17)), ['stop-session'], 'no sample yet: the session is to be stopped');
+  });
+});
+
+test('M3 act due: an admitted row is start-session, and bind once its folder has a transcript (a new key)', async () => {
+  await withRoot({ thr: { coalesce_ticks: 0 } }, async (ctx) => {
+    const task = 'f1-research';
+    setTasks(ctx, [row(task, { step: 'admitted', epoch: 1 })]);
+    const j1 = assertLine(tick(ctx), 17);
+    assert.deepEqual(actsOf(j1), ['start-session']);
+    ackUpTo(ctx, actEvents(ctx, 'start-session')[0].seq);
+    assertLine(tick(ctx), 0);
+    const folder = path.join(ctx.root, 'wt', `${task}-e1`);
+    const sid = newSid();
+    writeTranscript(path.join(ctx.root, 'transcripts', LIB.projectDirName(folder), sid + '.jsonl'), { sessionId: sid, cwd: folder, calls: CALLS(1) });
+    const j2 = assertLine(tick(ctx), 17);
+    assert.deepEqual(actsOf(j2), ['bind']);
+    assert.equal(actEvents(ctx, 'bind').length, 1);
+  });
+});
+
+test('M3 act due: a drain of this ce with no slot used is handover', async () => {
+  await withRoot({ thr: { coalesce_ticks: 0 } }, async (ctx) => {
+    addLine(ctx.root, { kind: 'drain', data: { window: 1, w_star: 1 } });
+    ackUpTo(ctx, 1);
+    assert.deepEqual(actsOf(assertLine(tick(ctx), 17)), ['handover']);
+  });
+});
+
+test('M3 act due: an event line above acked_seq whose condition has cleared wakes as events', async () => {
+  await withRoot({ thr: { coalesce_ticks: 0 } }, async (ctx) => {
+    assertLine(tick(ctx, [], { free: 100 }), 24); // a memory event, never acknowledged
+    const mem = eventsOf(ctx.root, 'memory', 24);
+    assert.equal(mem.length, 1);
+    const j = assertLine(tick(ctx), 17); // memory is back: the condition cleared, its line is unacked
+    assert.deepEqual(actsOf(j), ['events']);
+    assert.deepEqual(j.reasons[0].detail.seqs, [mem[0].seq]);
+    ackUpTo(ctx, ledgerLines(ctx.root).at(-1).seq);
+    assertLine(tick(ctx), 0);
+  });
+});
+
+test('M5 pause discount: a tick more than 2 delta after the last one does not count toward hang', async () => {
+  await withRoot({ thr: { hang_ticks: 2, delta_ms: 60000 } }, async (ctx) => {
+    const t = singleTask(ctx);
+    setTasks(ctx, [t.row]);
+    const T0 = Date.parse(NOW);
+    const at = (min) => new Date(T0 + min * 60000).toISOString();
+    assertLine(tick(ctx, [], { now: at(0) }), 0);
+    assert.equal(watcherJson(ctx).tasks[t.task].hang_ticks, 1);
+    const j = assertLine(tick(ctx, [], { now: at(10) }), 0); // the PC slept: without M5 this exits 21
+    assert.equal(j.result.paused, true);
+    assert.equal(watcherJson(ctx).tasks[t.task].hang_ticks, 1, 'a paused tick leaves the count');
+    assert.equal(watcherJson(ctx).ticks_total, 2, 'it still is a tick');
+    const j3 = assertLine(tick(ctx, [], { now: at(11) }), 21); // one delta later: counted
+    assert.equal(j3.result.paused, false);
+  });
+});
+
+test('M5 pause discount is one-sided: a clock that went back counts the tick', async () => {
+  await withRoot({ thr: { hang_ticks: 2, delta_ms: 60000 } }, async (ctx) => {
+    const t = singleTask(ctx);
+    setTasks(ctx, [t.row]);
+    const T0 = Date.parse(NOW);
+    assertLine(tick(ctx, [], { now: new Date(T0).toISOString() }), 0);
+    const j = assertLine(tick(ctx, [], { now: new Date(T0 - 3600000).toISOString() }), 21);
+    assert.equal(j.result.paused, false);
+  });
+});
+
 test('NA1 a background command exit reaches the coordinator turn, also during sleep or after a ce change', { skip: `${NEEDS_APP}: item 5, the harness delivers a background command's exit` }, () => {});
 test('NA2 Node timers and the PC across suspend: one sleep of Delta is one tick', { skip: `${NEEDS_APP}: item 6, needs a real suspend of the PC` }, () => {});
 test('NA3 real transcripts match the parser', { skip: `${NEEDS_APP}: item 7, needs real session transcripts` }, () => {});

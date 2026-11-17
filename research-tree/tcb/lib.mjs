@@ -1021,11 +1021,32 @@ export function relPosix(root, abs) {
   return path.relative(path.resolve(root), path.resolve(abs)).split(path.sep).join('/');
 }
 
-/** Whitespace-separated tokens. */
+// Scripts written without spaces between words: each character counts as one word (LR-7).
+const UNSPACED_CHAR = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/gu;
+/**
+ * The longest string, in code points, that x-maxWords n admits: n * MAX_CODEPOINTS_PER_WORD. A
+ * bound on length, so a quote with no separators the word count sees cannot grow without limit.
+ */
+export const MAX_CODEPOINTS_PER_WORD = 40;
+
+/**
+ * Tokens separated by whitespace or by invisible format characters (\p{Cf}: U+200B, U+2060, ...);
+ * in a token, every Han, Hiragana or Katakana character counts as a word of its own.
+ */
 export function wordCount(s) {
   if (typeof s !== 'string') return 0;
-  const t = s.trim();
-  return t === '' ? 0 : t.split(/\s+/u).length;
+  let n = 0;
+  for (const tok of s.split(/[\s\p{Cf}]+/u)) {
+    if (!tok) continue;
+    const unspaced = tok.match(UNSPACED_CHAR);
+    if (!unspaced) {
+      n++;
+      continue;
+    }
+    n += unspaced.length;
+    if (tok.replace(UNSPACED_CHAR, '') !== '') n++; // the other characters of the token: one word
+  }
+  return n;
 }
 
 /** A path segment with trailing dots and spaces removed, case-folded. */
@@ -1151,21 +1172,59 @@ export function selfInfo(proc) { // eslint-disable-line no-unused-vars
   return SELF_INFO;
 }
 
+/** {missing, record, bytes}: bytes is null when the file could not be read (absent or a sharing error). */
 function readLockRecord(file) {
   let buf;
   try {
     buf = readBytes(file);
   } catch (e) {
-    if (e && e.code === 'ENOENT') return { missing: true, record: null };
-    return { missing: false, record: null };
+    if (e && e.code === 'ENOENT') return { missing: true, record: null, bytes: null };
+    return { missing: false, record: null, bytes: null };
   }
   try {
     const r = JSON.parse(stripBom(buf).toString('utf8'));
-    return { missing: false, record: r && typeof r === 'object' ? r : null };
+    return { missing: false, record: r && typeof r === 'object' ? r : null, bytes: buf };
   } catch {
-    return { missing: false, record: null };
+    return { missing: false, record: null, bytes: buf };
   }
 }
+
+/**
+ * Holder liveness from one process query's answer (LR-1, LR-2). `out` is what the query printed:
+ * 'NONE' (no process has that pid: dead), 'NOSTART' (no creation date), or the process's creation
+ * date as ISO 8601. `startTime` is the start time the holder recorded from its own clock, which can
+ * only lie after the moment Windows created it (a slow start-up widens the gap, never reverses it).
+ * So the listed process is the holder iff it was created no later than the recorded start plus
+ * START_TOLERANCE_MS; a later creation is another process that reused the pid. Any other answer is
+ * null (unknown, counts as alive). An unparseable recorded start time never matches (false).
+ */
+export function aliveFromQuery(out, startTime) {
+  if (typeof out !== 'string') return null;
+  const o = out.trim();
+  if (o === 'NONE') return false;
+  if (o === 'NOSTART') return startTime === null || startTime === undefined ? true : null;
+  const listed = startMs(o);
+  if (listed === null) return null; // not an answer this query gives: unknown
+  if (startTime === null || startTime === undefined) return true;
+  if (o === startTime) return true;
+  const recorded = startMs(startTime);
+  if (recorded === null) return false;
+  return listed <= recorded + START_TOLERANCE_MS;
+}
+
+/**
+ * Consecutive sightings of one unchanged holder before it is judged (LR-3): a holder that lets go
+ * within about five seconds is never judged, so ordinary contention starts no process query. Capped
+ * at the caller's `retries`, so a caller with fewer retries still judges at its last one.
+ */
+export const LOCK_JUDGE_AFTER = 50;
+/**
+ * A lock file whose bytes are not a lock record (empty after a crash between create and write, or
+ * corrupt) is broken only when it stayed byte-for-byte unchanged for a whole retry budget of at
+ * least this many retries (LR-4); with fewer retries it stays, as before, and the caller gets
+ * lock-busy.
+ */
+export const LOCK_UNREADABLE_MIN_RETRIES = 50;
 
 function makeHandle(root, name, file, record) {
   let released = false;
@@ -1267,16 +1326,15 @@ export function acquireLock(root, name, opts = {}) {
     return judged.get(key) === false; // null (unknown) counts as alive
   };
 
-  const finish = (stale) => {
+  const finish = (stale, unreadable) => {
     const handle = makeHandle(R, name, file, record);
     if (name !== 'run.lock') return handle;
     const lctx = ctx || fallbackCtx(script);
     try {
       if (stale) {
-        appendLedger(R, handle, {
-          ctx: lctx, ce, kind: 'lock-break', now,
-          data: { stale: { pid: stale.pid ?? null, start_time: stale.start_time ?? null, nonce: stale.nonce ?? null, script: stale.script ?? null } },
-        });
+        const data = { stale: { pid: stale.pid ?? null, start_time: stale.start_time ?? null, nonce: stale.nonce ?? null, script: stale.script ?? null } };
+        if (unreadable) data.unreadable = { bytes: unreadable.length, sha256: sha256hex(unreadable) };
+        appendLedger(R, handle, { ctx: lctx, ce, kind: 'lock-break', now, data });
       }
       logOrphans(R, handle, lctx, ce, now);
     } catch (e) {
@@ -1286,18 +1344,32 @@ export function acquireLock(root, name, opts = {}) {
     return handle;
   };
 
+  const judgeAfter = Math.min(LOCK_JUDGE_AFTER, Math.max(0, Number.isInteger(retries) ? retries : 0));
+  const NO_RECORD = { pid: null, start_time: null, nonce: null, script: null };
   let tries = 0;
   let spins = 0;
+  let lastSeen = null; // the lock bytes of the previous sighting
+  let seen = 0; // consecutive sightings of exactly those bytes
   for (;;) {
     const r = tryCreate();
     if (r === 'ok') return finish(null);
     if (r === 'exists') {
-      const { missing, record: held } = readLockRecord(file);
+      const { missing, record: held, bytes: heldBytes } = readLockRecord(file);
+      if (heldBytes && lastSeen && heldBytes.equals(lastSeen)) seen++;
+      else {
+        lastSeen = heldBytes;
+        seen = heldBytes ? 1 : 0;
+      }
       if (missing) {
         if (++spins < 1000) continue; // released between our create and read
-      } else if (held && isStale(held)) {
-        const out = breakStale(file, held, nonce, bytes);
+      } else if (held && seen > judgeAfter && isStale(held)) {
+        const out = breakStale(file, held, heldBytes, nonce, bytes);
         if (out === 'held') return finish(held);
+        if (++spins < 1000) continue;
+      } else if (!held && heldBytes && retries >= LOCK_UNREADABLE_MIN_RETRIES && seen > retries) {
+        // Unchanged and unreadable for the whole retry budget: no holder ever finished writing it.
+        const out = breakStale(file, null, heldBytes, nonce, bytes);
+        if (out === 'held') return finish(NO_RECORD, heldBytes);
         if (++spins < 1000) continue;
       }
     }
@@ -1307,7 +1379,15 @@ export function acquireLock(root, name, opts = {}) {
   }
 }
 
-function breakStale(file, held, ownNonce, bytes) {
+/**
+ * Break the lock judged stale. `held` is the record judged (null for an unreadable lock, which is
+ * then matched by its bytes alone); `heldBytes` the bytes it was read from. The lock is re-read
+ * right before the rename and left alone when its bytes changed since the judgement (LR-3).
+ */
+function breakStale(file, held, heldBytes, ownNonce, bytes) {
+  const now = readLockRecord(file);
+  if (now.missing) return 'gone';
+  if (!now.bytes || !heldBytes || !now.bytes.equals(heldBytes)) return 'changed';
   const renamed = `${file}.${ownNonce}.stale`;
   try {
     fsRetry(() => FS.renameSync(file, renamed));
@@ -1315,8 +1395,8 @@ function breakStale(file, held, ownNonce, bytes) {
     if (e && e.code === 'ENOENT') return 'gone';
     throw e;
   }
-  const { record: moved } = readLockRecord(renamed);
-  if (sameRecord(moved, held)) {
+  const { record: moved, bytes: movedBytes } = readLockRecord(renamed);
+  if (held ? sameRecord(moved, held) : !!movedBytes && movedBytes.equals(heldBytes)) {
     let fd;
     try {
       fd = FS.openSync(file, 'wx');
@@ -2004,6 +2084,8 @@ export function validate(schema, value, opts = {}) {
         if (s.pattern !== undefined && !regexOf(s.pattern).test(v)) errs.push({ path: p, keyword: 'pattern', message: `does not match ${s.pattern}` });
         if (s['x-maxWords'] !== undefined && wordCount(v) > s['x-maxWords']) {
           errs.push({ path: p, keyword: 'x-maxWords', message: `more than ${s['x-maxWords']} words` });
+        } else if (s['x-maxWords'] !== undefined && len > s['x-maxWords'] * MAX_CODEPOINTS_PER_WORD) {
+          errs.push({ path: p, keyword: 'x-maxWords', message: `longer than ${s['x-maxWords'] * MAX_CODEPOINTS_PER_WORD} characters (${s['x-maxWords']} words)` });
         }
       }
       if (typeof v === 'number') {
@@ -2622,15 +2704,22 @@ export function urlKey(u) {
 export const PROC_EXE = 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe';
 export const TASKKILL = 'C:/Windows/System32/taskkill.exe';
 
+// Every script starts with $ErrorActionPreference='Stop' (LR-1): a failed CIM query is otherwise a
+// non-terminating error, the script goes on with $null, prints 'NONE' (or an empty list) and exits
+// 0, and a live lock holder reads as dead. With 'Stop' the failure exits non-zero, execFileSync
+// throws, and the provider answers unknown (alive, boot: null; list: proc-unavailable 2).
+const PS_PREFIX = "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.Encoding]::UTF8;";
 const PS_LIST = [
-  '[Console]::OutputEncoding=[Text.Encoding]::UTF8;',
+  PS_PREFIX,
   "$b=$null; try { $b=(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o') } catch {};",
   '$p=@(Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine,',
   "@{n='start_time';e={if($_.CreationDate){$_.CreationDate.ToUniversalTime().ToString('o')}else{$null}}});",
   'ConvertTo-Json -InputObject @{boot=$b; procs=$p} -Compress -Depth 4',
 ].join(' ');
-const PS_BOOT = "[Console]::OutputEncoding=[Text.Encoding]::UTF8; (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')";
-const psOne = (pid) => `[Console]::OutputEncoding=[Text.Encoding]::UTF8; $x=Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}'; if($x){ if($x.CreationDate){$x.CreationDate.ToUniversalTime().ToString('o')}else{'NOSTART'} } else {'NONE'}`;
+const PS_BOOT = `${PS_PREFIX} (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')`;
+const psOne = (pid) => `${PS_PREFIX} $x=Get-CimInstance Win32_Process -Filter 'ProcessId=${Number.parseInt(pid, 10)}'; if($x){ if($x.CreationDate){$x.CreationDate.ToUniversalTime().ToString('o')}else{'NOSTART'} } else {'NONE'}`;
+/** The PowerShell texts realProc runs (read-only; exported for tests of their failure behaviour). */
+export const PS_SCRIPTS = Object.freeze({ list: PS_LIST, boot: PS_BOOT, one: psOne });
 
 function stripBomStr(s) {
   return s.charCodeAt(0) === 0xfeff ? s.slice(1) : s;
@@ -2677,7 +2766,8 @@ export function realProc({ timeoutMs = 30000, exe = PROC_EXE } = {}) {
     // Identity needs the start time, so the answer always comes from PowerShell: true, false, or
     // null when PowerShell fails (section 4.9, spec/lib.md T89). No process.kill(pid, 0) shortcut:
     // it would answer `false` while PowerShell is unavailable. The recorded start time matches the
-    // reported one within START_TOLERANCE_MS (a process records its own from its own clock, 4.4).
+    // reported one one-sidedly: created no later than the recorded start plus START_TOLERANCE_MS
+    // (a process records its own start from its own clock, after Windows created it; aliveFromQuery).
     alive(pid, startTime) {
       if (!Number.isInteger(pid) || pid <= 0) return false;
       let out;
@@ -2686,10 +2776,7 @@ export function realProc({ timeoutMs = 30000, exe = PROC_EXE } = {}) {
       } catch {
         return null;
       }
-      if (out === 'NONE') return false;
-      if (startTime === null || startTime === undefined) return true;
-      if (out === 'NOSTART') return null;
-      return sameStartTime(out, startTime);
+      return aliveFromQuery(out, startTime);
     },
     boot() {
       if (bootCache !== undefined) return bootCache;

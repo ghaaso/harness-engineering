@@ -402,6 +402,34 @@ test('T5 positions are random but reproducible: the same --rng-seed on a copy gi
   assert.equal(readKey(r2, 'b1-1').rng_seed, 'b1-1:' + head.slice(0, 16));
 });
 
+test('T5b R42: the seeds sit at random positions among the real items, not after all of them', () => {
+  const { root } = freezeWorld();
+  let early = 0;
+  const firstSeedAt = [];
+  for (const [name, more] of [['one', []], ['two', ['--requeue']]]) {
+    const j = shape(cq(root, 'freeze', ['--rng-seed', 'pos-' + name, ...more]), 'check-queue', 0);
+    const key = readKey(root, j.result.batch);
+    const order = readBatch(root, j.result.batch).items;
+    assert.equal(order.length, 10);
+    const isSeed = order.map((id) => key.items[id].seed);
+    assert.equal(isSeed.filter(Boolean).length, 8);
+    const lastReal = isSeed.lastIndexOf(false);
+    firstSeedAt.push(isSeed.indexOf(true));
+    if (isSeed.indexOf(true) < lastReal) early += 1;
+  }
+  assert.ok(early >= 1, 'with the shuffle gone every seed follows every real item; first seed positions: ' + firstSeedAt);
+});
+
+test('T6b R42/R43: the seeded items of one batch do not all carry one sentence: no single text or sid marks them', () => {
+  const { root } = freezeWorld();
+  const j = shape(cq(root, 'freeze', ['--rng-seed', 'sent-a']), 'check-queue', 0);
+  const key = readKey(root, j.result.batch);
+  const seeded = Object.entries(key.items).filter(([, e]) => e.seed).map(([id]) => readItem(root, j.result.batch, id).sentence);
+  assert.equal(seeded.length, 8);
+  assert.ok(new Set(seeded.map((x) => x.text)).size >= 3, 'phrasings in one batch: ' + new Set(seeded.map((x) => x.text)).size);
+  assert.ok(new Set(seeded.map((x) => x.sid)).size >= 2, 'sids in one batch');
+});
+
 test('T6 opacity: no item file shows an s_ id, the word seed, a class or an operator name; real and seeded items have the same keys; sentences all or none', () => {
   const forbidden = [/s_[0-9a-f]{16}/, /seed/i, ...CLASSES.map((c) => new RegExp('\\b' + c + '\\b')), ...Object.values(OPERATORS).flat().map((o) => new RegExp(o))];
   const { root } = freezeWorld();

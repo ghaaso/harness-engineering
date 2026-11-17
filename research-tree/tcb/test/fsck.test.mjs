@@ -791,3 +791,26 @@ test('X1 no coord.json: exit 2 no-coordinator and no ledger line', () => {
   assertReason(j, 'no-coordinator');
   assert.ok(!exists(ledgerPath(root)) || readLedger(root).length === 0);
 });
+
+// Review U2-F7: promote appends its status lines and then its promote ledger line under the lock. A
+// fsck whose phase 1 read the ledger before that line and the status file after the status lines must not
+// report status-unlogged (a spurious tamper exit 3): phase 2 reads the status files again under the lock.
+// The test plays promote: it holds run.lock, has a status line not yet covered, lets fsck run phase 1 and
+// wait, appends the covering promote line, then releases.
+test('X2 a promote line appended while fsck waits for the lock covers the status line phase 1 saw uncovered: exit 0 pass', async (t) => {
+  if (!GIT_OK) return t.skip('git is not installed');
+  const ctx = baseline({ statusSeqs: [1, 2], promoteRanges: [[1, 1]], params: { lock_retries: 400 } });
+  const lock = holdLock(ctx.root);
+  try {
+    const pending = runAsync(['--root', ctx.root, '--ce', '1', '--now', NOW], ctx.root);
+    await new Promise((resolve) => setTimeout(resolve, 4000));
+    addLedger(ctx.root, 'promote', { mode: 'witness', first_seq: 2, last_seq: 2 }, { writer: 'promote' });
+    fs.rmSync(path.join(ctx.root, 'run', 'run.lock'), { force: true });
+    lock.release();
+    const r = await pending;
+    const j = shape(r, 'fsck', 0, null);
+    assert.ok(!hasFail(j, 'status', 'status-unlogged'), JSON.stringify(failingOf(j)));
+    assert.equal(lastFsck(ctx.root).data.result, 'pass');
+    verifyLedger(readLedger(ctx.root));
+  } finally { lock.release(); }
+});

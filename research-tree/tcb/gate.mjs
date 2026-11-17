@@ -328,17 +328,27 @@ async function evaluate(env) {
         break;
       }
       const childIds = new Set(arr(child.hazards).map((h) => h.hazard_id));
-      for (const ph of arr(parent.hazards)) if (isObj(ph) && !childIds.has(ph.hazard_id)) dropped.push(ph.hazard_id);
+      const childById = new Map(arr(child.hazards).filter(isObj).map((h) => [h.hazard_id, h]));
+      for (const ph of arr(parent.hazards)) {
+        if (!isObj(ph)) continue;
+        const ch = childById.get(ph.hazard_id);
+        if (!ch) dropped.push(ph.hazard_id);
+        // An id keeps its meaning: a changed name, statement or severity under the old id is a rewrite, not an append
+        // (a replacement takes a new id and says `supersedes`), else an owner accept of the old text covers the new one.
+        else if (ch.classical_name !== ph.classical_name || ch.statement !== ph.statement || ch.severity !== ph.severity) dropped.push(ph.hazard_id);
+      }
       child = parent;
     }
     if (dropped.length) {
       F.add('hazards-not-append-only');
-      detail('hazards-not-append-only', dropped);
+      detail('hazards-not-append-only', sorted(new Set(dropped)));
     }
     // every problem id has a row
     const pset = new Set();
     for (const h of hz) for (const p of arr(h.p_ids)) pset.add(p);
+    // R55: every problem row has a hazard, and the gaps G1-G12 are problem rows too (U5-GT-1)
     for (let i = 1; i <= 21; i += 1) if (!pset.has(`P${i}`)) pMissing.push(`P${i}`);
+    for (let i = 1; i <= 12; i += 1) if (!pset.has(`G${i}`)) pMissing.push(`G${i}`);
     if (pMissing.length) {
       F.add('p-id-missing');
       detail('p-id-missing', pMissing);

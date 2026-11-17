@@ -1,0 +1,129 @@
+{
+  "label": "review:U3",
+  "result": {
+    "verdict": "NOT CLEAN: one high finding (guard-hook fails open when started through a junction or symlink path) and eight medium findings (missing selftest fixtures for all four scripts, a canary refusal rule that counts any tool error, a coordinator helper type that cannot work, and five mechanisms no test pins). All unit tests pass: snap+witness 102 pass/4 skip, guard-hook 15/3 skip, selftest 28/2 skip. Of 26 mutations, 20 were caught, 5 survived and 1 is equivalent.",
+    "tests": {
+      "command": "cwd tcb-build/tcb, each through tools/lane.mjs --timeout-s 300: node --test --test-concurrency=1 test/snap.test.mjs test/witness.test.mjs; ... test/guard-hook.test.mjs; selftest.test.mjs in 4 calls with --test-name-pattern ^(T1 |T2 |T3 |T12|T13|T11), ^(T4|T5 |T5b|T5c|step 5), ^(T5d|T5e|T5f|T6|T7|T8), ^(T9|T10|T14|T15|T16|T17|T18|T19|--keep|step 6|needs-app)",
+      "passed": 145,
+      "failed": 0,
+      "skipped": 9,
+      "output_tail": "snap+witness: tests 106 pass 102 fail 0 skipped 4 (25.8 s). guard-hook: tests 18 pass 15 fail 0 skipped 3 (24.0 s). selftest chunks: 6/6 (30.8 s), 5/5 (74.7 s), 6/6 (106.7 s), 13 tests 11 pass 2 skipped (69.8 s). Logs: review-tmp/U3/base-*.txt; mutation logs review-tmp/U3/out-<id>.txt; runner review-tmp/U3/mut.sh; probe review-tmp/U3/probe-ismain.mjs."
+    },
+    "findings": [
+      {
+        "id": "U3-F1",
+        "file": "tcb/guard-hook.mjs",
+        "lines": "39-45, 622-624",
+        "severity": "high",
+        "kind": "fail-open",
+        "claim": "The hook decides nothing and exits 0 (allow) when node starts it through a path that is not its real path, for example a junction or symlink in {root}. isMain compares the lexical process.argv[1] with fileURLToPath(import.meta.url), and Node sets import.meta.url to the realpath of the entry. When they differ, main() never runs, no deadline is armed, and the process ends with code 0 and empty stdout. Under the hook protocol that means no objection. The spec says no other exit code than a deny on its own failure, ever.",
+        "evidence": "Probe review-tmp/U3/probe-ismain.mjs, run through the lane on the scratch copy: a coordinator Write to <root>/tcb/evil.mjs. Through the canonical path the result is status 2, `[guard-hook] deny write-protected: ...`. Through a junction jn-tcb -> tcb it is status 0 with empty stdout and stderr. The settings command is \"{node}\" \"{root}/tcb/guard-hook.mjs\", so any run root reached through a junction or symlink (a redirected Documents folder, a linked drive folder) turns the preventive layer off for every role. No test covers this, because every test root goes through fs.realpathSync (guard-hook.test.mjs:143). snap and witness compare realpaths on both sides; guard-hook does not.",
+        "fix": "Compute isMain on real paths: `pathKey(fs.realpathSync(process.argv[1])) === pathKey(SELF)` inside the existing try (or `import.meta.main === true` on Node >= 24.2). Add a T11 case that starts the hook through a junction to tcb/ and expects exit 2."
+      },
+      {
+        "id": "U3-F2",
+        "file": "tcb/fixtures/{snap,witness,guard-hook,selftest}/",
+        "lines": "selftest.mjs 495-504; CONTRACT.md 922-923",
+        "severity": "medium",
+        "kind": "spec-behaviour-missing",
+        "claim": "None of the four scripts of this unit has a selftest fixture case (no case.json under tcb/fixtures/snap, witness, guard-hook or selftest). CONTRACT §5 says every script has fixtures in tcb/fixtures/<name>/, and R41 requires at least one good and one bad case per script. A real `selftest run` on this tree therefore fails the static check no-fixtures for all four scripts, so no tree can pass selftest and admission (§8.18) can never pass.",
+        "evidence": "`find tcb/fixtures -name case.json`: 72 cases across admit, audit, certify, check-queue, compare, cost, gate, promote, protocol-freeze, render, replace, seed, stop and tms; none for snap, witness, guard-hook or selftest. fixtures/snap holds only test pages and spy-net.mjs, fixtures/witness only cases.json corpora, fixtures/guard-hook only must_read.json, and fixtures/selftest only canary-expect.json.",
+        "fix": "Add at least one good and one bad case.json per script. Suggested: snap a `serve` case (good) and a `bad-scheme` case (exit 2). witness a stored text with a matching card (good) and a quote-missing card (exit 1). guard-hook an allowed child Read (good) and a write-claude deny (exit 2, with `stderr_prefix: \"[guard-hook] deny write-claude\"`, so a crash that ends in deny `internal` does not pass). selftest a stub run (good) and a missing-script run (exit 1)."
+      },
+      {
+        "id": "U3-F3",
+        "file": "tcb/selftest.mjs",
+        "lines": "1136-1148 (spec/selftest.mjs.md 123-125)",
+        "severity": "medium",
+        "kind": "pass-without-check",
+        "claim": "canary counts any error result as a refusal on a `layer: permission` or `layer: any` probe. A forbidden call that failed for an unrelated reason therefore passes as refused, even though no hook and no permission rule refused it. Examples: a Write to an existing file the session had not read gets the harness's own 'read it first' error; a missing directory; a malformed input. The spec defines it this way (`permission: it does not [hold the hook text]`), so the defect sits in the spec as well as in the code.",
+        "evidence": "findProbe: `if (res.isError) return { outcome: ... includes('[guard-hook] deny') ? 'refused-hook' : 'refused-permission' }`. probeVerdict passes every non-allowed outcome for `any`, and passes `refused-permission` for `permission`. T17 asserts exactly this: 'a refusal without the hook text ... passes a permission probe'.",
+        "fix": "Treat `refused-permission` as a pass only when the result text matches the harness's permission-denial wording, held as a pattern in the expect file (to be confirmed by needs-app 7). Report any other error result as `not_run` (code `error-not-refusal`), never as a pass."
+      },
+      {
+        "id": "U3-F4",
+        "file": "tcb/test/selftest.test.mjs",
+        "lines": "102-106, 476-512 (code under test: selftest.mjs 679-705)",
+        "severity": "medium",
+        "kind": "mutation-survived",
+        "claim": "T5 does not prove that a timed-out case's process tree is ended by killOwnTree. Mutation T3 replaced the killOwnTree call with `child.kill(); return;` and T5 still passed. The stub's grandchild is spawned non-detached, so libuv places it in the stub's kill-on-close job object, and it dies with the stub whatever selftest does. A real descendant that is detached, or that is not a Node child, would survive a plain child.kill(). The test would not notice.",
+        "evidence": "out-T3.txt: `T5 ... pass (19245 ms)` with line 697 mutated. The stub (test line 103) uses `spawn(process.execPath, ['-e', 'setTimeout(...,15000)'], { stdio: 'ignore' })`, which is not detached.",
+        "fix": "In the T5 stub, spawn the grandchild with `detached: true` (still stdio 'ignore', and it still expires by itself). The test then fails unless killOwnTree really ends the descendant."
+      },
+      {
+        "id": "U3-F5",
+        "file": "tcb/test/selftest.test.mjs",
+        "lines": "627-638 (code under test: selftest.mjs 871-874)",
+        "severity": "medium",
+        "kind": "mutation-survived",
+        "claim": "No test pins the expect.code comparison in judge. Mutation T5 removed it (`void reasons;`) and T5d still passed. T5d's negative case prints `code: memory` at exit 6, and the earlier stdout-code check (line 870) already fails that case because the slug of 6 is `deferred`. The reasons check itself is never the deciding one. Without it, a bad fixture case that names a fault class passes on any failure that has the right exit code.",
+        "evidence": "out-T5.txt: `T5d ... pass` with line 873 mutated.",
+        "fix": "Add a T5d variant whose stub prints `code: deferred, reasons: [{code: other}]` at exit 6 with `expect.code: memory`. Assert that it fails with `why: code`."
+      },
+      {
+        "id": "U3-F6",
+        "file": "tcb/witness.mjs",
+        "lines": "212-221",
+        "severity": "medium",
+        "kind": "mutation-survived",
+        "claim": "Two rules of the number match are untested. (a) A signed token must not match a value of the opposite sign. Mutation W7 (`if (r === Math.abs(value))`, so value 3 matches '-3') passed all 72 tests, so a card that flips a reported decrease into an increase would be witnessed. (b) A token followed by % must not match a non-percent unit. Mutation W8 removed that rule and passed all tests.",
+        "evidence": "out-W7.txt and out-W8.txt: tests 74, pass 72, fail 0. T6 asserts only that value -3 matches '-3', '−3' and '3', never the converse.",
+        "fix": "Extend T6 with: value 3 against '-3' (and '−3') does not match; value 12.5 with unit 'ms' against '12.5%' does not match; value 12.5 with unit '%' against '12.5%' matches."
+      },
+      {
+        "id": "U3-F7",
+        "file": "tcb/test/guard-hook.test.mjs",
+        "lines": "568-573 (code under test: guard-hook.mjs 424-428)",
+        "severity": "medium",
+        "kind": "mutation-survived",
+        "claim": "The explicit sealed/ refusal (step 7, `never under <root>/sealed/`, including a search whose root contains sealed/) is untested. Mutation G2 removed it and all 15 tests passed. With the shipped profiles no read prefix covers sealed/, so the role-prefix check denies the same calls under the same code. A future profile with a broad prefix (`{root}/` or `{root}/plan/` containing a link) would lose the protection with no test failing.",
+        "evidence": "out-G2.txt: tests 18, pass 15, fail 0. T1's coordinator Read of sealed/seeds/b1-1.json is denied as read-outside-role by the prefix check, and the test does not look at the detail.",
+        "fix": "In T1, write a test-root profile with read_prefixes [\"{root}/\"]. Assert that a Read of {root}/sealed/x and a Grep with path {root} are each denied with detail starting `sealed:`."
+      },
+      {
+        "id": "U3-F8",
+        "file": "tcb/profiles/coordinator.json",
+        "lines": "agent_types [checker, mapper]; settings/coordinator.json allow Agent(mapper); guard-hook.mjs 379-384, 279-281",
+        "severity": "medium",
+        "kind": "spec-behaviour-missing",
+        "claim": "The coordinator may start a `mapper` helper (spec table and design line 320), but the role files cannot support one. There is no tcb/agents/mapper.md for the harness to start. The mapper profile has only `{attempt}/` prefixes, and those never render in the coordinator's folder (attempt is null), so every Read, Glob, Grep and Write of a mapper helper is denied read-outside-role or write-outside-role. CONTRACT (line 298) treats mapper as a task role with its own attempt, so the helper form is either stale or unbuilt. It fails safe, but R55's mapper-as-helper cannot run.",
+        "evidence": "ls tcb/agents: checker.md and reader.md only. renderPrefix returns null for `{attempt}` when ctx.attempt is null, and matchesPrefix then returns false.",
+        "fix": "Decide one form. Either remove `mapper` from the coordinator's agent_types and its `Agent(mapper)` allow rule (mapper runs only as a task role), or add agents/mapper.md plus a helper profile whose prefixes are rooted at {root} (for example {root}/plan/ read and a staging path write), and a T6/T7 case for it."
+      }
+    ],
+    "mutations": [
+      {"file": "tcb/snap.mjs", "what": "S1 line 499: address filter result ignored (`if (false) return ... private-address`)", "a_test_failed": true},
+      {"file": "tcb/snap.mjs", "what": "S2 line 397: decoded-size cap removed (gzip bomb not refused)", "a_test_failed": true},
+      {"file": "tcb/snap.mjs", "what": "S3 line 780: writes taken out of withRunLock (fn called with a null handle)", "a_test_failed": true},
+      {"file": "tcb/snap.mjs", "what": "S4 line 656: source_changed forced false (hash comparison with earlier by-url lines removed)", "a_test_failed": true},
+      {"file": "tcb/snap.mjs", "what": "S5 line 443: per-request agent dropped (global agent and its DNS used)", "a_test_failed": true},
+      {"file": "tcb/witness.mjs", "what": "W1 line 260: the w-character binding window removed", "a_test_failed": true},
+      {"file": "tcb/witness.mjs", "what": "W2 line 343: text-file hash comparison removed (snapshot-mismatch never raised)", "a_test_failed": true},
+      {"file": "tcb/witness.mjs", "what": "W3 line 452: card-changed tamper check removed", "a_test_failed": true},
+      {"file": "tcb/witness.mjs", "what": "W4 line 237: quote search replaced (every card's quote 'found' at offset 0)", "a_test_failed": true},
+      {"file": "tcb/witness.mjs", "what": "W5 line 506: three-valued check result collapsed (unverifiable reported as pass)", "a_test_failed": true},
+      {"file": "tcb/witness.mjs", "what": "W6 line 486: appends taken out of withRunLock", "a_test_failed": true},
+      {"file": "tcb/witness.mjs", "what": "W7 line 218: a signed token matches the absolute value (value 3 matches '-3')", "a_test_failed": false},
+      {"file": "tcb/witness.mjs", "what": "W8 line 214: a %-token matches a non-percent unit", "a_test_failed": false},
+      {"file": "tcb/witness.mjs", "what": "W9 line 186: 'never start inside a digit run' skip removed (equivalent mutant: NUM_RE never yields such a start)", "a_test_failed": false},
+      {"file": "tcb/guard-hook.mjs", "what": "G1 line 399: stale-epoch fence removed", "a_test_failed": true},
+      {"file": "tcb/guard-hook.mjs", "what": "G2 line 427: explicit sealed/ refusal removed", "a_test_failed": false},
+      {"file": "tcb/guard-hook.mjs", "what": "G3 line 445: .claude segment check removed", "a_test_failed": true},
+      {"file": "tcb/guard-hook.mjs", "what": "G4 line 504: witnessed-fetch snapshot check removed", "a_test_failed": true},
+      {"file": "tcb/guard-hook.mjs", "what": "G5 lines 365 and 596: run-from-attempt checks removed", "a_test_failed": true},
+      {"file": "tcb/guard-hook.mjs", "what": "G6 line 480: must_read membership check removed", "a_test_failed": true},
+      {"file": "tcb/selftest.mjs", "what": "T1 line 980: per-case tree-hash comparison removed", "a_test_failed": true},
+      {"file": "tcb/selftest.mjs", "what": "T2 line 998: not_run forced false (a stopped run could certify)", "a_test_failed": true},
+      {"file": "tcb/selftest.mjs", "what": "T3 line 697: killOwnTree replaced by child.kill() (descendants not ended)", "a_test_failed": false},
+      {"file": "tcb/selftest.mjs", "what": "T4 line 807: pipe-close (left-process) check removed", "a_test_failed": true},
+      {"file": "tcb/selftest.mjs", "what": "T5 line 873: expect.code reasons comparison removed", "a_test_failed": false},
+      {"file": "tcb/selftest.mjs", "what": "T6 line 1138: every error result counted as a hook refusal (layer distinction removed)", "a_test_failed": true}
+    ],
+    "notes": [
+      "Checked and found sound: snap's address filter (two BlockLists plus embedded IPv4 for mapped, NAT64, 6to4 and IPv4-compatible forms), its fixed per-request lookup, the one deadline over all hops and the body, the raw and decoded size caps, the writes under the lock, and the network use limited to snap. witness's normalisation map, the w window (a number starting exactly w characters after the quote's end is bound, at w+1 it is not, as T5 says), the exit precedence 3>1>2>0, and the three-valued check line. guard-hook's path resolution (8.3, ADS, UNC, ~, trailing dots and spaces), its junction-safe prefix checks, and its Bash grammar (the metacharacter test is redundant with the token regex, which is defense in depth, not a gap). selftest's no-copy design, the tree hash after every case, the leftover-process stop, its kills (only its own unreaped child, or a tree verified by start time), and an --only run that writes nothing. The briefs (agents/*.md) name no model tier and do not hint at a hoped-for result; reader.md's 'within about 300 characters' tells the reader the witness window, which is guidance, not a hint at a result.",
+      "Not raised (low): snap's source_changed stays true on every retrieval after the first change (spec text: any earlier differing raw_sha); tcb/denylist.txt is absent from the live tcb/ (audit's file, not this unit).",
+      "Mutation S1 made the mutated snap try connections to private addresses (10.x) during T14 (and T14's filter table) before the tests failed; those connection attempts to 10.0.0.1 and similar addresses may have reached the local network. Later mutations avoided that kind.",
+      "Scratch copy review-tmp/U3/tcb is restored byte-equal to the live scripts; the junction made by the probe was removed; review-tmp/U3/tmp is empty. No unit file was edited."
+    ]
+  }
+}

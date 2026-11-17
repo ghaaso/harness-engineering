@@ -217,23 +217,56 @@ function planChecker(root, P, now, { batch, batchJson, key, verdictOf }) {
   return { lines, skipped: [...new Set(skipped)].sort(), seeds_dropped: seedsDropped };
 }
 
-// revert --class (spec steps 1-2).
+// revert --class (spec steps 1-2, CONTRACT §3.15). A card's last line need not be the confirmation:
+// promote itself writes status-keeping lines after one (card-item `unclear`, sentence lines). So the
+// card's own confirmation is read from its latest confirmed card-item check line (status `confirmed`,
+// `check.verdict` confirmed, no `check.node`; the card being confirmed now), and a sentence clearing from any `sentence-check` line with verdict `confirmed`, each not yet
+// reverted for the class by a later `unqualified-revert` line naming it. One revert line per card when
+// either relies on the class; the status falls to `witnessed` only when the card's own confirmation
+// relies on it (a sentence clearing alone keeps the current status, the line still reopens the
+// clearing through lib.flagCleared).
 function planRevert(P, now, cls) {
   const qual = readQualification(P);
   if (!qual) throw fail('no-qualification', 2, {});
   if (qualified(qual, cls)) throw fail('class-qualified', 1, { class: cls });
   const st = readStatus(P);
+  const byCard = new Map();
+  for (const rec of st.records) {
+    if (!rec || typeof rec.card_id !== 'string') continue;
+    if (!byCard.has(rec.card_id)) byCard.set(rec.card_id, []);
+    byCard.get(rec.card_id).push(rec);
+  }
+  const names = (rec) => Array.isArray(rec.classes) && rec.classes.includes(cls);
+  const revertedAfter = (recs, i) => recs.slice(i + 1).some((x) => x.reason === 'unqualified-revert' && names(x));
   const lines = [];
   let seq = st.lastSeq;
-  for (const id of [...st.last.keys()].sort()) {
-    const rec = st.last.get(id);
-    if (rec.status !== 'confirmed' || !Array.isArray(rec.classes) || !rec.classes.includes(cls)) continue;
+  for (const id of [...byCard.keys()].sort()) {
+    const recs = byCard.get(id);
+    const last = recs[recs.length - 1];
+    let cardRelies = false;
+    if (last.status === 'confirmed') {
+      let ci = -1;
+      for (let i = recs.length - 1; i >= 0; i--) {
+        const r = recs[i];
+        if (r.status === 'confirmed' && r.check && r.check.verdict === 'confirmed' && r.check.node == null && r.reason !== 'unqualified-revert') {
+          ci = i;
+          break;
+        }
+      }
+      cardRelies = ci >= 0 && names(recs[ci]) && !revertedAfter(recs, ci);
+    }
+    let sentenceRelies = false;
+    recs.forEach((r, i) => {
+      if (r.reason === 'sentence-check' && r.check && r.check.verdict === 'confirmed' && names(r) && !revertedAfter(recs, i))
+        sentenceRelies = true;
+    });
+    if (!cardRelies && !sentenceRelies) continue;
     lines.push({
       schema_version: 1,
       seq: ++seq,
       card_id: id,
-      card_sha: rec.card_sha,
-      status: 'witnessed',
+      card_sha: last.card_sha,
+      status: cardRelies ? 'witnessed' : last.status,
       reason: 'unqualified-revert',
       classes: [cls],
       at: now,

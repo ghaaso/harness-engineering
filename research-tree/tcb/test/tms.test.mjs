@@ -682,3 +682,116 @@ test('T15 stale --ce is 64 and writes nothing; lock busy is 75; --dry-run writes
     noViews(root);
   }
 });
+
+// ---------------------------------------------------------------------------------------------
+// Review U2 fixes (review-U2.json): F6, F8, F9, F10
+// ---------------------------------------------------------------------------------------------
+
+// U2-F6: promote records a card-item outside_conditions verdict as reason unclear and keeps the verdict
+// in check.verdict (spec/promote.mjs.md step 6); its citers are JUDGMENT support-unclear like an unclear one.
+test('X2 a cited card whose last line is a status-keeping unclear line with verdict outside_conditions: JUDGMENT support-unclear', () => {
+  const w = world();
+  confirm(w.root, w.A);
+  addStatus(w.root, w.A, 'confirmed', { reason: 'unclear', check: { batch: 'b2-1', item: 'i_' + '9'.repeat(16), verdict: 'outside_conditions' } });
+  const P = packWith(w.root, [w.A], [SENT('s1', [w.A.id])]);
+  commitPack(w.root, P, [w.A]);
+  shape(tms(w.root), 'tms', 0);
+  const n = labelsOf(w.root).nodes[node(P, 's1')];
+  assert.equal(n.label, 'JUDGMENT');
+  assert.ok(whyOf(n).includes('support-unclear'));
+});
+
+// U2-F9: CONTRACT 3.18, the questions-changed STALE rule.
+test('X3 a protocol-amend that changes question_ids makes the pack conclusions and the review sentences STALE questions-changed, exit 1', () => {
+  const w = world();
+  confirm(w.root, w.A);
+  const P = packWith(w.root, [w.A], [SENT('s1', [w.A.id])]);
+  const R = putObj(w.root, mkReview({ pack: P.id, sentences: [SENT('s1', [w.A.id])] }));
+  commitPack(w.root, P, [w.A]);
+  commitReview(w.root, R);
+  shape(tms(w.root), 'tms', 0);
+  assert.equal(labelsOf(w.root).nodes[node(P, 's1')].label, 'IN');
+  // amend: one more question
+  const v = JSON.parse(fs.readFileSync(path.join(w.root, w.prot.rel), 'utf8'));
+  v.question_ids = ['f1-g1-01', 'f1-g1-02'];
+  const bytes = canon(v);
+  const h = sha(bytes);
+  const rel = `plan/frozen/protocol-f1-${h.slice(0, 12)}.json`;
+  fs.writeFileSync(path.join(w.root, rel), bytes);
+  addLedger(w.root, 'protocol-amend', { name: 'protocol-f1', sha256: h, path: rel, reason: 'synthetic amend' });
+  const j = shape(tms(w.root), 'tms', 1);
+  const N = labelsOf(w.root).nodes;
+  for (const k of [node(P, 's1'), node(R, 's1')]) {
+    assert.equal(N[k].label, 'STALE', k);
+    assert.ok(whyOf(N[k]).includes('questions-changed'), k);
+  }
+  assert.ok(j.result.bad_targets.length >= 1);
+});
+
+// U2-F10: the R38 standing bar is strict (|value - baseline| < sesoi) and needs the conditions to cover.
+test('X4 dismissal bar: |value-baseline| equal to sesoi is untested; a bounding card whose conditions lack a declared applies_to value is untested', () => {
+  const scenario = ({ value, baseline, sesoi, applies }) => {
+    const w = world({ prot: { sesoi } });
+    const C = putObj(w.root, mkCard({ tag: 'C', value, baseline, approach: 'a1', measure: 'm1' }));
+    confirm(w.root, C);
+    const P = packWith(w.root, [C], []);
+    const R = putObj(w.root, mkReview({
+      pack: P.id,
+      sentences: [SENT('s1', [C.id], { approach: 'a1', measure: 'm1', applies })],
+      dismissals: [{ sid: 's1', verdict: 'wrong-form', supports: [C.id], outlist: [] }],
+    }));
+    commitPack(w.root, P, [C]);
+    commitReview(w.root, R);
+    shape(tms(w.root), 'tms', 0);
+    return labelsOf(w.root).dismissals[`${R.id}#s1`];
+  };
+  const equal = scenario({ value: 11, baseline: 10, sesoi: { m1: 1.0 }, applies: { task: ['repair'] } });
+  assert.equal(equal.label, 'untested', 'the bar is strict: |value-baseline| = sesoi does not bound');
+  assert.ok(whyOf(equal).includes('no-bound'));
+  const uncovered = scenario({ value: 10.5, baseline: 10, sesoi: { m1: 1.0 }, applies: { task: ['install'] } });
+  assert.equal(uncovered.label, 'untested', 'a card measured under other conditions does not bound');
+  assert.ok(whyOf(uncovered).includes('no-bound'));
+  const covered = scenario({ value: 10.5, baseline: 10, sesoi: { m1: 1.0 }, applies: { task: ['repair'], language: ['py'] } });
+  assert.equal(covered.label, 'standing');
+});
+
+// U2-F8: tms reads its inputs without the lock; a change before it gets the lock must not leave labels
+// computed from the older inputs. The test plays the other writer: it holds run.lock, lets tms read and
+// wait, appends a status line that makes the cited card fall, then releases.
+function runTmsAsync(argv, root) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [path.join(TCB, 'tms.mjs'), ...argv], { cwd: root, windowsHide: true, shell: false });
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { err += d; });
+    child.on('close', (code) => {
+      const lines = out.split('\n').filter((l) => l.trim());
+      let json = null;
+      if (lines.length === 1) { try { json = JSON.parse(lines[0]); } catch { json = null; } }
+      resolve({ exit: code, stdout: out, stderr: err, lines, json });
+    });
+  });
+}
+test('X5 a status line appended while tms waits for the lock: the labels written are computed from it', { concurrency: false }, async () => {
+  const w = cleanWorld({ params: { lock_retries: 400 } });
+  const lock = holdLock(w.root);
+  try {
+    const pending = runTmsAsync(['--root', w.root, '--ce', '1', '--now', NOW], w.root);
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    addStatus(w.root, w.A, 'rejected', { reason: 'quote-missing', witness_seq: 3 });
+    fs.rmSync(path.join(w.root, 'run', 'run.lock'), { force: true });
+    lock.release();
+    const r = await pending;
+    const j = shape(r, 'tms', 1);
+    const L = labelsOf(w.root);
+    assert.equal(L.cards[w.A.id].label, 'rejected', 'labels.json reflects the status line written before tms held the lock');
+    assert.equal(L.cards[w.A.id].status_seq, 3);
+    assert.equal(L.nodes[node(w.P, 's1')].label, 'STALE');
+    assert.equal(j.result.labels_sha, sha(fs.readFileSync(path.join(w.root, 'views', 'labels.json'))));
+    const checks = tmsChecks(w.root);
+    assert.equal(checks.at(-1).data.result, 'fail');
+    assert.equal(checks.at(-1).data.labels_sha, j.result.labels_sha);
+    verifyLedger(readLedger(w.root));
+  } finally { lock.release(); }
+});

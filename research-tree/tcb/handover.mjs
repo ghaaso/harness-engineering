@@ -244,7 +244,10 @@ async function writeEmptyTable(root, handle) {
 
 // ---------------------------------------------------------------- raise
 
-async function doRaise(ctx, root, flags, dry) {
+// Exported for one test seam (review U1-F8): `hooks.beforeLock` runs after the read-only pre-checks
+// and before the run lock is taken, so a test can move a row between the two and reach the in-lock
+// re-check. The command line never passes hooks.
+export async function doRaise(ctx, root, flags, dry, hooks = {}) {
   const N = flags.ce;
   if (!Number.isInteger(N) || N < 1) throw err('usage', 66, { flag: 'ce' });
   if (flags.session !== undefined || flags['tcb-commit'] !== undefined) throw err('usage', 66, { expect: 'raise takes --ce only' });
@@ -301,6 +304,7 @@ async function doRaise(ctx, root, flags, dry) {
     brief: briefLine(flags.root, to, tcbCommit),
   };
   if (dry) return { exit: 0, result };
+  if (hooks && typeof hooks.beforeLock === 'function') await hooks.beforeLock();
 
   // Step 3: under the run lock of ce N (withRunLock re-checks ce first).
   let refusal = null;
@@ -430,4 +434,15 @@ async function main(ctx) {
   return { mode, dry_run: dry, reasons: [], ...out };
 }
 
-lib.runMain(import.meta.url, SCRIPT, main);
+// Run only as a script, so that a test can import doRaise without starting main.
+function isMainModule() {
+  try {
+    const self = path.resolve(fileURLToPath(import.meta.url));
+    const argv1 = process.argv[1] ? path.resolve(process.argv[1]) : '';
+    return process.platform === 'win32' ? self.toLowerCase() === argv1.toLowerCase() : self === argv1;
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) lib.runMain(import.meta.url, SCRIPT, main);

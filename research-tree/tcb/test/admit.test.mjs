@@ -535,6 +535,22 @@ test('T6b slotCount through check: two admitted rows with no process and no tran
   assert.equal(sf.detail.unknown, 2);
 });
 
+test('T6c (M4) the model trace: a zombie of a planned hand-over plus an admitted-not-started row fill N_max 2, so a third is refused', { concurrency: false }, async (t) => {
+  const A = 'f1-research-x';
+  const zombieThenAdmitted = row(A, {
+    state: 'active', step: 'admitted', epoch: 2, reason: 'handover', handovers: 1,
+    attempts: [att(A, 1, { session: SID1, boot: 'BOOT-A', manifest: M0, settings_sha: Z64, stop: 'unconfirmed' }), att(A, 2, { manifest: M0, settings_sha: Z64 })],
+  });
+  const w = await admissibleRoot([zombieThenAdmitted, stoppedRow('f1-research-z')]);
+  t.after(w.cleanup);
+  const j = check(w.root, { task: 'f1-research-z', freeMb: 99999 });
+  // Counting live and unconfirmed only would give 1 < 2 and admit: three sessions once both start.
+  expectExit(j, 6, 'slots-full');
+  const sf = j.reasons.find((x) => x.code === 'slots-full');
+  assert.equal(sf.detail.unconfirmed, 1, 'the zombie of attempt 1');
+  assert.equal(sf.detail.unknown, 1, 'the admitted attempt 2 is a reservation');
+});
+
 test('T16 check: a bound attempt with a transcript but no matching process is counted unknown', { concurrency: false }, async (t) => {
   const w = await admissibleRoot([boundRow(RES), stoppedRow('f1-research-b')]);
   t.after(w.cleanup);
@@ -544,6 +560,87 @@ test('T16 check: a bound attempt with a transcript but no matching process is co
   assert.equal(j.result.slots.unknown, 1);
   assert.equal(j.result.slots.live, 0);
   assert.equal(j.result.slots.unconfirmed, 0);
+});
+
+// U1-F1 (M4): gatherFacts counts an admitted-not-started row with no process as pending memory.
+test('T16b (M4) check: an admitted row with no process reserves one peak of memory; without it the same --free-mb admits', { concurrency: false }, async (t) => {
+  // free 2300 - reserve 1024 - peak 1200 x pending 1 = 76 < 1200 -> memory; pending 0 gives 1276 >= 1200.
+  await t.test('with the admitted row: exit 6, memory with pending 1', async (t2) => {
+    const w = await admissibleRoot([admittedRow('f1-research-x'), stoppedRow('f1-research-z')]);
+    t2.after(w.cleanup);
+    setThr(w.root, { reserve_mb: 1024, peak_mb: 1200, N_max: 2 });
+    await seal(w.root);
+    const j = check(w.root, { task: 'f1-research-z', freeMb: 2300 });
+    expectExit(j, 6, 'memory');
+    const m = j.reasons.find((x) => x.code === 'memory');
+    assert.equal(m.detail.pending, 1);
+    assert.ok(!codes(j).includes('slots-full'), JSON.stringify(j.reasons));
+  });
+  await t.test('control, no admitted row: admitted at the same --free-mb', async (t2) => {
+    const w = await admissibleRoot([stoppedRow('f1-research-z')]);
+    t2.after(w.cleanup);
+    setThr(w.root, { reserve_mb: 1024, peak_mb: 1200, N_max: 2 });
+    await seal(w.root);
+    const j = check(w.root, { task: 'f1-research-z', freeMb: 2300 });
+    expectExit(j, 0);
+    assert.equal(j.result.decisions[0].admit, true, JSON.stringify(j.result.decisions[0].reasons));
+  });
+});
+
+// U1-F2 (R44): gate A as read from the committed cards, card status and the latest pack (gateAFacts).
+test('T10b check gate A from files: a committed card covers a, the pack lists b as not covered; F5 counts only witnessed cards', { concurrency: false }, async (t) => {
+  const REV = 'f1-review-r1';
+  const revRow = () => stoppedRow(REV, { stage: 'review', role: 'child-reviewing', steps: ['pack', 'review'] });
+  const A = 'f1-a-01';
+  const B = 'f1-a-02';
+  const card = { kind: 'card', field: 'f1', question_ids: [A], claim: 'synthetic card' };
+  let seq = 0;
+  function commitRec(root, task, step, values) {
+    const outputs = values.map((v) => {
+      const p = lib.putObject(root, v);
+      return { kind: v.kind, id: p.id, sha256: p.sha256 };
+    });
+    seq += 1;
+    putJ(root, `store/commits/${task}-${step}-${seq}.json`, { schema_version: 1, task, epoch: 1, step, outputs });
+    led(root, 'commit', { task, epoch: 1, data: { step } });
+    return outputs;
+  }
+  async function rootWith({ pack = true, f5 = false, status = null } = {}) {
+    const w = await admissibleRoot([revRow()]);
+    const [c] = commitRec(w.root, 'f1-research', 'card', [card]);
+    if (pack) commitRec(w.root, 'f1-research', 'pack', [{ kind: 'pack', field: 'f1', cards: [c.id], not_covered: [{ question_id: B, why: 'synthetic' }] }]);
+    if (status) put(w.root, 'store/status/card_status.jsonl', JSON.stringify({ card_id: c.id, status, seq: 1 }) + '\n');
+    setThr(w.root, { f5_given: f5 });
+    await seal(w.root); // fsck newer than the commits, selftest over the patched tcb
+    return w;
+  }
+  await t.test('F5 not given: the card (status pending) covers a, the pack covers b -> admitted', async (t2) => {
+    const w = await rootWith();
+    t2.after(w.cleanup);
+    const j = check(w.root, { task: REV, freeMb: 99999 });
+    expectExit(j, 0);
+    assert.equal(j.result.decisions[0].admit, true, JSON.stringify(j.result.decisions[0].reasons));
+  });
+  await t.test('no pack -> gate-a-uncovered [b]', async (t2) => {
+    const w = await rootWith({ pack: false });
+    t2.after(w.cleanup);
+    const j = check(w.root, { task: REV, freeMb: 99999 });
+    expectExit(j, 6, 'gate-a-uncovered');
+    assert.deepEqual(j.reasons.find((x) => x.code === 'gate-a-uncovered').detail.ids, [B]);
+  });
+  await t.test('F5 given, card still pending, no pack -> gate-a-uncovered [a, b]', async (t2) => {
+    const w = await rootWith({ pack: false, f5: true });
+    t2.after(w.cleanup);
+    const j = check(w.root, { task: REV, freeMb: 99999 });
+    expectExit(j, 6, 'gate-a-uncovered');
+    assert.deepEqual(j.reasons.find((x) => x.code === 'gate-a-uncovered').detail.ids, [A, B]);
+  });
+  await t.test('F5 given, card witnessed, pack present -> admitted', async (t2) => {
+    const w = await rootWith({ f5: true, status: 'witnessed' });
+    t2.after(w.cleanup);
+    const j = check(w.root, { task: REV, freeMb: 99999 });
+    expectExit(j, 0);
+  });
 });
 
 test('T17 check with a tasks.json row at step "running" -> exit 67', { concurrency: false }, async (t) => {

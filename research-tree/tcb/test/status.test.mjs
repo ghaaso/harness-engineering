@@ -275,6 +275,14 @@ function liveAlarm(ctx, { ce = 1 } = {}) {
   w(path.join(ctx.root, 'run', 'alarm.json'), { schema_version: 1, pid: s.pid, start_time: s.start_time, ce, armed_at: NOW, sleep_ms: 1000 });
   return s;
 }
+// M2 (CONTRACT decision 40): a reconcile on a root with no live alarm of this ce asks for one: exit 1
+// alarm-missing, result.arm "alarm"; the rows are reconciled and the status is built all the same.
+function recNoAlarm(res) {
+  const j = assertLine(res, 1);
+  assert.ok(hasReason(j, 'alarm-missing'), 'reason alarm-missing');
+  assert.equal(j.result.arm, 'alarm');
+  return j;
+}
 
 // =============================================================== the tests
 test('T1 build: status.json validates, spent and next per row, deterministic for one --now', async () => {
@@ -366,7 +374,8 @@ test('T3 next for each step of the machine', async () => {
       [row('f1-failed', { state: 'failed', epoch: 2, step: 'stopped', question_ids: q, attempts: [att('f1-failed', 1, { stop: 'confirmed' }), att('f1-failed', 2)] }), 'owner'],
     ];
     setTasks(ctx, rows.map((r) => r[0]));
-    w(path.join(ctx.root, 'run', 'stop-sample', 'f1-stopsample-e2.json'), { schema_version: 1, task: 'f1-stopsample', epoch: 2, target: 1, tick: 0, sizes: {} });
+    // stop.mjs names the sample by the target attempt k (here e - 1 = 1), CONTRACT 3.22 / spec/stop.mjs.md.
+    w(path.join(ctx.root, 'run', 'stop-sample', 'f1-stopsample-e1.json'), { schema_version: 1, task: 'f1-stopsample', epoch: 1, target: 1, tick: 0, sizes: {} });
     readyFile(ctx, 'f1-audit', 1);
     readyFile(ctx, 'f1-commit', 1);
     addLine(ctx.root, { kind: 'intake', task: 'f1-commit', epoch: 1, data: { objects: [], rejected: [], flagged: [] } });
@@ -476,7 +485,7 @@ test('T7 reconcile: an admitted row with one folder transcript becomes started, 
     const sid = newSid();
     setTasks(ctx, [admittedRow(task)]);
     writeTranscript(tpath(ctx.root, sid, projectDirName(folderAbs(ctx, task))), { sessionId: sid, cwd: folderAbs(ctx, task), calls: 1 });
-    assertLine(reconcile(ctx), 0);
+    recNoAlarm(reconcile(ctx));
     const r = readTasks(ctx).tasks[0];
     assert.equal(r.step, 'started');
     assert.equal(r.attempts.find((a) => a.epoch === 1).session, sid);
@@ -486,7 +495,7 @@ test('T7 reconcile: an admitted row with one folder transcript becomes started, 
     assert.equal(started[0].task, task);
     assert.equal(started[0].epoch, 1);
     assert.ok(fs.existsSync(statusPath(ctx)), 'reconcile ends with a build');
-    assertLine(reconcile(ctx), 0);
+    recNoAlarm(reconcile(ctx));
     assert.equal(ledgerLines(ctx.root, 'started').length, 1, 'a repeat adds no line');
   });
 });
@@ -514,7 +523,7 @@ test('T8 reconcile: a transcript whose cwd is another folder is ignored', async 
     const proj = projectDirName(folderAbs(ctx, task));
     writeTranscript(tpath(ctx.root, mine, proj), { sessionId: mine, cwd: folderAbs(ctx, task), calls: 1 });
     writeTranscript(tpath(ctx.root, other, proj), { sessionId: other, cwd: folderAbs(ctx, 'f2-other'), calls: 1 });
-    assertLine(reconcile(ctx), 0);
+    recNoAlarm(reconcile(ctx));
     const r = readTasks(ctx).tasks[0];
     assert.equal(r.step, 'started');
     assert.equal(r.attempts.find((a) => a.epoch === 1).session, mine);
@@ -543,7 +552,7 @@ test('T9 reconcile: a row fenced meanwhile (epoch moved) is skipped, others are 
     } finally {
       fs.rmSync(lockFile, { force: true });
     }
-    assertLine(await s.done, 0);
+    recNoAlarm(await s.done);
     const rows = readTasks(ctx).tasks;
     const ra = rows.find((r) => r.task === a); const rb = rows.find((r) => r.task === b);
     assert.equal(ra.epoch, 2);
@@ -737,11 +746,11 @@ test('T16 --dry-run of build, reconcile and endturn: the result of the real run,
     fs.rmSync(statusPath(ctx));
 
     before = snapshotTree(ctx.root);
-    const dRec = assertLine(reconcile(ctx, ['--dry-run']), 0);
+    const dRec = recNoAlarm(reconcile(ctx, ['--dry-run']));
     assert.equal(dRec.dry_run, true);
     assert.deepEqual(snapshotTree(ctx.root), before, 'dry-run reconcile changed a file');
     assert.equal(readTasks(ctx).tasks[0].step, 'admitted');
-    const rRec = assertLine(reconcile(ctx), 0);
+    const rRec = recNoAlarm(reconcile(ctx));
     assert.deepEqual(keys(dRec), keys(rRec));
     assert.equal(readTasks(ctx).tasks[0].step, 'started');
 
@@ -772,6 +781,44 @@ test('T17 run.lock busy exits 75 for every mode, one line each, ledger still ver
     assertLine(owner(ctx, ['--act', 'ruling', '--subject', 'free text', '--quote-file', q]), 75);
     assertLine(run(ctx.root, ['meter', '--pct', '5', ...common(ctx)]), 75);
     assert.equal(ledgerLines(ctx.root).length, 1, 'nothing was appended');
+  });
+});
+
+// ------------------------------------------------ second model check (CONTRACT decision 40)
+test('M2 reconcile asks for the alarm at turn start: none -> exit 1 alarm-missing; a live one of this ce -> exit 0', async () => {
+  await withRoot({}, async (ctx) => {
+    meterLine(ctx.root);
+    const j = recNoAlarm(reconcile(ctx));
+    assert.ok(fs.existsSync(statusPath(ctx)), 'the status is still built and written');
+    assert.equal(j.result.written, true);
+    // a dead alarm record and one of another ce both count as missing
+    w(path.join(ctx.root, 'run', 'alarm.json'), { schema_version: 1, ...deadRecord(), ce: 1, armed_at: NOW, sleep_ms: 1000 });
+    assert.equal(recNoAlarm(reconcile(ctx)).reasons[0].detail.alive, false);
+    const s = liveAlarm(ctx, { ce: 2 });
+    recNoAlarm(reconcile(ctx));
+    s.kill();
+    const s2 = liveAlarm(ctx);
+    const ok = assertLine(reconcile(ctx), 0);
+    assert.equal(ok.result.arm, undefined);
+    assert.ok(s2.child.exitCode === null && s2.child.signalCode === null, 'reconcile neither kills nor replaces the alarm');
+  });
+});
+
+test('M1 endturn re-arms a live alarm by writing the token (acked.json); alarm.json untouched, the alarm alive', async () => {
+  await withRoot({}, async (ctx) => {
+    meterLine(ctx.root);
+    const s = liveAlarm(ctx);
+    const alarmFile = path.join(ctx.root, 'run', 'alarm.json');
+    const before = fs.readFileSync(alarmFile);
+    const tokenOf = () => (fs.existsSync(ackedPath(ctx)) ? sha(fs.readFileSync(ackedPath(ctx))) : null);
+    const t0 = tokenOf();
+    const j = endturn(ctx, 1);
+    assert.ok([0, 1].includes(j.exit), j.stdout);
+    assert.ok(!hasReason(j.json, 'alarm-missing'), 'the live alarm is seen');
+    const t1 = tokenOf();
+    assert.notEqual(t1, t0, 'the token changed');
+    assert.ok(before.equals(fs.readFileSync(alarmFile)), 'alarm.json is not rewritten: no new alarm');
+    assert.ok(s.child.exitCode === null && s.child.signalCode === null, 'the alarm was not killed');
   });
 });
 

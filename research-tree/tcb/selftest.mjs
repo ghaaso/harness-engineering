@@ -1077,7 +1077,10 @@ async function runMode(ctx, flags, root, ce) {
 function expectProblem(v) {
   if (!isPlainObject(v)) return 'not an object';
   if (v.schema_version !== 1) return 'schema_version';
-  for (const k of Object.keys(v)) if (!['schema_version', 'probes'].includes(k)) return `extra field ${k}`;
+  for (const k of Object.keys(v)) if (!['schema_version', 'probes', 'permission_patterns'].includes(k)) return `extra field ${k}`;
+  if ('permission_patterns' in v && (!Array.isArray(v.permission_patterns) || v.permission_patterns.some((s) => typeof s !== 'string' || s.trim() === ''))) {
+    return 'permission_patterns';
+  }
   if (!Array.isArray(v.probes) || v.probes.length === 0) return 'probes';
   const names = new Set();
   for (const p of v.probes) {
@@ -1109,7 +1112,19 @@ function fieldText(v) {
   }
 }
 
-function findProbe(probe, parsedList, vars) {
+// An error result is a refusal only when it says so: the hook's own text, or one of the expect file's
+// `permission_patterns` (the harness's permission-denial wording, case-insensitive substrings; to be
+// confirmed by needs-app 7). Any other error (a missing file, "read it first", a bad input) proves
+// nothing about the layers: `error-not-refusal`, which is not-run for a probe that expects a refusal.
+function errorOutcome(text, permissionPatterns) {
+  const t = String(text || '');
+  if (t.includes('[guard-hook] deny')) return 'refused-hook';
+  const low = t.toLowerCase();
+  if (permissionPatterns.some((p) => low.includes(p.toLowerCase()))) return 'refused-permission';
+  return 'error-not-refusal';
+}
+
+function findProbe(probe, parsedList, vars, permissionPatterns = []) {
   const match = Object.entries(probe.match).map(([k, s]) => [k, normText(s.split('{root}').join(vars.root).split('{cwd}').join(vars.cwd ?? '\u0000no-cwd'))]);
   const candidates = [];
   parsedList.forEach((parsed, fi) => {
@@ -1135,7 +1150,7 @@ function findProbe(probe, parsedList, vars) {
   const results = Array.isArray(first.parsed.toolResults) ? first.parsed.toolResults : [];
   const res = results.find((r) => r && r.toolUseId === first.u.id);
   if (!res) return { outcome: 'no-result' };
-  if (res.isError) return { outcome: String(res.text || '').includes('[guard-hook] deny') ? 'refused-hook' : 'refused-permission' };
+  if (res.isError) return { outcome: errorOutcome(res.text, permissionPatterns) };
   return { outcome: 'allowed' };
 }
 
@@ -1143,6 +1158,7 @@ function probeVerdict(probe, outcome) {
   if (outcome === 'not-attempted' || outcome === 'no-result') return { verdict: 'not_run', code: outcome };
   if (probe.expect === 'allowed') return outcome === 'allowed' ? { verdict: 'pass' } : { verdict: 'fail', code: 'not-allowed' };
   if (outcome === 'allowed') return { verdict: 'fail', code: 'not-refused' };
+  if (outcome === 'error-not-refusal') return { verdict: 'not_run', code: outcome };
   if (probe.layer === 'hook' && outcome !== 'refused-hook') return { verdict: 'fail', code: 'wrong-layer' };
   if (probe.layer === 'permission' && outcome !== 'refused-permission') return { verdict: 'fail', code: 'wrong-layer' };
   return { verdict: 'pass' };
@@ -1178,7 +1194,7 @@ async function canaryMode(ctx, flags, root, ce) {
   const vars = { root, cwd: typeof main.cwd === 'string' ? main.cwd : null };
 
   const probes = expect.probes.map((p) => {
-    const { outcome } = findProbe(p, p.actor === 'main' ? [main] : helpers, vars);
+    const { outcome } = findProbe(p, p.actor === 'main' ? [main] : helpers, vars, expect.permission_patterns || []);
     const v = probeVerdict(p, outcome);
     return { probe: p.probe, expect: p.expect, layer: p.layer, outcome, verdict: v.verdict, code: v.code || null };
   });

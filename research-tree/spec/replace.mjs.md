@@ -64,7 +64,14 @@ line `{act: drop, subject: T}` → else exit 1 `no-owner-drop`. 4 `host` (failur
 only; CONTRACT §3.6). 5 `cut = stagingCut(wt/T-eE)` (no folder → `{}`). 6 `lib.fence({task,
 expectEpoch: E, reason, host, tick, readyCheck, cut, spendAtFence, R, Hmax})`, where `readyCheck`
 re-reads `wt/T-eE/staging/READY.json` inside the lock and is true only for a parseable,
-schema-valid `{kind: ready, task: T, epoch: E}` (not called for `tainted`). A `cut`/`drop` on a row
+schema-valid `{kind: ready, task: T, epoch: E}` (not called for `tainted`). **M6 (CONTRACT
+decision 40): the re-check applies to every reason but `first` and `tainted`**, a planned
+`handover`, a `memory` park, a `cut` and a `drop` included: under the lock, before calling
+`lib.fence`, when the row is at epoch E with a running attempt (active at bound|started|admitted,
+or parked/stopped), `readyCheck()` true → exit 5 `ready-wins`, row unchanged, one `incident`
+{class: refusal} (the coordinator commits first; the hand-over, park, cut or drop is then moot or
+taken on the committed row). The library's own check covers failure reasons only, so replace makes
+this one itself; `--dry-run` predicts the same. A `cut`/`drop` on a row
 at planned/none or active/stopped takes the no-attempt row (state `cut`/`dropped`, epoch unchanged);
 for `cut` append `overflow` {ids: `lib.variant(...).uncovered`, tokens: total spend of every attempt,
 reason: "cut"}. 7 Append `fence` {reason, from, to, host, restart_charged, limit, cut_files: number
@@ -123,8 +130,8 @@ with SID already → exit 0, nothing written.
 R1, R2 (CAS fence, staging cut), R3 (refused admission leaves the row), R7 (checkpoint = commit
 records + cut prefixes; READY re-check), R8 (R = 1, host class by boot identifier, limit exits 1),
 R10, R11 (unstarted cut → overflow), R12, R13, R14, R21, R22 (user files hashed; tainted fence),
-R29, R54 (cut input), R58. Decisions §8: 12, 13, 18, 19, 26, 31, 32. Model findings F1, F5, F6, A4,
-A7, E5×E8.
+R29, R54 (cut input), R58. Decisions §8: 12, 13, 18, 19, 26, 31, 32, 40. Model findings F1, F5,
+F6, A4, A7, E5×E8; second model check M6 (READY re-check for every reason).
 
 ## Behaviours (tests)
 - T1 plan: a `tasks-plan.json` with two tasks → two rows at planned/none/epoch 0 with their `tier`,
@@ -142,6 +149,10 @@ A7, E5×E8.
   byte-identical, one `incident` line `{class:refusal}`; a READY with `epoch:0` or a torn READY does
   not count (fence applies); fence `tainted` with the same valid READY → applied (a READY never wins
   over a taint), restarts +1.
+- T5b (M6) fence `handover` on a bound row with a valid READY of epoch 1 → exit 5 `ready-wins`,
+  row byte-identical (handovers unchanged), one `incident` {class: refusal}, no `fence` line; the
+  same for `memory`, `cut` and `drop` (with its owner line); `--dry-run` of `handover` → exit 5;
+  without the READY the `handover` fence applies (epoch 2, handovers 1).
 - T6 fence crash where `attemptOf(row,1).boot` is "A" and `--boot B` → `host:true`, restarts
   unchanged, `restart_charged:false`; `--boot A` → host false; a null recorded boot → host false.
 - T7 fence stall at restarts = R → fence applied (epoch +1, step fenced), `limit:true`, exit 1

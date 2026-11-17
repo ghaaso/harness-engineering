@@ -647,6 +647,63 @@ test('T12b revert with no qualification.json is exit 2 no-qualification', () => 
   assert.equal(statusLines(w.root).length, 1);
 });
 
+// Review U2-F1: promote writes status-keeping lines after a confirmation (card-item unclear, sentence
+// lines), so the card's last line is not always the confirmation (CONTRACT 3.15: a revert line for every
+// confirmation whose classes include the class).
+test('T12c revert --class J2 reverts a J1/J2/J4 confirmation whose last line is a later status-keeping unclear line', () => {
+  const w = pw({ quals: { J1: true, J2: false, J3: true, J4: true } });
+  const { A } = w.cards;
+  addStatus(w.root, A, 'witnessed', { witness_seq: 1 });
+  addStatus(w.root, A, 'confirmed', { reason: 'checker-confirmed', check: { batch: 'b1-1', item: itemId('A'), verdict: 'confirmed' }, classes: J_CARD });
+  addStatus(w.root, A, 'confirmed', { reason: 'unclear', check: { batch: 'b2-1', item: itemId('A2'), verdict: 'unclear' } });
+  const n0 = statusLines(w.root).length;
+  shape(promoteRevert(w.root, 'J2'), 'promote', 0);
+  const added = statusLines(w.root).slice(n0);
+  assert.equal(added.length, 1, 'one revert line for the J2-relying confirmation');
+  assert.equal(added[0].card_id, A.id);
+  assert.equal(added[0].status, 'witnessed');
+  assert.equal(added[0].reason, 'unqualified-revert');
+  assert.deepEqual(added[0].classes, ['J2']);
+  // rerun: nothing more
+  const before = snapshot(w.root);
+  shape(promoteRevert(w.root, 'J2'), 'promote', 0);
+  assert.deepEqual(snapshot(w.root), before);
+  verifyLedger(readLedger(w.root));
+});
+
+test('T12d revert --class J3 keeps a card confirmation that relies on J1/J2/J4 only, and writes a revert line for every J3 sentence clearing (status kept)', () => {
+  const w = pw({ quals: { J1: true, J2: true, J3: false, J4: true } });
+  const { A, B, C } = w.cards;
+  addStatus(w.root, A, 'witnessed', { witness_seq: 1 });
+  addStatus(w.root, A, 'confirmed', { reason: 'checker-confirmed', check: { batch: 'b1-1', item: itemId('A'), verdict: 'confirmed' }, classes: J_CARD });
+  addStatus(w.root, A, 'confirmed', { reason: 'sentence-check', check: { batch: 'b2-1', item: itemId('A2'), verdict: 'confirmed', node: 'r_0000000000000000#s1' }, classes: J_SENT });
+  addStatus(w.root, B, 'witnessed', { witness_seq: 2 });
+  addStatus(w.root, B, 'witnessed', { reason: 'sentence-check', check: { batch: 'b2-1', item: itemId('B2'), verdict: 'confirmed', node: 'r_0000000000000000#s2' }, classes: J_SENT });
+  // a sentence line whose verdict was not confirmed clears nothing, so nothing to revert for C
+  addStatus(w.root, C, 'witnessed', { witness_seq: 3 });
+  addStatus(w.root, C, 'witnessed', { reason: 'sentence-check', check: { batch: 'b2-1', item: itemId('C2'), verdict: 'outside_conditions', node: 'r_0000000000000000#s3' } });
+  const n0 = statusLines(w.root).length;
+  shape(promoteRevert(w.root, 'J3'), 'promote', 0);
+  const added = statusLines(w.root).slice(n0);
+  const byCard = Object.fromEntries(added.map((l) => [l.card_id, l]));
+  assert.deepEqual(Object.keys(byCard).sort(), [A.id, B.id].sort(), 'one line each for A and B, none for C');
+  assert.equal(byCard[A.id].status, 'confirmed', 'the card confirmation does not rely on J3 and stands');
+  assert.equal(byCard[B.id].status, 'witnessed', 'the status is kept');
+  for (const l of added) {
+    assert.equal(l.reason, 'unqualified-revert');
+    assert.deepEqual(l.classes, ['J3']);
+  }
+  assert.equal(lineOf(statusLines(w.root), A).status, 'confirmed');
+  const pl = promoteLines(w.root);
+  assert.equal(pl.length, 1);
+  assert.equal(pl[0].data.class, 'J3');
+  // rerun: the clearings are reverted already
+  const before = snapshot(w.root);
+  shape(promoteRevert(w.root, 'J3'), 'promote', 0);
+  assert.deepEqual(snapshot(w.root), before);
+  verifyLedger(readLedger(w.root));
+});
+
 test('T13 a torn last line in card_status.jsonl is moved to .corrupt and the new seq follows the last complete line; the ledger verifies', () => {
   const w = pw();
   const { A, B } = w.cards;

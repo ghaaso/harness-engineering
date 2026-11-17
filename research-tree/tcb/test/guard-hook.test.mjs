@@ -280,7 +280,10 @@ function judge(c, r) {
   if (r.status !== 2) return `expected deny ${[].concat(c.expect).join('|')}, got allow`;
   if (c.expect === 'deny') return null;
   const want = [].concat(c.expect);
-  return want.includes(m[1]) ? null : `expected deny ${want.join('|')}, got ${m[1]}: ${r.stderr.trim().slice(0, 300)}`;
+  if (!want.includes(m[1])) return `expected deny ${want.join('|')}, got ${m[1]}: ${r.stderr.trim().slice(0, 300)}`;
+  // optional: the detail after "<code>: " starts with this text
+  if (c.detail !== undefined && !r.stderr.startsWith(`[guard-hook] deny ${m[1]}: ${c.detail}`)) return `expected detail "${c.detail}": ${r.stderr.trim().slice(0, 300)}`;
+  return null;
 }
 
 // At most two hook processes alive at once (no bursts of short-lived processes).
@@ -571,6 +574,24 @@ test('T1 role read paths: the child, the coordinator and the sealed folder', asy
   });
 });
 
+test('T1b the sealed folder is refused by its own step, not only by the prefixes: a profile that reads all of {root} still cannot read sealed/ or search a folder that holds it', async () => {
+  await withWorld({}, async (w) => {
+    editProfile(w, 'coordinator', (p) => { p.read_prefixes = ['{root}/']; });
+    const co = (n, tool, input, expect, extra = {}) => ({ n, role: 'coordinator', tool, input, expect, ...extra });
+    const cases = [
+      co('broad profile: a view is readable', 'Read', { file_path: w.P('views', 'owner.md') }, 0),
+      co('broad profile: the task table is readable', 'Read', { file_path: w.P('run', 'tasks.json') }, 0),
+      co('broad profile: Read of sealed/x', 'Read', { file_path: w.P('sealed', 'x') }, 'read-outside-role', { detail: 'sealed:' }),
+      co('broad profile: Read of a sealed seed', 'Read', { file_path: w.P('sealed', 'seeds', 'b1-1.json') }, 'read-outside-role', { detail: 'sealed:' }),
+      co('broad profile: Read of the sealed folder itself', 'Read', { file_path: w.P('sealed') }, 'read-outside-role', { detail: 'sealed:' }),
+      co('broad profile: Grep with path {root} (holds sealed/)', 'Grep', { pattern: 'x', path: w.root }, 'read-outside-role', { detail: 'sealed:' }),
+      co('broad profile: Glob with path {root} (holds sealed/)', 'Glob', { pattern: '**/*.json', path: w.root }, 'read-outside-role', { detail: 'sealed:' }),
+      co('broad profile: Grep in views (no sealed/ below it)', 'Grep', { pattern: 'x', path: w.P('views') }, 0),
+    ];
+    assert.deepEqual(await runCases(w, cases), []);
+  });
+});
+
 test('T2 write paths: staging only, .claude and CLAUDE files, protected paths, the coordinator\'s plan paths', async () => {
   await withWorld({}, async (w) => {
     assert.deepEqual(await runCases(w, casesT2(w)), []);
@@ -763,6 +784,10 @@ test('T11 fail-safe: every kind of bad invocation or bad input is exit 2', async
     const copy = w.P('wt', 'x');
     fs.mkdirSync(copy, { recursive: true });
     for (const f of ['guard-hook.mjs', 'lib.mjs']) fs.copyFileSync(path.join(TCB, f), path.join(copy, f));
+    // a junction to the live tcb/: node gets a script path that is not the hook's realpath
+    const jn = w.P('jn-tcb');
+    fs.symlinkSync(TCB, jn, 'junction');
+    w.junctions.push(jn);
     editProfile(w, 'control', (p) => { p.bogus_extra = true; });
     editProfile(w, 'stpa', (p) => { delete p.fetch; });
     fs.writeFileSync(w.P('tcb', 'profiles', 'canary.json'), '{ not json');
@@ -789,6 +814,10 @@ test('T11 fail-safe: every kind of bad invocation or bad input is exit 2', async
       { n: 'hook_event_name missing', stdin: { tool_name: 'Read', tool_input: { file_path: path.join(a, 'in', 'brief.md') }, cwd: a }, expect: 'bad-input' },
       { n: 'a hook copy run from wt/x', script: path.join(copy, 'guard-hook.mjs'), ...okTool, expect: 'run-from-attempt' },
       { n: 'control case: the same call through the real hook', ...okTool, expect: 0 },
+      // started through a junction the hook still decides: a lexical argv[1] check would skip main()
+      // and exit 0 with nothing on stdout or stderr (fail open)
+      { n: 'the hook run through a junction still denies', script: path.join(jn, 'guard-hook.mjs'), role: 'coordinator', tool: 'Write', input: { file_path: w.P('tcb', 'evil.mjs'), content: 'x' }, expect: 'write-protected' },
+      { n: 'the hook run through a junction still allows', script: path.join(jn, 'guard-hook.mjs'), ...okTool, expect: 0 },
     ];
     assert.deepEqual(await runCases(w, cases), []);
   });

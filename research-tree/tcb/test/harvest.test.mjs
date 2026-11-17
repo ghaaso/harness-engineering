@@ -723,3 +723,20 @@ test('X1 zero candidates exits 0; a foreign file in harvested is reported in res
 
 test('N1 a real reader schema-checked result is a StructuredOutput input or a structured_output attachment in its helper transcript below <session>/subagents/', { skip: 'needs the app: CONTRACT 7 item 7, real transcripts' }, () => {});
 test('N2 the harness schema retry of a helper result', { skip: 'needs the app: CONTRACT 7 item 8' }, () => {});
+
+// Review U2-F2: commit does not check the URL of a harvested card (R34), so the session's own structured
+// output (its own claim) must never become a harvested card; a helper's result still does.
+test('X2 the session own StructuredOutput input and own structured_output attachment are no candidates; a helper result is still harvested', () => {
+  const ctx = setupH();
+  const own = cardN(1);
+  const helperCard = cardN(2);
+  ctx.main((b) => {
+    b.call({ tools: [{ name: 'StructuredOutput', input: own }] });
+    b.structured({ schema_version: 1, cards: [own], skipped: [] });
+  });
+  ctx.helper('h1', (b) => { b.call({ text: 'done' }); b.structured(helperCard); });
+  const j = go(ctx, 0);
+  assert.deepEqual(j.result.written, [idOf(helperCard)]);
+  assert.equal(j.result.candidates, 1, 'only the helper result is a candidate');
+  assert.deepEqual(cardFiles(ctx), [`${idOf(helperCard)}.card.json`]);
+});

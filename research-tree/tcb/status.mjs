@@ -530,7 +530,8 @@ function nextOf(root, row, { blocked, zombieOver, readyPending, lines }) {
     } catch {
       stop = 'none';
     }
-    const sample = exists(path.join(fileOf(root, 'stopSample'), `${row.task}-e${e}.json`));
+    // stop.mjs names the sample by the target attempt (wt/<task>-e<k>), not by the row's epoch.
+    const sample = exists(path.join(fileOf(root, 'stopSample'), `${row.task}-e${target}.json`));
     // A sample means `stop verify` has started: verify again before anything else.
     if (stop === 'unconfirmed' || sample) return 'stop-verify';
     if (stop === 'none' || stop === 'requested') return 'stop-session';
@@ -564,7 +565,8 @@ async function runBuild(ctx, root, flags, reconcile, dry) {
     const changes = reconcile ? await applyReconcile(ctx, root, null, pre, ce, facts, anomalies, table) : [];
     const status = await computeStatus(root, th, ce, pre, facts, table, anomalies);
     lib.checkFormat(root, 'status', status);
-    return { exit: 0, result: { run: reconcile ? 'reconcile' : 'build', written: false, reconciled: changes, status } };
+    const res = { exit: 0, result: { run: reconcile ? 'reconcile' : 'build', written: false, reconciled: changes, status } };
+    return reconcile ? armAtStart(root, ce, pre.procList, res) : res;
   }
 
   let out = null;
@@ -578,7 +580,23 @@ async function runBuild(ctx, root, flags, reconcile, dry) {
     lib.writeAtomic(fileOf(root, 'status'), serialize(status));
     out = { run: reconcile ? 'reconcile' : 'build', written: true, reconciled: changes, status };
   });
-  return { exit: 0, result: out };
+  const res = { exit: 0, result: out };
+  return reconcile ? armAtStart(root, ce, pre.procList, res) : res;
+}
+
+// M2 (CONTRACT decision 40): reconcile is the first act of every turn, so it asks for the alarm
+// whenever none of this ce is known to live (absent, another ce, dead, or the process list
+// unavailable). The coordinator then starts `watch.mjs --alarm` before anything else, and a turn
+// that dies before its endturn still leaves a wake source. Nothing is started or killed here.
+function armAtStart(root, ce, procList, res) {
+  const alarm = readLoose(fileOf(root, 'alarm'));
+  const alive = alarm && alarm.ce === ce ? aliveIn(procList, alarm) : false;
+  if (alive === true) return res;
+  return {
+    exit: 1,
+    result: { ...res.result, arm: 'alarm' },
+    reasons: [{ code: 'alarm-missing', detail: { ce: alarm ? alarm.ce ?? null : null, pid: alarm ? alarm.pid ?? null : null, alive } }],
+  };
 }
 
 // ---------------------------------------------------------------- endturn

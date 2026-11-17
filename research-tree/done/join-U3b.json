@@ -1,0 +1,42 @@
+{
+  "label": "join:U3b",
+  "result": {
+    "tests": {
+      "command": "cwd tcb-build/tcb: node ../tools/lane.mjs --label join-U3b --timeout-s 300 -- node --test --test-concurrency=1 test/guard-hook.test.mjs; selftest.test.mjs in four lane calls with --test-name-pattern (^(T1 |T2 |T3 |T12|T13|T11), ^(T1 |T2 |T4|T5 |T5b|T5c|step 5), ^(T5d|T5e|T5f|T6|T7|T8), ^(T9|T10|T14|T15|T16|T17|T18|T19|--keep|step 6|needs-app)) because the whole file takes about 240 s, close to the lane's 300 s timeout",
+      "passed": 41,
+      "failed": 0,
+      "skipped": 5,
+      "output_tail": "guard-hook.test.mjs: tests 18, pass 15, fail 0, skipped 3 (needs-app 1-3), duration_ms 20340. selftest.test.mjs (final runs of each chunk; together they cover all 30 tests once): pass 28, fail 0, skipped 2 (needs-app 11, needs-app 7); chunk durations 26 s, 88 s, 91 s, 58 s. Full output: tcb-build/tmp/join-U3b-gh2.txt, join-U3b-st1.txt .. join-U3b-st4.txt (st1 holds the round-1 T1/T2 failures, rerun green in st2)."
+    },
+    "rounds": 2,
+    "fixes": [
+      {"file": "tcb/test/guard-hook.test.mjs", "what": "The test copied tcb/scripts/ into every temp root and ran <root>/tcb/scripts/guard-hook.mjs (every case: Cannot find module). It now runs the live hook tcb/guard-hook.mjs with --root <temp root>. A temp root gets data files only (schemas, profiles, settings, agents, briefs, thresholds.json...), with no script copy and no stub scripts; the hook finds the coordinator's named scripts beside its own file (import.meta.url), as the script and the finish-U3b note say.", "wrong_side": "layout"},
+      {"file": "tcb/test/guard-hook.test.mjs", "what": "T5 Bash commands moved to the flat grammar (node tcb/status.mjs, node \"<root>/tcb/status.mjs\", tcb/lib.mjs, tcb/nosuch.mjs, tcb/Status.mjs ...). Two cases were added: the old layout `node tcb/scripts/status.mjs` and its absolute form are bash-pattern. Read/Glob/Write cases that named tcb/scripts/... now name tcb/lib.mjs, tcb/ and tcb/x.mjs. The expected results are unchanged.", "wrong_side": "layout"},
+      {"file": "tcb/test/guard-hook.test.mjs", "what": "T11 'hook copy run from wt/x' copied the whole script folder. It now copies only guard-hook.mjs and lib.mjs, the two files the hook loads. The expectation is still run-from-attempt.", "wrong_side": "layout"},
+      {"file": "tcb/test/guard-hook.test.mjs", "what": "T14 expects the flat settings hook command \"{node}\" \"{root}/tcb/guard-hook.mjs\" ... and the coordinator allow rule Bash(node tcb/*), as shipped (finish-U3b). The spec text still says tcb/scripts.", "wrong_side": "layout"},
+      {"file": "tcb/test/guard-hook.test.mjs", "what": "runCases ran up to 8 hook processes at once. That is now 2, the brief's limit on child processes alive inside a test. No assertion changed, and the file still takes about 20 s.", "wrong_side": "test"},
+      {"file": "tcb/test/selftest.test.mjs", "what": "Flat layout: the test runs the live tcb/selftest.mjs, and the 24 stubs are written to <root>/tcb/<name>.mjs (not tcb/scripts/). T3's missing-script case removes tcb/snap.mjs.", "wrong_side": "layout"},
+      {"file": "tcb/test/selftest.test.mjs", "what": "Default fixtures for guard-hook: the stub printed a JSON line, and the script (following spec step 5, 'guard-hook's stdout is expected empty') failed both default guard-hook cases. This is why T1 and T2 failed in round 1. The guard-hook defaults now print nothing: the good case exits 0, and the bad case exits 2 with one stderr line '[guard-hook] deny refused: stub' and expect.stderr_prefix. The script was right. The 'step 5 judge' test gains a case showing that a guard-hook stub that prints a line fails its case by default.", "wrong_side": "test"},
+      {"file": "tcb/test/selftest.test.mjs", "what": "The selftest spec was revised after the tests were written (no bursts), and the tests now follow it. runSt no longer passes --jobs 4 and uses the default (one case at a time). Watch cases carry --once --no-intake. T6 compares --jobs 2 with --jobs 1.", "wrong_side": "spec_unclear"},
+      {"file": "tcb/test/selftest.test.mjs", "what": "T5 strengthened to the revised spec. The stub sleeps 45 s (was 20 s). A new next-in-order case (stop/good-slow-z-after) records whether the timed-out stub and its grandchild are alive when it starts, and both must be dead. Both must also be dead at the end with no grace wait, and the run must complete (all 50 cases in selftest.json) in under 42 s.", "wrong_side": "spec_unclear"},
+      {"file": "tcb/test/selftest.test.mjs", "what": "T5b rewritten to the new watch rule. Six bad variants are each watch-case-loops with no case run and no tmp/ case root: none, --once alone, --no-intake alone, --once --no-intake with --alarm, with --intake, and --alarm alone. The old 'good-alarm'/'good-intake' half contradicted the revised spec and was replaced by a bounded --once --no-intake case that runs.", "wrong_side": "spec_unclear"},
+      {"file": "tcb/test/selftest.test.mjs", "what": "T5c strengthened. The case root's tcb/ must hold no .mjs file at any depth and no scripts/ folder, and must have thresholds, schemas, profiles, settings, agents and briefs. The stub's process.argv[1] must equal <root>/tcb/render.mjs.", "wrong_side": "spec_unclear"},
+      {"file": "tcb/test/selftest.test.mjs", "what": "New T5e. Every default case records the number of case roots under tmp/st-*/ when it starts: always 1 by default, never more than 2 with --jobs 2. --jobs 3 and --jobs 0 exit 66 usage with no tmp/ and no selftest.json.", "wrong_side": "spec_unclear"},
+      {"file": "tcb/test/selftest.test.mjs", "what": "New T5f. A stub exits 0 but leaves a detached grandchild holding its stdout and stderr. The result: why left-process, exit 2, case-left-process, selftest.json not_run listing only the two cases that ran, result.not_started holding the other 47, and no later marker. The grandchild writes 'expired' after 8 s and ends by itself; the test waits for that and kills nothing.", "wrong_side": "spec_unclear"},
+      {"file": "tcb/test/selftest.test.mjs", "what": "T8 strengthened to the revised spec. tcb-changed is the first reason and its detail names snap/good-edit-live. No later case ran: no markers, no later entries in selftest.json, and snap/good-ok is in not_started.", "wrong_side": "spec_unclear"},
+      {"file": "tcb/test/selftest.test.mjs", "what": "Stub options added for these checks: --stub-count-roots, --stub-alive-check, --stub-holder, plus argv1 and mjs_files in --stub-probe. makeRoot/defaultFixtures take extra stub args.", "wrong_side": "test"}
+    ],
+    "still_failing": [],
+    "lib_change_requests": [
+      "lib.mjs line 436: paths(root).scripts is still j('tcb', 'scripts'). In the flat layout it should be j('tcb'). Neither guard-hook.mjs nor selftest.mjs uses it (each finds scripts from its own file or from <root>/tcb), so nothing in this group fails on it. Carried over from finish-U3b; not worked around."
+    ],
+    "notes": [
+      "No change to guard-hook.mjs or selftest.mjs was needed. Every failure was on the test side (layout, a guard-hook default fixture that contradicted spec step 5, and tests written before the selftest spec's no-burst revision).",
+      "Spec text out of date (not writable here): spec/guard-hook.mjs.md lines 11, 16, 68-69, 89, 92 and the T5 examples still name tcb/scripts/<n>.mjs and Bash(node tcb/scripts/*). The script, the shipped settings and now the tests use tcb/<n>.mjs and Bash(node tcb/*). CONTRACT §3.21 and §5 say the same old paths.",
+      "The full selftest.test.mjs takes about 240 s at --test-concurrency=1 with one case at a time: about 17 full runs of 48-50 sequential stub cases. Run it in chunks with --test-name-pattern to stay inside the lane's 300 s, or give the lane a longer --timeout-s.",
+      "T5e asserts only the ceiling (at most 2) for --jobs 2, not that two cases did overlap.",
+      "T14's lock-busy half ran (the CIM start time was readable; no skip diagnostic).",
+      "Left untouched, not created by this stage: tcb-build/tmp/u3b-cG5dN3, u3b-run, u3b-smoke, wit-PHLMWq, wit-Q8dRmR. This stage's runs left no temp root behind. Temporary backups of the two test files were made during the work and removed."
+    ]
+  }
+}

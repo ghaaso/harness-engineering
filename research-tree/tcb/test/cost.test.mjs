@@ -551,6 +551,88 @@ test('T10 from-transcripts: S0, sigma, o and a fall of context between calls', (
   assert.equal(ro2.o, null, 'no write in the successor: no figure');
 });
 
+test('T10b from-transcripts: a fall of context is not averaged into g, even in a role with a single session; sd is the sample sd over two tasks', () => {
+  // U5-K-2 (survivors KC3, KC2). One research task, one session: 70000 .. 75600, a compaction fall to 40000, then 42800 .. 45600.
+  const T = 'f1-research';
+  const S = sid(71);
+  const root = makeRoot({ rows: [row(T, { state: 'committed', step: 'bound', epoch: 1, reason: 'first', session: S, attempts: [att(T, 1, { session: S })] })] });
+  writeT(sessionFile(root, S), { sessionId: S, cwd: folderOf(root, T, 1), calls: [call(70000), call(72800), call(75600), call(40000), call(42800), call(45600)] });
+  commitCards(root, T, 'pack', [putCard(root, ['f1-a-01'], 'g')]);
+  shape(costFT(root), { exit: 0, mode: 'from-transcripts' });
+  const ro = readJ(unitFile(root)).roles.child;
+  assert.equal(ro.compactions, 1);
+  assert.equal(ro.g, 2800, 'g = the mean of the positive steps only');
+  // two research tasks of known tokens: the sample sd (n - 1), not the population sd
+  const A = sid(72), B = sid(73);
+  const rows = [
+    row('f1-research', { state: 'committed', step: 'bound', epoch: 1, reason: 'first', session: A, attempts: [att('f1-research', 1, { session: A })] }),
+    row('f2-research', { field: 'f2', question_ids: ['f2-a-01'], state: 'committed', step: 'bound', epoch: 1, reason: 'first', session: B, attempts: [att('f2-research', 1, { session: B })] }),
+  ];
+  const r2 = makeRoot({ rows });
+  const ca = [call(100000)];
+  const cb = [call(300000)];
+  writeT(sessionFile(r2, A), { sessionId: A, cwd: folderOf(r2, 'f1-research', 1), calls: ca });
+  writeT(sessionFile(r2, B), { sessionId: B, cwd: folderOf(r2, 'f2-research', 1), calls: cb });
+  commitCards(r2, 'f1-research', 'pack', [putCard(r2, ['f1-a-01'], 'h')]);
+  commitCards(r2, 'f2-research', 'pack', [putCard(r2, ['f2-a-01'], 'i')]);
+  shape(costFT(r2), { exit: 0, mode: 'from-transcripts' });
+  const u = readJ(unitFile(r2)).units['stage:research'];
+  assert.equal(u.n, 2);
+  assert.equal(u.mean, (tokensOf(ca) + tokensOf(cb)) / 2);
+  closeTo(u.sd, (tokensOf(cb) - tokensOf(ca)) / Math.SQRT2, 'sample sd of two values');
+});
+
+test('T11b from-transcripts: a card whose bytes or commit-record sha256 do not match, or an unreadable commit record, makes the run untrusted and is listed', () => {
+  // U5-K-1. Each case starts from a trusted one-card world and breaks one thing.
+  const T = 'f1-research';
+  const build = (n) => {
+    const S = sid(80 + n);
+    const root = makeRoot({ rows: [row(T, { state: 'committed', step: 'bound', epoch: 1, reason: 'first', session: S, attempts: [att(T, 1, { session: S })] })] });
+    writeT(sessionFile(root, S), { sessionId: S, cwd: folderOf(root, T, 1), calls: stepCalls(70000, 2800, 5) });
+    const c = putCard(root, ['f1-a-01'], 'k' + n);
+    commitCards(root, T, 'pack', [c]);
+    return { root, c };
+  };
+  const ok = build(0);
+  shape(costFT(ok.root), { exit: 0, mode: 'from-transcripts' });
+  assert.equal(readJ(unitFile(ok.root)).trusted, true);
+  const recPath = (root) => path.join(root, 'store', 'commits', `${T}.pack.json`);
+  const cases = [
+    ['edited card bytes', (w) => { const f = path.join(w.root, 'store', 'objects', w.c.id + '.json'); fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('synthetic quote', 'synthetic QUOTE')); }, { card: true }],
+    ['record names another sha256', (w) => { const rec = readJ(recPath(w.root)); rec.outputs[0].sha256 = '1'.repeat(64); fs.writeFileSync(recPath(w.root), JSON.stringify(rec)); }, { card: true }],
+    ['card object removed', (w) => { fs.rmSync(path.join(w.root, 'store', 'objects', w.c.id + '.json')); }, { card: true }],
+    ['unparseable commit record', (w) => { fs.writeFileSync(recPath(w.root), 'not json'); }, { step: true }],
+  ];
+  cases.forEach(([label, damage, kind], i) => {
+    const w = build(i + 1);
+    damage(w);
+    const r = costFT(w.root);
+    shape(r, { exit: 2, mode: 'from-transcripts' });
+    assert.ok(reasonCodes(r).includes('untrusted'), label);
+    const u = readJ(unitFile(w.root));
+    assert.equal(u.trusted, false, label + ': not trusted');
+    assert.equal(u.missing.length, 1, label + ': one entry says what could not be read');
+    assert.equal(u.missing[0].task, T);
+    if (kind.card) assert.deepEqual([u.missing[0].card, u.missing[0].why], [w.c.id, 'card-unreadable'], label);
+    else assert.deepEqual([u.missing[0].step, u.missing[0].why], ['pack', 'commit-record-unreadable'], label);
+  });
+});
+
+test('T11c compute reads the default inputs beside the script only; a cost-inputs.json one folder up is ignored', () => {
+  // U5-K-3. A copy of the script and the library under <scratch>/a/b/, a bogus inputs file in <scratch>/a/.
+  const d = scratch('ci-');
+  const dir = path.join(d, 'a', 'b');
+  fs.mkdirSync(dir, { recursive: true });
+  for (const f of ['cost.mjs', 'lib.mjs', 'cost-inputs.json']) fs.copyFileSync(path.join(TCB, f), path.join(dir, f));
+  fs.writeFileSync(path.join(d, 'a', 'cost-inputs.json'), '{}');
+  const r = spawnSync(process.execPath, [path.join(dir, 'cost.mjs'), 'compute'], { encoding: 'utf8', cwd: d, windowsHide: true, shell: false });
+  const lines = (r.stdout ?? '').split('\n').filter((l) => l !== '');
+  assert.equal(lines.length, 1, r.stderr);
+  const j = JSON.parse(lines[0]);
+  assert.equal(r.status, 0, 'the file beside the script is used: ' + lines[0].slice(0, 300));
+  assert.equal(j.mode, 'compute');
+});
+
 test('T11 from-transcripts: t_q and k_q from the card split; no_estimate; the card unit', () => {
   const T = 'f1-research';
   const CHILD = sid(41);

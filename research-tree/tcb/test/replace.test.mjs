@@ -571,6 +571,20 @@ test('T5 fence with a READY of the current epoch: ready-wins for a failure, neve
     expectExit(run(root, 'fence', { task: RES, epoch: 1, reason: 'stall', tick: 4, boot: BOOT_A }), 0);
     assert.equal(getRow(root, RES).epoch, 2);
   });
+  // Review U1-F7: a schema-valid READY of another epoch (2) in the epoch-1 folder is not this
+  // attempt's READY (R7/M6): the stall fence applies.
+  await t.test('a schema-valid READY of another epoch (2) in wt/<task>-e1 does not count: the fence applies', async (t2) => {
+    const w = mk();
+    t2.after(w.cleanup);
+    const { root } = w;
+    table(root, [boundRow()]);
+    put(root, `wt/${RES}-e1/staging/READY.json`, ready(2));
+    const j = run(root, 'fence', { task: RES, epoch: 1, reason: 'stall', tick: 4, boot: BOOT_A });
+    expectExit(j, 0);
+    assert.ok(!codes(j).includes('ready-wins'), JSON.stringify(j.reasons));
+    assert.equal(getRow(root, RES).epoch, 2);
+    assert.equal(ofKind(root, 'fence').length, 1);
+  });
   await t.test('a torn READY does not count: the fence applies', async (t2) => {
     const w = mk();
     t2.after(w.cleanup);
@@ -594,6 +608,51 @@ test('T5 fence with a READY of the current epoch: ready-wins for a failure, neve
     assert.equal(r.restarts, 1);
     assert.equal(r.fails[0].class, 'tainted');
     assert.equal(r.fails[0].host, false);
+  });
+});
+
+test('T5b (M6) a READY of the current epoch wins over every reason but first and tainted, a planned hand-over included', async (t) => {
+  const ready = JSON.stringify({ kind: 'ready', task: RES, epoch: 1, step: 'pack' });
+  const owner = (root) => led(root, 'owner', { data: { act: 'drop', subject: RES, quote: 'drop this task' } });
+  for (const reason of ['handover', 'memory', 'cut', 'drop']) {
+    await t.test(`${reason} with a valid READY of epoch 1 -> exit 5 ready-wins, row byte-identical, one incident, no fence line`, async (t2) => {
+      const w = mk();
+      t2.after(w.cleanup);
+      const { root } = w;
+      table(root, [boundRow()]);
+      if (reason === 'drop') owner(root);
+      put(root, `wt/${RES}-e1/staging/READY.json`, ready);
+      const tb = read(root, 'run/tasks.json');
+      const j = run(root, 'fence', { task: RES, epoch: 1, reason, boot: BOOT_A });
+      expectExit(j, 5, 'ready-wins');
+      assert.ok(tb.equals(read(root, 'run/tasks.json')), 'the row is unchanged');
+      const inc = ofKind(root, 'incident');
+      assert.equal(inc.length, 1);
+      assert.equal(inc[0].data.class, 'refusal');
+      assert.equal(ofKind(root, 'fence').length, 0);
+    });
+  }
+  await t.test('handover --dry-run with the READY predicts exit 5', async (t2) => {
+    const w = mk();
+    t2.after(w.cleanup);
+    const { root } = w;
+    table(root, [boundRow()]);
+    put(root, `wt/${RES}-e1/staging/READY.json`, ready);
+    const h = treeHash(root);
+    const j = run(root, 'fence', { task: RES, epoch: 1, reason: 'handover', boot: BOOT_A, dry: true });
+    expectExit(j, 5, 'ready-wins');
+    assert.equal(treeHash(root), h);
+  });
+  await t.test('handover without a READY is applied: epoch 2, handovers 1', async (t2) => {
+    const w = mk();
+    t2.after(w.cleanup);
+    const { root } = w;
+    table(root, [boundRow()]);
+    expectExit(run(root, 'fence', { task: RES, epoch: 1, reason: 'handover', boot: BOOT_A }), 0);
+    const r = getRow(root, RES);
+    assert.equal(r.epoch, 2);
+    assert.equal(r.step, 'fenced');
+    assert.equal(r.handovers, 1);
   });
 });
 

@@ -354,10 +354,21 @@ async function decide(env) {
     const subject = target.kind === 'plan' ? 'analysis-plan' : `protocol:${target.field}`;
     const want = clip500(draft.approval.quote);
     const after = last ? last.seq : 0;
-    const found = lines.some(
+    const owner = lines.filter(
       (l) => l.kind === 'owner' && l.data && l.data.act === 'approve' && l.data.subject === subject && clip500(l.data.quote) === want && l.seq > after,
     );
-    if (!found) add('approval-unrecorded', { subject, after_seq: after });
+    // An owner line that names the content it approved (`draft_sha256`: the sha256 of the canonical draft without its `approval`
+    // field) covers only that content (U5-PF-1). A line without the field is the contract's current shape and is not bound.
+    let content = null;
+    try {
+      const { approval: _approval, ...rest } = draft;
+      content = lib.sha256hex(lib.canonicalize(rest));
+    } catch {
+      content = null;
+    }
+    const covers = (l) => l.data.draft_sha256 === undefined || l.data.draft_sha256 === content;
+    if (owner.length === 0) add('approval-unrecorded', { subject, after_seq: after });
+    else if (!owner.some(covers)) add('approval-unrecorded', { subject, after_seq: after, why: 'draft-changed-after-approval' });
   }
 
   if (reasons.length > 0) throw new Out(1, reasons);

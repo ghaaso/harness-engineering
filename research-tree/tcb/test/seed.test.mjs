@@ -376,7 +376,7 @@ test('T7 with withSentence every class returns a sentence with cites [] and the 
     assert.deepEqual(Object.keys(o.sentence).sort(), SENTENCE_KEYS, cls);
     assert.deepEqual(o.sentence.cites, []);
     assert.equal(o.sentence.kind, 'fact');
-    assert.equal(o.sentence.sid, 's1');
+    assert.match(o.sentence.sid, /^s[0-9]+$/);
     assert.ok(o.sentence.text.split(/\s+/).length <= 80);
     assert.deepEqual(Object.keys(o).sort(), ['card', 'class', 'from_card', 'ok', 'operator', 'seed_id', 'sentence', 'window'], cls);
     if (!needsSentence(cls)) {
@@ -385,6 +385,33 @@ test('T7 with withSentence every class returns a sentence with cites [] and the 
       assert.ok(!('sentence' in bare), `${cls} has no sentence without withSentence`);
     }
   }
+});
+
+test('T7b R42/R43: the seeds of a batch do not share one sentence: phrasing and sid vary with the rng, the facts stay', () => {
+  const texts = new Set();
+  const sids = new Set();
+  for (const seed of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j']) {
+    const o = mk('J1', seed);
+    texts.add(o.sentence.text);
+    sids.add(o.sentence.sid);
+    const m = o.card.measured;
+    for (const part of [m.approach_id, m.measure, String(m.value), m.unit]) assert.ok(o.sentence.text.includes(part), `the sentence keeps "${part}": ${o.sentence.text}`);
+  }
+  assert.ok(texts.size >= 3, 'phrasings: ' + texts.size);
+  assert.ok(sids.size >= 3, 'sids: ' + sids.size);
+  // the same rng gives the same sentence (a batch stays reproducible)
+  assert.equal(mk('J1', 'a').sentence.text, mk('J1', 'a').sentence.text);
+});
+
+test('T2b S1 redraws a quote that happens to sit in the window: the result is never a substring of it', () => {
+  const free = mk('S1', 'x', { window: 'nothing of interest here' });
+  assert.equal(free.ok, true);
+  const q1 = free.card.quote;
+  const win = 'before ' + q1.toUpperCase() + ' after';
+  const again = mk('S1', 'x', { window: win });
+  assert.equal(again.ok, true);
+  assert.notEqual(again.card.quote, q1, 'the first draw sat in the window and was drawn again');
+  assert.ok(!win.toLowerCase().includes(again.card.quote), 'the invented quote is not in the window');
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -863,6 +890,39 @@ test('T18 escape counts seeds answered confirmed; plants pool the certificates w
   assert.equal(q.plants.contra_found, 2);
   assert.ok(q.plants.lower <= 5 / 6 && q.plants.upper >= 5 / 6);
   assert.ok(q.plants.contra_lower <= 1 && q.plants.contra_upper >= 1);
+});
+
+test('T18b plants pool one certificate per task, the latest by the ledger; contra_k counts only the tasks that have one', () => {
+  const root = makeRoot();
+  storeQual(root, { 'b1-1': fakeBatch(['S1'], {}) });
+  const X1 = putObj(root, { kind: 'certificate', task: 't1', plants: { k: 3, found: 1, contra_found: 0 }, session_label: 'first', result: 'certified' });
+  const X2 = putObj(root, { kind: 'certificate', task: 't1', plants: { k: 3, found: 3, contra_found: 1 }, session_label: 'second', result: 'certified' });
+  putObj(root, { kind: 'certificate', task: 't2', plants: { k: 3, found: 2, contra_found: 1 }, session_label: 'only', result: 'certified' });
+  // the ledger names the certificate with the smaller id last: the ledger decides, not the id
+  const [small, big] = [X1, X2].sort((a, b) => (a.id < b.id ? -1 : 1));
+  addLedger(root, 'certificate', { id: big.id, result: 'certified' }, { task: 't1', epoch: 1 });
+  addLedger(root, 'certificate', { id: small.id, result: 'certified' }, { task: 't1', epoch: 1 });
+  const pl = (n, ag) => ({ task: n, k: 3, plants: [{ plant_id: 'pl_' + hex16(n + 1), file: 'a.md', locator: 'line 1', card_id: 'c_' + hex16(n), against_hope: ag, original_sha: ZERO, planted_sha: ZERO }] });
+  fs.writeFileSync(path.join(root, 'sealed', 'plants', 't1.json'), canon(pl('t1', true)) + '\n');
+  fs.writeFileSync(path.join(root, 'sealed', 'plants', 't2.json'), canon(pl('t2', true)) + '\n');
+  fs.writeFileSync(path.join(root, 'sealed', 'plants', 't3.json'), canon(pl('t3', true)) + '\n'); // planted, no certificate yet
+  shape(scoreRun(root), 'seed', 2);
+  const q = readQual(root);
+  const t1 = small === X1 ? { k: 3, found: 1, contra: 0 } : { k: 3, found: 3, contra: 1 };
+  assert.equal(q.plants.k, t1.k + 3, 'one certificate for t1 plus the one of t2');
+  assert.equal(q.plants.found, t1.found + 2);
+  assert.equal(q.plants.contra_found, t1.contra + 1);
+  assert.equal(q.plants.contra_k, 2, 't3 has no certificate: its against-hope plant is not in the denominator');
+  assert.ok(q.plants.contra_found <= q.plants.contra_k, 'a rate over one set cannot exceed 1');
+  // without any ledger line naming them, the greater id stands
+  const root2 = makeRoot();
+  storeQual(root2, { 'b1-1': fakeBatch(['S1'], {}) });
+  const Y1 = putObj(root2, { kind: 'certificate', task: 't1', plants: { k: 3, found: 1, contra_found: 0 }, session_label: 'first', result: 'certified' });
+  const Y2 = putObj(root2, { kind: 'certificate', task: 't1', plants: { k: 3, found: 3, contra_found: 1 }, session_label: 'second', result: 'certified' });
+  shape(scoreRun(root2), 'seed', 2);
+  const q2 = readQual(root2);
+  assert.equal(q2.plants.k, 3, 'two certificates of one task are one');
+  assert.equal(q2.plants.found, (Y1.id > Y2.id ? Y1 : Y2).value.plants.found);
 });
 
 test('T19 score refuses with exit 2 and leaves qualification.json as it was: no key, no transcript, no verdicts, no seed items', () => {

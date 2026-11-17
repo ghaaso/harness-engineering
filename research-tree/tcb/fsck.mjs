@@ -561,7 +561,7 @@ async function main(ctx) {
   const statusLed = await readJsonlOr(L.cardStatus);
   const witnessLed = await readJsonlOr(L.witness);
   let store = await storeChecks(root, L, table, led1, statusLed, witnessLed);
-  const status = checkStatus(led1.records, store.objs, statusLed, witnessLed);
+  let status = checkStatus(led1.records, store.objs, statusLed, witnessLed);
   const tcb = checkTcb(root, coord);
   const claude = await checkClaude(root, L, table);
   const frozen = checkFrozen(root, L, led1.records);
@@ -588,12 +588,22 @@ async function main(ctx) {
     let head = H1;
     const led2 = await readJsonlOr(L.ledger);
     const last2 = led2.records.length ? led2.records[led2.records.length - 1] : null;
-    if (last2 && (last2.seq !== H1.seq || last2.hash !== H1.hash)) {
-      // The head moved: re-verify the chain and recheck objects, records and keys over everything the
+    // promote and witness append their status lines and then their ledger line, under the lock; phase 1
+    // read the ledger before the status files without it, so it can meet status lines whose ledger
+    // line came later (U2-F7). Under the lock both status files are read again.
+    const statusLed2 = await readJsonlOr(L.cardStatus);
+    const witnessLed2 = await readJsonlOr(L.witness);
+    const sameJsonl = (x, y) => JSON.stringify([x.records, x.badLines, x.torn]) === JSON.stringify([y.records, y.badLines, y.torn]);
+    const headMoved = !!(last2 && (last2.seq !== H1.seq || last2.hash !== H1.hash));
+    const statusMoved = !sameJsonl(statusLed, statusLed2) || !sameJsonl(witnessLed, witnessLed2);
+    if (headMoved || statusMoved) {
+      // Re-verify the chain and recheck objects, records, keys and status coverage over everything the
       // new lines can name (a superset of "the lines after H1"), so a pass covers every earlier line.
       const table2 = await lib.readTasks(root);
-      store = await storeChecks(root, L, table2, led2, statusLed, witnessLed);
-      head = { seq: last2.seq, hash: last2.hash };
+      const ledNow = last2 ? led2 : led1;
+      store = await storeChecks(root, L, table2, ledNow, statusLed2, witnessLed2);
+      status = checkStatus(ledNow.records, store.objs, statusLed2, witnessLed2);
+      if (headMoved) head = { seq: last2.seq, hash: last2.hash };
     }
     const checks = {
       objects: { n: store.objs.n, failing: store.objs.failing },

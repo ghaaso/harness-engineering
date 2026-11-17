@@ -39,6 +39,6 @@ Write `staging/review.json`: `kind: "review"`, `field`, `task` (`{{task}}`), `pa
 
 ## Finishing a step
 When a step's files are complete and valid, write `staging/READY.json` last: `{"kind":"ready","task":"{{task}}","epoch":{{epoch}},"step":"<step name>"}`. If you cannot finish because a source or a check you need is missing, write `{"kind":"repair","task":"{{task}}","epoch":{{epoch}},"question_ids":[...],"missing":"source"}` (missing: source, snapshot, card, check or other) and end your turn. When the coordinator tells you to commit, write the valid files you have, then READY, and stop: start nothing new.
-Role `control`: you start no readers (no Agent calls) and work with the tools you have, in the same forms, until the coordinator tells you to stop.
+If `in/reader-brief.md` is not in your folder, you have no readers: you start none (no Agent calls) and work with the tools you have, in the same forms, until the coordinator tells you to stop.
 
 Your last line of every turn is exactly `TURN-END {{field}}`, and nothing follows it: no other note, summary or request, in that line or after it.

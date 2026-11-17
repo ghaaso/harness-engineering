@@ -681,14 +681,15 @@ async function discover({ root, table, coord, troot }) {
 }
 
 function readCommits(root) {
-  // store/commits/<task>.<step>.json -> {task: {step: record}}
+  // store/commits/<task>.<step>.json -> {commits: {task: {step: record}}, unreadable: [{task, step}]}
   const dir = path.join(root, 'store', 'commits');
   const out = {};
+  const unreadable = [];
   let names = [];
   try {
     names = fs.readdirSync(dir).sort();
   } catch {
-    return out;
+    return { commits: out, unreadable };
   }
   for (const name of names) {
     const m = /^([^.]+)\.([^.]+)\.json$/.exec(name);
@@ -697,27 +698,35 @@ function readCommits(root) {
       const rec = lib.readJson(path.join(dir, name));
       (out[m[1]] ||= {})[m[2]] = rec;
     } catch {
-      // an unreadable commit record gives no cards
+      // an unreadable commit record gives no cards; it is reported, not dropped silently (U5-K-1)
+      unreadable.push({ task: m[1], step: m[2] });
     }
   }
-  return out;
+  return { commits: out, unreadable };
 }
 
-function cardsOf(root, taskCommits) {
-  // unique committed card ids of a task, in record order, with the stored card (a card that cannot be read is dropped)
+function cardsOf(root, taskCommits, bad = []) {
+  // unique committed card ids of a task, in record order, with the stored card. A card is read through its commit record:
+  // the object's bytes must hash to its name and to the record's sha256. A card that fails either is not counted and is
+  // pushed to `bad` (the caller marks the run untrusted: t_q and k_q would shift without a trace, U5-K-1).
   const ids = [];
+  const shaOf = new Map();
   for (const step of sortedKeys(taskCommits || {})) {
     for (const o of taskCommits[step]?.outputs || []) {
-      if (o && o.kind === 'card' && typeof o.id === 'string' && !ids.includes(o.id)) ids.push(o.id);
+      if (o && o.kind === 'card' && typeof o.id === 'string' && !ids.includes(o.id)) {
+        ids.push(o.id);
+        shaOf.set(o.id, o.sha256);
+      }
     }
   }
   const cards = [];
   for (const id of ids) {
     try {
-      const value = lib.readJson(path.join(root, 'store', 'objects', `${id}.json`));
+      const value = lib.getObject(root, id);
+      if (lib.sha256hex(lib.canonicalize(value)) !== shaOf.get(id)) throw new Error('record sha256 differs');
       cards.push({ id, value, bytes: Buffer.byteLength(lib.canonicalize(value), 'utf8') });
     } catch {
-      // unreadable card: not counted
+      bad.push(id);
     }
   }
   return cards;
@@ -787,7 +796,8 @@ function unitOf(values, weighted) {
   return { mean: mean(values), sd: sampleSd(values), n: values.length, weighted_mean: mean(weighted) };
 }
 
-export function buildUnitCosts({ sessions, missing, leads, rows, commits, root, protocolIds, meter, W, shareMax, now }) {
+export function buildUnitCosts({ sessions, missing: missingIn, leads, rows, commits, unreadable = [], root, protocolIds, meter, W, shareMax, now }) {
+  const missing = [...missingIn];
   const roles = buildRoles(sessions, leads, rows);
   const total = sessions.reduce((a, s) => a + s.tokens.total, 0);
 
@@ -829,7 +839,9 @@ export function buildUnitCosts({ sessions, missing, leads, rows, commits, root, 
   for (const name of Object.keys(task).sort()) {
     const r = rowOf[name];
     if (!r || r.stage !== 'research') continue;
-    const cards = cardsOf(root, commits[name]);
+    const bad = [];
+    const cards = cardsOf(root, commits[name], bad);
+    for (const id of bad) missing.push({ task: name, epoch: null, card: id, why: 'card-unreadable' });
     if (!cards.length) {
       unattributedTasks.add(name);
       continue;
@@ -849,6 +861,11 @@ export function buildUnitCosts({ sessions, missing, leads, rows, commits, root, 
     }
   }
   if (cardV.length) units.card = unitOf(cardV, cardW);
+
+  for (const u of unreadable) {
+    const r = rowOf[u.task];
+    if (r && r.stage === 'research') missing.push({ task: u.task, epoch: null, step: u.step, why: 'commit-record-unreadable' });
+  }
 
   const noEstimate = [...new Set(protocolIds)].filter((q) => !tq[q]).sort();
 
@@ -888,7 +905,9 @@ export function buildUnitCosts({ sessions, missing, leads, rows, commits, root, 
     generated_at: now,
     trusted,
     unattributed_share: share,
-    missing: [...missing].sort((x, y) => (x.task < y.task ? -1 : x.task > y.task ? 1 : x.epoch - y.epoch)),
+    missing: [...missing].sort(
+      (x, y) => (x.task < y.task ? -1 : x.task > y.task ? 1 : (x.epoch ?? -1) - (y.epoch ?? -1)) || String(x.card ?? x.step ?? '').localeCompare(String(y.card ?? y.step ?? '')),
+    ),
     no_estimate: noEstimate,
     roles,
     units: sortedUnits,
@@ -942,7 +961,7 @@ async function runFromTranscripts(flags, ctx, now) {
   if (live.length === 0) {
     return { exit: 2, mode: 'from-transcripts', dry_run: dryRun, result: { missing: found.missing }, reasons: [{ code: 'no-transcripts', detail: { missing: found.missing } }] };
   }
-  const commits = readCommits(root);
+  const { commits, unreadable } = readCommits(root);
   const protocolIds = [];
   for (const field of [...new Set(found.rows.map((r) => r.field).filter(Boolean))].sort()) {
     try {
@@ -959,7 +978,7 @@ async function runFromTranscripts(flags, ctx, now) {
 
   const unit = buildUnitCosts({
     sessions: found.sessions, missing: found.missing, leads: found.leads, rows: found.rows,
-    commits, root, protocolIds, meter, W, shareMax, now,
+    commits, unreadable, root, protocolIds, meter, W, shareMax, now,
   });
   const bytes = JSON.stringify(unit, null, 2) + '\n';
   const sha = lib.sha256hex(bytes);
@@ -1038,8 +1057,7 @@ async function main(ctx) {
 }
 
 function defaultInputs() {
-  const a = path.join(HERE, '..', 'cost-inputs.json');
-  if (fs.existsSync(a)) return a;
+  // only the file beside the script: a file one folder up is outside tcb/ and has no single writer (U5-K-3)
   return path.join(HERE, 'cost-inputs.json');
 }
 

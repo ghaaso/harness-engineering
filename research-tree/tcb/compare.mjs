@@ -10,6 +10,7 @@
 // The figures are computed from committed objects only (store/commits -> store/objects, hash re-checked). The transcripts are
 // parsed before the run lock is taken (CONTRACT 2.1: no transcript parse while run.lock is held).
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as lib from './lib.mjs';
@@ -294,17 +295,19 @@ async function armFigures(root, arm, ctx) {
 function callsOfTask(task, rows, tctx) {
   const row = rows.get(task);
   const calls = [];
-  let missing = false;
+  // A task with no row, or an attempt with no transcript, has nothing to count: missing, never zero tokens.
+  let missing = !row;
   for (const a of arr(row && row.attempts)) {
     const files = [];
-    if (typeof a.session === 'string') {
+    let have = false;
+    if (isObj(a) && typeof a.session === 'string') {
       const t = lib.sessionTranscripts(tctx.root_t, a.session);
-      if (!t.main) {
-        missing = true;
-        continue;
+      if (t.main) {
+        files.push(t.main, ...t.helpers);
+        have = true;
       }
-      files.push(t.main, ...t.helpers);
-    } else if (typeof a.folder === 'string') {
+    }
+    if (!have && isObj(a) && typeof a.folder === 'string') {
       let found = [];
       try {
         found = lib.transcriptsForFolder(tctx.root_t, path.join(tctx.root, ...String(a.folder).split('/')));
@@ -314,7 +317,12 @@ function callsOfTask(task, rows, tctx) {
       for (const f of found) {
         files.push(f.path);
         files.push(...lib.sessionTranscripts(tctx.root_t, f.sessionId).helpers);
+        have = true;
       }
+    }
+    if (!have) {
+      missing = true;
+      continue;
     }
     for (const f of files) {
       if (!tctx.parsed.has(f)) tctx.parsed.set(f, lib.parseTranscript(f));
@@ -437,13 +445,14 @@ async function blindingOf(root, scorerAbs, planSha, arms, th) {
   const invalid = () => ({ blinding: { status: 'not_run', reason: 'scores-invalid' }, rubric: null, reasons: ['scores-invalid'] });
   if (!isObj(data) || !Array.isArray(data.scores) || data.scores.length === 0) return invalid();
   const keyItems = isObj(key.items) ? key.items : {};
+  const keyArms = new Set(Object.values(keyItems).map((x) => (isObj(x) ? x.arm : null)));
   const seen = new Set();
   const perArm = new Map();
   let right = 0;
   for (const s of data.scores) {
     if (!isObj(s) || typeof s.item !== 'string' || !(s.item in keyItems) || seen.has(s.item)) return invalid();
     seen.add(s.item);
-    if (!isObj(s.rubric) || typeof s.guess_arm !== 'string') return invalid();
+    if (!isObj(s.rubric) || typeof s.guess_arm !== 'string' || !keyArms.has(s.guess_arm)) return invalid();
     let total = 0;
     for (const crit of RUBRIC) {
       const v = s.rubric[crit];
@@ -455,6 +464,8 @@ async function blindingOf(root, scorerAbs, planSha, arms, th) {
     if (!perArm.has(arm)) perArm.set(arm, []);
     perArm.get(arm).push(total);
   }
+  // The scorer must answer every item of the key: a partial result would give a rate over the items it chose to return.
+  if (seen.size !== Object.keys(keyItems).length) return invalid();
   const n = data.scores.length;
   const rate = right / n;
   const threshold = th.get('blind_fail_rate');
@@ -665,8 +676,19 @@ async function computeAnon(env) {
     if (a.status === 'committed' && a.review) live.push(a);
   }
   if (live.length === 0) throw fail('no-arm-committed', 2, { arms: names });
+  // The key is created once and never replaced: blinding a part of the arms would lock the rest out for this plan (CM-5).
+  const notCommitted = names.filter((n) => !live.some((a) => a.name === n));
+  if (notCommitted.length > 0) throw fail('arms-not-committed', 2, { arms: notCommitted });
+  const keyPath = path.join(root, 'sealed', 'blind', `${bound.sha256.slice(0, 12)}.json`);
+  // The seed is drawn at random and lives only in the sealed key: the plan hash, the arm names and lib.rng are all
+  // readable by the coordinator, so a seed derived from them would let it recompute the order (CM-4). A repeat reuses it.
+  let seed = null;
+  if (fs.existsSync(keyPath)) {
+    const old = await lib.readJson(keyPath);
+    if (isObj(old) && old.plan_sha256 === bound.sha256 && typeof old.rng_seed === 'string' && /^[0-9a-f]{64}$/.test(old.rng_seed)) seed = old.rng_seed;
+  }
+  if (seed === null) seed = crypto.randomBytes(32).toString('hex');
   const scrub = scrubber(names.flatMap((n) => tasksOfEntry(armTasks[n])));
-  const seed = lib.sha256hex(`blind:${bound.sha256}`);
   const order = lib.rng(seed).shuffle(live.map((a) => a.name).sort());
   const byName = new Map(live.map((a) => [a.name, a]));
   const files = new Map();
@@ -681,7 +703,7 @@ async function computeAnon(env) {
   const index = lib.canonicalize({ schema_version: 1, items: ids, arm_names: names.filter((n) => byName.has(n)) }) + '\n';
   files.set(path.join(root, 'views', 'blind', 'index.json'), index);
   const key = lib.canonicalize({ schema_version: 1, plan_sha256: bound.sha256, rng_seed: seed, items: keyItems }) + '\n';
-  return { files, keyPath: path.join(root, 'sealed', 'blind', `${bound.sha256.slice(0, 12)}.json`), key, ids };
+  return { files, keyPath, key, ids };
 }
 
 // ---------------------------------------------------------------------------------------------- main
@@ -698,6 +720,15 @@ async function recordTamper({ root, ctx, ce, err, now, proc, retries }) {
   } catch {
     // best effort (CONTRACT 1.4: only when the ce is current and the ledger tail verifies)
   }
+}
+
+// The ledger head the figures were computed against (CM-2): anything appended since means the plan binding may be stale.
+const headOf = (lines) => (lines.length ? `${lines.length}:${lines[lines.length - 1].hash}` : '0');
+
+async function assertLedgerUnmoved(root, head) {
+  const led = await lib.readLedger(root);
+  if (headOf(led.lines) !== head) throw fail('lock-lost', 75, { why: 'the ledger moved while the figures were computed; run again' });
+  return led;
 }
 
 const sameBytes = (file, text) => fs.existsSync(file) && fs.readFileSync(file, 'utf8') === text;
@@ -728,8 +759,10 @@ async function main(ctx) {
   if (retries !== undefined) lockOpts.retries = retries;
 
   let work;
+  let head = '0';
   try {
     const lines = await loadLedger(root);
+    head = headOf(lines);
     const bound = await bindPlan(root, lines);
     if (!bound.plan) throw fail('plan-missing', 2, { file: 'plan/analysis-plan.json' });
     if (mode === 'anon' && !bound.frozen) throw fail('plan-not-frozen', 2, { reasons: bound.reasons });
@@ -747,6 +780,7 @@ async function main(ctx) {
     const result = { plan_sha256: work.bound.sha256, items: work.ids, n_items: work.ids.length };
     if (dry) return { exit: 0, mode, dry_run: true, result, reasons: [] };
     return lib.withRunLock(root, lockOpts, async (h) => {
+      await assertLedgerUnmoved(root, head);
       if (fs.existsSync(work.keyPath) && !sameBytes(work.keyPath, work.key)) {
         throw fail('blind-key-differs', 1, { path: path.relative(root, work.keyPath).split(path.sep).join('/') });
       }
@@ -774,9 +808,9 @@ async function main(ctx) {
   if (dry) return { exit: 0, mode, dry_run: true, result, reasons: [] };
   const out = path.join(root, 'views', 'comparison.json');
   return lib.withRunLock(root, lockOpts, async (h) => {
+    const led = await assertLedgerUnmoved(root, head);
     const same = sameBytes(out, text);
     if (!same) await lib.writeAtomic(out, text);
-    const led = await lib.readLedger(root);
     const prev = lib.lastLine(led.lines, 'check', (l) => l.data && l.data.check === 'compare' && l.data.subject === 'score');
     if (!same || !prev) {
       await lib.appendLedger(root, h, {

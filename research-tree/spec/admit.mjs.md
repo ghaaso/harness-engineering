@@ -87,7 +87,10 @@ admissible, 6 if every candidate is refused, 2 as above. Unknown `--task` → 1 
 R10 (all conditions, reservation over every attempt incl. zombie and post-limit spend, live
 processes incl. stop-unconfirmed), R12 (drain blocks starts), R33, R40 (missing = not-run = fail),
 R41, R44 (gate A), R45 (null threshold = reading), R55 (design-check skips the gate); §8 decisions
-17, 18, 19. Model findings F6 (count live processes, not table state), A7 (refusal changes nothing).
+17, 18, 19, 40. Model findings F6 (count live processes, not table state), A7 (refusal changes
+nothing); second model check M4 (rows admitted but not yet started are reservations): already
+implemented by condition 6 through `lib.slotCount` (an admitted current attempt always counts one
+slot, CONTRACT §4.10), so this spec is unchanged apart from the test T6c.
 
 ## Behaviours (tests)
 `decide` tests call the function with literal facts; `check` tests run the script on a temp root.
@@ -103,6 +106,10 @@ R41, R44 (gate A), R45 (null threshold = reading), R55 (design-check skips the g
   slots null → `slots-unknown`; N_max 4, N_ceiling 3 → `ceiling`.
 - T6b slotCount through check: two rows at step admitted with no process and no transcript, N_max 2
   → a third candidate refused `slots-full` (each counted `unknown`, never zero).
+- T6c (M4, the model's trace) check, N_max 2: row A at epoch 2 step admitted (no process, no
+  transcript) whose attempt 1 has `stop: unconfirmed` (a zombie after a planned hand-over), row B at
+  active/stopped → B refused `slots-full` {unconfirmed 1, unknown 1}. Counting only live and
+  unconfirmed attempts would give 1 < 2 and admit B: three sessions once A and B both start.
 - T7 decide: freeMb 2000, reserve 1024, peak 1200, pending 0 → `memory`; freeMb 2300 → admitted;
   freeMb 2300 with pending 1 → `memory`.
 - T8 decide: B 10000 gate, rows spent 3000 (finished) + bound row e_task 5000 spent 1000 →

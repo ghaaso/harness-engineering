@@ -68,7 +68,10 @@ R1 (ce raised under the run lock, finding E1), R4/R6 (watcher and alarm of the o
 their next check), R12 (drain, quiescence over live processes of any epoch, raise, one-line brief),
 R28 (tcb commit recorded at init, copied at each raise), R58; decisions 4, 5, 21, 29. Model findings
 A2 (the old watcher cannot act: every write re-checks ce), A3 (quiescence counts zombies), "two
-coordinators act" (the ce fence).
+coordinators act" (the ce fence). Second model check (CONTRACT decision 40): no change here. M1
+holds already (raise kills no wake source; an old alarm, re-armed or not, ends with 64 at its next
+check after a sleep); M3's `handover` act is raised by the watcher (class 17) when a `drain` line of
+this ce exists and no slot is used, which is this script's quiescence over the table.
 
 ## Behaviours (tests)
 - T1 init on a root with only `tcb/` → every §2 folder exists, `.gitignore` has the ten lines,

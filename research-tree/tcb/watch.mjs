@@ -4,8 +4,8 @@
 //   --alarm   --root R --ce N [--sleep-ms MS] [--now ISO]
 //   --intake  --root R --ce N
 // Source of truth: CONTRACT.md (sections 1.2, 1.4, 2.1, 3.10, 4) and spec/watch.mjs.md.
-// Reads, decides and exits with the most urgent class. Counts model calls and ticks, never clock
-// differences. Transcripts are parsed before the run lock; every ledger append goes through
+// Reads, decides and exits with the most urgent class. Counts model calls and ticks; the one clock
+// difference is the one-sided pause discount of the hang count (M5, CONTRACT 1.2). Transcripts are parsed before the run lock; every ledger append goes through
 // withRunLock(ce), so the ce is re-checked inside the lock. Kills nothing (decisions 5, 29).
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,10 +18,11 @@ const SCRIPT = 'watch';
 const CLASS_SLUG = {
   10: 'reopened', 11: 'ready', 12: 'repair', 13: 'soft-limit', 14: 'checker-batch', 15: 'window-limit', 16: 'drain',
   20: 'stall', 21: 'hang', 22: 'loop', 23: 'hard-limit', 24: 'memory', 25: 'stop-unconfirmed', 26: 'common-cause',
-  27: 'tamper-seen',
+  27: 'tamper-seen', 17: 'act-due',
 };
 // CONTRACT 1.4 precedence after 64 (handled before any class).
-const PRECEDENCE = [27, 26, 25, 24, 23, 22, 21, 20, 11, 12, 10, 13, 15, 16, 14];
+const PRECEDENCE = [27, 26, 25, 24, 23, 22, 21, 20, 11, 12, 10, 13, 15, 16, 14, 17];
+const TERMINAL = new Set(['committed', 'cut', 'failed', 'dropped']);
 const isUrgent = (c) => c >= 20 && c <= 27;
 
 const F = {
@@ -126,6 +127,44 @@ function readReady(root, row, e) {
 
 function commitExists(root, task, step) {
   return exists(path.join(fileOf(root, 'commits'), `${task}.${step}.json`));
+}
+
+// M3: the act status.json's `next` names for this row (status.mjs nextOf), when it is an act the
+// coordinator can take now; null for `none`, `owner`, `audit`/`commit` (READY is class 11) and for
+// an act that can only defer (a start with no free slot, a verify before its sample is old enough).
+function rowAct(root, tr, row, { slotFree, blocked, tick, svd }) {
+  const { state, step } = row;
+  const e = row.epoch;
+  if (state === 'failed' || row.limit === true) return null; // the owner's
+  if (state === 'planned' && step === 'none') return !blocked && slotFree ? 'replace-fence' : null;
+  if ((state === 'active' || state === 'parked') && step === 'stopped') return !blocked && slotFree ? 'replace-start' : null;
+  if (step === 'fenced' || (state === 'committed' && step === 'bound')) return 'stop-request';
+  if (step === 'stop-requested') {
+    const k = state === 'committed' ? e : e - 1;
+    const target = attemptOfSafe(row, k);
+    const stop = target && target.stop ? target.stop : 'none';
+    let sample = null;
+    try {
+      sample = lib.readJson(path.join(root, 'run', 'stop-sample', `${row.task}-e${k}.json`));
+    } catch {
+      sample = null;
+    }
+    if (sample && Number.isInteger(sample.tick)) return tick >= sample.tick + svd ? `stop-verify@${sample.tick}` : null;
+    if (stop === 'unconfirmed') return 'stop-verify@-';
+    if (stop === 'none' || stop === 'requested') return 'stop-session';
+    return null;
+  }
+  if (step === 'admitted') {
+    let found = [];
+    try {
+      found = lib.transcriptsForFolder(tr, attemptDir(root, row, e)) ?? [];
+    } catch {
+      found = [];
+    }
+    return found.length ? 'bind' : 'start-session';
+  }
+  if (step === 'started') return 'bind';
+  return null;
 }
 
 function lockOpts(th, ce, proc, now) {
@@ -297,6 +336,14 @@ async function evaluate(env, state, facts, counted) {
   const wChildGate = th.isGate('W_star_child');
   const wChild = wChildGate ? th.get('W_star_child') : null;
 
+  // M5 (CONTRACT 1.2, decision 40): a counted tick whose wall gap since the previous evaluation is
+  // more than 2 delta is a paused tick (the PC slept) and does not count toward hang. One-sided: a
+  // missing, unparseable, negative or short gap counts the tick as usual.
+  const prevMs = typeof state.last_tick_at === 'string' ? Date.parse(state.last_tick_at) : NaN;
+  const nowMs = Date.parse(isoOf(facts.now));
+  const paused = counted && Number.isFinite(prevMs) && Number.isFinite(nowMs) && Number.isFinite(env.delta)
+    && nowMs - prevMs > 2 * env.delta;
+
   for (const row of activeRows) {
     const e = row.epoch;
     let ts = state.tasks[row.task];
@@ -349,7 +396,7 @@ async function evaluate(env, state, facts, counted) {
       }
     }
     if (newCalls > 0) ts.hang_ticks = 0;
-    else if (counted) ts.hang_ticks = num(ts.hang_ticks) + 1;
+    else if (counted && !paused) ts.hang_ticks = num(ts.hang_ticks) + 1;
 
     const ready = readReady(root, row, e);
     let readyCls = null;
@@ -439,7 +486,17 @@ async function evaluate(env, state, facts, counted) {
   }
   if (cluster.length >= 2) {
     conds.push({ cls: 26, detail: { fails: cluster } });
-    if (!runFlags.halted) appends.push({ kind: 'halt', data: { reason: 'common-cause', fails: cluster } });
+    // One halt per set of fails (review U1-F4): a fail already named by an earlier halt line does
+    // not halt again, so an owner resume takes effect while those fails are still inside W_cc. A
+    // fail no halt has named yet (a new common cause) halts again.
+    const failKey = (f) => `${f.task}|${f.epoch ?? null}|${f.class ?? null}|${f.tick}`;
+    const named = new Set();
+    for (const l of lines) {
+      if (l.kind !== 'halt' || !l.data || !Array.isArray(l.data.fails)) continue;
+      for (const f of l.data.fails) if (f) named.add(failKey(f));
+    }
+    const fresh = cluster.some((f) => !named.has(failKey(f)));
+    if (!runFlags.halted && fresh) appends.push({ kind: 'halt', data: { reason: 'common-cause', fails: cluster } });
   }
 
   // f. The coordinator's window (R12, R50), parsed incrementally through coord_file.
@@ -483,6 +540,32 @@ async function evaluate(env, state, facts, counted) {
   const cands = ((await lib.intakeCandidates(root)) ?? []).filter((c) => !c.in_flight).length;
   if (cands >= batchSize || (cands > 0 && activeRows.length === 0)) conds.push({ cls: 14, detail: { candidates: cands, batch_size: batchSize } });
 
+  // j. Act due (M3, CONTRACT decision 40): the planner's own predicate, so a live watcher cannot
+  // stay silent while work waits. Keyed and acknowledged like every class (step 5).
+  const rows = table.tasks ?? [];
+  let used = Infinity;
+  try {
+    const sc = await lib.slotCount(rows, [], tr, { root }); // empty process list: no PowerShell per tick
+    used = num(sc && sc.live) + num(sc && sc.unknown) + num(sc && sc.unconfirmed);
+  } catch (x) {
+    if (x && x.exit === 3) throw x;
+    used = Infinity;
+  }
+  const slotFree = used < num(th.get('N_max'), 0);
+  const blocked = runFlags.halted === true || runFlags.draining === true;
+  const svd = num(th.get('stop_verify_deltas'), 0);
+  let rowActs = 0;
+  for (const row of rows) {
+    const act = rowAct(root, tr, row, { slotFree, blocked, tick, svd });
+    if (!act) continue;
+    rowActs += 1;
+    conds.push({ cls: 17, task: row.task, epoch: row.epoch, act, detail: { act } });
+  }
+  if (runFlags.draining === true && used === 0) conds.push({ cls: 17, act: 'handover', detail: { act: 'handover' } });
+  if (rows.length > 0 && rowActs === 0 && rows.every((r) => TERMINAL.has(r.state))) {
+    conds.push({ cls: 17, act: 'run-terminal', detail: { act: 'run-terminal' } });
+  }
+
   // i. Intake: spawned detached, never awaited (R4).
   if (!flags['no-intake'] && activeRows.length > 0) {
     let alive = false;
@@ -496,8 +579,23 @@ async function evaluate(env, state, facts, counted) {
     if (!alive) state.intake = await spawnIntake(root, ce, proc);
   }
 
-  // 5. Events keyed by onset (CONTRACT 3.10).
-  const identOf = (c) => `${c.cls}|${c.task ?? c.sub ?? '-'}|${c.epoch ?? '-'}`;
+  // 5. Events keyed by onset (CONTRACT 3.10). Class 17 names its act in the second part.
+  const identOf = (c) => (c.cls === 17
+    ? `17|${c.task ?? '-'}:${c.act}|${c.epoch ?? '-'}`
+    : `${c.cls}|${c.task ?? c.sub ?? '-'}|${c.epoch ?? '-'}`);
+
+  // j (end). An `event` line above acked_seq whose condition has cleared no longer wakes through its
+  // own key; it is still work for the coordinator (R6 acts on ledger events after the acked seq).
+  const presentIdents = new Set(conds.map(identOf));
+  const orphans = [];
+  for (const l of lines) {
+    if (l.kind !== 'event' || !(l.seq > ackedSeq) || !l.data || typeof l.data.key !== 'string') continue;
+    const ident = l.data.key.slice(0, l.data.key.lastIndexOf('|'));
+    if (ident === '17|-:events|-' || presentIdents.has(ident)) continue;
+    orphans.push(l.seq);
+  }
+  if (orphans.length) conds.push({ cls: 17, act: 'events', detail: { act: 'events', seqs: orphans } });
+
   const present = [];
   const seenIdent = new Set();
   for (const c of conds) {
@@ -572,6 +670,7 @@ async function evaluate(env, state, facts, counted) {
   return {
     exit: classes.length ? classes[0] : 0,
     classes,
+    paused,
     reasons: classes.length
       ? due
           .filter((c) => classes.includes(c.cls))
@@ -619,7 +718,7 @@ async function runWatcher(ctx, root, flags, once) {
     state.ce = ce;
     state.pid = self.pid;
     state.start_time = self.start_time;
-    const env = { ctx, root, th, ce, proc, flags, handle };
+    const env = { ctx, root, th, ce, proc, flags, handle, delta };
     const run = once ? 'once' : 'watcher';
     let out;
     if (once) {
@@ -636,7 +735,7 @@ async function runWatcher(ctx, root, flags, once) {
     }
     return {
       exit: out.exit,
-      result: { run, classes: out.classes, ticks_total: state.ticks_total, pending: state.pending },
+      result: { run, classes: out.classes, ticks_total: state.ticks_total, pending: state.pending, paused: out.paused === true },
       reasons: out.reasons,
     };
   } finally {
@@ -664,27 +763,61 @@ async function runAlarm(ctx, root, flags) {
     previous = null;
   }
   const self = await lib.selfInfo(proc);
+  // M1 (CONTRACT 3.9, decision 40): the arm token is run/acked.json, which every endturn rewrites.
+  // Read before alarm.json is written, so an endturn after this alarm registered always re-arms it.
+  let token = armToken(root);
   const record = { schema_version: 1, pid: self.pid, start_time: self.start_time, ce, armed_at: isoOf(facts.now), sleep_ms: sleepMs };
   await lib.withRunLock(root, lockOpts(th, ce, proc, facts.now), async (handle) => {
     handle.assertHeld();
     lib.writeAtomic(fileOf(root, 'alarm'), JSON.stringify(record) + '\n');
   });
-  await sleep(sleepMs);
-  lib.checkCe(root, ce); // a newer ce -> 64
-  let cur = null;
+  const result = { run: 'alarm', previous, armed: record, rearms: 0 };
+  for (;;) {
+    await sleep(sleepMs);
+    lib.checkCe(root, ce); // a newer ce -> 64
+    let cur = null;
+    try {
+      cur = lib.readJson(fileOf(root, 'alarm'));
+    } catch {
+      cur = null;
+    }
+    const mine = !!cur && Number(cur.pid) === Number(self.pid)
+      && (cur.start_time === self.start_time || lib.sameStartTime(cur.start_time, self.start_time));
+    if (!mine) {
+      return { exit: 0, result: { ...result, superseded: true }, reasons: [{ code: 'superseded', detail: cur ? { pid: cur.pid ?? null } : null }] };
+    }
+    const now = armToken(root);
+    if (now === token) break; // a whole period with no endturn: the long silence
+    token = now; // re-armed by an endturn: sleep one more period (nothing written, no clock read)
+    result.rearms += 1;
+  }
+  return { exit: 30, result: { ...result, superseded: false }, reasons: [{ code: 'alarm', detail: { sleep_ms: sleepMs, rearms: result.rearms } }] };
+}
+
+// The alarm's arm token: the sha256 of run/acked.json's bytes, null when it cannot be read.
+function armToken(root) {
   try {
-    cur = lib.readJson(fileOf(root, 'alarm'));
+    return lib.sha256hex(fs.readFileSync(fileOf(root, 'acked')));
   } catch {
-    cur = null;
+    return null;
   }
-  const result = { run: 'alarm', previous, armed: record };
-  if (!cur || Number(cur.pid) !== Number(self.pid) || cur.start_time !== self.start_time) {
-    return { exit: 0, result: { ...result, superseded: true }, reasons: [{ code: 'superseded', detail: cur ? { pid: cur.pid ?? null } : null }] };
-  }
-  return { exit: 30, result: { ...result, superseded: false }, reasons: [{ code: 'alarm', detail: { sleep_ms: sleepMs } }] };
 }
 
 // ---------------------------------------------------------------- --intake
+
+// Threshold intake_step_timeout_ms (ms one intake step may run before spawnSync ends it). Until the
+// shared thresholds.json carries it, a missing parameter falls back to 30 minutes.
+const INTAKE_STEP_TIMEOUT_DEFAULT_MS = 30 * 60 * 1000;
+function intakeStepTimeoutMs(th) {
+  let v;
+  try {
+    v = th.get('intake_step_timeout_ms');
+  } catch (x) {
+    if (x && x.code === 'param-missing') return INTAKE_STEP_TIMEOUT_DEFAULT_MS;
+    throw x;
+  }
+  return Number.isInteger(v) && v > 0 ? v : INTAKE_STEP_TIMEOUT_DEFAULT_MS;
+}
 
 async function runIntake(ctx, root, flags) {
   const ce = flags.ce;
@@ -700,16 +833,20 @@ async function runIntake(ctx, root, flags) {
   if (th.get('f5_given') === true) steps.push(['snap.mjs', ['--new']]);
   steps.push(['witness.mjs', []], ['promote.mjs', ['--from', 'witness']], ['tms.mjs', []], ['status.mjs', []]);
 
+  // Review U1-F6: one step that never exits must not block every later intake. spawnSync's timeout
+  // ends only its own child; a timeout counts as exit 70 (one not-run incident) and the intake goes on.
+  const stepTimeout = intakeStepTimeoutMs(th);
   let proc = null;
   const done = [];
   for (const [script, a] of steps) {
     const args = [...a, '--root', root, '--ce', String(ce)];
     // Sibling scripts are found beside this file (import.meta.url), not under a fixed tcb/scripts path.
     const r = spawnSync(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), script), ...args], {
-      cwd: root, shell: false, windowsHide: true, stdio: 'ignore',
+      cwd: root, shell: false, windowsHide: true, stdio: 'ignore', timeout: stepTimeout, killSignal: 'SIGTERM',
     });
-    const exit = typeof r.status === 'number' ? r.status : 70;
-    done.push({ script, args, exit });
+    const timedOut = !!(r.error && r.error.code === 'ETIMEDOUT');
+    const exit = !timedOut && typeof r.status === 'number' ? r.status : 70;
+    done.push(timedOut ? { script, args, exit, timeout: true } : { script, args, exit });
     if (exit === 64 || exit === 3) {
       return {
         exit,
@@ -721,7 +858,8 @@ async function runIntake(ctx, root, flags) {
       proc = proc ?? lib.realProc({ exe: th.get('proc_exe') });
       const facts = lib.edgeFacts(flags);
       await lib.withRunLock(root, lockOpts(th, ce, proc, facts.now), async (handle) => {
-        await lib.recordIncident(root, handle, { ctx, ce, cls: 'not-run', detail: { script, exit }, now: facts.now });
+        const detail = timedOut ? { script, exit, timeout: true } : { script, exit };
+        await lib.recordIncident(root, handle, { ctx, ce, cls: 'not-run', detail, now: facts.now });
       });
     }
   }

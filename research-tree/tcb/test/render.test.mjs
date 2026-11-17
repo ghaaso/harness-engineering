@@ -410,6 +410,7 @@ test('T1 fixture world: exit 0, the six file kinds exist, every .md starts with 
 test('T2 join: conditions come from the card, the sentence text keeps its own words', () => {
   const W = stdWorld({ noLabels: true });
   const A2 = addCard(W, { tag: 'J', qids: ['f1-g1-03'], language: ['python'] });
+  confirm(W.root, A2); // a pending card is not trusted (R24) and would be shown under excluded
   const P = addPack(W, 'f1-research', [A2], [SENT('s1', [A2.id], { text: 'this works well on Java builds', applies: { language: ['python'] } })]);
   W.packs = [P];
   W.cards = [A2];
@@ -519,6 +520,17 @@ test('T7 an output whose object bytes were edited: exit 3 object-mismatch; a cit
   const incident = readLedger(W.root).filter((l) => l.kind === 'incident').pop();
   assert.deepEqual(incident.data.detail, { tamper: true, script: 'render', code: 'object-mismatch' });
   fs.writeFileSync(file, good);
+  // the commit record's own sha256 of an output is compared too: the object bytes are untouched here
+  const recFile = path.join(W.root, 'store', 'commits', 'f1-research.pack.json');
+  const recGood = fs.readFileSync(recFile, 'utf8');
+  const rec = JSON.parse(recGood);
+  rec.outputs.find((o) => o.id === W.A.id).sha256 = 'e'.repeat(64);
+  fs.writeFileSync(recFile, JSON.stringify(rec));
+  const jr = shape(render(W.root), 3);
+  assertReason(jr, 'object-mismatch');
+  assert.ok(JSON.stringify(jr.reasons).includes('sha256-differs-from-commit-record'), JSON.stringify(jr.reasons));
+  assert.deepEqual(viewFiles(W.root), viewsBefore);
+  fs.writeFileSync(recFile, recGood);
   // seed id inside a committed review
   const W2 = stdWorld({ noLabels: true });
   const seeded = 's_0123456789abcdef';
@@ -531,14 +543,14 @@ test('T7 an output whose object bytes were edited: exit 3 object-mismatch; a cit
   assert.ok(!JSON.stringify(s).includes(seeded), 'the seed id is never echoed');
 });
 
-function twoReviewWorld({ effectB = 'improves' } = {}) {
+function twoReviewWorld({ effectB = 'improves', confirmB = true } = {}) {
   const W = stdWorld({ noLabels: true });
   const A2 = addCard(W, { tag: 'A2', field: 'f1', qids: ['f1-g1-03'], effect: effectB });
   const P = addPack(W, 'f1-research', [W.A, A2], [SENT('s1', [W.A.id])]);
   W.packs = [P, W.P2];
   fs.rmSync(path.join(W.root, 'store', 'commits', 'f1-review.review.json'));
   W.reviews = []; W.certs = [];
-  confirm(W.root, A2);
+  if (confirmB) confirm(W.root, A2);
   const RA = addReview(W, 'f1-review-a', P, { sentences: [SENT('s1', [W.A.id])] });
   const RB = addReview(W, 'f1-review-b', P, { sentences: [SENT('s1', [A2.id]), SENT('s2', [A2.id]), SENT('s3', [W.A.id])] });
   W.RA = RA; W.RB = RB; W.A2 = A2;
@@ -746,7 +758,7 @@ test('T14 measures: tokens from the session and its helper, the weighted token c
 const T0 = Date.parse('2026-11-17T06:00:00.000Z');
 const at = (min) => new Date(T0 + min * 60000).toISOString();
 
-test('T15 throughput per active hour; a quiet gap is shown apart and excluded; no bind line gives time null', () => {
+test('T15 throughput per wall hour; a quiet gap is shown apart and excluded from active_s only; no bind line gives time null', () => {
   const W = miniWorld();
   for (const c of W.cardsQ) confirm(W.root, c);
   commitMini(W);
@@ -774,7 +786,7 @@ test('T15 throughput per active hour; a quiet gap is shown apart and excluded; n
   assert.equal(t.time.quiet_gaps[0].gap_s, 3600);
   assert.equal(t.time.quiet_s, 3600);
   assert.equal(t.time.active_s, 1200);
-  assert.ok(Math.abs(t.throughput_per_h - 9) < 1e-9, '3 ids in a third of an hour: ' + t.throughput_per_h);
+  assert.ok(Math.abs(t.throughput_per_h - 2.25) < 1e-9, '3 ids in 4800 s of wall time (R20: per hour): ' + t.throughput_per_h);
   // no bind line
   const W3 = miniWorld();
   for (const c of W3.cardsQ) confirm(W3.root, c);
@@ -1036,6 +1048,101 @@ test('T27 store or ledger missing, or a ledger whose chain is broken: exit 2 / 3
   fs.writeFileSync(ledgerPath(W2.root), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
   assert.equal(shape(render(W2.root), 3).reasons[0].code, 'ledger-broken');
   assert.ok(!fs.existsSync(path.join(W2.root, 'views', 'owner.md')));
+});
+
+// ---------------------------------------------------------------------------------------------
+// Added after the review of U4
+// ---------------------------------------------------------------------------------------------
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function runAsync(argv, root, script = 'render') {
+  return new Promise((resolve) => {
+    const c = spawn(process.execPath, [scriptFile(script), ...argv], { cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = ''; let err = '';
+    c.stdout.on('data', (d) => { out += d; });
+    c.stderr.on('data', (d) => { err += d; });
+    c.on('close', (code) => {
+      const lines = out.split('\n').filter((l) => l.trim());
+      let json = null;
+      if (lines.length === 1) { try { json = JSON.parse(lines[0]); } catch { json = null; } }
+      resolve({ exit: code, json, stdout: out, stderr: err, lines });
+    });
+  });
+}
+
+test('T15b R20: throughput is per wall hour; a step writes no ledger line while it works, so a long silence is not subtracted', () => {
+  const W = miniWorld();
+  for (const c of W.cardsQ) confirm(W.root, c);
+  commitMini(W);
+  // a bind line, then one line two hours later: the whole span is one quiet gap, active_s is 0
+  addLedger(W.root, 'bind', { session: W.S, boot: 'b' }, { task: 'f1-research', epoch: 1, ts: at(0) });
+  addLedger(W.root, 'intake', { objects: [], rejected: [], flagged: [] }, { task: 'f1-research', epoch: 1, ts: at(120) });
+  shape(render(W.root), 0);
+  const t = readJ(W.root, 'views/measures.json').by_task['f1-research'];
+  assert.equal(t.time.wall_s, 7200);
+  assert.equal(t.time.active_s, 0);
+  assert.equal(t.time.quiet_gaps.length, 1);
+  assert.equal(t.throughput_per_h, 1.5, '3 ids in 2 wall hours, not null');
+  // one hour of silence and five seconds of lines: 3 ids in about an hour, never 2160 per hour
+  const W2 = miniWorld();
+  for (const c of W2.cardsQ) confirm(W2.root, c);
+  commitMini(W2);
+  addLedger(W2.root, 'bind', { session: W2.S, boot: 'b' }, { task: 'f1-research', epoch: 1, ts: at(0) });
+  addLedger(W2.root, 'intake', { objects: [], rejected: [], flagged: [] }, { task: 'f1-research', epoch: 1, ts: at(60) });
+  addLedger(W2.root, 'intake', { objects: [], rejected: [], flagged: [] }, { task: 'f1-research', epoch: 1, ts: new Date(T0 + 60 * 60000 + 5000).toISOString() });
+  shape(render(W2.root), 0);
+  const t2 = readJ(W2.root, 'views/measures.json').by_task['f1-research'];
+  assert.equal(t2.time.active_s, 5);
+  assert.ok(Math.abs(t2.throughput_per_h - 3 / (3605 / 3600)) < 1e-9, 'throughput ' + t2.throughput_per_h);
+});
+
+test('T10b R24: a pending or an unverifiable card is not trusted: under Excluded with its label, not in the body, and never the cause of "weak"', () => {
+  for (const st of ['pending', 'unverifiable']) {
+    const W = twoReviewWorld({ effectB: 'worsens', confirmB: false });
+    if (st === 'unverifiable') addStatus(W.root, W.A2, 'unverifiable', { reason: 'no-snapshot' });
+    addCert(W, W.RA, { task: 'f1-review-a' });
+    addCert(W, W.RB, { task: 'f1-review-b' });
+    writeLabels(W);
+    shape(render(W.root), 0);
+    const page = read(W.root, 'views/pack-f1-research.md');
+    const at2 = page.indexOf('## Excluded');
+    assert.ok(at2 > 0);
+    assert.ok(!page.slice(0, at2).includes(W.A2.id), st + ': not in the trusted body');
+    assert.ok(page.slice(at2).split('\n').some((l) => l.includes(W.A2.id) && l.includes(st)), st + ': under Excluded with its label');
+    assert.ok(page.slice(0, at2).includes(W.A.id), 'the confirmed card stays in the body');
+    const row = read(W.root, 'views/synthesis.md').split('\n').find((l) => l.startsWith('| a1 | m1 |'));
+    assert.ok(row, 'the key has a row');
+    assert.ok(!row.includes('weak'), st + ': an unchecked card cannot make a key weak: ' + row);
+    assert.ok(!row.includes(W.A2.id) && !row.includes('worsens'), st + ': nor appear in it: ' + row);
+  }
+});
+
+test('T11b R16: with F5 given a superseded card counts for nothing, whatever its own status says', () => {
+  const W = stdWorld({ noLabels: true });
+  writeLabels(W, { cards: { [W.A.id]: { label: 'superseded', status_seq: 2 } } });
+  shape(render(W.root), 0);
+  const cov = readJ(W.root, 'views/coverage.json');
+  assert.deepEqual(cov.fields.f1.covered, ['f1-g1-02'], 'f1-g1-01 was carried only by the superseded card');
+  assert.deepEqual(cov.fields.f1.not_covered, ['f1-g1-01', 'f1-g1-03']);
+  const m = readJ(W.root, 'views/measures.json');
+  assert.equal(m.by_task['f1-research'].covered_ids, 1);
+  assert.equal(m.by_task['f1-research'].confirmed_ids, 0, 'the superseded card is also not a confirmed answer');
+});
+
+test('T23b CONTRACT 1.1: --ce is checked again inside the run lock; a ce changed while the script waits for the lock writes nothing (exit 64)', async () => {
+  const W = stdWorld();
+  setThresholds(W.root, { lock_retries: 200 });
+  const lock = holdLock(W.root);
+  const p = runAsync(['--root', W.root, '--ce', '1', '--now', NOW], W.root);
+  await sleep(3000);
+  fs.writeFileSync(path.join(W.root, 'run', 'coord.json'), JSON.stringify({ schema_version: 1, ce: 2, started_at: NOW, tcb_commit: 'a'.repeat(40) }, null, 2));
+  const before = snapshot(W.root);
+  delete before['run/run.lock']; // the test's own holder, gone before the script runs on
+  lock.release();
+  fs.rmSync(path.join(W.root, 'run', 'run.lock'), { force: true });
+  const r = await p;
+  assert.equal(r.exit, 64, r.stdout + r.stderr);
+  assert.equal(JSON.parse(r.stdout.trim().split('\n').pop()).reasons[0].code, 'stale-ce');
+  assert.deepEqual(snapshot(W.root), before, 'nothing written');
 });
 
 test('T25a needs-app: real token fields and helper linking (tokens.complete on real transcripts)', { skip: 'needs the app: CONTRACT section 7 item 7' }, () => {});

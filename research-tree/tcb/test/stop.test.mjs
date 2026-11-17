@@ -253,6 +253,12 @@ const noSession = (o = {}) => {
   delete r.attempts[0].session;
   return r;
 };
+// review U1-F5: a target attempt that was never admitted (no manifest, no boot, no session)
+const neverAdmitted = (o = {}) => {
+  const r = noSession(o);
+  for (const k of ['manifest', 'settings_sha', 'boot']) delete r.attempts[0][k];
+  return r;
+};
 const reqRow = (o = {}, a1 = {}) => fencedRow({ step: 'stop-requested', ...o }, { stop: 'requested', ...a1 });
 
 function setThr(root, patch) {
@@ -312,11 +318,11 @@ test('T1 request on a fenced row whose attempt has a session: stop-requested, on
   assert.equal(ofKind(root, 'stop-request').length, 1);
 });
 
-test('T2 request on a fenced row whose attempt never started (no session, no transcript): stopped, confirmed, state active', async (t) => {
+test('T2 request on a fenced row whose attempt was never admitted (no manifest, no session, no transcript): stopped, confirmed, state active', async (t) => {
   const w = mk();
   t.after(w.cleanup);
   const { root } = w;
-  table(root, [noSession()]);
+  table(root, [neverAdmitted()]);
   const j = run(root, 'request');
   expectExit(j, 0);
   const r = getRow(root);
@@ -331,6 +337,52 @@ test('T2 request on a fenced row whose attempt never started (no session, no tra
   assert.deepEqual(l[0].data.survivors, []);
   assert.equal(l[0].data.zombie_tokens, 0);
   await assertLedgerVerifies(root);
+});
+
+// Review U1-F5 (R9, R10): an admitted attempt may already run a session whose transcript is not
+// visible yet, so its stop is never confirmed without observation over stop_verify_deltas ticks.
+test('T2b request on a fenced row whose attempt was admitted but shows no session and no transcript: stop-requested (session null); verify confirms only after the deltas, and a live process naming the folder blocks it', { concurrency: false }, async (t) => {
+  await t.test('nothing appears: sampling, then confirmed once the ticks have passed', async (t2) => {
+    const w = mk();
+    t2.after(w.cleanup);
+    const { root } = w;
+    table(root, [noSession({ reason: 'memory' })]);
+    const j = run(root, 'request');
+    expectExit(j, 0);
+    let r = getRow(root);
+    assert.equal(r.step, 'stop-requested', 'not confirmed without observation');
+    assert.equal(attemptOf(r, 1).stop, 'requested');
+    assert.equal(r.state, 'active');
+    assert.equal(ofKind(root, 'stop').length, 0);
+    const l = ofKind(root, 'stop-request');
+    assert.equal(l.length, 1);
+    assert.equal(l[0].data.session, null);
+    expectExit(sampleThenCompare(root), 0);
+    r = getRow(root);
+    assert.equal(r.step, 'stopped');
+    assert.equal(r.state, 'parked');
+    assert.equal(attemptOf(r, 1).stop, 'confirmed');
+    await assertLedgerVerifies(root);
+  });
+  await t.test('a process naming the attempt folder is a survivor: unconfirmed', async (t2) => {
+    const w = mk();
+    t2.after(w.cleanup);
+    const { root } = w;
+    table(root, [noSession({ reason: 'memory' })]);
+    expectExit(run(root, 'request'), 0);
+    fs.mkdirSync(folderAbs(root, T, 1), { recursive: true });
+    const s = await helpers.spawnSleeper({ args: [folderAbs(root, T, 1)] });
+    try {
+      const j = sampleThenCompare(root);
+      expectExit(j, 1, 'stop-unconfirmed');
+      const r = getRow(root);
+      assert.equal(r.step, 'stop-requested');
+      assert.equal(attemptOf(r, 1).stop, 'unconfirmed');
+      assert.ok(ofKind(root, 'stop')[0].data.survivors.some((p) => p.pid === s.pid));
+    } finally {
+      await s.kill();
+    }
+  });
 });
 
 test('T3 request on a fenced row with no session but a folder transcript: stop-requested with that session, row session untouched, verify samples it', { concurrency: false }, async (t) => {
@@ -518,7 +570,7 @@ test('T10 a confirmed stop sets the disposition: limit -> failed, memory -> park
     await t.test(name, async (t2) => {
       const w = mk();
       t2.after(w.cleanup);
-      table(w.root, [noSession(o)]);
+      table(w.root, [neverAdmitted(o)]);
       expectExit(run(w.root, 'request'), 0);
       const r = getRow(w.root);
       assert.equal(r.step, 'stopped');

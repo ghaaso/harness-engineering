@@ -50,7 +50,11 @@ b. Per row active at step started|bound (current attempt e): parse its transcrip
    `lib.variant(root, row, {f5Given})`.V.
    - V null (design-check) → no stall counter. Else V < V_min → V_min = V, stall_calls = 0; else
      stall_calls += new calls. ≥ `stall_calls` → 20.
-   - new calls = 0 on a counted tick → hang_ticks += 1, else 0. ≥ `hang_ticks` → 21.
+   - new calls = 0 on a counted tick → hang_ticks += 1, else 0. ≥ `hang_ticks` → 21. **Pause
+     discount (M5, CONTRACT §1.2):** a counted tick whose gap `now − last_tick_at` (the stored
+     value of the previous evaluation, any watcher) exceeds 2Δ is *paused*: hang_ticks is left as
+     it is (new calls still reset it). This is the watcher's only use of a clock difference and it
+     can only withhold a hang count; an unparseable or missing `last_tick_at` counts the tick.
    - `loopRun` of the main transcript's tool uses: run ≥ `loop_k` → 22; stored as `loop {sig, run}`.
    - READY of epoch e: kind ready for a step without a commit record → 11; kind repair → 12. Either
      voids 20, 21, 22 for that epoch (R5, finding A4).
@@ -71,6 +75,26 @@ g. Tamper → 27: `verifyLedger` fails (a), or an `incident` line with `detail.t
 h. Checker batch → 14 when the count of `lib.intakeCandidates(root)` not `in_flight` (the cards
    check-queue's intake mode would take) is ≥ batch_size, or > 0 while no row is at started|bound
    (R4: full, or the only thing blocking).
+j. **Act due → 17 (M3, CONTRACT decision 40): the planner's own predicate**, so that a live watcher
+   cannot stay silent while work waits. Slots used = live + unknown + unconfirmed of
+   `lib.slotCount(rows, [], transcripts_root, {root})` (an empty process list: no PowerShell per
+   tick); a slot is free when that is < `N_max`; blocked = `runFlags` halted or draining. Per row,
+   the act of status's `next` (status.mjs.md), one condition per row keyed `17|<task>:<act>|<e>`:
+   planned/none → `replace-fence` and active|parked/stopped → `replace-start`, both only when a
+   slot is free and not blocked; fenced, or committed at bound → `stop-request`; stop-requested
+   (target attempt k = e − 1, or e for a committed row) with no sample `run/stop-sample/<task>-e<k>
+   .json` → `stop-session` while the target's `stop` is none|requested, `stop-verify@-` when it is
+   unconfirmed; with a sample → `stop-verify@<sample.tick>` only once ticks_total ≥ sample.tick +
+   `stop_verify_deltas` (earlier the verify can only defer); admitted → `start-session`, or `bind`
+   when the attempt folder already has a transcript (the reconcile at the next turn start will make
+   it started). Failed rows, `limit` rows and rows whose `next` is `owner`, `none`, `audit` or
+   `commit` raise nothing here (READY is class 11). Run level: a `drain` line of this ce with no
+   slot used → `-:handover`; a non-empty table whose rows are all committed|cut|failed|dropped and
+   none has a row act → `-:run-terminal`; an `event` line with seq > acked_seq whose key is not in
+   `active` (its condition has cleared, so its own key no longer wakes) → `-:events`. Like every
+   class it is keyed by onset and acknowledged through `acked_seq`, so an act the coordinator
+   acknowledged and could not take (admission deferred, say) stays quiet until its condition
+   clears and returns.
 i. Intake: unless `--no-intake`, no intake alive (`watcher.json.intake` and `proc.alive` not true),
    and some row at started|bound → spawn `process.execPath <root>/tcb/scripts/watch.mjs --intake
    --root R --ce N` detached, `stdio: 'ignore'`, `windowsHide: true`, `cwd: root`, unref; record
@@ -84,14 +108,21 @@ tick. Non-urgent ones (10-16) enter `pending` with `first_tick` and exit once ti
 first_tick ≥ coalesce_ticks, together with anything else present. 6 Write `watcher.json`
 (`last_tick_at` = now, information only). 7 Exit with
 the first present class in §1.4's precedence (64, 27, 26, 25, 24, 23, 22, 21, 20, 11, 12, 10, 13,
-15, 16, 14), `result {classes: [...], ticks_total, pending}`; `--once` with nothing due → exit 0.
+15, 16, 14, 17), `result {classes: [...], ticks_total, pending, paused}` (`paused`: the last tick was
+a paused one, M5); `--once` with nothing due → exit 0. Step j is evaluated after h and before i.
 Release the watcher lock on every exit; an uncaught error exits 70 ("restart the watcher").
 
 ## Alarm steps
 1 `checkCe` → 64. 2 Previous `alarm.json`: record it in `result.previous`; kill nothing (decision
-5: it exits 0 `superseded` when it wakes). 3 Under `withRunLock(ce)`: write `alarm.json` {pid,
-start_time, ce, armed_at, sleep_ms}. 4 Sleep `--sleep-ms` (default `alarm_ms`). 5 coord ce > own →
-exit 64; `alarm.json` names another pid → exit 0 `superseded`; else exit 30 `alarm`.
+5: it exits 0 `superseded` when it wakes). 2b Read the **arm token** (M1, CONTRACT §3.9): the
+sha256 of `run/acked.json`'s bytes, null when absent. 3 Under `withRunLock(ce)`: write `alarm.json`
+{pid, start_time, ce, armed_at, sleep_ms}. 4 Sleep `--sleep-ms` (default `alarm_ms`). 5 coord ce >
+own → exit 64; `alarm.json` names another pid → exit 0 `superseded`; the token differs from the
+one last read → the alarm was re-armed: keep the new token, `rearms += 1`, and go back to 4 (no
+write, no clock read); else exit 30 `alarm`, `result {previous, armed, superseded, rearms}`. So the
+alarm fires only after a whole period in which no endturn ran, and nobody ever kills it (the
+model's busy loop came from killing the alarm at each endturn, whose exit then woke the
+coordinator).
 
 ## Intake steps
 `checkCe` → 64. Run each as a child process (`process.execPath`, `cwd: root`, `shell: false`,
@@ -104,14 +135,15 @@ it, and tms's reopen is a `check` reason, g); 2 or 70 → one `incident` line {c
 tamper incident). Result `{steps: [{script, args, exit}]}`; exit 0.
 
 ## Exit codes
-0 (`--once` quiet, alarm superseded, intake done), 10-16, 20-27, 30, 3 (`run-from-attempt`, tamper
+0 (`--once` quiet, alarm superseded, intake done), 10-17, 20-27, 30, 3 (`run-from-attempt`, tamper
 in intake), 64, 66, 67, 70, 75.
 
 ## Rules implemented
 R1, R4 (reads, decides, exits; watcher.lock; ce first and inside the lock; intake spawned, not
 awaited; no deadline exit), R5 (V, stall by calls, hang by ticks, loop, READY voids suspicion),
 R6 (alarm), R8 (W_cc in ticks, halt), R10 (memory), R11 (soft/hard, overflow via cut), R12/R50
-(drain at W*_coord), R40, R58; decisions 2, 3, 5, 15. Model findings F2, F3, F4, A4-A6.
+(drain at W*_coord), R40, R58; decisions 2, 3, 5, 15, 40. Model findings F2, F3, F4, A4-A6; second
+model check M1 (alarm re-armed by token, never killed), M3 (act-due), M5 (pause discount).
 
 ## Behaviours (tests)
 All with `--once` or `--interval-ms 50` and `--no-intake` unless stated; fake transcripts.
@@ -157,6 +189,22 @@ All with `--once` or `--interval-ms 50` and `--no-intake` unless stated; fake tr
   reads only the new bytes (`files[path].end_byte` advances; a spy on the read count or the elapsed
   time under the tick budget) and counts 3 new calls; a call split across the boundary (`lastCall`)
   is counted once; the file truncated → re-parsed from 0.
+
+- M1 alarm re-armed by the token: an alarm (`--sleep-ms 1500`) is running; `status --endturn`
+  rewrites `acked.json` during its sleep → the alarm does not exit after the first period; it exits
+  30 after the next quiet period with `result.rearms` 1, `alarm.json` still naming it, and endturn
+  having killed and started nothing. Without the token it exits 30 after one period, `rearms` 0.
+- M3 act due: a row at planned/none with N_max 2 and no slot used → exit 17 at the tick that
+  passes coalesce, one `event` line {class `act-due`, detail.act `replace-fence`}; once
+  acknowledged (acked_seq ≥ its seq) it stays quiet while present; with the slots full (two
+  admitted rows) the planned row raises nothing. A fenced row → `stop-request`. A row at
+  stop-requested whose sample is younger than `stop_verify_deltas` ticks → no 17; old enough →
+  `stop-verify@<tick>`. An admitted row → `start-session`; its folder gaining a transcript → a new
+  key `bind` and a new exit. A `drain` line of this ce and no slot used → `handover`. An `event`
+  line above acked_seq whose condition has cleared → `events`. A row at `failed` or `limit` → none.
+- M5 pause discount: hang_ticks 2; tick 1 at T, tick 2 at T + 10 min (Δ 60 s) → no exit 21,
+  hang_ticks still 1, `result.paused` true; tick 3 at T + 11 min → exit 21. Without the discount
+  tick 2 exits 21.
 
 ## Cannot be tested without the app
 A background command's exit reaching the coordinator's turn, also during sleep or after a ce

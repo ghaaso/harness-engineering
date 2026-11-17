@@ -223,7 +223,7 @@ async function taskForm(ctl) {
   for (const i of manifest.inputs ?? []) fileEntries.push(path.join(F, 'in', i.name));
   for (const a of manifest.agents ?? []) fileEntries.push(path.join(F, '.claude', 'agents', `${a.type}.md`));
   for (const u of manifest.user_files ?? []) if (u?.path) fileEntries.push(path.resolve(u.path));
-  const dirEntries = [path.join(F, 'staging'), path.join(F, 'view')];
+  const dirEntries = [{ dir: path.join(F, 'staging'), batch: null }, { dir: path.join(F, 'view'), batch: null }];
   const batchDirs = [];
   try {
     for (const d of fs.readdirSync(path.join(root, 'queue'), { withFileTypes: true })) {
@@ -232,21 +232,31 @@ async function taskForm(ctl) {
   } catch { /* no queue folder */ }
   for (const pfx of profile.read_prefixes ?? []) {
     const base = pfx.replaceAll('{root}', root).replaceAll('{attempt}', F);
-    if (base.includes('{batch}')) for (const b of batchDirs) dirEntries.push(path.resolve(base.replaceAll('{batch}', path.basename(b))));
-    else dirEntries.push(path.resolve(base));
+    if (base.includes('{batch}')) for (const b of batchDirs) dirEntries.push({ dir: path.resolve(base.replaceAll('{batch}', path.basename(b))), batch: path.basename(b) });
+    else dirEntries.push({ dir: path.resolve(base), batch: null });
   }
   const eq = (a, b) => normPath(a) === normPath(b);
-  const readAllowed = async (abs) => {
+  // CONTRACT 3.21: a {batch} prefix allows one batch per transcript, the first one it read.
+  const batchOf = async (abs) => {
+    for (const b of batchDirs) if (eq(abs, b) || await under(abs, b)) return path.basename(b);
+    return null;
+  };
+  const readAllowed = async (abs, bound) => {
     if (eq(abs, F)) return true;
-    for (const d of dirEntries) if (eq(abs, d) || await under(abs, d)) return true;
+    for (const { dir: d, batch } of dirEntries) {
+      if (batch !== null && bound && batch !== bound) continue;
+      if (eq(abs, d) || await under(abs, d)) return true;
+    }
     for (const f of fileEntries) if (eq(abs, f) || await under(abs, f)) return true;
     return false;
   };
   const undeclared = [];
   for (const parsed of [main, ...helpers]) {
+    let bound = null;
     for (const { path: p } of readsOf(parsed)) {
       const abs = path.resolve(F, p);
-      if (!(await readAllowed(abs))) undeclared.push(await display(root, abs));
+      if (bound === null && await readAllowed(abs, null)) bound = await batchOf(abs);
+      if (!(await readAllowed(abs, bound))) undeclared.push(await display(root, abs));
     }
   }
 
@@ -461,6 +471,39 @@ async function coordinatorForm(ctl) {
     try { if (await under(abs, root)) rel = relPosix(root, abs); } catch { /* outside the root */ }
     if (rel !== null && /^wt\/[^/]+\/staging(\/|$)/i.test(rel)) udi.push(rel);
   }
+  // A helper that read a queue batch is a checker (CONTRACT 3.21): it may read only that first batch
+  // (the checker profile's read_prefixes bound to it). A second batch, the seed key under sealed/ or
+  // anything else it read is listed. Any other helper is flagged only for a read under sealed/.
+  let ckPrefixes = ['{root}/queue/{batch}/'];
+  try {
+    const cp = readJson(path.join(root, 'tcb', 'profiles', 'checker.json'));
+    if (Array.isArray(cp.read_prefixes)) ckPrefixes = cp.read_prefixes;
+  } catch { /* the default prefix stands */ }
+  const queueDir = path.join(root, 'queue');
+  const sealedDir = path.join(root, 'sealed');
+  const eqp = (a, b) => normPath(a) === normPath(b);
+  const checkerReads = [];
+  for (let i = 0; i < helpers.length; i++) {
+    const hp = helpers[i];
+    const hbase = hp.cwd ? path.resolve(hp.cwd) : base;
+    const reads = readsOf(hp).map(({ path: p }) => path.resolve(hbase, p));
+    let batch = null;
+    for (const abs of reads) {
+      let rel = null;
+      try { if (await under(abs, queueDir)) rel = relPosix(root, abs); } catch { /* outside the root */ }
+      if (rel !== null && rel.split('/').length > 1 && rel.split('/')[1] !== '') { batch = rel.split('/')[1]; break; }
+    }
+    const allowedDirs = batch === null ? [] : ckPrefixes.map((pfx) => path.resolve(pfx.replaceAll('{root}', root).replaceAll('{batch}', batch)));
+    for (const abs of reads) {
+      let bad = false;
+      if (batch !== null) {
+        bad = true;
+        for (const d of allowedDirs) if (eqp(abs, d) || await under(abs, d)) { bad = false; break; }
+      } else if (eqp(abs, sealedDir) || await under(abs, sealedDir)) bad = true;
+      if (bad) checkerReads.push({ helper: relTr(trRoot, found.helpers[i]), path: await display(root, abs) });
+    }
+  }
+  checkerReads.sort((a, b) => (a.helper + '\u0000' + a.path < b.helper + '\u0000' + b.path ? -1 : a.helper + '\u0000' + a.path > b.helper + '\u0000' + b.path ? 1 : 0));
   const outOfProfile = [];
   for (const u of main.toolUses ?? []) {
     if (u.access?.kind !== 'exec') continue;
@@ -471,7 +514,7 @@ async function coordinatorForm(ctl) {
     schema_version: 1, session: sessionId, ce,
     protected_writes: sortUnique(protectedWrites), calls_over: callsOver, peak_context: peak, n_calls: (main.calls ?? []).length,
     window: { W_star_coord: W ?? null, factor, limit, gate: th.isGate('W_star_coord') },
-    udi_reads: sortUnique(udi), out_of_profile: outOfProfile,
+    udi_reads: sortUnique(udi), checker_reads: checkerReads, out_of_profile: outOfProfile,
     transcripts: { main: relTr(trRoot, found.main), helpers: found.helpers.map((h) => relTr(trRoot, h)) },
     at: now,
   };
@@ -481,6 +524,10 @@ async function coordinatorForm(ctl) {
   if (audit.protected_writes.length > 0) {
     exit = 3;
     reasons.push({ code: 'protected-write', detail: { paths: audit.protected_writes } });
+  }
+  if (checkerReads.length > 0) {
+    if (exit === 0) exit = 1;
+    reasons.push({ code: 'tainted', detail: { checker_reads: checkerReads } });
   }
   if (th.isGate('W_star_coord') && callsOver.length > 0) {
     if (exit === 0) exit = 1;

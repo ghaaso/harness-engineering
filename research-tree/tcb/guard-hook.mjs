@@ -36,9 +36,16 @@ const FALLBACK_DEADLINE_MS = 5000;
 // Always protected for writes, whatever the thresholds file lists (the spec names `.git/` explicitly).
 const ALWAYS_PROTECTED = ['tcb/', 'sealed/', 'review-in/', '.claude/', 'run/', 'store/', '.git/'];
 
+// Node sets import.meta.url to the realpath of the entry, so argv[1] is compared by its realpath too:
+// started through a junction or a symlink the hook must still decide (a lexical compare would skip
+// main() and exit 0, which the hook protocol reads as no objection).
 const isMain = (() => {
+  if (import.meta.main === true) return true;
   try {
-    return typeof process.argv[1] === 'string' && pathKey(process.argv[1]) === pathKey(SELF);
+    if (typeof process.argv[1] !== 'string') return false;
+    const self = pathKey(SELF);
+    if (pathKey(process.argv[1]) === self) return true;
+    return pathKey(fs.realpathSync(path.resolve(process.argv[1]))) === self;
   } catch {
     return false;
   }

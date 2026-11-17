@@ -471,16 +471,16 @@ test('T9 denylist: a listed term in another case taints; comments and blank line
 });
 
 test('T10 notes: only TURN-END <field> as the last line passes; the flag never changes the label or the exit; a design-check row expects its task', () => {
-  const w = auditWorld({ calls: [{ userText: 'one', text: 'TURN-END f1' }, { userText: 'two', text: 'done' }, { userText: 'three', text: 'all fine\nTURN-END f1' }] });
+  const w = auditWorld({ calls: [{ userText: 'one', text: 'TURN-END f1' }, { userText: 'two', text: 'done' }, { userText: 'three', text: 'all fine\nTURN-END f1' }, { userText: 'four', text: 'TURN-END f1\nextra note' }] });
   const j = shape(audit(w), 0);
-  assert.equal(auditFile(w).notes_bad, 1);
-  assert.equal(j.result.notes_bad, 1);
+  assert.equal(auditFile(w).notes_bad, 2, 'a note after TURN-END makes the last line a note, not the turn end');
+  assert.equal(j.result.notes_bad, 2);
   assert.equal(auditFile(w).label, 'clean');
-  assert.equal(auditLines(w.root)[0].data.notes_bad, 1);
+  assert.equal(auditLines(w.root)[0].data.notes_bad, 2);
   // the same turns for a row whose field is f2
-  const w2 = auditWorld({ field: 'f2', calls: [{ userText: 'one', text: 'TURN-END f1' }, { userText: 'two', text: 'done' }, { userText: 'three', text: 'all fine\nTURN-END f1' }] });
+  const w2 = auditWorld({ field: 'f2', calls: [{ userText: 'one', text: 'TURN-END f1' }, { userText: 'two', text: 'done' }, { userText: 'three', text: 'all fine\nTURN-END f1' }, { userText: 'four', text: 'TURN-END f1\nextra note' }] });
   shape(audit(w2), 0);
-  assert.equal(auditFile(w2).notes_bad, 3);
+  assert.equal(auditFile(w2).notes_bad, 4);
   assert.equal(auditFile(w2).label, 'clean');
   // a design-check row (field null) ends with TURN-END <its task>
   const w3 = auditWorld({ task: 'stpa-one', field: null, role: 'stpa', stage: 'design-check', calls: [{ userText: 'go', text: 'TURN-END stpa-one' }] });
@@ -737,6 +737,123 @@ test('T20 a script run from wt/ exits 3 run-from-attempt and writes nothing', ()
   assert.equal(r.status, 3, r.stdout + r.stderr);
   assert.ok(JSON.stringify(JSON.parse(r.stdout.trim().split('\n').pop()).reasons).includes('run-from-attempt'));
   assert.deepEqual(snapshot(w.root), before);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Added after the review of U4
+// ---------------------------------------------------------------------------------------------
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function runAsync(argv, root, script = 'audit') {
+  return new Promise((resolve) => {
+    const c = spawn(process.execPath, [scriptFile(script), ...argv], { cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = ''; let err = '';
+    c.stdout.on('data', (d) => { out += d; });
+    c.stderr.on('data', (d) => { err += d; });
+    c.on('close', (code) => {
+      const lines = out.split('\n').filter((l) => l.trim());
+      let json = null;
+      if (lines.length === 1) { try { json = JSON.parse(lines[0]); } catch { json = null; } }
+      resolve({ exit: code, json, stdout: out, stderr: err, lines });
+    });
+  });
+}
+
+// The script waits for a lock a test-owned process holds; what the test changes meanwhile must be seen
+// again inside the lock (CONTRACT 1.1): the epoch compare-and-set and the --ce check.
+async function waitedLockCase(change) {
+  const w = auditWorld({ params: { lock_retries: 200 } });
+  const lock = holdLock(w.root);
+  const p = runAsync(['--root', w.root, '--ce', '1', '--task', w.task, '--epoch', '1', '--now', NOW], w.root);
+  await sleep(3000);
+  change(w);
+  const before = snapshot(w.root);
+  delete before['run/run.lock']; // the test's own holder, gone before the script runs on
+  lock.release();
+  fs.rmSync(path.join(w.root, 'run', 'run.lock'), { force: true });
+  const r = await p;
+  return { w, r, before };
+}
+
+test('T15b the epoch is compared again inside the lock: a row fenced while the script waits for the lock gets exit 65 and no audit file', async () => {
+  const { w, r, before } = await waitedLockCase((x) => {
+    const tbl = readJ(x.root, 'run/tasks.json');
+    tbl.tasks[0].epoch = 2;
+    tbl.tasks[0].attempts.push({ epoch: 2, folder: 'wt/f1-research-e2', session: newSid(), stop: 'none', manifest: x.M.id });
+    fs.writeFileSync(path.join(x.root, 'run', 'tasks.json'), JSON.stringify(tbl));
+  });
+  assert.equal(r.exit, 65, r.stdout + r.stderr);
+  assert.equal(JSON.parse(r.stdout.trim().split('\n').pop()).reasons[0].code, 'stale-epoch');
+  assert.ok(!fs.existsSync(path.join(w.root, 'run', 'audit', 'f1-research-e1.json')), 'no audit file');
+  assert.deepEqual(snapshot(w.root), before, 'nothing written');
+});
+
+test('T15c --ce is compared again inside the lock: a ce raised while the script waits for the lock gets exit 64 and no audit file', async () => {
+  const { w, r, before } = await waitedLockCase((x) => {
+    fs.writeFileSync(path.join(x.root, 'run', 'coord.json'), JSON.stringify({ schema_version: 1, ce: 2, started_at: NOW, tcb_commit: 'a'.repeat(40) }, null, 2));
+  });
+  assert.equal(r.exit, 64, r.stdout + r.stderr);
+  assert.equal(JSON.parse(r.stdout.trim().split('\n').pop()).reasons[0].code, 'stale-ce');
+  assert.ok(!fs.existsSync(path.join(w.root, 'run', 'audit', 'f1-research-e1.json')), 'no audit file');
+  assert.deepEqual(snapshot(w.root), before, 'nothing written');
+});
+
+function batchFiles(root, names = ['b1-1', 'b1-2']) {
+  for (const b of names) {
+    fs.mkdirSync(path.join(root, 'queue', b), { recursive: true });
+    fs.writeFileSync(path.join(root, 'queue', b, 'batch.json'), '{}');
+    fs.writeFileSync(path.join(root, 'queue', b, 'i_1.json'), '{}');
+  }
+  fs.mkdirSync(path.join(root, 'sealed', 'seeds'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'sealed', 'seeds', 'b1-1.json'), '{}');
+}
+
+test('T14b CONTRACT 3.21: a helper that read a batch may read that one batch only; a second batch, the seed key or any other read is listed and exits 1', () => {
+  const q = (c, ...p) => path.join(c.root, ...p);
+  const withHelper = (reads) => {
+    const c = coordWorld([{ usage: U(1000), text: 'a' }]);
+    batchFiles(c.root);
+    writeTranscript(helperFile(c.root, c.S, 'agent-h1'), { sessionId: c.S, cwd: c.root, calls: [{ tools: reads(c).map((p) => RD(p, 'ok')) }, { text: 'done' }] });
+    return c;
+  };
+  // one batch, its batch file and an item: clean
+  let c = withHelper((x) => [q(x, 'queue', 'b1-1', 'batch.json'), q(x, 'queue', 'b1-1', 'i_1.json'), q(x, 'queue', 'b1-1')]);
+  shape(audC(c), 0);
+  assert.deepEqual(readJ(c.root, 'run/audit/coordinator-ce1.json').checker_reads, []);
+  // a second batch
+  c = withHelper((x) => [q(x, 'queue', 'b1-1', 'batch.json'), q(x, 'queue', 'b1-2', 'batch.json')]);
+  let j = shape(audC(c), 1);
+  assert.equal(j.reasons[0].code, 'tainted');
+  assert.deepEqual(readJ(c.root, 'run/audit/coordinator-ce1.json').checker_reads.map((x) => x.path), ['queue/b1-2/batch.json']);
+  assert.deepEqual(j.reasons[0].detail.checker_reads.map((x) => x.path), ['queue/b1-2/batch.json']);
+  // the seed key
+  c = withHelper((x) => [q(x, 'queue', 'b1-1', 'batch.json'), q(x, 'sealed', 'seeds', 'b1-1.json')]);
+  shape(audC(c), 1);
+  assert.deepEqual(readJ(c.root, 'run/audit/coordinator-ce1.json').checker_reads.map((x) => x.path), ['sealed/seeds/b1-1.json']);
+  // a read of anything else besides the batch
+  c = withHelper((x) => [q(x, 'queue', 'b1-1', 'batch.json'), q(x, 'plan', 'p.json')]);
+  shape(audC(c), 1);
+  assert.deepEqual(readJ(c.root, 'run/audit/coordinator-ce1.json').checker_reads.map((x) => x.path), ['plan/p.json']);
+  // the key alone, with no batch read first, is still a read of sealed/
+  c = withHelper((x) => [q(x, 'sealed', 'seeds', 'b1-1.json')]);
+  shape(audC(c), 1);
+  assert.deepEqual(readJ(c.root, 'run/audit/coordinator-ce1.json').checker_reads.map((x) => x.path), ['sealed/seeds/b1-1.json']);
+  // a helper that never touched a batch or sealed/ is not a checker and is not flagged
+  c = withHelper((x) => [q(x, 'plan', 'p.json')]);
+  shape(audC(c), 0);
+  assert.deepEqual(readJ(c.root, 'run/audit/coordinator-ce1.json').checker_reads, []);
+});
+
+test('T3b CONTRACT 3.21: a {batch} prefix allows one batch per transcript; reads of a second batch are undeclared', () => {
+  const w = auditWorld({ profile: { read_prefixes: ['{root}/queue/{batch}/'] } });
+  batchFiles(w.root);
+  const rd = (...p) => RD(path.join(w.root, ...p), 'ok');
+  writeTranscript(sessionFile(w.root, w.S), { sessionId: w.S, cwd: w.F, calls: [{ tools: [rd('queue', 'b1-1', 'batch.json'), rd('queue', 'b1-1', 'i_1.json')] }, TURN('f1')] });
+  shape(audit(w), 0);
+  assert.deepEqual(auditFile(w).undeclared, []);
+  writeTranscript(sessionFile(w.root, w.S), { sessionId: w.S, cwd: w.F, calls: [{ tools: [rd('queue', 'b1-1', 'batch.json'), rd('queue', 'b1-2', 'batch.json')] }, TURN('f1')] });
+  const j = shape(audit(w), 1);
+  assert.equal(j.reasons[0].code, 'tainted');
+  assert.deepEqual(auditFile(w).undeclared, ['queue/b1-2/batch.json']);
 });
 
 test('T21a needs-app: real transcripts hold the fields assumed (helper linking, tool-result text, turn-end text)', { skip: 'needs the app: CONTRACT section 7 item 7' }, () => {});

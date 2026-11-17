@@ -795,10 +795,20 @@ test('T21 writeAtomic replaces a file whole: a reader in another process never s
   child.stderr.on('data', (x) => (err += x));
   const ready = new Promise((res) => child.stdout.on('data', (x) => { out += x; if (out.includes('ready')) res(); }));
   const closed = new Promise((res) => child.on('close', res));
-  await Promise.race([ready, closed]);
-  for (let i = 0; i < 200; i++) await lib.writeAtomic(target, mk(i % 2 ? 'A' : 'B'));
-  fs.writeFileSync(stop, '1');
-  await closed;
+  // The reader ends on every path (LR-6): a writeAtomic that throws must not leave it running.
+  try {
+    await Promise.race([ready, closed]);
+    for (let i = 0; i < 200; i++) await lib.writeAtomic(target, mk(i % 2 ? 'A' : 'B'));
+  } finally {
+    fs.writeFileSync(stop, '1');
+    let timer;
+    const done = await Promise.race([closed.then(() => true), new Promise((r) => { timer = setTimeout(() => r(false), 10000); })]);
+    clearTimeout(timer);
+    if (!done && child.exitCode === null && child.signalCode === null) {
+      child.kill();
+      await closed;
+    }
+  }
   const last = out.trim().split('\n').pop();
   const sum = JSON.parse(last);
   assert.equal(sum.bad, 0, `partial reads: ${err}`);
@@ -1279,6 +1289,178 @@ rt('T36f a stale lock of a real process that has ended is broken after one real 
     await h.release();
   }
 }, {}, { concurrency: false, timeout: 120000 });
+// LR-3: a holder is judged only after its lock stayed unchanged for LOCK_JUDGE_AFTER retries (capped
+// at the caller's retries), so ordinary contention starts no process query.
+const isLockCreate = (a) => isLockSrc(a[0]) && JSON.stringify(a.slice(1)).includes('wx');
+rt('T36g a holder is judged once, and only after LOCK_JUDGE_AFTER unchanged sightings', async (root) => {
+  assert.equal(lib.LOCK_JUDGE_AFTER, 50);
+  putLock(root, mkRec());
+  let creates = 0;
+  let createsAtJudge = null;
+  const p = fproc({ alive: () => { if (createsAtJudge === null) createsAtJudge = creates; return true; } });
+  const restore = patch(fs, 'openSync', (orig) => function (...a) {
+    if (isLockCreate(a)) creates++;
+    return orig.apply(this, a);
+  });
+  try {
+    await throwsTcb(() => lib.acquireLock(root, 'run.lock', lo({ proc: p, retries: 60, retryMs: 1 })), 'lock-busy', 75);
+  } finally {
+    restore();
+  }
+  assert.equal(p.calls.alive.length, 1, 'one judgement for one unchanged holder');
+  assert.equal(createsAtJudge, lib.LOCK_JUDGE_AFTER + 1, `judged at sighting ${createsAtJudge}`);
+});
+rt('T36h a lock whose bytes change between sightings (ordinary contention) is never judged', async (root) => {
+  putLock(root, mkRec());
+  const restore = patch(fs, 'readFileSync', (orig) => function (...a) {
+    if (isLockSrc(a[0])) fs.writeFileSync(lockFile(root), JSON.stringify(mkRec())); // a new holder each time
+    return orig.apply(this, a);
+  });
+  const p = fproc({ alive: () => false });
+  try {
+    await throwsTcb(() => lib.acquireLock(root, 'run.lock', lo({ proc: p, retries: 5, retryMs: 1 })), 'lock-busy', 75);
+  } finally {
+    restore();
+  }
+  assert.equal(p.calls.alive.length, 0, 'no process query while the holder keeps changing');
+  assert.deepEqual(staleLeftovers(root), []);
+});
+rt('T36i a lock that changed after its holder was judged dead is not renamed', async (root) => {
+  const stale = putLock(root, mkRec());
+  const fresh = Buffer.from(JSON.stringify(mkRec({ pid: process.pid, script: 'fresh' })));
+  let renames = 0;
+  const p = fproc({
+    alive: (pid) => {
+      if (pid !== stale.pid) return true;
+      fs.writeFileSync(lockFile(root), fresh); // the dead holder's lock was replaced meanwhile
+      return false;
+    },
+  });
+  const restore = patch(fs, 'renameSync', (orig) => function (...a) {
+    if (isLockSrc(a[0])) renames++;
+    return orig.apply(this, a);
+  });
+  try {
+    await throwsTcb(() => lib.acquireLock(root, 'run.lock', lo({ proc: p, retries: 2, retryMs: 1 })), 'lock-busy', 75);
+  } finally {
+    restore();
+  }
+  assert.equal(renames, 0, 'the fresh lock was never renamed');
+  assert.deepEqual(fs.readFileSync(lockFile(root)), fresh);
+  assert.equal((await ledger(root)).filter((l) => l.kind === 'lock-break').length, 0);
+});
+// LR-4: an unreadable lock (empty after a crash between create and write) is broken once it stayed
+// unchanged for a whole retry budget of at least LOCK_UNREADABLE_MIN_RETRIES; a short budget leaves it.
+rt('T36j an empty or corrupt run.lock unchanged for the whole retry budget is broken with a lock-break line', async (root) => {
+  assert.equal(lib.LOCK_UNREADABLE_MIN_RETRIES, 50);
+  for (const bad of ['', '{"pid":12']) {
+    fs.mkdirSync(P(root, 'run'), { recursive: true });
+    fs.writeFileSync(lockFile(root), bad);
+    // a short budget leaves it in place
+    await throwsTcb(() => lib.acquireLock(root, 'run.lock', lo({ proc: fproc({ alive: () => false }), retries: 3 })), 'lock-busy', 75);
+    assert.equal(fs.readFileSync(lockFile(root), 'utf8'), bad);
+    const p = throwingProc();
+    const h = await lib.acquireLock(root, 'run.lock', lo({ proc: p, retries: 50, retryMs: 1 }));
+    try {
+      assert.equal(rdj(lockFile(root)).nonce, h.nonce);
+      assert.equal(p.calls.n, 0, 'no process query for a lock with no record');
+      assert.deepEqual(staleLeftovers(root), []);
+      const lb = (await ledger(root)).filter((l) => l.kind === 'lock-break').pop();
+      assert.ok(lb, 'a lock-break line');
+      assert.deepEqual(lb.data.stale, { pid: null, start_time: null, nonce: null, script: null });
+      assert.equal(lb.data.unreadable.bytes, Buffer.byteLength(bad));
+      assert.equal(lb.data.unreadable.sha256, sha(Buffer.from(bad)));
+    } finally {
+      await h.release();
+    }
+  }
+});
+rt('T36k an unreadable lock that changes during the budget (a holder finishing its write) is not broken', async (root) => {
+  fs.mkdirSync(P(root, 'run'), { recursive: true });
+  fs.writeFileSync(lockFile(root), '');
+  let reads = 0;
+  const live = Buffer.from(JSON.stringify(mkRec({ pid: process.pid, script: 'slow-writer' })));
+  const restore = patch(fs, 'readFileSync', (orig) => function (...a) {
+    if (isLockSrc(a[0]) && ++reads === 10) fs.writeFileSync(lockFile(root), live); // the write lands
+    return orig.apply(this, a);
+  });
+  try {
+    await throwsTcb(() => lib.acquireLock(root, 'run.lock', lo({ proc: fproc(), retries: 50, retryMs: 1 })), 'lock-busy', 75);
+  } finally {
+    restore();
+  }
+  assert.deepEqual(fs.readFileSync(lockFile(root)), live);
+  assert.deepEqual(staleLeftovers(root), []);
+});
+// LR-2: the recorded start time comes from the holder's own clock, after Windows created it.
+test('T36l aliveFromQuery: a creation before the recorded start is the holder; a later one (pid reuse) is not', () => {
+  const rec = '2026-11-17T10:00:10.0000000Z';
+  assert.equal(lib.aliveFromQuery('NONE', rec), false);
+  assert.equal(lib.aliveFromQuery('2026-11-17T10:00:10.0000000Z', rec), true);
+  assert.equal(lib.aliveFromQuery('2026-11-17T10:00:09.0000000Z', rec), true, 'one second of start-up');
+  assert.equal(lib.aliveFromQuery('2026-11-17T09:59:58.0000000Z', rec), true, 'twelve seconds of start-up (slow, below-normal priority)');
+  assert.equal(lib.aliveFromQuery('2026-11-17T10:00:11.5000000Z', rec), true, 'within the tolerance after');
+  assert.equal(lib.aliveFromQuery('2026-11-17T10:00:12.5000000Z', rec), false, 'created after the holder started: pid reuse');
+  assert.equal(lib.aliveFromQuery('2026-11-17T15:00:00.0000000Z', rec), false);
+  assert.equal(lib.aliveFromQuery('2026-11-17T10:00:09.0000000Z', 'not-a-time'), false);
+  assert.equal(lib.aliveFromQuery('NOSTART', null), true);
+  assert.equal(lib.aliveFromQuery('NOSTART', rec), null);
+  assert.equal(lib.aliveFromQuery('2026-11-17T10:00:09.0000000Z', null), true);
+  for (const junk of ['', 'WARNING: something', 'Get-CimInstance : failed', undefined]) {
+    assert.equal(lib.aliveFromQuery(junk, rec), null, `unknown for ${JSON.stringify(junk)}`);
+  }
+});
+// LR-1: every PowerShell text stops on a failed query, so the provider answers unknown, never dead.
+test('T36m every realProc PowerShell text starts with $ErrorActionPreference=Stop', () => {
+  const texts = [lib.PS_SCRIPTS.list, lib.PS_SCRIPTS.boot, lib.PS_SCRIPTS.one(1234)];
+  for (const t of texts) assert.ok(t.startsWith("$ErrorActionPreference='Stop';"), t.slice(0, 60));
+  assert.ok(lib.PS_SCRIPTS.one(1234).includes("'ProcessId=1234'"));
+});
+// LR-5: the lock is re-checked right before each write, after the reads that precede it.
+rt('T42b appendLedger re-checks the lock after reading the tail: lost there, it is lock-lost 75 and writes nothing', async (root) => {
+  await appendMany(root, [{ data: { added: ['a'] } }]);
+  const before = fs.readFileSync(ledgerPath(root));
+  const h = await lib.acquireLock(root, 'run.lock', lo());
+  let fired = 0;
+  const restore = patch(fs, 'openSync', (orig) => function (...a) {
+    if (String(a[0]).endsWith('ledger.jsonl') && a[1] === 'r' && fired++ === 0) {
+      fs.writeFileSync(lockFile(root), JSON.stringify(mkRec({ pid: process.pid }))); // another holder took over
+    }
+    return orig.apply(this, a);
+  });
+  try {
+    await throwsTcb(() => ap(root, h), 'lock-lost', 75);
+  } finally {
+    restore();
+  }
+  assert.equal(fired >= 1, true, 'the tail was read');
+  assert.deepEqual(fs.readFileSync(ledgerPath(root)), before, 'the ledger is unchanged');
+  await h.release();
+});
+rt('T50b writeTasks re-checks the lock after reading the rev: lost there, it is lock-lost 75 and writes nothing', async (root) => {
+  await seedRows(root, [mkRow()]);
+  const cur = await lib.readTasks(root);
+  const before = fs.readFileSync(tasksFile(root));
+  const prevBefore = fs.existsSync(tasksFile(root) + '.prev') ? fs.readFileSync(tasksFile(root) + '.prev') : null;
+  const h = await lib.acquireLock(root, 'run.lock', lo());
+  let fired = 0;
+  const restore = patch(fs, 'readFileSync', (orig) => function (...a) {
+    if (String(a[0]).endsWith('tasks.json') && fired++ === 0) {
+      fs.writeFileSync(lockFile(root), JSON.stringify(mkRec({ pid: process.pid })));
+    }
+    return orig.apply(this, a);
+  });
+  try {
+    await throwsTcb(() => lib.writeTasks(root, h, { schema_version: 1, rev: cur.rev, tasks: [] }, { expectRev: cur.rev }), 'lock-lost', 75);
+  } finally {
+    restore();
+  }
+  assert.equal(fired >= 1, true, 'the rev was read');
+  assert.deepEqual(fs.readFileSync(tasksFile(root)), before);
+  const prevAfter = fs.existsSync(tasksFile(root) + '.prev') ? fs.readFileSync(tasksFile(root) + '.prev') : null;
+  assert.deepEqual(prevAfter, prevBefore);
+  await h.release();
+});
 rt('T37 withRunLock runs fn under the lock for the current ce, refuses another ce without calling fn, and always releases', async (root) => {
   let called = 0;
   await lib.withRunLock(root, { script: 'test', ce: 2, proc: fproc(), now: NOW }, async (h) => {
@@ -1842,6 +2024,27 @@ test('T67 x-maxWords accepts 15 words and rejects 16, splitting on whitespace ru
   assert.equal((await lib.validate(schema, `  ${words(16, '   ')}\n`, {})).ok, false);
   assert.equal((await lib.validate(schema, '', {})).ok, true);
 });
+test('T67b x-maxWords is not bypassed by invisible separators, unspaced scripts or one endless token (LR-7)', async () => {
+  const schema = { type: 'string', 'x-maxWords': 15 };
+  const bad = async (v, why) => {
+    const r = await lib.validate(schema, v, {});
+    assert.equal(r.ok, false, why);
+    assert.ok(r.errors.some((e) => e.keyword === 'x-maxWords'), `${why}: ${JSON.stringify(r.errors)}`);
+  };
+  const toks = (n, sep) => Array.from({ length: n }, (_, i) => `t${i}`).join(sep);
+  await bad(toks(500, '​'), 'words joined by U+200B');
+  await bad(toks(500, '⁠'), 'words joined by U+2060');
+  assert.equal(lib.wordCount(toks(16, '​')), 16);
+  await bad('漢'.repeat(16), 'sixteen Han characters');
+  await bad('あ'.repeat(16), 'sixteen Hiragana characters');
+  assert.equal(lib.wordCount('漢字 ok'), 3);
+  assert.equal((await lib.validate(schema, '漢'.repeat(15), {})).ok, true);
+  await bad('x'.repeat(15 * lib.MAX_CODEPOINTS_PER_WORD + 1), 'one token longer than the bound');
+  assert.equal((await lib.validate(schema, 'x'.repeat(15 * lib.MAX_CODEPOINTS_PER_WORD), {})).ok, true);
+  // ordinary text keeps its count
+  assert.equal(lib.wordCount('  the  quick\tbrown\nfox  '), 4);
+  assert.equal(lib.wordCount(''), 0);
+});
 test('T68 an unknown keyword throws schema-keyword 70; the ignored keywords do not', async () => {
   await throwsTcb(() => lib.validate({ type: 'string', format: 'email' }, 'a', {}), 'schema-keyword', 70);
   await throwsTcb(() => lib.validate({ dependentRequired: { a: ['b'] } }, { a: 1 }, {}), 'schema-keyword', 70);
@@ -2298,6 +2501,19 @@ test('T89 realProc with an unrunnable PowerShell makes list throw proc-unavailab
   await throwsTcb(() => proc.list(), 'proc-unavailable', 2);
   assert.equal(await proc.alive(process.pid, SELF_START), null);
   assert.equal(await proc.boot(), null);
+});
+test('T89b a failed CIM query makes the alive and list texts exit non-zero, never print NONE or an empty list (LR-1)', SERIAL, async (t) => {
+  if (!fs.existsSync(PS)) return t.skip('no Windows PowerShell here');
+  // Shadow Get-CimInstance with a function that writes a non-terminating error, as a failed query does.
+  const shadow = "function Get-CimInstance { Write-Error 'probe: query failed' }; ";
+  for (const [what, text] of [['alive', lib.PS_SCRIPTS.one(process.pid)], ['list', lib.PS_SCRIPTS.list]]) {
+    const r = spawnSync(PS, ['-NoProfile', '-NonInteractive', '-Command', shadow + text], {
+      encoding: 'utf8', timeout: 60000, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    assert.equal(r.error, undefined, `${what}: ${r.error}`);
+    assert.notEqual(r.status, 0, `${what}: exited 0 with stdout ${JSON.stringify(r.stdout)}`);
+    assert.notEqual(String(r.stdout).trim(), 'NONE', `${what}: a failed query read as "no such process"`);
+  }
 });
 const t7 = (n) => `2026-11-17T10:00:${String(n).padStart(2, '0')}.0000000Z`;
 const pr = (pid, ppid, cmdline, start) => ({ pid, ppid, name: 'x.exe', exe: 'x', cmdline, start_time: start });

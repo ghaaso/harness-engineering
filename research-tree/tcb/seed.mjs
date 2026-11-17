@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import {
   parseArgs, runMain, edgeFacts, thresholds, canonicalize, sha256hex, objectId, getObject,
   readJson, readJsonl, writeAtomic, createExclusive, isUnder, withRunLock, checkCe, appendLedger,
-  readTasks, currentProtocol, checkerVerdicts, clopperPearson, rng as makeRng, parseTranscript,
+  readTasks, currentProtocol, checkerVerdicts, clopperPearson, rng as makeRng, parseTranscript, readLedger,
   realProc,
 } from './lib.mjs';
 
@@ -117,14 +117,27 @@ function synthValue(rng, taken) {
   }
   return SYNTH_VALUES[i] + '-x';
 }
-function syntheticSentence(card, appliesTo) {
+// Several phrasings and a drawn sid: a batch whose seeds all carried one sentence shape and sid "s1"
+// would let a checker pick them out (R42/R43). Same facts in every phrasing, so the checker's task
+// does not change; the draw comes from the batch's rng, so a batch stays reproducible.
+const SENTENCE_TEMPLATES = [
+  (m) => `Using ${m.approach_id}, the measured ${m.measure} was ${m.value} ${m.unit} under the conditions stated for the source.`,
+  (m) => `In the cited source, ${m.approach_id} gave a ${m.measure} of ${m.value} ${m.unit}.`,
+  (m) => `The source reports a ${m.measure} of ${m.value} ${m.unit} for ${m.approach_id}, within the conditions it states.`,
+  (m) => `${m.approach_id} reached ${m.value} ${m.unit} on ${m.measure} in the study, as measured there.`,
+  (m) => `For ${m.approach_id}, the ${m.measure} measured ${m.value} ${m.unit}; the source states the conditions.`,
+  (m) => `The measured ${m.measure} for ${m.approach_id} was ${m.value} ${m.unit} in the reported setting.`,
+];
+function syntheticSentence(card, appliesTo, rng) {
   const m = card.measured;
+  const t = rng.int(SENTENCE_TEMPLATES.length);
+  const n = 1 + rng.int(12);
   return {
-    sid: 's1',
+    sid: `s${n}`,
     approach_id: m.approach_id,
     measure: m.measure,
     kind: 'fact',
-    text: `Using ${m.approach_id}, the measured ${m.measure} was ${m.value} ${m.unit} under the conditions stated for the source.`,
+    text: SENTENCE_TEMPLATES[t](m),
     cites: [],
     applies_to: appliesTo,
   };
@@ -232,7 +245,7 @@ export function makeSeed({ cls, card, window: win, withSentence = false, other =
   };
   if (withSentence) {
     const src = sentenceSource || itemCard;
-    out.sentence = syntheticSentence(src, appliesOverride || scopeOf(src));
+    out.sentence = syntheticSentence(src, appliesOverride || scopeOf(src), rng);
   }
   return out;
 }
@@ -538,21 +551,36 @@ function bounds(x, n, conf) {
   return { lower: b.lower, upper: b.upper };
 }
 
+// One certificate per task: a review certified again must not count its plants twice. The latest one
+// stands (the last `certificate` line of the ledger naming it; an id the ledger never names loses to
+// one it names, and ties go to the greater id). contra_k comes only from the plant files of the
+// tasks that have a pooled certificate, so numerator and denominator cover the same set.
 function certificatePool(root) {
   let k = 0;
   let found = 0;
   let contraFound = 0;
+  const seqOf = new Map();
+  try {
+    for (const l of readLedger(root).lines) if (l.kind === 'certificate' && l.data && typeof l.data.id === 'string') seqOf.set(l.data.id, l.seq);
+  } catch { /* no readable ledger: ids decide */ }
+  const latest = new Map(); // task -> {id, seq, plants}
   const dir = path.join(root, 'store', 'objects');
   if (fs.existsSync(dir)) {
     for (const f of fs.readdirSync(dir).sort()) {
       if (!/^x_[0-9a-f]{16}\.json$/.test(f)) continue;
-      const v = getObject(root, f.slice(0, -5));
-      if (v && v.kind === 'certificate' && v.plants) {
-        k += v.plants.k || 0;
-        found += v.plants.found || 0;
-        contraFound += v.plants.contra_found || 0;
-      }
+      const id = f.slice(0, -5);
+      const v = getObject(root, id);
+      if (!(v && v.kind === 'certificate' && v.plants)) continue;
+      const key = String(v.task ?? id);
+      const seq = seqOf.has(id) ? seqOf.get(id) : -1;
+      const cur = latest.get(key);
+      if (!cur || seq > cur.seq || (seq === cur.seq && id > cur.id)) latest.set(key, { id, seq, plants: v.plants });
     }
+  }
+  for (const { plants } of latest.values()) {
+    k += plants.k || 0;
+    found += plants.found || 0;
+    contraFound += plants.contra_found || 0;
   }
   let contraK = 0;
   const pdir = path.join(root, 'sealed', 'plants');
@@ -560,6 +588,7 @@ function certificatePool(root) {
     for (const f of fs.readdirSync(pdir).sort()) {
       const abs = path.join(pdir, f);
       if (!f.endsWith('.json') || !fs.statSync(abs).isFile()) continue;
+      if (!latest.has(f.slice(0, -5))) continue;
       const doc = readJson(abs);
       for (const p of (doc && doc.plants) || []) if (p.against_hope) contraK += 1;
     }

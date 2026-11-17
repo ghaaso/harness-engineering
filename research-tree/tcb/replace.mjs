@@ -409,7 +409,7 @@ function predictFence(row, { E, reason, host, ready, R, Hmax }) {
   }
   const ok = (st === 'active' && ['bound', 'started', 'admitted'].includes(sp)) || (st === 'parked' && sp === 'stopped');
   if (!ok) throw tcbError('wrong-step', 65, { state: st, step: sp });
-  if (FAILURE.has(reason) && reason !== 'tainted' && ready) throw tcbError('ready-wins', 5, { task: row.task, epoch: E });
+  if (reason !== 'tainted' && ready) throw tcbError('ready-wins', 5, { task: row.task, epoch: E, reason }); // M6: every reason
   if ((reason === 'handover' || reason === 'memory') && (row.handovers ?? 0) + (row.parks ?? 0) >= Hmax) {
     throw tcbError('hmax', 1, { handovers: row.handovers ?? 0, parks: row.parks ?? 0, H_max: Hmax });
   }
@@ -464,11 +464,20 @@ async function modeFence(env, flags) {
       const cutFiles = cut && cut.files ? Object.keys(cut.files).length : 0;
       const readyCheck = () => readyValid(root, dir, T, E);
 
+      // M6 (CONTRACT decision 40): a READY of the current epoch wins over every reason but `first`
+      // and `tainted`, a planned hand-over, a park, a cut and a drop included. lib.fence re-checks
+      // for failure reasons only, so the check for every reason is made here, under the same lock.
+      const running = row.epoch === E
+        && ((row.state === 'active' && ['bound', 'started', 'admitted'].includes(row.step)) || (row.state === 'parked' && row.step === 'stopped'));
+      if (running && reason !== 'first' && reason !== 'tainted' && readyCheck()) {
+        throw tcbError('ready-wins', 5, { task: T, epoch: E, reason });
+      }
+
       let out;
       if (handle) {
         out = lib.fence(root, handle, { task: T, expectEpoch: E, reason, host: !!host, tick, readyCheck, cut, spendAtFence, R, Hmax });
       } else {
-        const ready = FAILURE.has(reason) && reason !== 'tainted' ? readyCheck() : false;
+        const ready = reason !== 'first' && reason !== 'tainted' ? readyCheck() : false;
         out = predictFence(row, { E, reason, host: !!host, ready, R, Hmax });
       }
       const from = out.from ?? E;

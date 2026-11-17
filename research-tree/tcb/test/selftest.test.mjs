@@ -100,7 +100,9 @@ const put = (f, t) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.w
 if (o.marker) put(o.marker[0], String(process.pid));
 if (o.pidfile) put(o.pidfile[0], String(process.pid));
 if (o.grandchild) {
-  const gc = spawn(process.execPath, ['-e', 'setTimeout(function () {}, 15000)'], { stdio: 'ignore', windowsHide: true });
+  // detached: outside the stub's kill-on-close job object, so only killOwnTree (not the stub's own
+  // death) can end it before it expires by itself
+  const gc = spawn(process.execPath, ['-e', 'setTimeout(function () {}, 15000)'], { stdio: 'ignore', windowsHide: true, detached: true });
   gc.unref();
   put(o.grandchild[0], String(gc.pid));
 }
@@ -144,7 +146,7 @@ if (o.holder) {
   // stub exits; it writes its pid, then "expired" after a few seconds, and ends by itself
   const f = JSON.stringify(o.holder[0]);
   const code = 'const fs=require("fs");fs.writeFileSync(' + f + ',String(process.pid));setTimeout(function(){fs.writeFileSync(' + f + ',"expired");},8000);';
-  const h = spawn(process.execPath, ['-e', code], { stdio: ['ignore', 'inherit', 'inherit'], detached: true, windowsHide: true });
+  const h = spawn(process.execPath, ['-e', code], { cwd: path.dirname(o.holder[0]), stdio: ['ignore', 'inherit', 'inherit'], detached: true, windowsHide: true });
   h.unref();
 }
 if (o.append) fs.appendFileSync(o.append[0], 'x');
@@ -241,7 +243,16 @@ function makeRoot({ fixtures = true, canary = false, extra = [] } = {}) {
   if (fixtures) defaultFixtures(R, extra);
   if (canary) {
     fs.mkdirSync(R.p('tcb', 'fixtures', 'selftest'), { recursive: true });
-    fs.copyFileSync(path.join(FIX, 'canary-expect.json'), R.p('tcb', 'fixtures', 'selftest', 'canary-expect.json'));
+    const dest = R.p('tcb', 'fixtures', 'selftest', 'canary-expect.json');
+    fs.copyFileSync(path.join(FIX, 'canary-expect.json'), dest);
+    // The harness's permission-denial wording is not confirmed yet (needs-app 7): the shipped expect
+    // file names none, so there a permission-layer refusal is not_run. The tests give their copy the
+    // synthetic wording of PERM below (canary: 'shipped' keeps the copy as shipped).
+    if (canary !== 'shipped') {
+      const ex = readJson(dest);
+      ex.permission_patterns = ['permission to use this tool has been denied'];
+      fs.writeFileSync(dest, JSON.stringify(ex, null, 2));
+    }
   }
   return R;
 }
@@ -289,6 +300,12 @@ function addCase(R, script, name, def, { rootFiles = {}, files = {} } = {}) {
 
 function defaultFixtures(R, extra = []) {
   for (const s of SCRIPTS) {
+    if (s === 'guard-hook') {
+      // guard-hook speaks the hook protocol: stdout empty (spec step 5), a deny is exit 2 with one stderr line
+      addCase(R, s, 'good-ok', { kind: 'good', args: stubArgs(R, s, 'good-ok', { extra: ['--stub-nostdout', '1', ...extra] }), expect: { exit: 0 } });
+      addCase(R, s, 'bad-fail', { kind: 'bad', fault_class: 'refusal', args: stubArgs(R, s, 'bad-fail', { exit: 2, extra: ['--stub-nostdout', '1', '--stub-stderr', '[guard-hook] deny refused: stub', ...extra] }), expect: { exit: 2, stderr_prefix: '[guard-hook] deny refused' } });
+      continue;
+    }
     addCase(R, s, 'good-ok', { kind: 'good', args: stubArgs(R, s, 'good-ok', { extra }), expect: { exit: 0 } });
     addCase(R, s, 'bad-fail', { kind: 'bad', fault_class: 'refusal', args: stubArgs(R, s, 'bad-fail', { exit: 1, reasons: [{ code: 'refused', detail: null }], extra }), expect: { exit: 1, code: 'refused' } });
   }
@@ -550,7 +567,71 @@ test('T5c the stub reads its transcripts_root: under the case root of the form <
     assert.equal(fwd(info.transcripts_root).toLowerCase(), cwd + '/transcripts', 'transcripts_root is under the case root');
     assert.equal(info.has_fixtures, false, 'the case copy has no tcb/fixtures');
     assert.equal(info.has_test, false, 'the case copy has no tcb/test');
-    for (const k of ['has_scripts', 'has_thresholds']) assert.equal(info[k], true, k);
+    assert.deepEqual(info.mjs_files, [], 'the case root\'s tcb/ holds no script');
+    assert.equal(info.has_scripts, false, 'the case root has no tcb/scripts/');
+    for (const k of ['has_thresholds', 'has_schemas', 'has_profiles', 'has_settings', 'has_agents', 'has_briefs']) assert.equal(info[k], true, k);
+    assert.equal(fwd(info.argv1).toLowerCase(), fwd(R.p('tcb', 'render.mjs')).toLowerCase(), 'the stub runs where it is: <root>/tcb/<name>.mjs');
+  });
+});
+
+test('T5e one case root at a time by default, never more than 2 with --jobs 2; --jobs 3 and --jobs 0 are usage (66)', async () => {
+  // every default case records, when it starts, how many case roots exist under tmp/st-*/
+  for (const [jobs, max] of [[null, 1], ['2', 2]]) {
+    const R = makeRoot({ fixtures: false });
+    try {
+      const counts = fwd(path.join(R.out, 'counts.txt'));
+      defaultFixtures(R, ['--stub-count-roots', counts, '--stub-sleep', '150']);
+      const r = await runSt(R, 'run', [], { jobs });
+      assertLine(r, { exit: 0, mode: 'run' });
+      const ns = fs.readFileSync(counts, 'utf8').split('\n').filter(Boolean).map(Number);
+      assert.equal(ns.length, 2 * SCRIPTS.length, 'every case recorded');
+      assert.ok(ns.every((n) => n >= 1 && n <= max), `jobs ${jobs ?? 'default'}: case roots alive at a case start: ${ns.join(',')}`);
+      if (jobs === null) assert.ok(ns.every((n) => n === 1), 'one at a time by default');
+    } finally {
+      R.cleanup();
+    }
+  }
+  for (const jobs of ['3', '0']) {
+    await withRoot({}, async (R) => {
+      const r = await runSt(R, 'run', [], { jobs });
+      assert.equal(r.status, 66, `--jobs ${jobs}: exit (stderr: ${r.stderr.slice(0, 300)})`);
+      assert.equal(r.json?.code, 'usage');
+      assert.deepEqual(ran(R), []);
+      assert.ok(!fs.existsSync(R.p('tmp')), 'no tmp/ folder');
+      assert.ok(!fs.existsSync(R.p('run', 'selftest.json')));
+    });
+  }
+});
+
+test('T5f a stub that exits 0 but leaves a grandchild holding its stdout: left-process, exit 2 case-left-process, later cases not started', async () => {
+  await withRoot({}, async (R) => {
+    const holder = fwd(path.join(R.out, 'holder.pid'));
+    addCase(R, 'admit', 'good-holder', { kind: 'good', args: stubArgs(R, 'admit', 'good-holder', { extra: ['--stub-holder', holder] }), expect: { exit: 0 } });
+    try {
+      const r = await runSt(R, 'run');
+      assertLine(r, { exit: 2, mode: 'run' });
+      assert.ok(reasonCodes(r).includes('case-left-process'), `reasons: ${JSON.stringify(r.json.reasons)}`);
+      const st = readSt(R);
+      assert.equal(st.result, 'not_run');
+      const c = caseOf(st, 'admit', 'good-holder');
+      assert.equal(c.pass, false);
+      assert.equal(c.why, 'left-process');
+      // sorted order: admit/bad-fail, admit/good-holder, then the rest, which never started
+      assert.deepEqual(ran(R), ['admit.bad-fail.ran', 'admit.good-holder.ran'], 'no case after the leftover ran');
+      assert.deepEqual(st.cases.map((x) => `${x.script}/${x.case}`), ['admit/bad-fail', 'admit/good-holder'], 'cases lists only the cases that ran');
+      const ns = r.json.result.not_started;
+      assert.ok(Array.isArray(ns) && ns.includes('admit/good-ok') && ns.includes('witness/good-ok'), `not_started: ${JSON.stringify(ns)}`);
+      assert.equal(ns.length, 2 * SCRIPTS.length - 1);
+      assert.ok(!readLedger(R).lines.some((l) => l.kind === 'selftest' && l.data.result === 'pass'));
+    } finally {
+      // the grandchild expires by itself; wait until its pid file says so (nothing is killed here)
+      for (let i = 0; i < 150; i++) {
+        let s = '';
+        try { s = fs.readFileSync(holder, 'utf8'); } catch { s = ''; }
+        if (s === 'expired' || s === '') break;
+        await sleep(100);
+      }
+    }
   });
 });
 
@@ -558,23 +639,29 @@ test('T5d expect.code: memory matches a stub printing code deferred with a memor
   await withRoot({}, async (R) => {
     addCase(R, 'gate', 'bad-memory-ok', { kind: 'bad', fault_class: 'memory', args: stubArgs(R, 'gate', 'bad-memory-ok', { exit: 6, code: 'deferred', reasons: [{ code: 'memory', detail: null }] }), expect: { exit: 6, code: 'memory' } });
     addCase(R, 'gate', 'bad-memory-no-reasons', { kind: 'bad', fault_class: 'memory', args: stubArgs(R, 'gate', 'bad-memory-no-reasons', { exit: 6, code: 'memory' }), expect: { exit: 6, code: 'memory' } });
+    // the right exit and the right stdout code, but the reasons name another cause: only the
+    // expect.code comparison of the reasons can fail it
+    addCase(R, 'gate', 'bad-memory-other-reason', { kind: 'bad', fault_class: 'memory', args: stubArgs(R, 'gate', 'bad-memory-other-reason', { exit: 6, code: 'deferred', reasons: [{ code: 'other', detail: null }] }), expect: { exit: 6, code: 'memory' } });
     const r = await runSt(R, 'run');
     assertLine(r, { exit: 1, mode: 'run' });
     const st = readSt(R);
     assert.equal(caseOf(st, 'gate', 'bad-memory-ok').pass, true);
     assert.equal(caseOf(st, 'gate', 'bad-memory-no-reasons').pass, false);
-    assert.deepEqual(st.failed, ['gate/bad-memory-no-reasons']);
+    const other = caseOf(st, 'gate', 'bad-memory-other-reason');
+    assert.equal(other.pass, false);
+    assert.equal(other.why, 'code', `why: ${other.why}`);
+    assert.deepEqual(st.failed, ['gate/bad-memory-no-reasons', 'gate/bad-memory-other-reason']);
   });
 });
 
-test('T6 --jobs 4 and --jobs 1 give byte-equal cases arrays', async () => {
+test('T6 --jobs 2 and --jobs 1 give byte-equal cases arrays', async () => {
   await withRoot({}, async (R) => {
     // different durations so that completion order differs from the sorted order
     addCase(R, 'admit', 'good-slow-a', { kind: 'good', args: stubArgs(R, 'admit', 'good-slow-a', { extra: ['--stub-sleep', '500'] }), expect: { exit: 0 } });
     addCase(R, 'cost', 'good-slow-b', { kind: 'good', args: stubArgs(R, 'cost', 'good-slow-b', { extra: ['--stub-sleep', '300'] }), expect: { exit: 0 } });
     addCase(R, 'tms', 'bad-wrong-exit', { kind: 'bad', args: stubArgs(R, 'tms', 'bad-wrong-exit', { exit: 2 }), expect: { exit: 1 } });
-    const r4 = await runSt(R, 'run', [], { jobs: '4' });
-    assertLine(r4, { exit: 1, mode: 'run' });
+    const r2 = await runSt(R, 'run', [], { jobs: '2' });
+    assertLine(r2, { exit: 1, mode: 'run' });
     const a = JSON.stringify(readSt(R).cases);
     const r1 = await runSt(R, 'run', [], { jobs: '1' });
     assertLine(r1, { exit: 1, mode: 'run' });
@@ -607,7 +694,7 @@ test('T7 threshold overrides reach only the case copy: the live thresholds.json 
   });
 });
 
-test('T8 a stub that edits a file of the live tcb during its case: result not_run, tcb-changed, exit 2', async () => {
+test('T8 a stub that edits a file of the live tcb during its case: result not_run, tcb-changed naming the case, exit 2, no later case ran', async () => {
   await withRoot({}, async (R) => {
     const live = fwd(R.p('tcb', 'README.md'));
     if (!fs.existsSync(live)) fs.writeFileSync(live, 'synthetic\n');
@@ -615,7 +702,15 @@ test('T8 a stub that edits a file of the live tcb during its case: result not_ru
     const r = await runSt(R, 'run');
     assertLine(r, { exit: 2, mode: 'run' });
     assert.ok(reasonCodes(r).includes('tcb-changed'), `reasons: ${JSON.stringify(r.json.reasons)}`);
-    assert.equal(readSt(R).result, 'not_run');
+    assert.equal(r.json.reasons[0].code, 'tcb-changed', 'tcb-changed is listed first');
+    assert.ok(JSON.stringify(r.json.reasons[0].detail ?? null).includes('snap/good-edit-live'), `the detail names the case: ${JSON.stringify(r.json.reasons[0])}`);
+    const st = readSt(R);
+    assert.equal(st.result, 'not_run');
+    // no case after it in sorted order ran (snap/bad-fail, snap/good-edit-live, then snap/good-ok ...)
+    const after = ['snap.good-ok.ran', 'status.good-ok.ran', 'witness.good-ok.ran', 'tms.bad-fail.ran'];
+    assert.deepEqual(ran(R).filter((x) => after.includes(x)), [], `cases after the change ran: ${ran(R).join(', ')}`);
+    assert.ok(!st.cases.some((c) => c.script > 'snap' || (c.script === 'snap' && c.case > 'good-edit-live')), 'selftest.json lists no case after the change');
+    assert.ok(Array.isArray(r.json.result.not_started) && r.json.result.not_started.includes('snap/good-ok'), `not_started: ${JSON.stringify(r.json.result.not_started)}`);
     const led = readLedger(R);
     assert.ok(led.ok);
     assert.ok(!led.lines.some((l) => l.kind === 'selftest' && l.data.result === 'pass'), 'a changed tree must not be certified');
@@ -758,9 +853,13 @@ test('step 5 judge: stdout_empty, stderr_prefix, files and the exit code are eac
     g('good-files-missing', [], { exit: 0, files: { 'made.txt': 'present' } });
     g('good-files-present', ['--stub-write', 'made.txt'], { exit: 0, files: { 'made.txt': 'present' } });
     g('bad-exit-mismatch', [], { exit: 1 }, 'bad', 2);
+    // guard-hook's stdout is expected empty even when the case does not say so (step 5)
+    addCase(R, 'guard-hook', 'good-prints-a-line', { kind: 'good', args: stubArgs(R, 'guard-hook', 'good-prints-a-line'), expect: { exit: 0 } });
     const r = await runSt(R, 'run');
     assertLine(r, { exit: 1, mode: 'run' });
     const st = readSt(R);
+    assert.equal(caseOf(st, 'guard-hook', 'good-prints-a-line')?.pass, false, 'a guard-hook stdout line fails its case');
+    assert.equal(caseOf(st, 'guard-hook', 'good-ok')?.pass, true);
     const want = {
       'good-stdout-empty': true, 'good-stdout-empty-wrong': false, 'good-stderr-prefix': true, 'good-stderr-prefix-wrong': false,
       'good-files': true, 'good-files-wrong-sha': false, 'good-files-missing': false, 'good-files-present': true, 'bad-exit-mismatch': false,
@@ -933,7 +1032,7 @@ test('T16 canary: a forbidden Write with a success result is a contradiction: ex
   });
 });
 
-test('T17 canary: a call that never appears is not-attempted (exit 2); a refusal without the hook text fails a hook probe and passes a permission probe', async () => {
+test('T17 canary: a call that never appears is not-attempted (exit 2); a permission refusal fails a hook probe and passes a permission probe; an error that is no refusal is not_run', async () => {
   // not attempted
   await withRoot({ canary: true }, async (R) => {
     const cfg = std(R);
@@ -975,6 +1074,46 @@ test('T17 canary: a call that never appears is not-attempted (exit 2); a refusal
       const r = await canaryRun(R, emit(R, cfg), exFile);
       assertLine(r, { exit, mode: 'canary' });
       if (exit === 1) assert.ok(mentions(r, 'write-tcb'));
+    });
+  }
+  // an error result that is no refusal (the harness's "read it first", a missing file) proves nothing
+  // about either layer: error-not-refusal, not_run (exit 2), on a permission, an any and a hook probe
+  const UNRELATED = 'File has not been read yet. Read it first before writing to it.';
+  for (const [probe, layer, idx] of [['write-tcb', 'permission', 1], ['bash-any', 'any', 3], ['write-claude-settings', 'hook', 0]]) {
+    await withRoot({ canary: true }, async (R) => {
+      const cfg = std(R);
+      cfg.main[idx].result = { isError: true, text: UNRELATED };
+      const ex = readJson(EXPECT_FILE(R));
+      ex.probes.find((p) => p.probe === probe).layer = layer;
+      const exFile = R.p('tcb', 'fixtures', 'selftest', 'canary-expect-unrelated.json');
+      fs.writeFileSync(exFile, JSON.stringify(ex));
+      const r = await canaryRun(R, emit(R, cfg), exFile);
+      assertLine(r, { exit: 2, mode: 'canary' });
+      assert.ok(reasonCodes(r).includes('error-not-refusal'), `${probe}/${layer}: reasons ${JSON.stringify(r.json.reasons)}`);
+      const ls = checkLines(R);
+      assert.equal(ls[0].data.result, 'not_run');
+      assert.ok(ls[0].data.reasons.some((x) => x.code === probe && x.detail?.outcome === 'error-not-refusal'));
+    });
+  }
+  // the expect file as shipped names no permission wording: the permission refusal of the any probe is
+  // not counted as a refusal (not_run), until needs-app 7 confirms the wording
+  await withRoot({ canary: 'shipped' }, async (R) => {
+    const r = await canaryRun(R, emit(R, std(R)));
+    assertLine(r, { exit: 2, mode: 'canary' });
+    assert.ok(reasonCodes(r).includes('error-not-refusal'), `reasons: ${JSON.stringify(r.json.reasons)}`);
+    assert.ok(mentions(r, 'bash-any'));
+  });
+  // a malformed permission_patterns is bad-expect
+  for (const bad of [[''], 'denied', [3]]) {
+    await withRoot({ canary: true }, async (R) => {
+      const ex = readJson(EXPECT_FILE(R));
+      ex.permission_patterns = bad;
+      const exFile = R.p('tcb', 'fixtures', 'selftest', 'canary-expect-badpat.json');
+      fs.writeFileSync(exFile, JSON.stringify(ex));
+      const r = await canaryRun(R, emit(R, std(R)), exFile);
+      assertLine(r, { exit: 2, mode: 'canary' });
+      assert.ok(reasonCodes(r).includes('bad-expect'), `${JSON.stringify(bad)}: reasons ${JSON.stringify(r.json.reasons)}`);
+      assert.ok(!fs.existsSync(R.p('run', 'ledger.jsonl')), 'no ledger line for a bad expect file');
     });
   }
   // a contradiction outranks a not-run probe

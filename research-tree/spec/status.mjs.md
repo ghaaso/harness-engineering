@@ -47,7 +47,9 @@ attempt, windows. 2 Under `withRunLock(ce)`: read every file, compute [status] �
   zombie spend over Z → `owner`; planned/none → `replace-fence`; active|parked/stopped →
   `replace-start` (both `none` while halted or draining); fenced, or committed at bound →
   `stop-request`; stop-requested with the target's `stop` none|requested → `stop-session`;
-  stop-requested with `stop` unconfirmed, or a stop sample present → `stop-verify`; admitted →
+  stop-requested with `stop` unconfirmed, or a stop sample present (`run/stop-sample/<task>-e<k>
+  .json`, k the target attempt: e − 1, or e for a committed row, as stop.mjs names it) →
+  `stop-verify`; admitted →
   `start-session`; started → `bind`; bound with a READY of this epoch for a step without a commit
   record → `audit` when no `audit` line of this task+epoch is newer than its last `intake` line,
   else `commit`; else `none`.
@@ -63,7 +65,14 @@ attempt, windows. 2 Under `withRunLock(ce)`: read every file, compute [status] �
 exactly one session → `updateRow(steps ['admitted'], epoch e)`: step `started`,
 `attemptOf(row, e).session`; append `started` {session}. Two or more sessions → no change, anomaly
 `several-sessions`. For every attempt not current with `session` null and folder transcripts: set
-that attempt's `session` (no step change, no line). Then build.
+that attempt's `session` (no step change, no line). Then build. **Then the alarm (M2, CONTRACT
+decision 40):** reconcile is the first act of every turn, so it checks the wake source a dying
+turn would otherwise leave missing: alarm = `alarm.json` ce equals ce and `proc.alive` true. When
+it is not (absent, another ce, dead, or the process list unavailable), exit 1 with reason
+`alarm-missing` {ce, pid, alive} (the status is still built and written, the rows still
+reconciled; `result.arm` = `"alarm"`); the coordinator starts `watch.mjs --alarm` as a background
+command before anything else in the turn. A live alarm is left as it is (endturn's `acked.json`
+write re-arms it, M1). Reconcile starts and kills nothing.
 
 **--endturn.** 1 Under `withRunLock(ce)`: K > ledger head seq → exit 1 `acked-ahead`; K < the
 stored acked_seq → exit 1 `acked-backwards`; write `acked.json` {ce, acked_seq: K, at: now}.
@@ -72,7 +81,8 @@ start_time, and `proc.alive` is true; alarm = `alarm.json` ce equals ce and `pro
 `proc.alive` null for either → exit 2 `proc-unavailable` (acked.json is still written). 3 Exit 0
 when both run; else 1 with reasons `watcher-missing` and/or `alarm-missing` — the coordinator then
 starts `watch.mjs` and/or `watch.mjs --alarm` as background commands. Endturn starts and kills
-nothing (decision 5).
+nothing (decision 5). The `acked.json` write of step 1 is also the alarm's arm token (M1, CONTRACT
+§3.9): a live alarm reads it and sleeps another period, so endturn never replaces a live alarm.
 
 **intent open.** Under the lock: create `run/intents/<key>.json` {key, ce, subject, text_sha (sha256
 of the text file, or of the empty string), created_at}. Existing with equal key, subject and
@@ -84,16 +94,17 @@ subject that is a task in the table (else 1 `no-task`); append `owner` {act, sub
 **meter.** Append `meter` {pct, self_reported: true}.
 
 ## Exit codes
-0; 1 `acked-ahead`, `acked-backwards`, `watcher-missing`, `alarm-missing`, `intent-differs`,
-`no-task`; 2 `proc-unavailable` (endturn), `missing`, `schema-version`; 3 `run-from-attempt`; 64;
+0; 1 `acked-ahead`, `acked-backwards`, `watcher-missing`, `alarm-missing` (endturn; and
+reconcile, M2), `intent-differs`, `no-task`; 2 `proc-unavailable` (endturn), `missing`, `schema-version`; 3 `run-from-attempt`; 64;
 65 (reconcile CAS); 66; 67 (tasks, coord, acked, watcher, alarm or an intent file corrupt); 70; 75.
 
 ## Rules implemented
 Process list and transcript parses happen before the lock (CONTRACT §2.1).
 R1 (status.json under the lock), R3 (reconcile: a transcript means the start happened), R6 (status
 first; acked seq; two wake sources), R10 (slots, reservation never stored), R12 (status is the only
-state), R20 (a view, rebuilt), R40 (`not_run`), R58; decisions 3, 4, 5, 17, 25. Model findings F4
-(endturn never starts a second watcher), A8 and "acked seq not persisted".
+state), R20 (a view, rebuilt), R40 (`not_run`), R58; decisions 3, 4, 5, 17, 25, 40. Model findings F4
+(endturn never starts a second watcher), A8 and "acked seq not persisted"; second model check M1
+(endturn's acked.json is the arm token; nothing killed) and M2 (alarm armed at turn start).
 
 ## Behaviours (tests)
 - T1 build on a root with two rows (one planned, one bound with a fake transcript of 3 calls, 1200
@@ -112,7 +123,13 @@ state), R20 (a view, rebuilt), R40 (`not_run`), R58; decisions 3, 4, 5, 17, 25. 
 - T6 `tasks.json` corrupt → exit 67, `status.json` unchanged; `coord.json` absent → exit 2
   `no-coordinator`; stale `--ce` → 64, nothing written.
 - T7 reconcile: admitted row whose folder has one fake transcript (cwd = folder) → step `started`,
-  `attemptOf(row, e).session` set, one `started` line; a repeat → exit 0, no line.
+  `attemptOf(row, e).session` set, one `started` line; a repeat → no line (exit 1 `alarm-missing`
+  in T7-T9 and T16, whose roots have no alarm; M2).
+- M2 reconcile and the alarm: no `alarm.json` → exit 1 `alarm-missing`, `result.arm` "alarm",
+  status.json still written; an `alarm.json` of this ce naming a live sleeper → exit 0; one naming a
+  finished child, or of another ce → exit 1 `alarm-missing`; the sleeper is alive afterwards.
+- M1 endturn re-arms by writing: with a live alarm sleeper, endturn changes the sha256 of
+  `acked.json` (the arm token), leaves `alarm.json` byte-identical and the sleeper alive.
 - T8 reconcile with transcripts of two sessions for one folder → row unchanged, anomaly
   `several-sessions`; a transcript whose `cwd` is another folder is ignored.
 - T9 reconcile on a row the coordinator fenced meanwhile (epoch moved) → that row skipped (65 from
