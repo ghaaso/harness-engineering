@@ -8,9 +8,11 @@ Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. This board list
 | Set a limit, a timeout, a threshold or a budget | r57-0002 | Computed against the objective, not his preference |
 | Start a helper or a child session | r57-0150 | Routes from kind of job to model; the hook refuses the rest |
 | Choose or check the model of a helper | r57-0150, r57-0120, r57-0108 | The routes, the hook, what an agent definition does not fix |
-| Decide how many helpers, sessions or heavy commands run at once | r57-0408, r57-0705 | A number per resource, run at the smallest; untested |
+| Decide how many helpers, sessions or heavy commands run at once | r57-0408, r57-0705, o2-0401, o2-0403 | A number per resource, run at the smallest; untested |
 | Let two writers change one file | r57-0406, r57-0128 | Per file, by cost in what is scarce; untested |
-| Decide what to do when a job is slow | r57-0408, r57-0129 | Find which resource gives the smallest number |
+| Decide what to do when a job is slow | r57-0408, r57-0129, o2-0401 (memory), o2-0403 (the check) | Find which resource gives the smallest number |
+| Ask whether more work side by side uses more tokens | r57-0408, r57-0115, o2-0501 | A budget, not a rate; reasoned, one trial, no paper |
+| Cite a figure on merges that are clean but wrong | r57-0305, x06-0356, x06-0360 | Human teams; shares of all merges, of clean merges, or of correct builds: say which |
 | Stop a helper writing outside its files | r57-0105, r57-0402 | Seen working once |
 | Start a session in a new folder | r57-0026, r57-0122 | Check the tier hook first |
 | Start work nobody asked for | r57-0007 | Not without his word |
@@ -80,6 +82,7 @@ Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. This board list
 - r57-0129 [measured] In 25 episodes the limit changed by job: queue 9, blocked program starts 7, memory 4, tokens 4, processor 3, nothing 1.
 - r57-0130 [measured] Fill 1: 2,524 extractor records; all script-checked, 733 read by hand, 3 small corrections, none removed.
 - r57-0131 [observed] The board is version 1.1: top-session records and a directory of journal files; extractor records are found by search.
+- r57-0132 [measured] Recall test 3, on the filled library: of 10 questions 4 sure, 5 partly, 1 rightly "not recorded"; its fixes are in.
 - r57-0150 [quoted] Tier routes: haiku locates and extracts; sonnet reads, collects, runs, builds; opus builds invariants, analyses, refutes, orchestrates.
 - o1-0101 [observed] The lane's capacity file holds 2 (default 1, at most 4).
 - o1-0102 [observed] Logged today: free memory and whole-PC processor share every 2 s, each heavy command's queue wait. Not logged: the ready queue, per-process memory, conflicts.
@@ -106,6 +109,7 @@ Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. This board list
 - r57-0307 [quoted] Scalability law peak N* = sqrt((1 - alpha) / beta); needs a first measurement.
 - r57-0308 [summary] AI agents in parallel: 19.8 to 41.7 % conflicts, 21 % faster to 39 % slower; summaries only.
 - r57-0309 [quoted] Graham 1966: 4/3 - 1/(3n) is the bound of longest-first order with no precedence; any list stays at 2 - 1/n.
+- o2-0300 [quoted] Denning 1968: one more program in a full memory collapses service (a model; it cites one measurement); two cures, a reserve and a shorter page transfer. The refuter added the second cure and the measurement.
 - o1-0301 to o1-0319 [quoted] 19 results on finding the bottleneck and switching method (load control, feedback control, adaptive locking). Search by word.
 - o2-0300 to o2-0331 [quoted] 32 results on scheduling when several resources are scarce (memory, multi-resource packing, quotas, cheaper models); nine reworded by a refuter. Search by word.
 ## Hypotheses (all untested)
@@ -148,6 +152,10 @@ Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. This board list
 - r57-0705 [observed] The decision rule: `docs/program/evidence/bottleneck-2026-11-18/DECISION-RULE.md`, with the two literature reports beside it.
 - r57-0706 [observed] The owner's page for the decision rule (a private Artifact) and its source `decision-rule.html`.
 ## Journal files (all in `journal/2026-11-18/`)
+How the content of each `x` file is known, before you open the place a record cites: papers read in full
+(x02 to x06); summaries only (x07); documentation, not observed here (x01); seen or measured on this PC
+(x13, x14, x18); our own documents and records, restated (all others).
+
 | File | Records | Written from | Search it for |
 |---|---|---|---|
 | `r57.jsonl`, `r57b.jsonl` | 90, 24 | The top session | Everything listed above |
@@ -184,6 +192,7 @@ Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. This board list
 - What a hook sees for the Edit tool, a time-out, or a compacted session: not tested (r57-0105).
 - Whether an agent started with no model keeps its definition's model: not tried (r57-0106).
 - The effort each past helper ran at, or any smaller-against-larger model comparison: no record (r57-0201).
+- Memory of one agent session (a helper or a child session): not measured. The 494 MB of r57-0103 is a suite run, not a helper.
 - Memory or tokens of any run but one suite run; the processor share of one job: not measured (r57-0129).
 - Time and tokens of the attack rounds of the R57 round: no record.
 - Whether the tier hook fires in sessions started in other folders: not tested (r57-0120, r57-0122).

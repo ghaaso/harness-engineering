@@ -22,8 +22,11 @@ A record is one line of 300 to 1,500 characters. Search tools such as the Grep t
 matching line]"). Use Bash. These work:
 
 - One record: `grep -rh '"id":"r57-0103"' library/journal` (the whole line), or `bash library/lookup.sh r57-0103`.
-- By word: `bash library/lookup.sh hook`, or `grep -rhi 'hook' library/journal | cut -c1-400`. The fields come in an
-  order that keeps `id`, `kind`, `status` and the start of `claim` inside the first 400 characters.
+- By word: `bash library/lookup.sh hook`, or several words, `bash library/lookup.sh lane slots`: a record must hold
+  all of them (a quoted phrase counts as one word); if none does, the records holding any one are printed and the
+  first line says so. The first line gives the counts; the top session's and its child sessions' records come
+  first, the extractor records (`x`) after them. Plain grep also works: `grep -rhi 'hook' library/journal | cut -c1-400`.
+  The fields come in an order that keeps `id`, `kind`, `status` and the start of `claim` inside the first 400 characters.
 - All ids: `grep -rho '"id":"[^"]*"' library/journal | sort`.
 - If the library has nothing, say "not recorded". Do not answer from memory. The board's section "Known gaps" lists what is known not to be here.
 
@@ -102,5 +105,6 @@ decision rests on one, read the place it cites (r57-0130).
 ## Not done yet
 
 No script builds the board; `lookup.sh` only reads. Nothing compares a `footprint` with the files. 1,791 of the
-2,524 extractor records were checked by script only (r57-0130). No recall test has run on the filled library
-yet.
+2,524 extractor records were checked by script only (r57-0130). Recall test 3 ran on the filled library
+(`tests/recall-test-3.md`, r57-0132); its changes to the board and to `lookup.sh` are in, and no test has run
+since them.
