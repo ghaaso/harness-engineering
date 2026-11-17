@@ -94,13 +94,19 @@ it); a script the session is told to call (holds only if a hook requires it).
 - So a check uses a small part of this PC, and the check is serial by its own setting. Whether the test
   files are safe to run side by side is not tested.
 
-**Do hooks refuse here: not answered** (`probe-hooks.md`):
+**Do hooks refuse here: yes, observed** (`probe-hooks.md`, one app session with a test hook):
 
-- The stand-alone Claude Code program on this PC has no login. The login lives in the desktop app. Two
-  headless runs ended with "Not logged in". No model call, no hook fired.
-- Measured all the same: one hook call costs about 37 ms on this PC (20 starts of the script).
-- A probe folder is prepared so that a normal app session started in it runs the same test. It needs the
-  owner's start.
+- A hook refused a write outside its folder. The file was not written and the session was told why.
+- A hook refused a helper started on the model opus. It sees the helper's type and model when they are passed.
+- Hooks fire for tool calls made inside a helper, with the same session id and an agent id that tells
+  the helper apart.
+- The refusals held although the session ran with permissions bypassed.
+- Hook input carries the session id, the transcript path, a tool-use id, and for Write the full content.
+- Hooks also fire for connector tools. PostToolUse, SubagentStop, Stop and SessionStart all fire.
+- The context size is not given to a hook.
+- One hook call costs about 37 ms on this PC.
+- Not tested: a hook that times out, a compacted or resumed session, writes through shell commands.
+- The first attempt, with the stand-alone program, failed: it has no login. The login lives in the app.
 
 Still untested: one root instruction file against several.
 
