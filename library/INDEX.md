@@ -77,8 +77,7 @@ Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. This board list
 - r57-0121 [measured] Recall test 1: of 14 questions 8 sure, 5 partly, 1 not recorded; ten changes asked.
 - r57-0122 [observed] `tools/ensure-tier-hook.sh <folder>` checks the hook and installs it inside this repository; not outside it without `--force`.
 - r57-0124 [measured] Recall test 2: 5 of 9 sure, 3 partly, 1 rightly "not recorded"; the format is judged ready to fill.
-- r57-0125 [observed] Wave 1 of the bottleneck literature: ten collector files by Sonnet helpers under two Opus orchestrators.
-- r57-0126 [observed] An orchestrator reached 132,000 tokens after one wave of five collectors and handed over through files.
+- r57-0125, r57-0126 [observed] Wave 1 of the bottleneck literature: ten collector files by Sonnet helpers under two Opus orchestrators; one reached 132,000 tokens after that wave and handed over through files.
 - r57-0129 [measured] In 25 episodes the limit changed by job: queue 9, blocked program starts 7, memory 4, tokens 4, processor 3, nothing 1.
 - r57-0130 [measured] Fill 1: 2,524 extractor records; all script-checked, 733 read by hand, 3 small corrections, none removed.
 - r57-0131 [observed] The board is version 1.1: top-session records and a directory of journal files; extractor records are found by search.
