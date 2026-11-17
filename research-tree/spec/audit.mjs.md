@@ -63,7 +63,7 @@ substrings.
 6. Profile check (reading, not an exit cause): tool not in `tools_allow` or in `tools_deny`, write outside
    `write_prefixes`, Agent type not in `agent_types`, any fetch when `fetch: none`, a fetch URL whose `href` is not in
    `F/in/must_read.json` when `fetch: witnessed`, any Bash/PowerShell when `bash: none`, a command not starting
-   `node tcb/scripts/` when `bash: tcb-node` -> `out_of_profile: [{tool_use_id, kind, detail}]`.
+   `node tcb/<name>.mjs` (any script but `lib.mjs`; flat layout) when `bash: tcb-node` -> `out_of_profile: [{tool_use_id, kind, detail}]`.
 7. Notes (R30): from `parsed.turnEnds` of the main transcript (CONTRACT §4.8), a turn end is bad when the last
    non-blank line of its text is not exactly `TURN-END <field>`, or `TURN-END <task>` for a design-check role (whose
    `field` is null); `notes_bad` = their count (flag only, never the label).
@@ -78,7 +78,7 @@ substrings.
 ## Steps (coordinator form)
 `--session` -> `sessionTranscripts`. Protected writes as in 3 (exit 3); every call whose `context > coord_over_factor *
 W_star_coord` (1.5 x 133,200 = 199,800) goes to `calls_over: [{id, ts, context}]` (a turn here is one model call);
-`peak_context`; reads of `wt/*/staging/` (untrusted) as `udi_reads`; Bash not `node tcb/scripts/` as `out_of_profile`.
+`peak_context`; reads of `wt/*/staging/` (untrusted) as `udi_reads`; Bash not `node tcb/<name>.mjs` (flat layout, not `lib.mjs`) as `out_of_profile`.
 File `run/audit/coordinator-ce<ce>.json`. Exit 1 `over-window` only if `W_star_coord` is a gate and `calls_over` is non-empty.
 
 ## Exit codes
@@ -95,7 +95,7 @@ File `run/audit/coordinator-ce<ce>.json`. Exit 1 `over-window` only if `W_star_c
   is undeclared; a junction inside `in/` pointing outside is undeclared (skip where junctions cannot be made).
 - T5 A helper transcript's read outside the roots taints the session; a helper's read of an allowed root does not.
 - T6 Glob/Grep without `path` counts as `F` (allowed); with `path: <root>/run` it is undeclared.
-- T7 A Write to `<root>/tcb/scripts/x.mjs`, `<root>/sealed/a`, `<root>/review-in/t/a`, `<root>/run/tasks.json`,
+- T7 A Write to `<root>/tcb/x.mjs`, `<root>/sealed/a`, `<root>/review-in/t/a`, `<root>/run/tasks.json`,
   `<root>/store/a`, `<root>/.git/config`, `F/staging/harvested/x.json`, `wt/<task>-e<e>/.claude/settings.json`,
   `F/staging/.Claude./x` or `F/staging/CLAUDE.md.` -> exit 3 `protected-write`, each path in `protected_writes`,
   label `tainted`, audit file, lines and a tamper `incident` line still written; a Write in `staging/` is not listed.
@@ -114,7 +114,7 @@ File `run/audit/coordinator-ce<ce>.json`. Exit 1 `over-window` only if `W_star_c
 - T13 Design-check role (`stpa`) whose transcript reads a path outside `in/` (the "full design") -> tainted (R54).
 - T14 Coordinator form: calls with contexts 150,000 and 250,000 and `W_star_coord` a gate -> `calls_over` one entry,
   exit 1 `over-window`; with the threshold `value: null` -> exit 0 and the same `calls_over` as a reading; a Write
-  to `tcb/` -> exit 3; Bash `git status` -> `out_of_profile`, `node tcb/scripts/status.mjs` is not.
+  to `tcb/` -> exit 3; Bash `git status` -> `out_of_profile`, `node tcb/status.mjs` is not.
 - T15 `--epoch` older than the row's -> 65, nothing written; stale `--ce` -> 64; busy lock -> 75; unknown task -> 1.
 - T16 No bound session -> 2; transcript missing -> 2; a transcript of only garbage lines -> 2 `format-unknown`; for
   each, no audit file and a `check` line with result `not_run` and an `incident` line.

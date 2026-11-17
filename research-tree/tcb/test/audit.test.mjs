@@ -527,9 +527,9 @@ test('T12 profile reading: Bash under bash none, an Agent of another type, a fet
   assert.deepEqual(o.map((x) => x.kind).sort(), ['agent', 'bash', 'fetch']);
   for (const x of o) assert.ok(x.tool_use_id && 'detail' in x);
   assert.equal(auditFile(w).label, 'clean');
-  // bash tcb-node: only node tcb/scripts/ passes
+  // bash tcb-node: only node tcb/<name>.mjs passes (flat layout)
   const w2 = auditWorld({ profile: { bash: 'tcb-node' } });
-  writeTranscript(sessionFile(w2.root, w2.S), { sessionId: w2.S, cwd: w2.F, calls: [{ tools: [BASH('node tcb/scripts/status.mjs --root x'), BASH('git status')] }, TURN('f1')] });
+  writeTranscript(sessionFile(w2.root, w2.S), { sessionId: w2.S, cwd: w2.F, calls: [{ tools: [BASH('node tcb/status.mjs --root x'), BASH('git status')] }, TURN('f1')] });
   shape(audit(w2), 0);
   assert.deepEqual(auditFile(w2).out_of_profile.map((x) => x.kind), ['bash']);
   // fetch witnessed: the address must be in in/must_read.json
@@ -568,7 +568,7 @@ function coordWorld(calls, { profile, params, gates } = {}) {
 const audC = (c, extra = [], ce = '1') => run(['--root', c.root, '--ce', ce, '--coordinator', '--session', c.S, '--now', NOW, ...extra], c.root);
 const U = (n) => ({ input: n, cache_read: 0, cache_write: 0, output: 10 });
 
-test('T14 coordinator form: calls above 1.5 times W* are listed (exit 1 over-window only when W* is a gate); a write to tcb/ exits 3; Bash outside node tcb/scripts/ is out of profile', () => {
+test('T14 coordinator form: calls above 1.5 times W* are listed (exit 1 over-window only when W* is a gate); a write to tcb/ exits 3; Bash outside node tcb/<name>.mjs is out of profile', () => {
   const c = coordWorld([{ usage: U(150000), text: 'a' }, { usage: U(250000), text: 'b' }]);
   const j = shape(audC(c), 1);
   assert.equal(j.reasons[0].code, 'over-window');
@@ -601,7 +601,7 @@ test('T14 coordinator form: calls above 1.5 times W* are listed (exit 1 over-win
   assert.deepEqual(readJ(c4.root, 'run/audit/coordinator-ce1.json').protected_writes, ['tcb/thresholds.json']);
   assert.equal(readLedger(c4.root).filter((l) => l.kind === 'incident').length, 1);
   // Bash
-  const c5 = coordWorld([{ usage: U(1000), tools: [BASH('git status'), BASH('node tcb/scripts/status.mjs --root x')], text: 'a' }]);
+  const c5 = coordWorld([{ usage: U(1000), tools: [BASH('git status'), BASH('node tcb/status.mjs --root x')], text: 'a' }]);
   shape(audC(c5), 0);
   const o = readJ(c5.root, 'run/audit/coordinator-ce1.json').out_of_profile;
   assert.equal(o.length, 1);

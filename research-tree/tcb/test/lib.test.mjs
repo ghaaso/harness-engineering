@@ -1,4 +1,4 @@
-// Tests of tcb/scripts/lib.mjs, written from spec/lib.md and CONTRACT.md sections 3 and 4 only
+// Tests of tcb/lib.mjs, written from spec/lib.md and CONTRACT.md sections 3 and 4 only
 // (the library's own source was not read). One test per numbered behaviour, named with its id.
 // Run: node --test tcb/test/lib.test.mjs
 import { test, after } from 'node:test';
@@ -2199,6 +2199,18 @@ dt('T76 tool results pair with their tool use by id, carry is_error, and their t
   assert.equal(b.isError, false);
   assert.equal(b.text, 'hello');
   assert.ok(p.toolUses.some((u) => u.id === a.toolUseId));
+});
+dt('T76b (fix-U2) a tool result carries the URLs of its full text as non-enumerable urls, also past the 2000-character cut', async (d) => {
+  const late = 'https://late.test/a?b=1';
+  const { p } = await parsed(d, [
+    asst('m1', toolB('toolu_w', 'WebFetch', { url: 'https://early.test/', prompt: 'p' }), US(1, 1, 1, 1)),
+    resultRec('toolu_w', 'see https://early.test/x then ' + 'y'.repeat(3000) + ` and ${late} twice ${late}.`, false),
+  ]);
+  const r = p.toolResults[0];
+  assert.equal(r.text.length, 2000);
+  assert.ok(!r.text.includes(late), 'the late URL lies past the cut');
+  assert.deepEqual(r.urls, ['https://early.test/x', late], 'distinct, in order, trailing punctuation dropped');
+  assert.equal(Object.keys(r).includes('urls'), false, 'urls is not enumerable');
 });
 dt('T77 structured holds the StructuredOutput tool-use input and the data of a structured_output attachment', async (d) => {
   const att1 = { ...base('attachment'), attachment: { type: 'structured_output', data: { b: 2 } } };

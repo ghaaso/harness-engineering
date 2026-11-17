@@ -1,4 +1,4 @@
-// Tests of tcb/scripts/witness.mjs, written from spec/witness.mjs.md and CONTRACT.md only.
+// Tests of tcb/witness.mjs, written from spec/witness.mjs.md and CONTRACT.md only.
 // Every test runs the script as a child process against a temporary run root the test builds:
 // invented cards in store/objects, invented snapshots in .snapshots with correct hashes.
 // The expected results of the text-matching behaviours (T2-T7, T21) live as data in

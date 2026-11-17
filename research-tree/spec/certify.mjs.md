@@ -14,7 +14,7 @@ plants found, coverage, and the read set whose hash voids the certificate when a
 
 ## Command line
 ```
-node tcb/scripts/certify.mjs --root <abs> --ce <n> --task <id> --epoch <e> [--now <iso>] [--dry-run]
+node tcb/certify.mjs --root <abs> --ce <n> --task <id> --epoch <e> [--now <iso>] [--dry-run]
 ```
 
 ## Reads

@@ -1,4 +1,4 @@
-// Tests of tcb/scripts/admit.mjs, written from spec/admit.mjs.md and CONTRACT.md only.
+// Tests of tcb/admit.mjs, written from spec/admit.mjs.md and CONTRACT.md only.
 // `decide` tests call the exported pure function with literal facts; `check` tests run the script
 // as a child process against their own temporary run root.
 import { test } from 'node:test';

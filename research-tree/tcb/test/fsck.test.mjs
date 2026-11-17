@@ -1,6 +1,6 @@
 // fsck.mjs tests, written from spec/fsck.mjs.md and CONTRACT.md only (the script's code was not read).
 // One test per behaviour, named with its id (T1..T17 of the spec). Each test builds its own run root under
-// tcb-build/tmp (with its own git repository where the tcb check needs one), runs `node tcb/scripts/fsck.mjs`
+// tcb-build/tmp (with its own git repository where the tcb check needs one), runs `node tcb/fsck.mjs`
 // as a child process and checks the exit code, the one JSON line on stdout, the `fsck` ledger line and the files.
 // Fixtures: tcb/fixtures/fsck/_card.json, _agent-reader.md, _settings.json (synthetic).
 import test, { after } from 'node:test';

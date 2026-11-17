@@ -5,7 +5,7 @@ Small Node scripts (Node 24, ES modules, no packages, Windows 11) that do what a
 ## Running a script
 Every script is run from the pinned checkout in the run root, never from an attempt folder (it refuses with exit 3):
 
-`node tcb/scripts/<name>.mjs [<mode>] --root <run root> [--ce <n>] [--task <id> --epoch <e>] [--dry-run] [flags]`
+`node tcb/<name>.mjs [<mode>] --root <run root> [--ce <n>] [--task <id> --epoch <e>] [--dry-run] [flags]`
 
 - stdout is one JSON line `{ok, script, mode, exit, code, dry_run, result, reasons, ledger_seq}`; messages for people go to stderr.
 - `--ce` is required by every script that writes; a stale coordinator epoch exits 64 and writes nothing. `--task` and `--epoch` name one attempt; a stale epoch exits 65.

@@ -8,13 +8,13 @@ put the owner's word, intents and meter readings into the ledger (§8 decision 2
 
 ## Command line
 ```
-node tcb/scripts/status.mjs --root R --ce N [--now ISO] [--free-mb M] [--dry-run]
-node tcb/scripts/status.mjs --reconcile --root R --ce N [--now ISO] [--free-mb M] [--dry-run]
-node tcb/scripts/status.mjs --endturn --acked-seq K --root R --ce N [--now ISO] [--dry-run]
-node tcb/scripts/status.mjs intent open --key KEY --subject S [--text-file P] --root R --ce N
-node tcb/scripts/status.mjs intent done --key KEY --root R --ce N
-node tcb/scripts/status.mjs owner --act approve|accept|resume|drop|ruling --subject S --quote-file P --root R --ce N
-node tcb/scripts/status.mjs meter --pct P --root R --ce N
+node tcb/status.mjs --root R --ce N [--now ISO] [--free-mb M] [--dry-run]
+node tcb/status.mjs --reconcile --root R --ce N [--now ISO] [--free-mb M] [--dry-run]
+node tcb/status.mjs --endturn --acked-seq K --root R --ce N [--now ISO] [--dry-run]
+node tcb/status.mjs intent open --key KEY --subject S [--text-file P] --root R --ce N
+node tcb/status.mjs intent done --key KEY --root R --ce N
+node tcb/status.mjs owner --act approve|accept|resume|drop|ruling --subject S --quote-file P --root R --ce N
+node tcb/status.mjs meter --pct P --root R --ce N
 ```
 Modes `intent` (sub-mode `open|done`), `owner`, `meter`; the default and the two flags otherwise.
 `--reconcile` and `--endturn` together → 66. `--pct` an integer 0..100; `--key` the intent-key

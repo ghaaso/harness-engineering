@@ -1,4 +1,4 @@
-// Tests of tcb/scripts/snap.mjs, written from spec/snap.mjs.md and CONTRACT.md only.
+// Tests of tcb/snap.mjs, written from spec/snap.mjs.md and CONTRACT.md only.
 // Every test runs the script as a child process against its own temporary run root and, where it
 // needs a web server, its own http.createServer on 127.0.0.1 (thresholds allow_loopback true).
 // Run: node --test tcb/test/snap.test.mjs

@@ -1,0 +1,180 @@
+{
+ "files_written": [
+  "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/e2e/run-e2e.mjs",
+  "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/e2e/last-result.json",
+  "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/e2e/last-run.log",
+  "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/e2e/full-run.out",
+  "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/e2e/w/ (kept run root and scratch snapshot root of the last run; removed at the start of the next run)",
+  "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/done/e2e-build.json"
+ ],
+ "command": "cd <tcb-build> && node tools/lane.mjs --label e2e-full --timeout-s 570 -- node e2e/run-e2e.mjs --keep   (add --force-selftest to skip the real selftest during development; the run takes about 3 minutes)",
+ "output_tail": "ok   gate cut at ce 2: the design cut is identical, nothing new\nok   fsck at ce 2\n# 246/250 steps ok, 4 FAIL\n(Note: before I switched to the lane, three short Node commands ran outside it: a schema print, a one-line patch and a syntax check. Every later command went through the lane. A stray folder tcb-build/wt, created by relative paths in my first runs, was removed.)",
+ "steps": [
+  {
+   "step": "setup: one shared copy of tcb/ (no test/ folder), committed to a throw-away git repository (fsck needs it), 127.0.0.1 server with two synthetic pages",
+   "script": "run-e2e.mjs",
+   "ok": true,
+   "detail": "tcb/denylist.txt is not shipped (FAIL, below)"
+  },
+  {
+   "step": "snap two pages and one 404 in a scratch root that allows loopback; snapshot folders copied into the run root",
+   "script": "snap.mjs",
+   "ok": true,
+   "detail": "404 gives exit 2 unverifiable; run root keeps allow_loopback false because selftest's static check and fsck's tcb-vs-commit check demand an unchanged tcb"
+  },
+  {
+   "step": "handover init (ce 1), identical repeat, other commit refused",
+   "script": "handover.mjs",
+   "ok": true,
+   "detail": "coord, .gitignore, tasks.json created"
+  },
+  {
+   "step": "status owner approve x2, status --reconcile (alarm-missing as designed)",
+   "script": "status.mjs",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "step": "selftest run (full)",
+   "script": "selftest.mjs",
+   "ok": false,
+   "detail": "static check no-fixtures: watch, status, handover, commit, harvest, fsck have no case.json. The 18 scripts that have fixtures all pass with run --only <script> (18 of 18 ok). A selftest line was then written through lib so admission could proceed (marked in the output)"
+  },
+  {
+   "step": "replace plan, protocol-freeze freeze / replay / analysis plan",
+   "script": "replace.mjs, protocol-freeze.mjs",
+   "ok": true,
+   "detail": "seed split 2 brief, 2 held out"
+  },
+  {
+   "step": "gate cut, id removal and dropped sections, gate check not_run before analyses and before the model result",
+   "script": "gate.mjs",
+   "ok": true,
+   "detail": "not_run recorded as not_run, with an incident line, never pass"
+  },
+  {
+   "step": "three design-check attempts (stpa, fmea, mapper): fence, fsck, admit, start, bind, intake, audit, fsck, record; gate check pass with a stand-in model result",
+   "script": "replace, admit, commit, audit, fsck, gate",
+   "ok": true,
+   "detail": "gate needed G1..G12 in p_ids as well as P1..P21 (spec drift, FAIL below)"
+  },
+  {
+   "step": "stop request / verify (sample, two watcher ticks, confirm) for the committed design sessions",
+   "script": "stop.mjs, watch.mjs",
+   "ok": true,
+   "detail": "N_max is capped at 3 by admit (HARD_CEILING), so committed sessions must be stopped to free slots"
+  },
+  {
+   "step": "f1-research: start, reconcile finds the transcript by folder, bind, guard-hook allow and two denies",
+   "script": "replace, status, guard-hook",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "step": "harvest the reader result (two cards) and again",
+   "script": "harvest.mjs",
+   "ok": false,
+   "detail": "exit 1 some-invalid because the Agent call's prose result text is counted unparseable; the two valid cards were written and the repeat is idempotent"
+  },
+  {
+   "step": "commit intake with a torn card file, then without it; origins harvested and session recorded",
+   "script": "commit.mjs",
+   "ok": true,
+   "detail": "torn file rejected unparseable and not stored"
+  },
+  {
+   "step": "snap --new without F5; witness c1-c4 (witnessed), c5 (quote not in page: rejected), c6 (no snapshot: exit 2, check line not_run); status shows not_run; promote --from witness",
+   "script": "snap, witness, status, promote",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "step": "checker: 14 qualification batches (check-queue, checker transcript, seed score), 2 real batches with promote --batch, revert refused, promote repeat is idempotent",
+   "script": "check-queue, seed, promote",
+   "ok": true,
+   "detail": "J1, J2, J4 qualified (lower bound >= 0.8 at 14 of 14), J3 unmeasured so score exits 2 as specified; one seed per class per batch; no seed id, class or operator name in queue/; no seed id in the status file; c1-c4 confirmed"
+  },
+  {
+   "step": "tms, torn READY.json (record exit 2 no-ready), commit record pack",
+   "script": "tms, commit",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "step": "f1-control: 3 calls then 37 calls with no gain: watch ticks, class 20 stall; fence stall (restart charged); late write of the replaced attempt; stop request / verify; start e2 with the e1 checkpoint prefix; pack and same-window review committed",
+   "script": "watch, replace, commit, stop",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "step": "seed plant, f1-review (fresh reviewer, review-in with planted copy), commit review, certify (3 of 3 plants, certified), repeat idempotent",
+   "script": "seed, replace, commit, certify",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "step": "check-queue post-review and freeze (nothing to check), tms all IN, render (pack, review, synthesis, owner, coverage, measures), gate check",
+   "script": "check-queue, tms, render, gate",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "step": "compare anon / score (T against S1, descriptive n = 1 per arm), status meter x2, cost compute / predict / from-transcripts (trusted), audit --coordinator",
+   "script": "compare, status, cost, audit",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "step": "retraction: page changed, snap again, witness c1 rejected, promote, tms exit 1 with the citing sentences STALE (support-fell) and the certificate STALE, repair list names c1",
+   "script": "snap, witness, promote, tms",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "step": "end of turn: coordinator window past W*, drain line, stops of every committed row, torn ledger tail, status, fsck pass, ledger chain verifies, stand-in watcher and alarm, reconcile, endturn (acked-ahead refused), handover raise to ce 2, stale ce 64, handover bind, gate cut identical, fsck at ce 2",
+   "script": "watch, stop, status, fsck, handover, gate",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "step": "FAULT stale epoch: commit intake and record of a replaced attempt exit 65, zombie-write lines, late card not stored",
+   "script": "commit.mjs",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "step": "FAULT torn file: torn card file rejected (unparseable); torn READY.json is not read as done",
+   "script": "commit.mjs",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "step": "FAULT quote not in the page is not witnessed; FAULT check that did not run is not a pass (witness c6 not_run, gate not_run)",
+   "script": "witness.mjs, gate.mjs",
+   "ok": true,
+   "detail": ""
+  }
+ ],
+ "failures": [
+  {
+   "script": "selftest.mjs (fixtures of watch, status, handover, commit, harvest, fsck)",
+   "what": "selftest run (full) exits 1 on the static check no-fixtures: watch, status, handover, commit, harvest and fsck have no good and no bad case.json, so no case runs and no passing selftest line can be written. Admission (admit.mjs selftest-missing/selftest-fail/selftest-stale) therefore refuses every start in a real run until they exist.",
+   "likely_cause": "The fixture folders of units U1b (watch, status, handover) and U2a (commit, harvest, fsck) hold only _-prefixed test data (for example fixtures/watch/_split-call-a.jsonl), never a case.json in the selftest's fixture-case format; the fixture work for those six scripts was not done. Evidence: find tcb/fixtures -name case.json gives 85 cases over 18 scripts; run --only <script> passes for all 18."
+  },
+  {
+   "script": "harvest.mjs",
+   "what": "harvest exits 1 some-invalid {invalid 0, unparseable 1} on a normal session whose Agent call returned a prose result. The two valid cards were written and a repeat is idempotent, but the exit is a failure, and watch's intake and any gate that reads exit 1 see it every turn.",
+   "likely_cause": "harvest.mjs lines ~158-180 count every Agent/Task result text that is not JSON and shorter than 2,000 characters as a candidate and as unparseable. spec/harvest.mjs.md says only a tool result 'whose whole text parses as JSON' is a candidate, so a prose result should be skipped. Either the code should skip non-JSON text or the spec must say that prose counts; the former matches the stated intent."
+  },
+  {
+   "script": "gate.mjs (and spec/gate.mjs.md, CONTRACT 3.19)",
+   "what": "gate check answered p-id-missing for G1..G12 when the hazards object covered P1..P21 as the spec and the contract say. The code also requires the twelve gap rows G1..G12 in some hazard's p_ids.",
+   "likely_cause": "Review finding U5-GT-1 (design R55: gaps G1-G12 are problem rows) was fixed in gate.mjs (line ~349) but not carried into spec/gate.mjs.md or the contract; a mapper brief that follows the spec would never pass the gate. Not a code defect; the documents and the mapper brief need the G ids named. The e2e then listed both ranges and the gate passed."
+  },
+  {
+   "script": "audit.mjs (and tcb/README.md, CONTRACT section 2)",
+   "what": "tcb/denylist.txt is named by the README and the contract (audit owns it) but is not in tcb/. audit treats an absent file as an empty list, so the denylist rule of R34 is silently off, and selftest's COPY_FILES copies a file that does not exist.",
+   "likely_cause": "The file is described as the owner's file and no builder was assigned to write a first version; audit.mjs line ~300 tolerates absence (fs.existsSync). Ship an explicit file (even comments only) so absence can be a refusal."
+  }
+ ]
+}

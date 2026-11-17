@@ -1,4 +1,4 @@
-// Tests of tcb/scripts/status.mjs, written from spec/status.mjs.md and CONTRACT.md only.
+// Tests of tcb/status.mjs, written from spec/status.mjs.md and CONTRACT.md only.
 // Each test builds its own run root under tcb-build/tmp, runs the script as a child process
 // (process.execPath + the root's own copy of the script) and checks the exit code, the stdout
 // line (CONTRACT 1.3) and the files. The synthetic data lives in tcb/fixtures/status/.

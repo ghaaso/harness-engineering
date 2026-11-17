@@ -8,7 +8,7 @@ computed at each decision and never stored (R10, lib `reservation`).
 
 ## Command line
 ```
-node tcb/scripts/admit.mjs check --root R [--task T] [--now ISO] [--free-mb M]
+node tcb/admit.mjs check --root R [--task T] [--now ISO] [--free-mb M]
 ```
 Read-only: no `--ce`, no `--dry-run` effect (it writes nothing anyway), no lock. Unknown flag,
 missing `--root`, a `--task` not matching the task pattern → 66.

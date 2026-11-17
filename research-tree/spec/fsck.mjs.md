@@ -12,7 +12,7 @@ named, and every attempt's `.claude/`. A breach is tampering: exit 3, all work s
 
 ## Command line
 ```
-node tcb/scripts/fsck.mjs --root <abs> --ce <n> [--now <iso>] [--dry-run]
+node tcb/fsck.mjs --root <abs> --ce <n> [--now <iso>] [--dry-run]
 ```
 No mode. `--ce` is required: fsck appends its `fsck` ledger line.
 

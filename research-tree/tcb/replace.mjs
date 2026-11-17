@@ -25,6 +25,9 @@ const STEP_KINDS = { pack: ['card', 'pack'], review: ['review'], stpa: ['stpa'],
 const BRIEF_KEYS = ['task', 'epoch', 'field', 'folder', 'role', 'todo_json', 'checkpoint_json', 'must_read_json'];
 // spec/briefs.md: the child brief serves roles child, child-reviewing and control
 const BRIEF_FALLBACK = { 'child-reviewing': 'child', control: 'child' };
+// review U5-B-1 (spec/briefs.md: no brief mentions that anything is tested): the control arm's brief shows a
+// neutral label, never the word control. Every other role is shown as it is. The manifest keeps the real role.
+const BRIEF_ROLE_LABEL = { control: 'solo' };
 const PLAN_FIELDS = ['task', 'field', 'stage', 'role', 'tier', 'steps', 'deps', 'question_ids', 'e_task'];
 
 const SPEC = {
@@ -743,7 +746,7 @@ function buildAttempt(env, info) {
     epoch: String(E),
     field: row.field ?? '',
     folder: posix(dir),
-    role,
+    role: BRIEF_ROLE_LABEL[role] ?? role,
     todo_json: JSON.stringify(todo.todo),
     checkpoint_json: JSON.stringify({ committed: committed.map((c) => c.id), prefix: [...prefixFiles.keys()].sort() }),
     must_read_json: JSON.stringify(protocol && Array.isArray(protocol.value.must_read) ? protocol.value.must_read : []),

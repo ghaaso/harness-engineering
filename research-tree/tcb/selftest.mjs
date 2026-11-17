@@ -34,7 +34,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import crypto from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as lib from './lib.mjs';
 
@@ -206,7 +206,7 @@ async function pool(items, n, fn, stop) {
 
 function caseProblem(spec, script, caseDir) {
   if (!isPlainObject(spec)) return 'not an object';
-  const top = ['schema_version', 'script', 'kind', 'fault_class', 'args', 'stdin', 'serve', 'thresholds', 'expect'];
+  const top = ['schema_version', 'script', 'kind', 'fault_class', 'args', 'stdin', 'serve', 'thresholds', 'git', 'expect'];
   for (const k of Object.keys(spec)) if (!top.includes(k)) return `extra field ${k}`;
   if (spec.schema_version !== 1) return 'schema_version';
   if (spec.script !== script) return `script ${spec.script} in the folder of ${script}`;
@@ -227,6 +227,7 @@ function caseProblem(spec, script, caseDir) {
   }
   if (spec.args.some((a) => a.includes('{server}')) && !('serve' in spec)) return '{server} without serve';
   if ('thresholds' in spec && !isPlainObject(spec.thresholds)) return 'thresholds';
+  if ('git' in spec && typeof spec.git !== 'boolean') return 'git';
   const ex = spec.expect;
   if (!isPlainObject(ex)) return 'expect';
   const exKeys = ['exit', 'code', 'result', 'stdout_empty', 'stderr_prefix', 'files'];
@@ -648,6 +649,38 @@ function prepareCase(c, liveRoot, caseRoot) {
   }
   fs.mkdirSync(String(th.params.transcripts_root.value), { recursive: true });
   lib.writeAtomic(thFile, JSON.stringify(th, null, 2) + '\n');
+  if (c.spec.git === true) gitCase(caseRoot);
+}
+
+// `git: true` (build extension of [fixture-case], see the return of the e2e-fix stage): the case root
+// becomes a git repository whose one commit C holds the case root's tcb/ (data files, after the
+// overrides), and run/coord.json's tcb_commit is set to C. Without it no fsck case can pass (fsck's
+// tcb check needs `.git` and a commit holding tcb/, and a case root's tcb/ differs from run to run).
+// Runs git one call at a time, never through a shell, with no hooks, no global or system config.
+function gitCase(caseRoot) {
+  const run = (args) => {
+    const r = spawnSync('git', [
+      '-c', 'core.hooksPath=NUL', '-c', 'core.autocrlf=false', '-c', 'core.longpaths=true', '-c', 'commit.gpgsign=false',
+      '-c', 'user.name=tcb-selftest', '-c', 'user.email=tcb-selftest@example.invalid', '-C', caseRoot, ...args,
+    ], {
+      cwd: caseRoot, shell: false, windowsHide: true, timeout: 60000, encoding: 'utf8',
+      env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: path.join(caseRoot, '.gitconfig-none') },
+    });
+    if (r.error || r.signal || r.status !== 0) throw Object.assign(new Error(`git ${args[0]} failed`), { code: 'git-case' });
+    return r.stdout || '';
+  };
+  fs.writeFileSync(path.join(caseRoot, '.gitattributes'), '* -text\n');
+  run(['init', '-q']);
+  run(['add', '.gitattributes', 'tcb']);
+  run(['commit', '-q', '-m', 'selftest case base']);
+  const head = run(['rev-parse', 'HEAD']).trim();
+  if (!/^[0-9a-f]{40}$/.test(head)) throw Object.assign(new Error('git rev-parse'), { code: 'git-case' });
+  const coordFile = path.join(caseRoot, 'run', 'coord.json');
+  if (fs.existsSync(coordFile)) {
+    const coord = lib.readJson(coordFile);
+    coord.tcb_commit = head;
+    lib.writeAtomic(coordFile, JSON.stringify(coord, null, 1) + '\n');
+  }
 }
 
 function waitExit(child) {

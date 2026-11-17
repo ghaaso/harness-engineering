@@ -9,9 +9,9 @@ successor; the old watcher and alarm are left to end themselves on the newer ce 
 
 ## Command line
 ```
-node tcb/scripts/handover.mjs init  --root R --tcb-commit SHA40 [--session SID] [--now ISO] [--dry-run]
-node tcb/scripts/handover.mjs raise --root R --ce N [--now ISO] [--dry-run]
-node tcb/scripts/handover.mjs bind  --root R --ce N --session SID [--now ISO] [--dry-run]
+node tcb/handover.mjs init  --root R --tcb-commit SHA40 [--session SID] [--now ISO] [--dry-run]
+node tcb/handover.mjs raise --root R --ce N [--now ISO] [--dry-run]
+node tcb/handover.mjs bind  --root R --ce N --session SID [--now ISO] [--dry-run]
 ```
 `--tcb-commit` must be 40 lowercase hex, `--session` 36 characters of `[0-9a-f-]` → else 66. `init`
 takes no `--ce` (it creates the first one, §1.1).
@@ -53,7 +53,7 @@ row reached step admitted/started/bound with stop ≠ confirmed since step 1 (el
 `not-quiescent`, nothing written); write `coord.json` {ce: N+1, session: null, started_at: now,
 tcb_commit: unchanged}; append `ce-raise` {from: N, to: N+1} (line `ce` N). 4 Result `{from, to,
 stale_wake_sources: [{which: watcher|alarm, pid, start_time}], brief}` where `brief` is one line:
-`Coordinator ce <N+1> for run <root>, tcb <tcb_commit>: run node <root>/tcb/scripts/status.mjs
+`Coordinator ce <N+1> for run <root>, tcb <tcb_commit>: run node <root>/tcb/status.mjs
 --root <root> --ce <N+1> and act on run/status.json.` (R12, R28: the brief echoes the commit).
 
 **bind.** Under `withRunLock(N)`: `session` null → set it, append `coord-bind` {session}; equal →

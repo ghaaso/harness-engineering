@@ -1,4 +1,4 @@
-// Tests of tcb/scripts/stop.mjs, written from spec/stop.mjs.md and CONTRACT.md only.
+// Tests of tcb/stop.mjs, written from spec/stop.mjs.md and CONTRACT.md only.
 // Transcripts come from helpers.fakeTranscript, processes from helpers.spawnSleeper, and the watcher's
 // ticks are moved by the test writing run/watcher.json between two verify calls (no timers).
 import { test } from 'node:test';

@@ -1,7 +1,7 @@
 // harvest.mjs: copy readers' schema-checked results from transcripts into staging/harvested/
 // (CONTRACT §5 unit U2a; spec/harvest.mjs.md; design rules R15, R32, R13).
 //
-//   node tcb/scripts/harvest.mjs --root <abs> --ce <n> --task <id> --epoch <e> [--now <iso>] [--dry-run]
+//   node tcb/harvest.mjs --root <abs> --ce <n> --task <id> --epoch <e> [--now <iso>] [--dry-run]
 //
 // Each card is checked against tcb's card schema exactly as found (nothing added, dropped, trimmed or
 // coerced) and written as canonical bytes to `wt/<task>-e<e>/staging/harvested/<c_id>.card.json` by
@@ -167,6 +167,11 @@ async function main(ctx) {
         // A cut text (exactly the parser's 2,000 characters) is read from the helper's own transcript
         // instead (CONTRACT §4.8), so it is no candidate here.
         if (c.text.length >= CUT_CHARS) continue;
+        // Only a result whose whole text parses as JSON is a candidate (spec "Candidates"). An Agent call's
+        // result is usually prose, which is no candidate; a text that starts as JSON and does not parse is a
+        // torn or broken result and is counted unparseable (e2e finding, harvest exit 1 on every normal session).
+        const head = c.text.trimStart();
+        if (!head.startsWith('{') && !head.startsWith('[')) continue;
         candidates++;
         unparseable++;
         continue;

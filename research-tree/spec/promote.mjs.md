@@ -13,9 +13,9 @@ that lost its qualification.
 
 ## Command line
 ```
-node tcb/scripts/promote.mjs --root <abs> --ce <n> --from witness [--now] [--dry-run]
-node tcb/scripts/promote.mjs --root <abs> --ce <n> --batch <b> --transcript <abs path> [--now] [--dry-run]
-node tcb/scripts/promote.mjs revert --root <abs> --ce <n> --class J1|J2|J3|J4 [--now] [--dry-run]
+node tcb/promote.mjs --root <abs> --ce <n> --from witness [--now] [--dry-run]
+node tcb/promote.mjs --root <abs> --ce <n> --batch <b> --transcript <abs path> [--now] [--dry-run]
+node tcb/promote.mjs revert --root <abs> --ce <n> --class J1|J2|J3|J4 [--now] [--dry-run]
 ```
 Default mode needs exactly one of `--from witness` and `--batch`+`--transcript` (else 66).
 

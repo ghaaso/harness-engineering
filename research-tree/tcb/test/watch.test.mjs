@@ -1,4 +1,4 @@
-// Tests of tcb/scripts/watch.mjs, written from spec/watch.mjs.md and CONTRACT.md only.
+// Tests of tcb/watch.mjs, written from spec/watch.mjs.md and CONTRACT.md only.
 // Each test builds its own run root under tcb-build/tmp, runs the script as a child process
 // (process.execPath + tcb-build/tcb/watch.mjs, or the shared stub folder's copy for intake tests) and checks the exit code, the stdout
 // line (CONTRACT 1.3) and the files. Everything the tests need is in this file; the synthetic data

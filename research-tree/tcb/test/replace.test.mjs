@@ -1,4 +1,4 @@
-// Tests of tcb/scripts/replace.mjs, written from spec/replace.mjs.md and CONTRACT.md only.
+// Tests of tcb/replace.mjs, written from spec/replace.mjs.md and CONTRACT.md only.
 // Every test runs the script as a child process against its own temporary run root.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -291,7 +291,7 @@ function fakeT(root, sid, cwd, usages, rel = `proj/${sid}.jsonl`) {
 const BRIEF = (role) => `# Synthetic brief ${role}\nTask {{task}} epoch {{epoch}} field {{field}} role {{role}}\nFolder {{folder}}\nTodo {{todo_json}}\nCheckpoint {{checkpoint_json}}\nMust read {{must_read_json}}\nTURN-END {{field}}\n`;
 function roleFiles(root, briefs = {}) {
   const prof = (role, types) => ({ role, tools_allow: ['Read', 'Write', 'Edit'], tools_deny: ['Bash'], read_prefixes: ['{attempt}/'], write_prefixes: ['{attempt}/staging/'], agent_types: types, fetch: 'none', bash: 'none' });
-  const sets = (role) => ({ hooks: { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: `"{node}" "{root}/tcb/scripts/guard-hook.mjs" --root "{root}" --role ${role} --task {task} --epoch {epoch}`, timeout: 30 }] }] } });
+  const sets = (role) => ({ hooks: { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: `"{node}" "{root}/tcb/guard-hook.mjs" --root "{root}" --role ${role} --task {task} --epoch {epoch}`, timeout: 30 }] }] } });
   for (const [role, types] of Object.entries({ child: ['reader'], 'fresh-reviewer': [], mapper: [], stpa: [], fmea: [] })) {
     putJ(root, `tcb/profiles/${role}.json`, prof(role, types));
     putJ(root, `tcb/settings/${role}.json`, sets(role));
@@ -845,6 +845,25 @@ test('T12 fence with a stale --ce writes nothing; --dry-run reports the same exi
 });
 
 // =================================================================== start
+test('T13b (review U5-B-1) start of a control row: the brief (the child brief, by fallback) shows the neutral label solo, never the word control', async (t) => {
+  const w = mk();
+  t.after(w.cleanup);
+  const { root } = w;
+  world(root);
+  const prof = readJ(root, 'tcb/profiles/child.json');
+  putJ(root, 'tcb/profiles/control.json', { ...prof, role: 'control', agent_types: [] });
+  const sets = read(root, 'tcb/settings/child.json').toString('utf8').split('--role child').join('--role control');
+  put(root, 'tcb/settings/control.json', sets);
+  table(root, [startRow({ role: 'control' })]);
+  await seal(root);
+  const j = await started(root);
+  expectExit(j, 0);
+  const brief = read(root, `wt/${RES}-e1/in/brief.md`).toString('utf8');
+  assert.ok(brief.includes('role solo'), 'the rendered {{role}} is the neutral label');
+  assert.ok(!/\bcontrol\b/i.test(brief), 'the brief never names the control role');
+  assert.equal(readJ(root, `wt/${RES}-e1/in/manifest.json`).role, 'control', 'the manifest keeps the real role');
+});
+
 test('T13 start: an admitted attempt gets its folder, inputs, todo, settings, agents, brief and manifest', async (t) => {
   const w = mk();
   t.after(w.cleanup);

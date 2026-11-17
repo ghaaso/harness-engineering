@@ -8,11 +8,11 @@ starts, stops or messages a session (§6); the coordinator does the session-tool
 
 ## Command line
 ```
-node tcb/scripts/replace.mjs plan  --root R --ce N [--now ISO] [--dry-run]
-node tcb/scripts/replace.mjs fence --root R --ce N --task T --epoch E --reason first|stall|hang|loop|crash|tainted|memory|handover|cut|drop
+node tcb/replace.mjs plan  --root R --ce N [--now ISO] [--dry-run]
+node tcb/replace.mjs fence --root R --ce N --task T --epoch E --reason first|stall|hang|loop|crash|tainted|memory|handover|cut|drop
                                    [--tick K] [--now ISO] [--boot B] [--dry-run]
-node tcb/scripts/replace.mjs start --root R --ce N --task T --epoch E [--now ISO] [--free-mb M] [--dry-run]
-node tcb/scripts/replace.mjs bind  --root R --ce N --task T --epoch E --session SID [--now ISO] [--boot B] [--dry-run]
+node tcb/replace.mjs start --root R --ce N --task T --epoch E [--now ISO] [--free-mb M] [--dry-run]
+node tcb/replace.mjs bind  --root R --ce N --task T --epoch E --session SID [--now ISO] [--boot B] [--dry-run]
 ```
 All flags as in §1.1; a missing mode, an unknown reason, a `--session` not matching the session-id
 pattern, a task not matching the task pattern exit 66 before anything is read. `--epoch` is always

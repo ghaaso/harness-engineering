@@ -1,6 +1,6 @@
 // fsck.mjs: the store check (CONTRACT §5 unit U2a; spec/fsck.mjs.md; design rules R23, R28, R31, R13, R14).
 //
-//   node tcb/scripts/fsck.mjs --root <abs> --ce <n> [--now <iso>] [--dry-run]
+//   node tcb/fsck.mjs --root <abs> --ce <n> [--now <iso>] [--dry-run]
 //
 // Object hashes, commit records, the ledger chain, foreign keys, the writers of the status files,
 // `tcb/` against the owner's commit (read-only git, before the lock), every attempt's `.claude/`, and

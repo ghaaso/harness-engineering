@@ -1,7 +1,7 @@
 // commit.mjs: the acceptor (CONTRACT §5 unit U2a; spec/commit.mjs.md).
 //
-//   node tcb/scripts/commit.mjs intake --root <abs> --ce <n> --task <id> --epoch <e> [--now <iso>] [--dry-run]
-//   node tcb/scripts/commit.mjs record --root <abs> --ce <n> --task <id> --epoch <e> --step <s> [--now <iso>] [--dry-run]
+//   node tcb/commit.mjs intake --root <abs> --ce <n> --task <id> --epoch <e> [--now <iso>] [--dry-run]
+//   node tcb/commit.mjs record --root <abs> --ce <n> --task <id> --epoch <e> --step <s> [--now <iso>] [--dry-run]
 //
 // `intake` validates an attempt's untrusted staging (and its checkpoint), stores each valid object by
 // exclusive create, rejects with a code (never repairs) and flags R18 (d)/(e) sentences for the checker.
@@ -224,7 +224,11 @@ function urlEvidence(p, isMain, out) {
   }
   for (const r of p.toolResults || []) {
     const kind = kindOf.get(r.toolUseId);
-    if ((kind === 'fetch' || kind === 'search' || kind === 'agent') && typeof r.text === 'string') out.push(r.text);
+    if (kind === 'fetch' || kind === 'search' || kind === 'agent') {
+      if (typeof r.text === 'string') out.push(r.text);
+      // URLs past the 2,000-character cut of `text` (lib: non-enumerable `urls`, from the full result text).
+      for (const u of Array.isArray(r.urls) ? r.urls : []) if (typeof u === 'string') out.push(u);
+    }
   }
   for (const s of p.structured || []) {
     // In a session's own transcript a structured result counts only when it is tied to an Agent/Task

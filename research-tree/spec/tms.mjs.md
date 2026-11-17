@@ -13,7 +13,7 @@ dismissals (exit 10).
 
 ## Command line
 ```
-node tcb/scripts/tms.mjs --root <abs> --ce <n> [--target <task>.<step>]... [--now <iso>] [--dry-run]
+node tcb/tms.mjs --root <abs> --ce <n> [--target <task>.<step>]... [--now <iso>] [--dry-run]
 ```
 `--target` (list) restricts the exit-1 judgement to those commit records; default: every commit record.
 

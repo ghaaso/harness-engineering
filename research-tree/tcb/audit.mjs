@@ -31,7 +31,9 @@ const SPEC = {
 const SESSION_RE = /^[0-9a-f-]{36}$/;
 const RESULT_CUT = 2000;
 const URL_RE = /https?:\/\/[^\s<>"')\]]+/g;
-const NODE_PREFIX = 'node tcb/scripts/';
+// Flat layout: `node tcb/<name>.mjs`, the relative form guard-hook allows (lib.mjs is not a script).
+const TCB_NODE_RE = /^node\s+tcb\/([A-Za-z0-9_-]+)\.mjs(?=\s|$)/;
+const isTcbNode = (cmd) => { const m = TCB_NODE_RE.exec(String(cmd).trimStart()); return !!m && m[1] !== 'lib'; };
 
 function isoNow(flags) {
   let now;
@@ -349,7 +351,7 @@ async function taskForm(ctl) {
     if (a.kind === 'exec') {
       const cmd = String(a.command ?? '');
       if (profile.bash === 'none') outOfProfile.push({ tool_use_id: u.id, kind: 'bash', detail: cmd.slice(0, 200) });
-      else if (profile.bash === 'tcb-node' && !cmd.trimStart().startsWith(NODE_PREFIX)) outOfProfile.push({ tool_use_id: u.id, kind: 'bash', detail: cmd.slice(0, 200) });
+      else if (profile.bash === 'tcb-node' && !isTcbNode(cmd)) outOfProfile.push({ tool_use_id: u.id, kind: 'bash', detail: cmd.slice(0, 200) });
     }
   }
 
@@ -508,7 +510,7 @@ async function coordinatorForm(ctl) {
   for (const u of main.toolUses ?? []) {
     if (u.access?.kind !== 'exec') continue;
     const cmd = String(u.access.command ?? '');
-    if (profile.bash === 'none' || !cmd.trimStart().startsWith(NODE_PREFIX)) outOfProfile.push({ tool_use_id: u.id, kind: 'bash', detail: cmd.slice(0, 200) });
+    if (profile.bash === 'none' || !isTcbNode(cmd)) outOfProfile.push({ tool_use_id: u.id, kind: 'bash', detail: cmd.slice(0, 200) });
   }
   const audit = {
     schema_version: 1, session: sessionId, ce,

@@ -11,7 +11,7 @@ fields. A result that does not validate is counted, never repaired.
 
 ## Command line
 ```
-node tcb/scripts/harvest.mjs --root <abs> --ce <n> --task <id> --epoch <e> [--now <iso>] [--dry-run]
+node tcb/harvest.mjs --root <abs> --ce <n> --task <id> --epoch <e> [--now <iso>] [--dry-run]
 ```
 No mode. All flags required except `--now`, `--dry-run`.
 

@@ -11,8 +11,8 @@ in the pilot (CONTRACT §2); the record's `commit` ledger line carries `git: nul
 
 ## Command line
 ```
-node tcb/scripts/commit.mjs intake --root <abs> --ce <n> --task <id> --epoch <e> [--now <iso>] [--dry-run]
-node tcb/scripts/commit.mjs record --root <abs> --ce <n> --task <id> --epoch <e> --step <s> [--now <iso>] [--dry-run]
+node tcb/commit.mjs intake --root <abs> --ce <n> --task <id> --epoch <e> [--now <iso>] [--dry-run]
+node tcb/commit.mjs record --root <abs> --ce <n> --task <id> --epoch <e> --step <s> [--now <iso>] [--dry-run]
 ```
 All flags required except `--now`, `--dry-run`. `--step` matches the commit-step pattern (§1.5).
 

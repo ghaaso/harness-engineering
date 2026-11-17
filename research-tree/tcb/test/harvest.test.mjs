@@ -1,6 +1,6 @@
 // harvest.mjs tests, written from spec/harvest.mjs.md and CONTRACT.md only (the script's code was not read).
 // One test per behaviour, named with its id (T1..T15 of the spec). Each test builds its own run root under
-// tcb-build/tmp, runs `node tcb/scripts/harvest.mjs` as a child process and checks the exit code, the one JSON
+// tcb-build/tmp, runs `node tcb/harvest.mjs` as a child process and checks the exit code, the one JSON
 // line on stdout and the files. Fixtures: tcb/fixtures/harvest/_card-<n>.json (synthetic cards).
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -478,15 +478,21 @@ test('T5 a 16-word quote, a string measured.value and a status field are invalid
   assert.deepEqual(cardFiles(ctx), [`${idOf(good)}.card.json`]);
 });
 
-test('T6 an Agent result whose text is not JSON and a structured result that is an array of numbers: unparseable 2, exit 1', () => {
+// The spec's candidate rule ("whose whole text parses as JSON") and its T6 example ("text is not JSON")
+// disagree about prose. This build follows the candidate rule: prose is no candidate, a text that starts
+// as JSON and does not parse is unparseable. The second Agent result below keeps T6's count at 2.
+test('T6 an Agent result whose text is broken JSON and a structured result that is an array of numbers: unparseable 2, exit 1; a prose result is no candidate', () => {
   const ctx = setupH();
   ctx.main((b) => {
     const [tid] = b.call({ tools: [{ name: 'Agent', input: { subagent_type: 'reader', description: 'read', prompt: 'read' } }] });
-    b.result(tid, 'these are plain words and not json at all');
+    b.result(tid, '{"schema_version": 1, "cards": [');
+    const [tid2] = b.call({ tools: [{ name: 'Agent', input: { subagent_type: 'reader', description: 'read', prompt: 'read' } }] });
+    b.result(tid2, 'these are plain words and not json at all');
   });
   ctx.helper('h1', (b) => { b.call({ text: 'done' }); b.structured([1, 2, 3]); });
   const j = go(ctx, 1);
   assert.equal(j.result.unparseable, 2);
+  assert.equal(j.result.candidates, 2, 'the prose Agent result is no candidate');
   assert.deepEqual(j.result.written, []);
   assert.deepEqual(cardFiles(ctx), []);
 });

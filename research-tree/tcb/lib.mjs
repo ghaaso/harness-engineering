@@ -35,6 +35,7 @@ export const EXIT = Object.freeze({
   'checker-batch': 14,
   'window-limit': 15,
   drain: 16,
+  'act-due': 17,
   stall: 20,
   hang: 21,
   loop: 22,
@@ -433,7 +434,7 @@ export function paths(root) {
   return {
     root: R,
     tcb: j('tcb'),
-    scripts: j('tcb', 'scripts'),
+    scripts: j('tcb'), // flat layout: the scripts sit in tcb/ beside lib.mjs
     schemas: j('tcb', 'schemas'),
     profiles: j('tcb', 'profiles'),
     settings: j('tcb', 'settings'),
@@ -2439,7 +2440,7 @@ function usageOf(u) {
   return { usage, partial };
 }
 
-function resultText(content) {
+function resultText(content, { full = false } = {}) {
   let s = '';
   if (typeof content === 'string') s = content;
   else if (Array.isArray(content)) {
@@ -2448,7 +2449,27 @@ function resultText(content) {
       .filter((x) => x !== '')
       .join('\n');
   }
+  if (full) return s;
   return s.length > 2000 ? s.slice(0, 2000) : s;
+}
+
+// The http(s) URLs in a tool result's FULL text (fix-U2 request: R34 evidence for a URL past the
+// 2,000-character cut of `text`). Bounded: at most RESULT_URLS_MAX distinct URLs of at most 2,048
+// characters each, in order of first appearance. Exposed as the non-enumerable `urls` of a tool result.
+const RESULT_URL_RE = /https?:\/\/[^\s<>"'`)\]}]+/g;
+const RESULT_URLS_MAX = 500;
+function resultUrls(content) {
+  const s = resultText(content, { full: true });
+  const out = [];
+  const seen = new Set();
+  for (const m of s.matchAll(RESULT_URL_RE)) {
+    const u = m[0].replace(/[.,;:!?]+$/, ''); // sentence punctuation after a URL is not part of it
+    if (u.length > 2048 || seen.has(u)) continue;
+    seen.add(u);
+    out.push(u);
+    if (out.length >= RESULT_URLS_MAX) break;
+  }
+  return out;
 }
 
 /** Attach a non-enumerable property: readable by callers, invisible to JSON and deep equality. */
@@ -2592,6 +2613,7 @@ export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
             };
             const pd = rec.permissionDecision;
             if (pd && typeof pd === 'object') tr.permission = { decision: pd.decision ?? null, source: pd.source ?? null };
+            hidden(tr, 'urls', resultUrls(b.content));
             res.toolResults.push(hidden(tr, 'line', lineNo));
           }
         }

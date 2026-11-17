@@ -4,8 +4,8 @@ Source of truth: `CONTRACT.md` §1, §2.1 (`run/selftest.json`), §3.7 (`selftes
 §3.22 ([selftest], [fixture-case]: defined here), §4.2 (`treeSha`), §4.8 (transcript parser), §4.9
 (`killOwnTree`), §5 (the 24 scripts), §6 (the one kill), §7, §8.18.
 
-Layout of this build: the scripts and the library sit flat in `tcb/` (`<root>/tcb/<name>.mjs`); where
-the contract says `tcb/scripts/<name>.mjs`, read `tcb/<name>.mjs`.
+Layout of this build: the scripts and the library sit flat in `tcb/` (`<root>/tcb/<name>.mjs`), as the contract says (there is no
+`scripts` subfolder).
 
 **Revised 2026-11-17 (no bursts).** A smoke run of the first design wrote 1,275 script files in one
 second (a copy of the whole script folder for every case, up to 8 cases at once) and the PC stalled

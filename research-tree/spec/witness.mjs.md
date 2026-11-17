@@ -12,7 +12,7 @@ passed). It writes witness records only; promote.mjs alone turns them into card 
 
 ## Command line
 ```
-node <root>/tcb/scripts/witness.mjs --root <dir> --ce <n> [--card <c_id>]... [--now <iso>] [--dry-run]
+node <root>/tcb/witness.mjs --root <dir> --ce <n> [--card <c_id>]... [--now <iso>] [--dry-run]
 ```
 - No `--card`: the default set (step 3). Each `--card` must match `^c_[0-9a-f]{16}$` (an `s_` seed id
   or any other form is 66); repeated `--card` names an explicit list, deduplicated, sorted.

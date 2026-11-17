@@ -124,11 +124,13 @@ function lockOpts(th, ce, proc, now) {
   return o;
 }
 
-// proc.alive semantics over one list taken before the lock: same pid and a start time within lib.sameStartTime.
+// proc.alive semantics over one list taken before the lock: same pid and a listed start time accepted by lib.aliveFromQuery.
 function aliveIn(procList, rec) {
   if (!rec || rec.pid === undefined || rec.pid === null) return false;
   if (!Array.isArray(procList)) return null;
-  return procList.some((p) => Number(p.pid) === Number(rec.pid) && lib.sameStartTime(p.start_time, rec.start_time));
+  // One-sided, as lib.aliveFromQuery (lib-fix LR-2): the listed start may lie before the recorded one
+  // (a record's own clock reads later than the OS creation time), never more than the tolerance after it.
+  return procList.some((p) => Number(p.pid) === Number(rec.pid) && typeof rec.start_time === 'string' && typeof p.start_time === 'string' && lib.aliveFromQuery(p.start_time, rec.start_time) === true);
 }
 
 // ---------------------------------------------------------------- init
@@ -345,7 +347,7 @@ export async function doRaise(ctx, root, flags, dry, hooks = {}) {
 }
 
 // The successor runs the sibling status.mjs, found beside this file (import.meta.url); in the
-// contract layout that is <root>/tcb/scripts/status.mjs, as the spec's brief reads.
+// flat layout that is <root>/tcb/status.mjs, as the spec's brief reads.
 function briefLine(root, ce, tcbCommit) {
   const status = path.join(path.dirname(fileURLToPath(import.meta.url)), 'status.mjs').replace(/\\/g, '/');
   return `Coordinator ce ${ce} for run ${root}, tcb ${tcbCommit}: run node ${status} --root ${root} --ce ${ce} and act on run/status.json.`;

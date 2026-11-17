@@ -12,7 +12,7 @@ card: witness.mjs does. Without the owner's word F5 it fetches nothing.
 
 ## Command line
 ```
-node <root>/tcb/scripts/snap.mjs --root <dir> --ce <n> (--url <u> | --new) [--now <iso>] [--dry-run]
+node <root>/tcb/snap.mjs --root <dir> --ce <n> (--url <u> | --new) [--now <iso>] [--dry-run]
 ```
 - `--root` (required), `--ce` (required: it writes `.snapshots/`), exactly one of `--url <u>` (one
   URL, always fetched, a refetch included) or `--new` (every committed card's URL that has no

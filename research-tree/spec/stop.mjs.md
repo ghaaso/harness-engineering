@@ -9,8 +9,8 @@ row's terminal disposition. It never stops a session, never kills, never sleeps 
 
 ## Command line
 ```
-node tcb/scripts/stop.mjs request --root R --ce N --task T --epoch E [--now ISO] [--dry-run]
-node tcb/scripts/stop.mjs verify  --root R --ce N --task T --epoch E [--now ISO] [--dry-run]
+node tcb/stop.mjs request --root R --ce N --task T --epoch E [--now ISO] [--dry-run]
+node tcb/stop.mjs verify  --root R --ce N --task T --epoch E [--now ISO] [--dry-run]
 ```
 `--epoch` is the row's current epoch. The **target attempt** (CONTRACT §3.6) is
 `lib.attemptOf(row, E−1)` for a row at step fenced / stop-requested after a fence, and

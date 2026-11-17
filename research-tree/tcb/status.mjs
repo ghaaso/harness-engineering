@@ -126,7 +126,9 @@ function lockOpts(th, ce, proc, now) {
 function aliveIn(procList, rec) {
   if (!rec || rec.pid === undefined || rec.pid === null) return false;
   if (!Array.isArray(procList)) return null;
-  return procList.some((p) => Number(p.pid) === Number(rec.pid) && lib.sameStartTime(p.start_time, rec.start_time));
+  // One-sided, as lib.aliveFromQuery (lib-fix LR-2): the listed start may lie before the recorded one
+  // (a record's own clock reads later than the OS creation time), never more than the tolerance after it.
+  return procList.some((p) => Number(p.pid) === Number(rec.pid) && typeof rec.start_time === 'string' && typeof p.start_time === 'string' && lib.aliveFromQuery(p.start_time, rec.start_time) === true);
 }
 
 function numOrNull(v) {

@@ -1,6 +1,6 @@
 // commit.mjs tests, written from spec/commit.mjs.md and CONTRACT.md only (the script's code was not read).
 // One test per behaviour, named with its id (T1..T25 of the spec). Each test builds its own run root under
-// tcb-build/tmp, runs `node tcb/scripts/commit.mjs` as a child process and checks the exit code, the one JSON
+// tcb-build/tmp, runs `node tcb/commit.mjs` as a child process and checks the exit code, the one JSON
 // line on stdout and the files. Fixtures: tcb/fixtures/commit/_*.json (synthetic cards).
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -616,6 +616,24 @@ test('T6 a session card whose url is in no transcript is rejected; the url insid
   assert.deepEqual(lines[1].data.objects.map((x) => `${x.id}|${x.origin}`), [`${B}|session`], 'only ids not listed before');
   assert.deepEqual(lines[2].data.objects.map((x) => `${x.id}|${x.origin}`), [`${C}|harvested`]);
   assert.ok(C_URL && !fs.readFileSync(mainTranscriptPath(ctx.root, SESSION), 'utf8').includes(C_URL));
+  ledgerOk(ctx.root);
+});
+
+test('T6b (fix-U2) a url found only past the 2000-character cut of a helper WebFetch result is accepted; one in no result is still rejected', () => {
+  const ctx = setup({ urls: [A_URL] });
+  const b = fixture('_card-b.json');
+  const B = objId('c', b);
+  ctx.stage('cards/b.card.json', b);
+  const h = transcript(SESSION, ctx.dir(), { sidechain: true });
+  const [tid] = h.call({ tools: [{ name: 'WebFetch', input: { url: 'https://example.test/other', prompt: 'read' } }] });
+  h.result(tid, 'fetched page. ' + 'z'.repeat(2500) + ' then it links to ' + B_URL + ' for more detail');
+  h.write(helperTranscriptPath(ctx.root, SESSION, 'h1'));
+  doIntake(ctx, 0);
+  assert.deepEqual(storedIds(ctx.root), [B]);
+  const c = fixture('_card-c.json');
+  ctx.stage('cards/c.card.json', c);
+  doIntake(ctx, 1);
+  assert.deepEqual(rejectedOf(ctx), ['staging/cards/c.card.json|url-not-in-transcript']);
   ledgerOk(ctx.root);
 });
 

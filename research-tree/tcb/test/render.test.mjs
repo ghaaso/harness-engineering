@@ -32,7 +32,7 @@ function canon(v) {
 }
 const fwd = (p) => p.split(path.sep).join('/');
 
-// The script lives in tcb/scripts/ (CONTRACT) or, while being built, in tcb/ itself.
+// The script lives in tcb/ (flat layout); the tcb/scripts/ candidate is a leftover fallback.
 function scriptFile(name) {
   const a = path.join(TCB, 'scripts', name + '.mjs');
   return fs.existsSync(a) ? a : path.join(TCB, name + '.mjs');

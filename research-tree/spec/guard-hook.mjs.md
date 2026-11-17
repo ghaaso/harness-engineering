@@ -8,12 +8,12 @@ hook input), §3.22 (`must_read.json`), §4.3 (`isUnder`, `segmentName`), §4.8 
 ## Purpose
 The preventive half of R29: before every tool call of a research session or helper, refuse paths
 outside the role, writes under `.claude/` or a protected path, Bash except the coordinator's `node
-tcb/scripts/*`, a wrong helper type, a child's fetch of a non-witnessed URL, any call of a fenced
+tcb/<n>.mjs`, a wrong helper type, a child's fetch of a non-witnessed URL, any call of a fenced
 attempt. It decides from files, writes nothing (§8.20) and denies on its own error.
 
 ## Command line and protocol
 ```
-node "<root>/tcb/scripts/guard-hook.mjs" --root <root> --role <role> [--task <id> --epoch <e>]
+node "<root>/tcb/guard-hook.mjs" --root <root> --role <role> [--task <id> --epoch <e>]
 ```
 stdin: the harness's PreToolUse JSON (`hook_event_name`, `tool_name`, `tool_input`, `cwd`,
 `session_id`, `transcript_path`, and for a helper's call `agent_type`; CONTRACT §3.21, believed,
@@ -68,7 +68,7 @@ ledger, so the cost does not grow with the run); checker: `queue/<b>/batch.json`
     `text_sha`; else `fetch-not-witnessed`. A missing or unparseable `must_read.json` → the same deny.
 11. search: allowed by step 5 alone (the project-term denylist is audit's, after the fact).
 12. exec: `bash: none` → `bash-refused`. `tcb-node`: the trimmed command is `node`, one script path
-    (`tcb/scripts/<n>.mjs` with `cwd` = root, or `<root>/tcb/scripts/<n>.mjs`, optionally in double
+    (`tcb/<n>.mjs` with `cwd` = root, or `<root>/tcb/<n>.mjs`, optionally in double
     quotes), then arguments made only of `[A-Za-z0-9_\-./:=]` or double-quoted strings of those plus
     space and `\`; `<n>` matches `^[a-z][a-z-]*$`, is not `lib`, and the file exists; else
     `bash-pattern`. No shell metacharacter (`;&|<>$'(){}*?!%^@,`, a backtick, a newline) ever passes.
@@ -89,10 +89,10 @@ ledger, so the cost does not grow with the run); checker: `queue/<b>/batch.json`
 ## Settings `tcb/settings/` (CONTRACT §3.21)
 - `<role>.json` for each task role and `coordinator.json`: harness settings `{permissions: {allow,
   deny}, hooks: {PreToolUse: [{matcher: "*", hooks: [{type: "command", command: "\"{node}\"
-  \"{root}/tcb/scripts/guard-hook.mjs\" --root \"{root}\" --role <role> --task {task} --epoch
+  \"{root}/tcb/guard-hook.mjs\" --root \"{root}\" --role <role> --task {task} --epoch
   {epoch}", timeout: 30}]}]}}` (coordinator: no task/epoch). `allow` scopes the profile's tools to
   its prefixes (`Read(//{attempt}/**)`, `Edit(//{attempt}/staging/**)`, `Agent(reader)`,
-  `WebFetch`; coordinator `Bash(node tcb/scripts/*)`); `deny` repeats `tools_deny` and adds
+  `WebFetch`; coordinator `Bash(node tcb/*)`); `deny` repeats `tools_deny` and adds
   `Edit`/`Write` on `//{root}/{tcb,run,store,sealed,review-in,.git}/**` and `//{attempt}/.claude/**`.
   replace renders the task-role files into `wt/<task>-e<e>/.claude/settings.json` by placeholder
   substitution only ({root}, {attempt}, {task}, {epoch}, {node} = the absolute node path); the
@@ -128,9 +128,9 @@ the exit code is 0 or 2, stdout is empty, and on 2 stderr starts `[guard-hook] d
   path, a Glob pattern `../**` → each the stated result.
 - T4 Edit, MultiEdit, NotebookEdit target fields are all checked; MultiEdit and NotebookEdit are
   `tool-denied` for a child.
-- T5 Bash for child → `tool-denied`; coordinator `node tcb/scripts/status.mjs --root C:/r --ce 1`
-  (cwd root) and the absolute quoted form → 0; `node tcb/scripts/x.mjs; del y`, `node -e 1`,
-  `node tcb/scripts/../../a.mjs`, `node tcb/scripts/lib.mjs`, `node tcb/scripts/nosuch.mjs`, `$(x)`,
+- T5 Bash for child → `tool-denied`; coordinator `node tcb/status.mjs --root C:/r --ce 1`
+  (cwd root) and the absolute quoted form → 0; `node tcb/x.mjs; del y`, `node -e 1`,
+  `node tcb/../../a.mjs`, `node tcb/lib.mjs`, `node tcb/nosuch.mjs`, the old layout `node tcb/scripts/status.mjs` (relative or absolute), `$(x)`,
   a newline → 2 `bash-pattern`.
 - T6 Agent `subagent_type: reader` from a child → 0; `general-purpose` or absent → 2 `agent-type`;
   coordinator `checker` → 0, `reader` → 2.

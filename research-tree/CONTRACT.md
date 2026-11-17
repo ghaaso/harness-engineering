@@ -6,7 +6,7 @@ design differ, this contract wins and §8 says why. Everything two scripts share
 unit's spec (`spec/<script>.md`) adds only what one script alone needs.
 
 Source tree (this build): `tcb-build/tcb/` = the run root's `tcb/`.
-`tcb/scripts/<name>.mjs` (24 scripts + `lib.mjs`), `tcb/schemas/<format>.schema.json`,
+`tcb/<name>.mjs` (24 scripts + `lib.mjs`, flat: there is no `scripts` subfolder; a script finds the library, the schemas and its sibling scripts relative to its own file, `import.meta.url`), `tcb/schemas/<format>.schema.json`,
 `tcb/profiles/<role>.json`, `tcb/settings/<role>.json` (harness settings templates, incl.
 `coordinator.json`), `tcb/settings/user-deny.json`, `tcb/briefs/<role>.md`, `tcb/agents/<name>.md`,
 `tcb/thresholds.json`, `tcb/cost-inputs.json`, `tcb/denylist.txt`, `tcb/fixtures/<script>/<case>/`,
@@ -18,7 +18,7 @@ Node 24, ES modules, `node:` built-ins only, Windows 11 / NTFS.
 ### 1.1 Command line
 
 ```
-node <root>/tcb/scripts/<name>.mjs [<mode>] --root <dir> [--ce <n>] [--task <id> --epoch <e>]
+node <root>/tcb/<name>.mjs [<mode>] --root <dir> [--ce <n>] [--task <id> --epoch <e>]
      [--now <iso>] [--dry-run] [script flags]
 ```
 - Flags are `--name value` or a bare boolean `--name`; repeated `--name` builds a list. An unknown
@@ -573,7 +573,7 @@ audit flags a checker that read more than one batch). Profiles exist for every r
 - **Settings.** `replace start` renders `wt/<task>-e<e>/.claude/settings.json` from
   `tcb/settings/<role>.json` by placeholder substitution only: `{root}`, `{attempt}`, `{task}`,
   `{epoch}`, and `{node}` = `process.execPath` of the replace run. The hook entry is `{matcher: "*",
-  hooks: [{type: "command", command: "\"{node}\" \"{root}/tcb/scripts/guard-hook.mjs\" --root
+  hooks: [{type: "command", command: "\"{node}\" \"{root}/tcb/guard-hook.mjs\" --root
   \"{root}\" --role <role> --task {task} --epoch {epoch}", timeout: 30}]}` under `PreToolUse`. The
   owner installs `tcb/settings/coordinator.json` (no task, no epoch) and merges `user-deny.json` into
   his user settings. guard-hook and audit enforce the same profile.
@@ -642,7 +642,7 @@ as written there; the spec is the single place of their fields.
   tick, sizes: {<path relative to transcripts_root>: bytes}}`.
 - [unit-costs] `plan/unit-costs.json`: as `spec/cost.mjs.md`.
 
-## 4. The library `tcb/scripts/lib.mjs`
+## 4. The library `tcb/lib.mjs`
 
 Named ES exports only; no side effects on import. Every error is a `TcbError {code (slug), exit,
 detail}`; `runMain` turns it into the stdout line and the exit code. Constants exported: `EXIT`
@@ -919,7 +919,7 @@ process list (directly or through a script) sets `{concurrency: false}`.
 
 ## 5. The scripts
 
-Each script is `tcb/scripts/<name>.mjs`, runs through `runMain`, appends a `check` ledger line when it
+Each script is `tcb/<name>.mjs` (flat, beside `lib.mjs`), runs through `runMain`, appends a `check` ledger line when it
 is a check (R40), and has fixtures in `tcb/fixtures/<name>/`. Modes and the flags other scripts or
 the coordinator rely on are fixed here; everything else is in its spec.
 
@@ -939,7 +939,7 @@ the coordinator rely on are fixed here; everything else is in its spec.
 | U2b | certify.mjs | Certificate of a review: reads vs manifest, cited cards confirmed and passing R18, plants found | `--task --epoch` | 0, 1, 2, 3 (`object-mismatch`, `step-key-mismatch`) |
 | U3a | snap.mjs | Plain Node fetch of a source (http/https, size and time caps, no cookies, no private addresses), bytes and HTML text by sha256 | `--url`; `--new` (cards with no snapshot) | 0, 2 (unverifiable: a URL without text, R40; F5 not given), 3 |
 | U3a | witness.mjs | Normalises, finds the exact quote and the number within w; binds the result to card and snapshot hashes | (default) `[--card]...` | 0, 1, 2, 3 |
-| U3b | guard-hook.mjs | Pre-tool hook: role paths, no `.claude/` writes, Bash only `node tcb/scripts/*` for the coordinator, helper types, witnessed fetches; denies on its own error. Also owns `tcb/profiles/*.json`, `tcb/settings/*.json` and `tcb/agents/{reader,checker}.md` | stdin = the harness hook JSON; `--root --role --task --epoch` | hook protocol: 0 allow, 2 deny (reason on stderr) |
+| U3b | guard-hook.mjs | Pre-tool hook: role paths, no `.claude/` writes, Bash only `node tcb/<name>.mjs` (not `lib.mjs`) for the coordinator, helper types, witnessed fetches; denies on its own error. Also owns `tcb/profiles/*.json`, `tcb/settings/*.json` and `tcb/agents/{reader,checker}.md` | stdin = the harness hook JSON; `--root --role --task --epoch` | hook protocol: 0 allow, 2 deny (reason on stderr) |
 | U3b | selftest.mjs | Every script on its good and bad fixtures; the canary for hooks and user-level denies | `run --ce`; `canary --ce --transcript --expect` | 0, 1, 2 |
 | U4a | render.mjs | Every page and view: pack, review, synthesis, owner page, coverage (held-out seed recall), seven measures, residual readings | (default) `--ce` | 0, 1, 2, 3 (`object-mismatch`, `seed-id`) |
 | U4a | audit.mjs | Read audit, protected writes, search log, notes, first-call context, coordinator turns above 1.5·W*; owns `tcb/denylist.txt` | `--task --epoch`; `--coordinator --session` | 0, 1 (tainted), 2, 3 |

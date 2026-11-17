@@ -8,10 +8,10 @@ the intake runner it spawns without waiting.
 
 ## Command line
 ```
-node tcb/scripts/watch.mjs --root R --ce N [--interval-ms MS] [--no-intake] [--now ISO] [--free-mb M]
-node tcb/scripts/watch.mjs --once  --root R --ce N [--no-intake] [--now ISO] [--free-mb M]
-node tcb/scripts/watch.mjs --alarm --root R --ce N [--sleep-ms MS] [--now ISO]
-node tcb/scripts/watch.mjs --intake --root R --ce N
+node tcb/watch.mjs --root R --ce N [--interval-ms MS] [--no-intake] [--now ISO] [--free-mb M]
+node tcb/watch.mjs --once  --root R --ce N [--no-intake] [--now ISO] [--free-mb M]
+node tcb/watch.mjs --alarm --root R --ce N [--sleep-ms MS] [--now ISO]
+node tcb/watch.mjs --intake --root R --ce N
 ```
 No positional mode (stdout `mode: null`; `result.run` is watcher|once|alarm|intake). `--once`,
 `--alarm`, `--intake` are exclusive (two → 66). `--interval-ms` overrides Δ (`delta_ms`);
@@ -99,7 +99,7 @@ j. **Act due → 17 (M3, CONTRACT decision 40): the planner's own predicate**, s
    acknowledged and could not take (admission deferred, say) stays quiet until its condition
    clears and returns.
 i. Intake: unless `--no-intake`, no intake alive (`watcher.json.intake` and `proc.alive` not true),
-   and some row at started|bound → spawn `process.execPath <root>/tcb/scripts/watch.mjs --intake
+   and some row at started|bound → spawn `process.execPath <root>/tcb/watch.mjs --intake
    --root R --ce N` detached, `stdio: 'ignore'`, `windowsHide: true`, `cwd: root`, unref; record
    `intake {pid, start_time}`. Never awaited.
 5 Events (CONTRACT §3.10): each present condition has a key `<class>|<task or ->|<epoch or ->|
@@ -190,7 +190,7 @@ All with `--once` or `--interval-ms 50` and `--no-intake` unless stated; fake tr
 - T18 intake spawn (without `--no-intake`; test reads `watcher.json.intake.pid`, waits for that
   process to end and asserts it was a `--intake` run): spawned once; a second tick while it is alive
   spawns none.
-- T19 `--intake` on a root whose step scripts are stubs in the test's own `tcb/scripts/` that exit
+- T19 `--intake` on a root whose step scripts are stubs in the test's own `tcb/` that exit
   0, 2, 0 → exit 0, one `incident` line naming the exit-2 step; stubs exiting 1, 6 and 10 → no
   incident; a stub exiting 70 → one incident; a stub exiting 64 ends it with 64; a stub that does
   not exit within `intake_step_timeout_ms` (1500 in the test) → ended, step exit 70 `timeout: true`,
