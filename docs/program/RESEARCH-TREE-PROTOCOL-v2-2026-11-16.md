@@ -11,6 +11,10 @@ that is the subject of the rule) and its basis by mapping id (D1-01 = expert fie
 `evidence/research-tree/foundations-2026-11-16/map/`). P1-P21, F1-F5, S and C are amendment 3's ids.
 *Pilot*: needed before the first field runs. *Later*: waits for what the pilot measures.
 
+**Amended by §16 (2026-11-17).** The build of the trusted scripts changed R5, R6, R7 and R10, added R59 and
+R60, and showed other sentences of this document to be wrong (R4, R9, R12, R57, the layout line, the script
+list); they are all in §16. Where §16 and an earlier section disagree, §16 holds.
+
 ## 1. The idea and the design
 
 The owner's words (typing corrected): "we have to fix these problems; they probably align with
@@ -873,3 +877,355 @@ refuters and revised on a mapper's ruling (27 edits). The record of all of it is
    (R14). R40: each checking script writes the value, and admit.mjs and gate.mjs count them. R43:
    check-queue.mjs, promote.mjs and certify.mjs. R49: replace.mjs, later. This is the coordinator's reading;
    the build must confirm it, and a rule that turns out to have no runner is deleted.
+
+## 16. The build of the trusted scripts (2026-11-17)
+
+The build ran in the night and day of 2026-11-17 in `tcb-build/` (saved under `research-tree/`). Its
+record: one return file per finished stage in `done/`, the first builders' notes in `done/first-run/`,
+the lane's logs in `lane/`, and two closing notes. Times are local (UTC+5). Where records disagree, both
+are named.
+
+**1. What was built.** An interface contract and 26 specs, attacked by two refuters (48 findings) and
+revised before any code. The shared library `tcb/lib.mjs` (88 exports) with 58 schema files. The scripts
+of §10 in five units of two groups each. Eleven role profiles, a settings file per role with the
+`guard-hook.mjs` hook, the agent files `reader.md` and `checker.md`, and eight briefs (child, reader,
+checker, fresh-reviewer, scorer, stpa, fmea, mapper). The protocol model of R57, extended, with a
+restartable runner for its full run. The lane and the recorder (point 3).
+
+| Unit | Groups and scripts | Join tests (pass / fail / skip) | Review: findings; mutations caught | Fix: result; tests |
+|---|---|---|---|---|
+| U1 execution | U1a replace, admit, stop; U1b watch, status, handover | 129/0/7; 95/0/10 | 9 medium; 31 of 40 | 9 fixed plus mutation R4; S4 equivalent; 264/0/16 |
+| U2 store and truth | U2a commit, harvest, fsck; U2b tms, promote, certify | 63/0/3; 53/0/2 | 2 high, 8 medium; 27 of 32 in the list | 10 fixed plus 2 survivors pinned; 1 residual open; 131/0/5 |
+| U3 witness and guard | U3a snap, witness; U3b guard-hook, selftest | 102/0/4; 41/0/5 | 1 high, 7 medium; 20 of 26 | 7 fixed; F8 needs a ruling; W9 equivalent; 151/0/9 |
+| U4 views and assurance | U4a render, audit; U4b seed, check-queue | 46/0/7; 47/0/6 | 1 high, 11 medium; 31 of 40 | 12 of 12 fixed; 106/0/13 |
+| U5 pilot plan | U5a protocol-freeze, compare, gate; U5b cost | 70/0/6; 21/0/2 | 14 medium; 21 of 26 | 14 addressed, 2 partial; 98/0/8 |
+
+The units hold 24 scripts. The 25th of §10 is protocol-model.mjs, built as the `model/` folder outside
+the units. Six of the 24 (admit, check-queue, handover, replace, seed, stop) did nothing and exited 0
+when started through a junction; the closing round fixed them (point 9). Every skip in every count above
+is a test marked as needing the app (point 10). The joins changed mostly layout (the contract said
+`tcb/scripts/<name>.mjs`; the build is flat, `tcb/<name>.mjs`) and tests. finish-U3b redesigned
+selftest against bursts: one case root at a time by default, no copy of the script folder.
+
+| Library stage | Tests (pass / fail / skip) | What it did |
+|---|---|---|
+| lib-finish | not run (its brief forbade it) | completed the library and schemas |
+| lib-join | 172/0/2 | 7 fixes: 2 layout, 2 test, 1 spec, 2 library |
+| lib-harden | counts not recorded; 12 named tests 12/0/0 | own-clock start time; no PowerShell on the normal path; a render run 2,292 ms before, 73 ms after |
+| lib-review | 177/0/2 | 7 findings (1 high); mutations: see below |
+| lib-fix | 188/0/2 | all 7 fixed in whole or part; reverting the 8 fixes fails all 10 targeted tests |
+
+Mutation counts that disagree within one record: lib-review's verdict says 13 of 14 caught, its list
+holds 15 with 14 caught; review-U2's verdict says 26 of 30, its list 32 with 27 caught. The high
+findings: a failed process query read as a dead lock holder (LR-1); promote reverted by a card's last
+line only, and commit's R34 URL check always passed (U2); guard-hook failed open through a junction
+(U3); render dropped ledger silences from working time (U4).
+
+The model found six more flaws (point 2) over 165,031,945 states on 22 workers. runner-build made its
+full run restartable (`model/run-resumable.mjs`): 77 configurations, 9,154 parts, about 21 days for the
+whole matrix, peak about 8,300 MB; a kill and restart gave 0 differences per part. runner-check fixed
+three defects (process bursts, a memory reservation too small, memory never sampled) and judged it safe
+to start (13 of 13 checks). Not verified: the 8,950 MB reservation of a big part.
+
+**2. The six model-check fixes M1 to M6.** The extended model found six flaws with every mechanism of
+the adopted design present (`inputs/model-findings-2.json`). modelfix-U1 wrote the fixes into the
+contract and the U1 scripts; its tests passed 245/0/17.
+
+| Fix | The flaw (the model's trace) | The fix | Script | Test that fails without it |
+|---|---|---|---|---|
+| M1 | Endturn kills the live alarm; the killed command's exit wakes the coordinator, whose endturn kills again: a busy loop | The alarm is re-armed by a token it reads (the hash of `run/acked.json`); no script kills it; a newer alarm still supersedes it | watch.mjs, status.mjs | watch.test "M1 alarm: an endturn during the sleep re-arms ..." (rearms 0 without it) |
+| M2 | The first turn, or one woken by the alarm, dies before endturn: no wake source, deadlock with one fault | `status --reconcile` exits 1 alarm-missing when no alarm of this ce is known to live, or the process list is unavailable; the coordinator starts the alarm first | status.mjs | status.test "M2 reconcile asks for the alarm at turn start" |
+| M3 | A row left mid step machine, a drained coordinator, or an event after the turn's read: the watcher never exits | Watcher class 17 act-due (non-urgent) on the planner's own predicate, acknowledged like every class | watch.mjs | eight "M3 act due" tests; the mutation summary reports 9 of 11 watch M tests failing, which does not match the 10 non-control tests now in the file |
+| M4 | Crash, owner wake, planned hand-over, stop unconfirmed: three sessions run beside N_max = 2 | Admitted, started and bound attempts with no process found take slots (in lib.slotCount) | lib.mjs, admit.mjs | admit.test T6c; slot counting not mutation-checked (it is in lib); the memory reservation of admitted rows is, by T16b (mutation A5) |
+| M5 | Two PC sleeps within one model call count two hang ticks | A counted tick more than 2Δ after the previous evaluation leaves the hang count unchanged | watch.mjs | watch.test "M5 pause discount" (exit 21 without it) |
+| M6 | A planned hand-over fences an attempt whose current READY is written | replace re-checks under the lock, for a running attempt of the current epoch, for a READY for every reason except first and tainted: exit 5 ready-wins | replace.mjs | replace.test "T5b (M6)": five subtests fail with it off |
+
+The rules change as follows (§15 item 4's six fixes were the first model check's; these are six more).
+
+| Rule | Present sentence (line) | Changed sentence | Because of |
+|---|---|---|---|
+| R5 | "A tick counts at most once per Δ. No clock reads elapsed wall time." (120-121) | "A tick of the long-running watcher counts at most once per Δ; a `--once` call counts one tick whenever it runs. A counted tick whose wall-clock gap since the watcher's previous evaluation exceeds 2Δ is a paused tick: it leaves h unchanged but still counts as a tick for every other counter; new calls still reset h; a missing, negative or shorter gap counts as usual. No other counter of this rule reads elapsed wall time." | M5 |
+| R6 | "Each endturn kills and re-arms the alarm, so it fires only after a long silence. Its pid and ce go in `coord.json`. Endturn writes acked_seq into `coord.json` under the run lock, and exits 1 unless both sources run." (127-129) | "Each endturn that records acked_seq rewrites `run/acked.json`; a live alarm reads that file's hash after each sleep and sleeps again while it has changed, exiting 30 only after a whole period with no change. No script kills a wake source; an alarm exits early only on a newer ce (64) or when a newer alarm has registered in `run/alarm.json` (exit 0, superseded), and that exit is itself a wake. The alarm's pid and ce go in `run/alarm.json`; endturn writes acked_seq into `run/acked.json` under the run lock, and exits 1 unless both sources run (2 proc-unavailable when it cannot tell)." | M1 |
+| R6 | "`status.mjs --endturn` makes sure two wake sources that the coordinator itself started are pending" (126-127) | add: "`status.mjs --reconcile` at the start of every turn exits 1 alarm-missing when no alarm of the current ce is known to live (none recorded, another ce, dead, or the process list unavailable); the coordinator then starts the alarm before anything else. The watcher also raises act-due (class 17, not urgent) when the planner's predicate names an act the coordinator can take now, or an event line above acked_seq whose condition has cleared; like every class it wakes only until acknowledged. A turn that dies before it starts the alarm counts as a lost wake in this bound." | M2, M3 |
+| R7 | "For a failure reason, replace.mjs first re-checks under the run lock for a READY of the current epoch" (137-138) | "For every reason except first and tainted (planned hand-over, memory parking, cut and drop included), replace.mjs first re-checks under the run lock for a READY of the running attempt's current epoch, and if it finds one it refuses with exit 5 ready-wins, so a READY written before the re-check wins; one written after it can still be fenced (open defect)." | M6 |
+| R10 | "fewer than N_max live child processes run, stop-unconfirmed ones included (2 until memory is measured, never above 3)" (155-156) | "fewer than N_max slots are taken (2 until memory is measured, never above 3), where every attempt whose stop is not confirmed takes one slot if it is stop-unconfirmed, a live process matches it, it is the current attempt of an active row at admitted, started or bound or the last attempt of a committed row, or a transcript of it exists; with no process list nothing is admitted. Free memory minus the reserve, minus one peak for each admitted or started session with no process, covers one session's peak." | M4 |
+
+Other sentences of this document that the build contradicts:
+
+| Where | Present text | Corrected text | Evidence |
+|---|---|---|---|
+| R4 (112-113) | "...and within δ on others." | "...and within δ on others, act-due (class 17) among them." The urgent list also leaves out common-cause and tamper-seen. | watch.mjs |
+| R12 (177); script list (630) | "handover.mjs kills the watcher and the alarm and raises ce" | "handover.mjs raises ce; the old watcher and alarm exit 64 on their next check." | handover.mjs; CONTRACT |
+| Layout (60) | "coord.json (ce, session, acked_seq, alarm pid)" | "coord.json (ce, session, started_at, tcb_commit), acked.json (acked_seq), alarm.json (alarm pid, ce)" | CONTRACT |
+| Script list (626-629) | watch.mjs and status.mjs entries | add "the act-due class (17)" to watch.mjs and "asks for the alarm (exit 1 alarm-missing)" to status `--reconcile` | M2, M3 |
+| "Deleted, not deferred" (692) | "pause detection by tick gaps (its rule is gone)" | strike; see R5 | M5 |
+| N2 row (584) | "Counters in calls and ticks" | "Counters in calls and ticks; a tick after a gap over 2Δ does not count toward hang" | M5 |
+| R57 (527-528) | "It models the adopted designs, not oracles" | "It must model the adopted designs as built, not oracles; as of 2026-11-17 four fixes, reconcile and the --ce fence are still oracles (§16)." | model-fidelity |
+| R9 (149-150) | the 2Δ stop check | its ticks still count across a PC sleep (M5's reasoning not applied); "kills processes naming the attempt folder" is contradicted by contract decision 29 | modelfix-U1 note 2 |
+
+The state of the model. With all six fixes the base configuration (2 fields, 2 faults, R = 1) holds all
+14 properties; at 3 faults only a bounded run exists after the last fix, with no failure in its explored
+states. The final full run was stopped after about 45 s, so nothing exists yet with the current model for
+R = 2, 3 fields or 4 faults (an earlier model's interrupted runs held there: evidence only). The fidelity
+review reproduced every verdict, and found:
+
+- Four fixes are modelled as oracles acting atomically on true state: arm at start (M2), the READY
+  re-check (M6), the pause discount (M5) and, close to one, the actionable watcher (M3). As built, M2 arms
+  by a separate tool call, M6 re-checks a READY the child writes without the lock, M5 misses short pauses.
+  With those as built: NoDeadlock and AlwaysCanResolve fail with one fault within 2 steps,
+  ReadyNotDiscarded within 5 steps in 43 of 43 parts, NoFalseSuspicion within 6 steps. M1 is only half
+  modelled (superseded-alarm exits are not modelled); M4 reads true process liveness, with no unknown case.
+- Reconcile and the --ce fence are oracles too. The report's state counts belong to an earlier base with
+  FIX_ENDTURN_RECHECK on (3,257,396 against 3,659,461); the verdicts are not affected.
+
+**The model's full run** was started at 14:52:47 on 2026-11-17, from `model/`, as `model/RUN-FULL.md`
+says and under the coordinator's limits: `node run-resumable.mjs --configs full --workers 3 --mem-mb 1500
+--big-mem-mb 6000 --floor-mb 6000`. It covers 77 configurations in 9,154 parts, cheapest first, and is
+restarted by the same command (a finished part is never run twice). Progress is in
+`model/results/SUMMARY.md`. One minute in it stood at 314 parts complete, none BOUNDED, no failed run.
+RUN-FULL.md's estimate, made for 4 workers and 8,000 MB: groups 1 to 5 (everything at 2 fields, and 3
+fields with 2 faults) in about 4 hours, groups 1 to 9 in about 2 to 2.5 days, the whole matrix in about
+2.5 to 3 weeks, with the last two groups ending mostly BOUNDED. With 3 workers and 6,000 MB it is slower
+and more parts end BOUNDED; a BOUNDED part is reported and can be rerun alone at a larger size, it is
+never cut down. Its table is therefore not in this section; it is committed with the results. The run
+is a process of the session that started it: if that session or the PC stops, the same command picks
+it up.
+
+Open defects, none fixed in any stage record:
+
+- A possible wake loop: when the process list is unavailable, reconcile reports alarm-missing; each turn
+  then starts an alarm that supersedes the last, whose exit wakes the coordinator again. Untested.
+- No coordinator brief yet carries R6's acts: reconcile first, start the alarm on alarm-missing, act on
+  status.json when the watcher exits 17.
+- A stale coordinator can start a second session: the session-tool start has no --ce fence.
+- READY races the fence; a late transcript leads to a double start; a committed child holds its slot
+  until a close only a session performs.
+- A healthy slow call is suspected as a hang: NoFalseSuspicion fails in every part within 4 steps, at the
+  cost of the one restart R = 1 allows (proposed fix: count transcript growth).
+- One dead turn leaves no wake source (proposed fix: a dead-man check outside the tree).
+- Weak properties: RestartLimit is vacuous; TwoCoordinatorsAct restates the fence; AtMostOneCommit's
+  mechanism is never exercised (A-WX's graph equals DF's); Slots excludes READY-but-alive children and is
+  weaker than R10; A-FENCE-CE has an infinite state space; R5's loop rule is never exercised.
+
+R57 reads "A counterexample blocks the change" and "Current verdict: blocked, until the extended model
+holds" (534-536). R55 makes gate.mjs pass only when R57 passes, and R10 admits nothing without the gate.
+The protocol stays blocked by its own R57 until the full run holds and the oracles are modelled as
+built.
+
+**3. The lane and the no-burst rule.** Both were added after the second stall; the lane's log starts at
+03:11.
+
+- **The lane** (`tools/lane.mjs`). Every command of an agent that starts Node runs through it, one call
+  per command. It lets as many commands run at once across all agents as `lane/capacity.txt` says
+  (default 1, at most 4); a slot is a folder taken by exclusive create, and a slot whose owner is dead or
+  older than 20 minutes is broken. Commands run at below-normal priority with the Node heap capped
+  (default 1,024 MB). At its timeout (default 540 s; the briefs say 300 s) it ends the command's own tree
+  with `taskkill /T /F`. It logs a flushed line at start, timeout, end, and when a waiter gives up (exit
+  75, 900 s by default). The briefs say one command at a time; `capacity.txt` holds 2 since 03:50, and
+  the log shows commands overlapping.
+- **No bursts** (the briefs' rule). Nothing creates script files or starts processes in bulk: no copy of
+  the script folder per test case, at most two child processes alive at once inside a test or a script
+  run unless a spec demands it, no real watcher, alarm or other long-running process in a test, no
+  PowerShell call where the value can be had without one. Test folders run with `--test-concurrency=1`.
+- **Why.** Both stalls began while an agent ran the self-test script over many cases: bursts of
+  short-lived processes, the first also with a PowerShell query per script start. The library review
+  (LR-3) and the runner check (RC-1) each found such a burst in code and removed it.
+- **The recorder** (`tools/recorder.ps1`). Every 2 s it writes free memory, total CPU, the process count
+  and the counts of node and powershell processes to `lane/recorder.log`, flushed. Its governor acts when
+  free memory is under 2,500 MB, more than 60 node or 40 powershell processes run, or CPU is at 97 % or
+  more for 15 samples in a row: it stops node and powershell processes whose command line names
+  `tcb-build` and logs a GOVERNOR line. The log holds no GOVERNOR line. The lines from 03:11 to 07:34
+  carry fields the present script does not write, so they come from an earlier version; whether that
+  version had the same governor is not recorded.
+
+**4. The interruptions of 2026-11-17.**
+
+- **01:42, a PC hard reset.** Running: an agent's self-test over many cases (memory note), and the first
+  model-review attempt, whose runner sized its pool at 11 workers of 670 MB (model-fidelity, which names
+  these pools as "the loads that came before the stalls"). No machine record of the minutes before
+  exists. A resume afterwards re-ran finished agents and overwrote 20 revised specs; it was stopped and
+  the specs restored from snapshot commit 8e0a694.
+- **02:34, a second stall.** Every process crawled for about 20 minutes until the owner restarted the PC
+  (memory note). Running: the self-test over many cases again. No machine record exists.
+- **Tested after the stalls.** `ps_scaling.mjs` times the library's process-list query run 1, 2, 4 and
+  8 at once; `burst_probe.mjs` times writing and reading 25 to 200 new script files against data files.
+  The memory note records the model checker, concurrent process queries and bursts of new script files
+  as "ruled out by test"; the figures are not recorded, and no test of the model checker is among the
+  coordinator's scripts. These tests show only that each load alone, at the sizes tried, did not
+  reproduce a stall. (`mem_crash.js` is not a test: it wrote the memory notes.) Not proven: the cause of
+  either stall. The antivirus (360 Total Security, Defender off) cannot be inspected.
+- **About 05:10 to 05:27, the coordinating session stopped; the PC did not.** The recorder's samples run
+  on through 07:34; in the lines read: 0 to 14 % CPU, at least 18,400 MB free, no GOVERNOR line. The lane
+  log: at 05:11:19 the whole U2 suite (six test files, label fix-U2) and at 05:11:58 admit with stop
+  (fix-U1-full-admit-stop) started; both timed out at 300 s (05:16:19, 05:16:58) with no end line after;
+  a waiter (fix-U3-st-canary) gave up as busy at 05:27:04 after 900 s. The fix-U2 command that ended in
+  43 s at 05:10:57 was fsck.test.mjs alone. From 05:12:34 the recorder counts 14 node processes at 0 to
+  2 % CPU; fix-U3's record gives the count falling to 13, 12 and 11 at 05:28, 05:35 and 05:56. The memory
+  note says the session stopped during a wait with its context about 90 % full. The recorder's log ends
+  at 07:34:27 and resumes at 12:07:46; why is not recorded.
+- **The three fix stages disagree on the timeouts**, each as its own opinion. fix-U1: run alone, admit
+  takes 50 s and stop 51 s; the hang was in stop T2b's PowerShell process reads; "likely ... a system-wide
+  WMI/PowerShell stall, not a hanging test". fix-U2 and fix-U3: the processes were blocked, most likely on
+  output pipes the stopped session no longer drained (the lane uses inherited stdio); fix-U3 adds that
+  the timeouts fired but taskkill did not end them (no end line). Not proven either way. Memory exhaustion and CPU saturation were not observed; no test
+  ruled anything out. Whether the full context caused the stop is not proven; the token count at the
+  stop is not recorded.
+- **13:57, a helper stalled for 22 minutes in the closing round** (coordinator's record). Its long test
+  command had been moved to the background by the harness after 180 s without the helper asking for it,
+  and the completion notice it waited for did not come; the coordinator saw it in the lane log and
+  resumed it. The closing note records the same move twice in that helper. Cause not examined.
+  Consequence for the briefs: "never put a command in the background" cannot be kept by a helper alone
+  when a lane command runs longer than 180 s.
+
+**5. The rule that follows: hand over while the context is small.**
+
+Measured on the session that finished the build, with the app's own usage tool (so a session of the
+desktop app can read its own window; whether sessions of the tree hold that tool is not verified): its
+fixed context before any message was about 75,000 tokens (system prompt 13,565; system tools 21,412;
+connector tools 13,758; memory files 16,330; skills 9,972). It stood at 179,773 tokens at 12:10 after
+reading the hand-over notes, the folder listings and the continuation script, at 217,073 at 13:05, and
+passed 250,000 at about 14:10. W*_coord (133.2k) was passed during set-up, before the first wait. It
+worked under a 250,000 line set by the session that started it; when it passed that line it wrote its
+state into the memory note and went on.
+
+- **R59. The coordinating session hands over early** (pilot, and every coordinating session outside the
+  tree, a build's included). In the tree, R12's drain is the hand-over: from W*_coord of R50 (133.2k by
+  default, 157.1k weighted; §12 (c) offers a band up to the 200k line as an owner option) the coordinator
+  starts nothing and waits only for quiescence and the owner. Outside the tree, a coordinating session
+  starts no long wait above W*_coord: it hands over first. The successor starts from files (the status
+  file, `coord.json`, the stage records), never from the old context. [In the tree: watch.mjs exits
+  class 16 at W*_coord, audit.mjs flags turns above 1.5·W*_coord, handover.mjs raises ce, the owner
+  starts the successor. Outside it: the session, through the app's usage tool, or the owner.] Because
+  the session that coordinated this build stopped with its context about 90 % full; that the full
+  context caused the stop is not proven.
+- **Consequence.** W*_coord already counts a fixed first-call context (P = 79,000 in `cost-inputs.json`);
+  the 75,000 measured here fits inside it and leaves about 58,000 tokens of work before the hand-over.
+  This session passed W*_coord during set-up, by reading notes, folder listings and the script into its
+  own context. Either that reading goes to a helper (R50: read-once content goes to a helper), or the
+  fixed context is cut (a lean folder for the tree, which the owner has asked for); W*_coord changes
+  only if P is measured again. The owner decides under §12 (c).
+
+**6. Two defects of the continuation script, found at noon before the last run.**
+
+- **(a) A fix stage counted as done when its unit's review was done.** A restart would have skipped the
+  three unfinished fix stages (U1, U2, U3) without a word. Corrected for the units at noon and for the
+  library's branch at 14:15. The coordinator records a dry run with stub agents: with every stage done
+  nothing starts; with lib:fix missing only lib:fix starts.
+- **(b) The last stage asked for the whole suite with four test files at once,** against the no-burst
+  rule. Corrected to: one lane command per test file, or a few files in one command when they end within
+  300 seconds together; never two commands at once.
+- **R60. A restart trusts only a stage's own record** (build practice). A stage is done only when its
+  own result is in the run journal; a neighbour's result, a file the stage wrote before it finished, or
+  a shared label never stands in for it. Every stage, the integration stage included, runs tests in the
+  allowed form of (b). [The stage function of the continuation script (`tcb-build-finish-v2.workflow.js`,
+  saved as `research-tree/tools/coordinator/tcb-build-continue.workflow.js.txt`) skips a stage only when
+  its own label is in the done list; `tcb_done_sync.js` builds that list from the run journals only.]
+
+**7. Final results.**
+
+- **fix-U1:** U1-F1 to F9 fixed (five by tests only); F4: the watcher appends a halt only for a fail no
+  earlier halt line names; F5: stop request no longer confirms an admitted attempt without observing it;
+  F6: each intake step has a timeout (`intake_step_timeout_ms`, 30 min default); F8: handover gained a
+  seam for its race test. Mutation R4 was not redundant and got a test. Not fixed: S4, an equivalent
+  mutant; the main-module guard through a junction (fixed in point 9). Tests 264/0/16; every listed
+  mutation fails its tests.
+- **fix-U2:** U2-F1 to F10 fixed (F9, F10 by tests only), and two survivors the review had called
+  redundant pinned by tests. Not fixed: a helper can still pass an unfetched URL into a harvested card
+  (a spec decision; point 9). Tests 131/0/5 (the six files in one command, 128 s).
+- **fix-U3:** U3-F1 to F7 fixed: guard-hook decides through a junction; 13 fixture cases for snap,
+  witness, guard-hook and selftest; the canary no longer counts any error as a refusal. Not fixed: F8
+  (what the mapper is: a ruling), W9 (an equivalent mutant). Tests 151/0/9.
+- **The first end-to-end run** (e2e-build): 24 steps, 22 passed (its script counts 246 of 250 checks).
+  Four failures: selftest's static check no-fixtures (watch, status, handover, commit, harvest and fsck
+  had no case), so admission would refuse every start; harvest exited 1 on a prose Agent result; gate
+  required G1..G12 that its spec did not name; `tcb/denylist.txt` was not shipped, so R34's denylist was
+  silently off.
+- **The last stage** (e2e-fix): 16 fixes, among them 19 new fixture cases with a `git: true` case field
+  so fsck can have a good case, harvest skipping prose, the denylist shipped, the one-sided start-time
+  rule in status and handover, `{{role}}` rendered as solo, and the flat layout in CONTRACT and 17 specs.
+  Library changes: three applied (exit 17 act-due, the flat scripts path, a `urls` field on tool results
+  past the 2,000-character cut); one not applied (widening `lib.fence`'s READY re-check); one note.
+
+| Whole suite as e2e-fix ran it, before the closing round (tests / pass / fail / skip) | |
+|---|---|
+| admit 38/36/0/2; audit 28/24/0/4; certify 17/17/0/0; check-queue 27/24/0/3; commit 35/34/0/1 | compare 27/25/0/2; cost 26/24/0/2; fsck 20/20/0/0; gate 24/22/0/2; guard-hook 19/16/0/3 |
+| handover 22/19/0/3; harvest 21/19/0/2; lib 191/189/0/2; promote 24/22/0/2; protocol-freeze 29/27/0/2 | render 33/30/0/3; replace 81/79/0/2; seed 31/28/0/3; selftest 31/29/0/2; snap 32/30/0/2 |
+| status 32/30/0/2; stop 39/36/0/3; tms 20/20/0/0; watch 69/65/0/4; witness 78/76/0/2 | Total 994: 941 pass, 0 fail, 53 skipped, all needs-app |
+
+The closing round added `main-guard.test.mjs` (24/24/0/0); the run of all 26 files after it is in
+point 9.
+
+Self-test: 104 of 104 cases, every static check passed. End-to-end: 231 of 232 steps; the failing step
+checks a document (spec/gate.mjs.md did not name G1..G12), not a script. The stage left ten items
+still wrong: six document amendments, made in the closing round (the manifest and hook command still
+name the control role), and four questions now in the ruling
+table below (fence, `draft_sha256`, unreadable lock, coordinator tools).
+
+**8. Disagreements in the final records.** The coordinator's summary counts five library changes;
+e2e-fix lists five entries, of which three are applied changes. The spec-sync note says "Five items
+need your ruling" and lists six.
+
+**9. The closing round.**
+
+- **Main-module guard.** Six scripts (admit, check-queue, handover, replace, seed, stop) compared their
+  own path with `argv[1]` lexically, so started through a junction they printed nothing and exited 0.
+  All six now take guard-hook's rule: `import.meta.main`, else a lexical and then a real-path compare.
+  A new test, `main-guard.test.mjs`, runs every one of the 24 scripts through a junction: before the fix
+  18 pass and 6 fail, after it 24 of 24. 18 existing files rerun: 549 tests, 516 pass, 0 fail, 33
+  skipped, equal to the e2e-fix figures. Not run by that helper: snap, status, stop, tms, watch, witness,
+  lib and the self-test. The self-test's tcb_sha will differ from e2e-fix's, as a result, not a defect.
+- **Spec sync.** CONTRACT and the specs were brought in line with the reviewed code: G1..G12 in the gate
+  spec and CONTRACT 3.19; `git: true` in the selftest spec and CONTRACT 3.22 (pinned only by the
+  end-to-end self-test); harvest's candidate rule; `urls` in CONTRACT 4.8; the solo label; render's
+  wall-hour throughput, audit's `checker_reads`, the seed sentence, the compare, gate and cost items,
+  CONTRACT 3.15, 3.20, 4.4, 4.7, 4.9 and 4.10. M1 to M6 needed no edit. Left open: compare's
+  `blind-key-differs` and intakeCandidates' other-mode rule (no test), the extras of 4.8 and 4.10,
+  the join-stage spec questions, and a schema note in `tcb/` that still says "not yet in CONTRACT 3.22".
+  After the guard fix it added the entry-guard convention to CONTRACT 1.1 and `main-guard.test.mjs` to
+  the contract's file lists. The spec drift step now passes (the coordinator's run below).
+
+| Needs the owner's ruling | Options | What each changes |
+|---|---|---|
+| U3-F8: is the mapper a helper or a design-check task role? | (a) a task role; (b) a helper | (a) drop mapper from the coordinator's agent types and allow rule, amend the guard-hook spec, line 320 and R55; (b) a second profile anchored at the root, breaking one profile per role; the task-role text leaves CONTRACT and specs |
+| U2-F2 residual: are harvested cards URL-checked? | (a) yes; (b) no | (a) commit checks them against the helper's own fetch and search results (`urls` makes it possible); (b) the witness (R25) stays the backstop, and the spec says a helper can pass an unfetched URL |
+| U5-PF-1: which file is the draft whose hash the owner line records? | (a) a fixed path per subject; (b) `status owner --file` | either way CONTRACT 3.7 gains the field, the status spec describes it, and the owner decides whether protocol-freeze then refuses lines without it |
+| LR-4: should status report an unreadable lock? | (a) a lock-unreadable anomaly; (b) none | (a) status.mjs, its spec and schema; (b) the library breaks such a lock after about 30 s |
+| Coordinator session tools | name the host's tool prefixes | until then guard-hook refuses them (tool-not-allowed); changes the coordinator profile and possibly its settings |
+| M6, the library half: should `lib.fence` re-check READY for every reason? | (a) widen; (b) keep | (a) lib.mjs, spec/lib T56, CONTRACT 4.6; (b) the documents are already true, as replace makes the wider check |
+
+**The coordinator's own run after the closing round** (ended 14:52; `tools/coordinator/tcb_verify_all.sh`:
+one lane command per test file, one after another, then the end-to-end run). 26 test files, every one
+exit 0: 1,018 tests, 965 pass, 0 fail, 53 skipped, all of them tests that need the app. That is the last
+stage's 994 plus the 24 of `main-guard.test.mjs`; every file's numbers equal the last stage's. The
+end-to-end run: 232 of 232 steps, the spec drift step and the self-test step (the real self-test, every
+script on its good and bad fixtures) among them. The self-test was not run again on its own. The result
+file is `done/verify-2026-11-17.txt`.
+
+**10. What still needs the app.** These depend on the real desktop app and real sessions and are not
+verified by the build. Each is a skipped test or a builder's note; the last stage's list adds nothing
+outside this table.
+
+| Script | Needs the app |
+|---|---|
+| lib | the harness names project folders by projectDirName's rule (T82); a session's command line names its folder or id (T92; the probe found `--resume=<id>` but no cwd); helper result fields |
+| replace | rendered settings and agent files bind a session in the attempt folder; a real transcript's cwd equals the bound folder; the host class across a shutdown with Fast Startup on |
+| admit | the process list finds a real session's processes; `peak_mb` = 1,200 is a guess |
+| stop | the coordinator's stop ends a real turn and its helpers; real orphans show in survivors; transcript flush within `stop_verify_deltas` ticks |
+| watch | a background command's exit reaches the coordinator, also in sleep and after a ce change; one sleep of Δ is one tick across suspend; real transcripts match the parser; a real window; a detached intake survives the watcher |
+| status | a real transcript appears under projectDirName soon after start; the watcher's and alarm's exits reach the coordinator; the usage meter |
+| handover | the old coordinator woken late is refused (exit 64); the owner starts the successor; the old watcher and alarm exit 64 |
+| commit, harvest | real reader URLs and structured results in the believed transcript shape; helpers under `<session>/subagents/`; the harness's schema retry |
+| fsck | sessions obey the files fsck guards; git honours the hook and fsmonitor overrides under the owner's global config |
+| promote, certify | a real checker's verdict appears as a structured result; it could only Read its batch; audit's clean label reflects real reads |
+| snap, witness | real pages, PDFs, paywalls and challenge pages; real DNS, IPv6 and TLS; `allow_loopback` false in a real run; the share of paraphrased quotes (G7) |
+| guard-hook | the harness runs the hook before every call, helpers included, and honours exit 2 (a timeout or failed start lets the call through); user-level denies bind; a session obeys its folder's settings only; `Bash(node tcb/*)` matches as meant |
+| selftest | the canary reads a real session's refusals; refusals appear as error results with the hook's text (no permission pattern ships, so a permission refusal stays not_run) |
+| render, audit | real token fields; quiet gaps tell sleep from idle; the owner page on the owner's screen; the lean first-call baseline; what the coordinator sees of a turn end; real junctions |
+| seed, check-queue | real checker detection per class and J4; verdict extraction and retries; seeds as hard as real faults; a checker confined to its batch; real witness windows; detection against batch size |
+| protocol-freeze, compare, gate | the owner line quotes the owner's words; a child cannot read `plan/protocols/` or `sealed/`; a real scorer's result; blind sessions read only the cut; the model result binds to a real run |
+| cost | real transcripts and helper meta files; the hand-over parameters; tokens per meter percent |
+| briefs | readers and checkers obey their briefs against injected text; sessions keep the `TURN-END` last line; whether a session can read the role in its manifest or hook command |
+
+Harness facts still only believed: agent files restrict a helper's tools; hooks and permission rules
+are enforced; a background script alone keeps the PC awake; something visible names a session's folder;
+a long foreground command stays in the foreground (point 4, 13:57).
