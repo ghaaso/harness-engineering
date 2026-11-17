@@ -1,0 +1,164 @@
+{
+ "schema": 1,
+ "config": "A-RECONCILE-K3",
+ "part": "k=3,cs=1,x=1,r=1",
+ "title": "ablation from design + fixes (3 faults, R=1): no status --reconcile at turn start",
+ "base": "DF2-K3-R1",
+ "status": "complete",
+ "mem_mb": 500,
+ "big": false,
+ "budget": {
+  "k": 3,
+  "cs": 1,
+  "cv": 0,
+  "cd": 0,
+  "z": 0,
+  "p": 0,
+  "l": 0,
+  "x": 1,
+  "t": 0,
+  "r": 1,
+  "h": 1,
+  "d": 1
+ },
+ "states": 1866214,
+ "transitions": 5991915,
+ "bfs_complete": true,
+ "bounded_why": null,
+ "error": null,
+ "failed_properties": [
+  {
+   "property": "Slots",
+   "steps": 3,
+   "trace": [
+    "coord0 wakes, status --reconcile, plan: admit(f0) > start-session(f0) > bind(f0) > admit(f1) > start-session(f1) > bind(f1) > endturn | coord0 admit.mjs f0: 0 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f0e1 (session tool) | coord0 replace.mjs --step bound f0e1 | coord0 admit.mjs f1: 1 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f1e1 (session tool) | FAULT coord0's turn dies before bind(f1)",
+    "alarm(coord0) fires after a long silence, which wakes coord0",
+    "coord0 wakes, status --reconcile, plan: start-session(f1) > bind(f1) > endturn | coord0 starts session f1e1 (session tool) -- a SECOND session for the same attempt | coord0 replace.mjs --step bound f1e1"
+   ]
+  },
+  {
+   "property": "OneSessionPerAttempt",
+   "steps": 3,
+   "trace": [
+    "coord0 wakes, status --reconcile, plan: admit(f0) > start-session(f0) > bind(f0) > admit(f1) > start-session(f1) > bind(f1) > endturn | coord0 admit.mjs f0: 0 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f0e1 (session tool) | FAULT coord0's turn dies before bind(f0)",
+    "alarm(coord0) fires after a long silence, which wakes coord0",
+    "coord0 wakes, status --reconcile, plan: start-session(f0) > bind(f0) > admit(f1) > start-session(f1) > bind(f1) > endturn | coord0 starts session f0e1 (session tool) -- a SECOND session for the same attempt | coord0 replace.mjs --step bound f0e1 | coord0 admit.mjs f1: refused, 2 counted >= N_max=2 (row stays at stopped) | coord0 start-session(f1) skipped | coord0 bind(f1) skipped"
+   ]
+  },
+  {
+   "property": "EventuallyResolves",
+   "steps": 15,
+   "trace": [
+    "coord0 wakes, status --reconcile, plan: admit(f0) > start-session(f0) > bind(f0) > admit(f1) > start-session(f1) > bind(f1) > endturn | coord0 admit.mjs f0: 0 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f0e1 (session tool) | coord0 replace.mjs --step bound f0e1 | coord0 admit.mjs f1: 1 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f1e1 (session tool) | FAULT coord0's turn dies before bind(f1)",
+    "child f0e1 journals a card (V falls)",
+    "child f1e1 journals a card (V falls)",
+    "child f1e1 writes READY, its turn-end note wakes coord0",
+    "coord0 wakes, status --reconcile, plan: replace(f0,planned hand-over,e1) > stop(f0) > admit(f0) > start-session(f0) > bind(f0) > start-session(f1) > bind(f1) > endturn",
+    "coord0 replace.mjs f0 (planned hand-over): FENCE e1 -> e2 (no charge to R), staging cut=1 card(s)",
+    "FAULT host reset: every process dies; locks are left behind",
+    "owner wakes coord0 (no wake source of this ce is alive)",
+    "coord0 wakes, status --reconcile, plan: drain(W*_coord) > stop(f0) > admit(f0) > start-session(f0) > bind(f0) > start-session(f1) > bind(f1) > handover | coord0 reaches W*_coord: drains (coord.json), every start blocked | coord0 stop.mjs f0: nothing live to stop; | coord0 admit.mjs f0: refused, draining (row stays at stopped) | coord0 start-session(f0) skipped | coord0 bind(f0) skipped | coord0 starts session f1e1 (session tool) -- a SECOND session for the same attempt | coord0 replace.mjs --step bound f1e1 | coord0 handover skipped: not quiescent; turn ends",
+    "FAULT child f1e1 stuck in a slow call",
+    "alarm(coord0) fires after a long silence, which wakes coord0",
+    "coord0 wakes, status --reconcile, plan: admit(f0) > start-session(f0) > bind(f0) > commit(f1e1) > endturn | coord0 admit.mjs f0: refused, draining (row stays at stopped) | coord0 start-session(f0) skipped | coord0 bind(f0) skipped | coord0 commit.mjs f1e1: COMMIT created (wx), table committed",
+    "coord0 status --endturn: starts watch.mjs (it takes watcher.lock), re-arms the live alarm by writing its token, acked_seq=seq read at turn start; turn ends",
+    "-- a fair cycle in which field f0 is never resolved --",
+    "watcher(coord0) tick: no event   (back to the start of the cycle)"
+   ]
+  }
+ ],
+ "props": {
+  "NoStaleAccepted": {
+   "holds": true
+  },
+  "AtMostOneCommit": {
+   "holds": true
+  },
+  "Slots": {
+   "holds": false,
+   "trace": [
+    "coord0 wakes, status --reconcile, plan: admit(f0) > start-session(f0) > bind(f0) > admit(f1) > start-session(f1) > bind(f1) > endturn | coord0 admit.mjs f0: 0 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f0e1 (session tool) | coord0 replace.mjs --step bound f0e1 | coord0 admit.mjs f1: 1 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f1e1 (session tool) | FAULT coord0's turn dies before bind(f1)",
+    "alarm(coord0) fires after a long silence, which wakes coord0",
+    "coord0 wakes, status --reconcile, plan: start-session(f1) > bind(f1) > endturn | coord0 starts session f1e1 (session tool) -- a SECOND session for the same attempt | coord0 replace.mjs --step bound f1e1"
+   ]
+  },
+  "RestartLimit": {
+   "holds": true
+  },
+  "TwoCoordinatorsAct": {
+   "holds": true
+  },
+  "SingleWatcher": {
+   "holds": true
+  },
+  "FailedTaskStopped": {
+   "holds": true
+  },
+  "OneSessionPerAttempt": {
+   "holds": false,
+   "trace": [
+    "coord0 wakes, status --reconcile, plan: admit(f0) > start-session(f0) > bind(f0) > admit(f1) > start-session(f1) > bind(f1) > endturn | coord0 admit.mjs f0: 0 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f0e1 (session tool) | FAULT coord0's turn dies before bind(f0)",
+    "alarm(coord0) fires after a long silence, which wakes coord0",
+    "coord0 wakes, status --reconcile, plan: start-session(f0) > bind(f0) > admit(f1) > start-session(f1) > bind(f1) > endturn | coord0 starts session f0e1 (session tool) -- a SECOND session for the same attempt | coord0 replace.mjs --step bound f0e1 | coord0 admit.mjs f1: refused, 2 counted >= N_max=2 (row stays at stopped) | coord0 start-session(f1) skipped | coord0 bind(f1) skipped"
+   ]
+  },
+  "ReadyNotDiscarded": {
+   "holds": true
+  },
+  "NoFalseSuspicion": {
+   "holds": true
+  },
+  "NoDeadlock": {
+   "holds": true
+  },
+  "AlwaysCanResolve": {
+   "holds": true
+  },
+  "NoBusyLoop": {
+   "holds": true
+  },
+  "EventuallyResolves": {
+   "holds": false,
+   "trace": [
+    "coord0 wakes, status --reconcile, plan: admit(f0) > start-session(f0) > bind(f0) > admit(f1) > start-session(f1) > bind(f1) > endturn | coord0 admit.mjs f0: 0 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f0e1 (session tool) | coord0 replace.mjs --step bound f0e1 | coord0 admit.mjs f1: 1 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f1e1 (session tool) | FAULT coord0's turn dies before bind(f1)",
+    "child f0e1 journals a card (V falls)",
+    "child f1e1 journals a card (V falls)",
+    "child f1e1 writes READY, its turn-end note wakes coord0",
+    "coord0 wakes, status --reconcile, plan: replace(f0,planned hand-over,e1) > stop(f0) > admit(f0) > start-session(f0) > bind(f0) > start-session(f1) > bind(f1) > endturn",
+    "coord0 replace.mjs f0 (planned hand-over): FENCE e1 -> e2 (no charge to R), staging cut=1 card(s)",
+    "FAULT host reset: every process dies; locks are left behind",
+    "owner wakes coord0 (no wake source of this ce is alive)",
+    "coord0 wakes, status --reconcile, plan: drain(W*_coord) > stop(f0) > admit(f0) > start-session(f0) > bind(f0) > start-session(f1) > bind(f1) > handover | coord0 reaches W*_coord: drains (coord.json), every start blocked | coord0 stop.mjs f0: nothing live to stop; | coord0 admit.mjs f0: refused, draining (row stays at stopped) | coord0 start-session(f0) skipped | coord0 bind(f0) skipped | coord0 starts session f1e1 (session tool) -- a SECOND session for the same attempt | coord0 replace.mjs --step bound f1e1 | coord0 handover skipped: not quiescent; turn ends",
+    "FAULT child f1e1 stuck in a slow call",
+    "alarm(coord0) fires after a long silence, which wakes coord0",
+    "coord0 wakes, status --reconcile, plan: admit(f0) > start-session(f0) > bind(f0) > commit(f1e1) > endturn | coord0 admit.mjs f0: refused, draining (row stays at stopped) | coord0 start-session(f0) skipped | coord0 bind(f0) skipped | coord0 commit.mjs f1e1: COMMIT created (wx), table committed",
+    "coord0 status --endturn: starts watch.mjs (it takes watcher.lock), re-arms the live alarm by writing its token, acked_seq=seq read at turn start; turn ends",
+    "-- a fair cycle in which field f0 is never resolved --",
+    "watcher(coord0) tick: no event   (back to the start of the cycle)"
+   ]
+  }
+ },
+ "seconds": 34,
+ "wall_seconds": 34.2,
+ "peak_mb": 224,
+ "max_rss_mb": 356,
+ "heap_limit_mb": 500,
+ "check_mem_mb": 460,
+ "bytes_per_state": 126,
+ "avg_record": 46,
+ "attempts": [
+  {
+   "mem_mb": 500,
+   "status": "complete",
+   "why": null,
+   "states": 1866214,
+   "seconds": 34,
+   "finished_at": "2026-11-17T10:41:14.245Z"
+  }
+ ],
+ "started_at": "2026-11-17T10:40:40.017Z",
+ "finished_at": "2026-11-17T10:41:14.245Z",
+ "fingerprint": "6243eeea7632c2870df4217fc2841dc46e3603159bb67fac9c97648c8e3b5bdd",
+ "node": "v24.22.1",
+ "host": "DESKTOP-8FQHJAP"
+}

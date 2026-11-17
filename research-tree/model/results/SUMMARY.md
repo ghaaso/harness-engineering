@@ -1,10 +1,8 @@
-# Model run summary (in progress)
+# Model run summary
 
-Updated 2026-11-17T09:58:11.068Z; runner pid 40648, started 2026-11-17T09:52:47.637Z, 323 s; 3 workers of 1500 MB, big parts alone at 6000 MB, floor 6000 MB free.
+Updated 2026-11-17T13:48:51.384Z; runner pid 2784, started 2026-11-17T13:32:01.571Z, 1010 s; 4 workers of 6000 MB, big parts alone at 6000 MB, floor 4000 MB free.
 
-Parts: 1118 complete, 0 BOUNDED, 0 failed runs, 8036 still to run (3 running) of 9154. 98373117 states, 285577036 transitions, 686 cpu-s.
-
-Running now: A-FENCE-CE k=1,t=1 (1500 MB, 3 s, rss 185 MB); A-FENCE-CE k=1,x=1 (1500 MB, 1 s, rss ? MB); A-FENCE-CE k=1,z=1 (1500 MB, 0 s, rss ? MB)
+Parts: 5154 complete, 9 BOUNDED, 0 failed runs, 0 still to run (0 running) of 5163. 3428126811 states, 10658670803 transitions, 53447 cpu-s. Exit 1.
 
 ```
 config                     parts  done        states    transitions    cpu-s peakMB  status; failing properties (trace steps)
@@ -34,57 +32,39 @@ X-ARM-BY-WRITE                43    43       3572731       11131197       28    
 X-PAUSE-DISCOUNT              43    43       3850396       11179323       29    166  complete; fails: NoFalseSuspicion(6)
 X-READY-ALL                   43    43       3640727       10618481       28    133  complete; fails: ReadyNotDiscarded(6)
 X-WATCHER-ACTIONABLE          43    43       3806894       11123077       27    118  complete; fails: AlwaysCanResolve(11) EventuallyResolves(13)
-A-FENCE-CE                     9     0             0              0        0      0  INCOMPLETE 0/9 parts run; fails: none
-A-ACK-K3                     140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-A-ADMIT-LIVE-K3              140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-A-ALARM-K3                   140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-A-CUT-K3                     140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-A-DRAIN-K3                   140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-A-FENCE-EPOCH-K3             140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-A-PROGRESS-K3                140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-A-READY-K3                   140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-A-RECONCILE-K3               140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-A-RESTART-LIMIT-K3           140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-A-STOP-LIMIT-K3              140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-A-WATCHER-LOCK-K3            140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-A-WX-K3                      140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-A-WX+RECONCILE-K3            140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-D2-K3-R1                     140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-D2-K3-R2                     140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-DF2-K3-R1                    140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-DF2-K3-R2                    140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-X-ADMIT-RESERVE-K3           140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-X-ARM-AT-START-K3            140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-X-ARM-BY-WRITE-K3            140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-X-PAUSE-DISCOUNT-K3          140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-X-READY-ALL-K3               140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-X-WATCHER-ACTIONABLE-K3      140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-D3-K2-R1                      43     0             0              0        0      0  INCOMPLETE 0/43 parts run; fails: none
-D3-K2-R2                      43     0             0              0        0      0  INCOMPLETE 0/43 parts run; fails: none
-DF3-K2-R1                     43     0             0              0        0      0  INCOMPLETE 0/43 parts run; fails: none
-DF3-K2-R2                     43     0             0              0        0      0  INCOMPLETE 0/43 parts run; fails: none
-D2-K4-R1                     126     0             0              0        0      0  INCOMPLETE 0/126 parts run; fails: none
-D2-K4-R2                     126     0             0              0        0      0  INCOMPLETE 0/126 parts run; fails: none
-DF2-K4-R1                    126     0             0              0        0      0  INCOMPLETE 0/126 parts run; fails: none
-DF2-K4-R2                    126     0             0              0        0      0  INCOMPLETE 0/126 parts run; fails: none
-A-FENCE-CE-K2                 43     0             0              0        0      0  INCOMPLETE 0/43 parts run; fails: none
-D2-K4F-R1                    343     0             0              0        0      0  INCOMPLETE 0/343 parts run; fails: none
-D2-K4F-R2                    343     0             0              0        0      0  INCOMPLETE 0/343 parts run; fails: none
-DF2-K4F-R1                   343     0             0              0        0      0  INCOMPLETE 0/343 parts run; fails: none
-DF2-K4F-R2                   343     0             0              0        0      0  INCOMPLETE 0/343 parts run; fails: none
-D3-K3-R1                     140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-D3-K3-R2                     140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-DF3-K3-R1                    140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-DF3-K3-R2                    140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-D3-K4-R1                     126     0             0              0        0      0  INCOMPLETE 0/126 parts run; fails: none
-D3-K4-R2                     126     0             0              0        0      0  INCOMPLETE 0/126 parts run; fails: none
-DF3-K4-R1                    126     0             0              0        0      0  INCOMPLETE 0/126 parts run; fails: none
-DF3-K4-R2                    126     0             0              0        0      0  INCOMPLETE 0/126 parts run; fails: none
-A-FENCE-CE-K3                140     0             0              0        0      0  INCOMPLETE 0/140 parts run; fails: none
-D3-K4F-R1                    343     0             0              0        0      0  INCOMPLETE 0/343 parts run; fails: none
-D3-K4F-R2                    343     0             0              0        0      0  INCOMPLETE 0/343 parts run; fails: none
-DF3-K4F-R1                   343     0             0              0        0      0  INCOMPLETE 0/343 parts run; fails: none
-DF3-K4F-R2                   343     0             0              0        0      0  INCOMPLETE 0/343 parts run; fails: none
+A-FENCE-CE                     9     9     413190221     1073338492     3090   5680  BOUNDED (9 parts); fails: Slots(12) TwoCoordinatorsAct(2) OneSessionPerAttempt(12)
+A-ACK-K3                     140   140      54657523      167644495     1032    455  complete; fails: AlwaysCanResolve(8) EventuallyResolves(10)
+A-ADMIT-LIVE-K3              140   140      59807924      190289996     1142    401  complete; fails: Slots(6)
+A-ALARM-K3                   140   140       6338674       13839426      108     98  complete; fails: NoDeadlock(2) AlwaysCanResolve(2)
+A-CUT-K3                     140   140     102826732      317934171     1814    840  complete; fails: NoStaleAccepted(10)
+A-DRAIN-K3                   140   140      47285767      144871423      946    373  complete; fails: none
+A-FENCE-EPOCH-K3             140   140      94852360      303698028     1712    642  complete; fails: NoStaleAccepted(8) AlwaysCanResolve(11) EventuallyResolves(12)
+A-PROGRESS-K3                140   140      44924761      140674348      861    345  complete; fails: EventuallyResolves(9)
+A-READY-K3                   140   140      56394093      175325690     1079    449  complete; fails: ReadyNotDiscarded(6)
+A-RECONCILE-K3               140   140      71780813      225316174     1337    436  complete; fails: Slots(3) OneSessionPerAttempt(3) AlwaysCanResolve(8) EventuallyResolves(15)
+A-RESTART-LIMIT-K3           140   140      59685689      184290645     1099    483  complete; fails: RestartLimit(15)
+A-STOP-LIMIT-K3              140   140      57928698      179455279     1023    484  complete; fails: FailedTaskStopped(15) AlwaysCanResolve(14) EventuallyResolves(21)
+A-WATCHER-LOCK-K3            140   140      87215082      288744850     1674    505  complete; fails: SingleWatcher(6) NoFalseSuspicion(11)
+A-WX-K3                      140   140      57657263      178572957     1080    446  complete; fails: none
+A-WX+RECONCILE-K3            140   140      71821564      225399874     1372    482  complete; fails: AtMostOneCommit(6) Slots(3) OneSessionPerAttempt(3) AlwaysCanResolve(8) EventuallyResolves(15)
+D2-K3-R1                     140   140      79649813      236007055     1367    633  complete; fails: Slots(6) ReadyNotDiscarded(6) NoFalseSuspicion(6) NoDeadlock(2) AlwaysCanResolve(2) NoBusyLoop(6) EventuallyResolves(12)
+D2-K3-R2                     140   140      83041085      245758660     1417    637  complete; fails: Slots(6) ReadyNotDiscarded(6) NoFalseSuspicion(6) NoDeadlock(2) AlwaysCanResolve(2) NoBusyLoop(6) EventuallyResolves(12)
+DF2-K3-R1                    140   140      57657263      178572957     1092    483  complete; fails: none
+DF2-K3-R2                    140   140      59654773      184217345     1102    482  complete; fails: none
+X-ADMIT-RESERVE-K3           140   140      57676685      178664669     1094    476  complete; fails: Slots(6)
+X-ARM-AT-START-K3            140   140      52640053      148690908      949    482  complete; fails: NoDeadlock(2) AlwaysCanResolve(2)
+X-ARM-BY-WRITE-K3            140   140      57239355      188648618     1164    492  complete; fails: NoBusyLoop(5)
+X-PAUSE-DISCOUNT-K3          140   140      62337681      192206608     1196    475  complete; fails: NoFalseSuspicion(6)
+X-READY-ALL-K3               140   140      57395191      177922572     1109    473  complete; fails: ReadyNotDiscarded(6)
+X-WATCHER-ACTIONABLE-K3      140   140      61689821      191727509     1162    533  complete; fails: AlwaysCanResolve(10) EventuallyResolves(12)
+D3-K2-R1                      43    43      29405004       84168613      568    478  complete; fails: Slots(6) ReadyNotDiscarded(6) NoFalseSuspicion(6) NoDeadlock(2) AlwaysCanResolve(2) NoBusyLoop(7) EventuallyResolves(12)
+D3-K2-R2                      43    43      29654221       84852576      580    486  complete; fails: Slots(6) ReadyNotDiscarded(6) NoFalseSuspicion(6) NoDeadlock(2) AlwaysCanResolve(2) NoBusyLoop(7) EventuallyResolves(12)
+DF3-K2-R1                     43    43      22887448       68575095      491    430  complete; fails: none
+DF3-K2-R2                     43    43      23044032       68995425      514    437  complete; fails: none
+D2-K4-R1                     126   126     372661390     1216179805     5298   3224  complete; fails: Slots(6) ReadyNotDiscarded(6) NoFalseSuspicion(8) NoDeadlock(2) AlwaysCanResolve(2) NoBusyLoop(6) EventuallyResolves(12)
+D2-K4-R2                     126   126     391530685     1279099141     5575   3335  complete; fails: Slots(6) ReadyNotDiscarded(6) NoFalseSuspicion(8) NoDeadlock(2) AlwaysCanResolve(2) NoBusyLoop(6) EventuallyResolves(12)
+DF2-K4-R1                    126   126     266749000      900296394     4376   2142  complete; fails: none
+DF2-K4-R2                    126   126     278473030      939113969     4337   2299  complete; fails: none
 
 config                     NSA  AMOC S    RL   TCA  SW   FTS  OSPA RND  NFS  ND   ACR  NBL  ER  
 A-ACK                      ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   FAIL ok   FAIL
@@ -113,59 +93,53 @@ X-ARM-BY-WRITE             ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok 
 X-PAUSE-DISCOUNT           ok   ok   ok   ok   ok   ok   ok   ok   ok   FAIL ok   ok   ok   ok  
 X-READY-ALL                ok   ok   ok   ok   ok   ok   ok   ok   FAIL ok   ok   ok   ok   ok  
 X-WATCHER-ACTIONABLE       ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   FAIL ok   FAIL
-A-FENCE-CE                 -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-A-ACK-K3                   -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-A-ADMIT-LIVE-K3            -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-A-ALARM-K3                 -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-A-CUT-K3                   -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-A-DRAIN-K3                 -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-A-FENCE-EPOCH-K3           -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-A-PROGRESS-K3              -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-A-READY-K3                 -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-A-RECONCILE-K3             -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-A-RESTART-LIMIT-K3         -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-A-STOP-LIMIT-K3            -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-A-WATCHER-LOCK-K3          -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-A-WX-K3                    -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-A-WX+RECONCILE-K3          -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-D2-K3-R1                   -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-D2-K3-R2                   -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-DF2-K3-R1                  -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-DF2-K3-R2                  -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-X-ADMIT-RESERVE-K3         -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-X-ARM-AT-START-K3          -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-X-ARM-BY-WRITE-K3          -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-X-PAUSE-DISCOUNT-K3        -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-X-READY-ALL-K3             -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-X-WATCHER-ACTIONABLE-K3    -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-D3-K2-R1                   -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-D3-K2-R2                   -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-DF3-K2-R1                  -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-DF3-K2-R2                  -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-D2-K4-R1                   -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-D2-K4-R2                   -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-DF2-K4-R1                  -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-DF2-K4-R2                  -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-A-FENCE-CE-K2              -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-D2-K4F-R1                  -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-D2-K4F-R2                  -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-DF2-K4F-R1                 -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-DF2-K4F-R2                 -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-D3-K3-R1                   -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-D3-K3-R2                   -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-DF3-K3-R1                  -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-DF3-K3-R2                  -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-D3-K4-R1                   -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-D3-K4-R2                   -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-DF3-K4-R1                  -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-DF3-K4-R2                  -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-A-FENCE-CE-K3              -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-D3-K4F-R1                  -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-D3-K4F-R2                  -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-DF3-K4F-R1                 -    -    -    -    -    -    -    -    -    -    -    -    -    -   
-DF3-K4F-R2                 -    -    -    -    -    -    -    -    -    -    -    -    -    -   
+A-FENCE-CE                 ?    ?    FAIL ?    FAIL ?    ?    FAIL ?    ?    ?    ?    ?    ?   
+A-ACK-K3                   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   FAIL ok   FAIL
+A-ADMIT-LIVE-K3            ok   ok   FAIL ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok  
+A-ALARM-K3                 ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   FAIL FAIL ok   ok  
+A-CUT-K3                   FAIL ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok  
+A-DRAIN-K3                 ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok  
+A-FENCE-EPOCH-K3           FAIL ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   FAIL ok   FAIL
+A-PROGRESS-K3              ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   FAIL
+A-READY-K3                 ok   ok   ok   ok   ok   ok   ok   ok   FAIL ok   ok   ok   ok   ok  
+A-RECONCILE-K3             ok   ok   FAIL ok   ok   ok   ok   FAIL ok   ok   ok   FAIL ok   FAIL
+A-RESTART-LIMIT-K3         ok   ok   ok   FAIL ok   ok   ok   ok   ok   ok   ok   ok   ok   ok  
+A-STOP-LIMIT-K3            ok   ok   ok   ok   ok   ok   FAIL ok   ok   ok   ok   FAIL ok   FAIL
+A-WATCHER-LOCK-K3          ok   ok   ok   ok   ok   FAIL ok   ok   ok   FAIL ok   ok   ok   ok  
+A-WX-K3                    ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok  
+A-WX+RECONCILE-K3          ok   FAIL FAIL ok   ok   ok   ok   FAIL ok   ok   ok   FAIL ok   FAIL
+D2-K3-R1                   ok   ok   FAIL ok   ok   ok   ok   ok   FAIL FAIL FAIL FAIL FAIL FAIL
+D2-K3-R2                   ok   ok   FAIL ok   ok   ok   ok   ok   FAIL FAIL FAIL FAIL FAIL FAIL
+DF2-K3-R1                  ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok  
+DF2-K3-R2                  ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok  
+X-ADMIT-RESERVE-K3         ok   ok   FAIL ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok  
+X-ARM-AT-START-K3          ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   FAIL FAIL ok   ok  
+X-ARM-BY-WRITE-K3          ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   FAIL ok  
+X-PAUSE-DISCOUNT-K3        ok   ok   ok   ok   ok   ok   ok   ok   ok   FAIL ok   ok   ok   ok  
+X-READY-ALL-K3             ok   ok   ok   ok   ok   ok   ok   ok   FAIL ok   ok   ok   ok   ok  
+X-WATCHER-ACTIONABLE-K3    ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   FAIL ok   FAIL
+D3-K2-R1                   ok   ok   FAIL ok   ok   ok   ok   ok   FAIL FAIL FAIL FAIL FAIL FAIL
+D3-K2-R2                   ok   ok   FAIL ok   ok   ok   ok   ok   FAIL FAIL FAIL FAIL FAIL FAIL
+DF3-K2-R1                  ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok  
+DF3-K2-R2                  ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok  
+D2-K4-R1                   ok   ok   FAIL ok   ok   ok   ok   ok   FAIL FAIL FAIL FAIL FAIL FAIL
+D2-K4-R2                   ok   ok   FAIL ok   ok   ok   ok   ok   FAIL FAIL FAIL FAIL FAIL FAIL
+DF2-K4-R1                  ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok  
+DF2-K4-R2                  ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok   ok  
 ok = holds in every part, all parts complete; FAIL = some part found a trace; ? = not decided (bounded or not checked); .. = parts still to run
 legend: NSA=NoStaleAccepted, AMOC=AtMostOneCommit, S=Slots, RL=RestartLimit, TCA=TwoCoordinatorsAct, SW=SingleWatcher, FTS=FailedTaskStopped, OSPA=OneSessionPerAttempt, RND=ReadyNotDiscarded, NFS=NoFalseSuspicion, ND=NoDeadlock, ACR=AlwaysCanResolve, NBL=NoBusyLoop, ER=EventuallyResolves
 ```
+
+## Parts not complete
+
+- A-FENCE-CE k=1,cs=1: BOUNDED at 6000 MB: memory: stopped at 45914883 states (14440840 expanded) with 4796 MB in use
+- A-FENCE-CE k=1,cv=1: BOUNDED at 6000 MB: memory: stopped at 45923407 states (14369568 expanded) with 4796 MB in use
+- A-FENCE-CE k=1,cd=1: BOUNDED at 6000 MB: memory: stopped at 46051870 states (14491301 expanded) with 4796 MB in use
+- A-FENCE-CE k=1,z=1: BOUNDED at 6000 MB: memory: stopped at 45362072 states (13843092 expanded) with 4796 MB in use
+- A-FENCE-CE k=1,p=1: BOUNDED at 6000 MB: memory: stopped at 45997718 states (14437618 expanded) with 4796 MB in use
+- A-FENCE-CE k=1,l=1: BOUNDED at 6000 MB: memory: stopped at 45792828 states (14254046 expanded) with 4796 MB in use
+- A-FENCE-CE k=1,x=1: BOUNDED at 6000 MB: memory: stopped at 46807030 states (14357770 expanded) with 4796 MB in use
+- A-FENCE-CE k=1,t=1: BOUNDED at 6000 MB: memory: stopped at 45817930 states (14056117 expanded) with 4796 MB in use
+- A-FENCE-CE k=1,r=1: BOUNDED at 6000 MB: memory: stopped at 45522483 states (14425092 expanded) with 4796 MB in use
 
 Per-part results: results/<config>/<part>.json (status, budget, states, transitions, failing properties with shortest traces, seconds, memory).

@@ -1,0 +1,150 @@
+{
+ "schema": 1,
+ "config": "A-WATCHER-LOCK-K3",
+ "part": "k=3,cs=1,p=1,x=1",
+ "title": "ablation from design + fixes (3 faults, R=1): no watcher.lock; endturn starts a watcher when none of its ce has a fresh tick",
+ "base": "DF2-K3-R1",
+ "status": "complete",
+ "mem_mb": 500,
+ "big": false,
+ "budget": {
+  "k": 3,
+  "cs": 1,
+  "cv": 0,
+  "cd": 0,
+  "z": 0,
+  "p": 1,
+  "l": 0,
+  "x": 1,
+  "t": 0,
+  "r": 0,
+  "h": 1,
+  "d": 1
+ },
+ "states": 632100,
+ "transitions": 2543240,
+ "bfs_complete": true,
+ "bounded_why": null,
+ "error": null,
+ "failed_properties": [
+  {
+   "property": "SingleWatcher",
+   "steps": 6,
+   "trace": [
+    "coord0 wakes, status --reconcile, plan: admit(f0) > start-session(f0) > bind(f0) > admit(f1) > start-session(f1) > bind(f1) > endturn | coord0 admit.mjs f0: 0 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f0e1 (session tool) | coord0 replace.mjs --step bound f0e1 | coord0 admit.mjs f1: 1 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f1e1 (session tool) | coord0 replace.mjs --step bound f1e1",
+    "coord0 status --endturn: starts watch.mjs, re-arms the live alarm by writing its token, acked_seq=seq read at turn start; turn ends",
+    "alarm(coord0) fires after a long silence, which wakes coord0",
+    "coord0 wakes, status --reconcile, plan: endturn",
+    "FAULT the PC sleeps and resumes (every process frozen together)",
+    "coord0 status --endturn: no fresh tick -> starts ANOTHER watch.mjs, re-arms the live alarm by writing its token, acked_seq=seq read at turn start; turn ends"
+   ]
+  },
+  {
+   "property": "NoFalseSuspicion",
+   "steps": 12,
+   "trace": [
+    "coord0 wakes, status --reconcile, plan: admit(f0) > start-session(f0) > bind(f0) > admit(f1) > start-session(f1) > bind(f1) > endturn | coord0 admit.mjs f0: 0 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f0e1 (session tool) | coord0 replace.mjs --step bound f0e1 | coord0 admit.mjs f1: 1 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f1e1 (session tool) | coord0 replace.mjs --step bound f1e1",
+    "child f0e1 journals a card (V falls)",
+    "FAULT child f1e1 stuck in a slow call",
+    "coord0 status --endturn: starts watch.mjs, re-arms the live alarm by writing its token, acked_seq=seq read at turn start; turn ends",
+    "child f0e1 writes READY, its turn-end note wakes coord0",
+    "coord0 wakes, status --reconcile, plan: commit(f0e1) > endturn | coord0 commit.mjs f0e1: COMMIT created (wx), table committed",
+    "watcher(coord0) tick: no event (f1: hang=1 stall=0)",
+    "child f1e1 returns from its slow call (transient stall)",
+    "FAULT the PC sleeps and resumes (every process frozen together)",
+    "coord0 status --endturn: no fresh tick -> starts ANOTHER watch.mjs, re-arms the live alarm by writing its token, acked_seq=seq read at turn start; turn ends",
+    "watcher(coord0) tick: no event (f1: hang=1 stall=0)",
+    "watcher(coord0) tick after a pause: hang f1e1 -> ledger; exits 20, which wakes coord0"
+   ]
+  }
+ ],
+ "props": {
+  "NoStaleAccepted": {
+   "holds": true
+  },
+  "AtMostOneCommit": {
+   "holds": true
+  },
+  "Slots": {
+   "holds": true
+  },
+  "RestartLimit": {
+   "holds": true
+  },
+  "TwoCoordinatorsAct": {
+   "holds": true
+  },
+  "SingleWatcher": {
+   "holds": false,
+   "trace": [
+    "coord0 wakes, status --reconcile, plan: admit(f0) > start-session(f0) > bind(f0) > admit(f1) > start-session(f1) > bind(f1) > endturn | coord0 admit.mjs f0: 0 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f0e1 (session tool) | coord0 replace.mjs --step bound f0e1 | coord0 admit.mjs f1: 1 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f1e1 (session tool) | coord0 replace.mjs --step bound f1e1",
+    "coord0 status --endturn: starts watch.mjs, re-arms the live alarm by writing its token, acked_seq=seq read at turn start; turn ends",
+    "alarm(coord0) fires after a long silence, which wakes coord0",
+    "coord0 wakes, status --reconcile, plan: endturn",
+    "FAULT the PC sleeps and resumes (every process frozen together)",
+    "coord0 status --endturn: no fresh tick -> starts ANOTHER watch.mjs, re-arms the live alarm by writing its token, acked_seq=seq read at turn start; turn ends"
+   ]
+  },
+  "FailedTaskStopped": {
+   "holds": true
+  },
+  "OneSessionPerAttempt": {
+   "holds": true
+  },
+  "ReadyNotDiscarded": {
+   "holds": true
+  },
+  "NoFalseSuspicion": {
+   "holds": false,
+   "trace": [
+    "coord0 wakes, status --reconcile, plan: admit(f0) > start-session(f0) > bind(f0) > admit(f1) > start-session(f1) > bind(f1) > endturn | coord0 admit.mjs f0: 0 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f0e1 (session tool) | coord0 replace.mjs --step bound f0e1 | coord0 admit.mjs f1: 1 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f1e1 (session tool) | coord0 replace.mjs --step bound f1e1",
+    "child f0e1 journals a card (V falls)",
+    "FAULT child f1e1 stuck in a slow call",
+    "coord0 status --endturn: starts watch.mjs, re-arms the live alarm by writing its token, acked_seq=seq read at turn start; turn ends",
+    "child f0e1 writes READY, its turn-end note wakes coord0",
+    "coord0 wakes, status --reconcile, plan: commit(f0e1) > endturn | coord0 commit.mjs f0e1: COMMIT created (wx), table committed",
+    "watcher(coord0) tick: no event (f1: hang=1 stall=0)",
+    "child f1e1 returns from its slow call (transient stall)",
+    "FAULT the PC sleeps and resumes (every process frozen together)",
+    "coord0 status --endturn: no fresh tick -> starts ANOTHER watch.mjs, re-arms the live alarm by writing its token, acked_seq=seq read at turn start; turn ends",
+    "watcher(coord0) tick: no event (f1: hang=1 stall=0)",
+    "watcher(coord0) tick after a pause: hang f1e1 -> ledger; exits 20, which wakes coord0"
+   ]
+  },
+  "NoDeadlock": {
+   "holds": true
+  },
+  "AlwaysCanResolve": {
+   "holds": true
+  },
+  "NoBusyLoop": {
+   "holds": true
+  },
+  "EventuallyResolves": {
+   "holds": true
+  }
+ },
+ "seconds": 13.7,
+ "wall_seconds": 13.7,
+ "peak_mb": 79,
+ "max_rss_mb": 183,
+ "heap_limit_mb": 500,
+ "check_mem_mb": 460,
+ "bytes_per_state": 132,
+ "avg_record": 44,
+ "attempts": [
+  {
+   "mem_mb": 500,
+   "status": "complete",
+   "why": null,
+   "states": 632100,
+   "seconds": 13.7,
+   "finished_at": "2026-11-17T12:20:21.174Z"
+  }
+ ],
+ "started_at": "2026-11-17T12:20:07.435Z",
+ "finished_at": "2026-11-17T12:20:21.174Z",
+ "fingerprint": "b84c8509d56582872b9248e432a0af62939137bddb93a4b0601461ab76b9d676",
+ "node": "v24.22.1",
+ "host": "DESKTOP-8FQHJAP"
+}

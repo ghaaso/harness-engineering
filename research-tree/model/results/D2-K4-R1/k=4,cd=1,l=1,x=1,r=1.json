@@ -1,0 +1,196 @@
+{
+ "schema": 1,
+ "config": "D2-K4-R1",
+ "part": "k=4,cd=1,l=1,x=1,r=1",
+ "title": "adopted design, 2 fields, 4 faults, R=1",
+ "base": null,
+ "status": "complete",
+ "mem_mb": 500,
+ "big": false,
+ "budget": {
+  "k": 4,
+  "cs": 0,
+  "cv": 0,
+  "cd": 1,
+  "z": 0,
+  "p": 0,
+  "l": 1,
+  "x": 1,
+  "t": 0,
+  "r": 1,
+  "h": 1,
+  "d": 1
+ },
+ "states": 1640477,
+ "transitions": 5328378,
+ "bfs_complete": true,
+ "bounded_why": null,
+ "error": null,
+ "failed_properties": [
+  {
+   "property": "ReadyNotDiscarded",
+   "steps": 6,
+   "trace": [
+    "coord0 wakes, status --reconcile, plan: admit(f0) > start-session(f0) > bind(f0) > admit(f1) > start-session(f1) > bind(f1) > endturn | coord0 admit.mjs f0: 0 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f0e1 (session tool) | FAULT coord0's turn dies before bind(f0)",
+    "child f0e1 journals a card (V falls)",
+    "owner wakes coord0 (no wake source of this ce is alive)",
+    "coord0 wakes, status --reconcile, plan: replace(f0,planned hand-over,e1) > stop(f0) > admit(f0) > start-session(f0) > bind(f0) > admit(f1) > start-session(f1) > bind(f1) > endturn",
+    "child f0e1 writes READY, its turn-end note wakes coord0",
+    "coord0 replace.mjs f0 (planned hand-over): FENCE e1 -> e2 (no charge to R), staging cut=1 card(s)"
+   ]
+  },
+  {
+   "property": "NoDeadlock",
+   "steps": 2,
+   "trace": [
+    "coord0 wakes, status --reconcile, plan: admit(f0) > start-session(f0) > bind(f0) > admit(f1) > start-session(f1) > bind(f1) > endturn | FAULT coord0's turn dies before admit(f0)",
+    "(no ordinary action is enabled; a field is unresolved)"
+   ]
+  },
+  {
+   "property": "AlwaysCanResolve",
+   "steps": 2,
+   "trace": [
+    "coord0 wakes, status --reconcile, plan: admit(f0) > start-session(f0) > bind(f0) > admit(f1) > start-session(f1) > bind(f1) > endturn | FAULT coord0's turn dies before admit(f0)",
+    "(from here field f0 can never be committed or failed by ordinary actions)"
+   ]
+  },
+  {
+   "property": "NoBusyLoop",
+   "steps": 6,
+   "trace": [
+    "coord0 wakes, status --reconcile, plan: admit(f0) > start-session(f0) > bind(f0) > admit(f1) > start-session(f1) > bind(f1) > endturn | coord0 admit.mjs f0: 0 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f0e1 (session tool) | coord0 replace.mjs --step bound f0e1 | coord0 admit.mjs f1: 1 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f1e1 (session tool) | coord0 replace.mjs --step bound f1e1",
+    "coord0 status --endturn: starts watch.mjs (it takes watcher.lock), starts the alarm, acked_seq=seq read at turn start; turn ends",
+    "FAULT child f0e1 crashed; its turn-end note wakes coord0",
+    "-- this cycle repeats with no child, watcher, alarm or owner action --",
+    "coord0 wakes, status --reconcile, plan: endturn",
+    "coord0 status --endturn: watcher.lock held by a live watcher, kills the alarm (its exit is a wake to coord0) and starts a new one, acked_seq=seq read at turn start; turn ends   (back to the start of the cycle)"
+   ]
+  },
+  {
+   "property": "EventuallyResolves",
+   "steps": 13,
+   "trace": [
+    "coord0 wakes, status --reconcile, plan: admit(f0) > start-session(f0) > bind(f0) > admit(f1) > start-session(f1) > bind(f1) > endturn | coord0 admit.mjs f0: 0 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f0e1 (session tool) | coord0 replace.mjs --step bound f0e1 | coord0 admit.mjs f1: 1 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f1e1 (session tool) | coord0 replace.mjs --step bound f1e1",
+    "child f0e1 journals a card (V falls)",
+    "child f1e1 journals a card (V falls)",
+    "coord0 status --endturn: starts watch.mjs (it takes watcher.lock), starts the alarm, acked_seq=seq read at turn start; turn ends",
+    "child f1e1 writes READY, its turn-end note wakes coord0",
+    "coord0 wakes, status --reconcile, plan: commit(f1e1) > endturn | coord0 commit.mjs f1e1: COMMIT created (wx), table committed",
+    "coord0 status --endturn: watcher.lock held by a live watcher, kills the alarm (its exit is a wake to coord0) and starts a new one, acked_seq=seq read at turn start; turn ends",
+    "alarm(coord0) fires after a long silence, which wakes coord0",
+    "coord0 wakes, status --reconcile, plan: replace(f0,planned hand-over,e1) > stop(f0) > admit(f0) > start-session(f0) > bind(f0) > endturn",
+    "coord0 replace.mjs f0 (planned hand-over): FENCE e1 -> e2 (no charge to R), staging cut=1 card(s)",
+    "coord0 stop.mjs f0: stop f0e1 confirmed; | FAULT coord0's turn dies before admit(f0)",
+    "-- a fair cycle in which field f0 is never resolved --",
+    "watcher(coord0) tick: no event   (back to the start of the cycle)"
+   ]
+  }
+ ],
+ "props": {
+  "NoStaleAccepted": {
+   "holds": true
+  },
+  "AtMostOneCommit": {
+   "holds": true
+  },
+  "Slots": {
+   "holds": true
+  },
+  "RestartLimit": {
+   "holds": true
+  },
+  "TwoCoordinatorsAct": {
+   "holds": true
+  },
+  "SingleWatcher": {
+   "holds": true
+  },
+  "FailedTaskStopped": {
+   "holds": true
+  },
+  "OneSessionPerAttempt": {
+   "holds": true
+  },
+  "ReadyNotDiscarded": {
+   "holds": false,
+   "trace": [
+    "coord0 wakes, status --reconcile, plan: admit(f0) > start-session(f0) > bind(f0) > admit(f1) > start-session(f1) > bind(f1) > endturn | coord0 admit.mjs f0: 0 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f0e1 (session tool) | FAULT coord0's turn dies before bind(f0)",
+    "child f0e1 journals a card (V falls)",
+    "owner wakes coord0 (no wake source of this ce is alive)",
+    "coord0 wakes, status --reconcile, plan: replace(f0,planned hand-over,e1) > stop(f0) > admit(f0) > start-session(f0) > bind(f0) > admit(f1) > start-session(f1) > bind(f1) > endturn",
+    "child f0e1 writes READY, its turn-end note wakes coord0",
+    "coord0 replace.mjs f0 (planned hand-over): FENCE e1 -> e2 (no charge to R), staging cut=1 card(s)"
+   ]
+  },
+  "NoFalseSuspicion": {
+   "holds": true
+  },
+  "NoDeadlock": {
+   "holds": false,
+   "trace": [
+    "coord0 wakes, status --reconcile, plan: admit(f0) > start-session(f0) > bind(f0) > admit(f1) > start-session(f1) > bind(f1) > endturn | FAULT coord0's turn dies before admit(f0)",
+    "(no ordinary action is enabled; a field is unresolved)"
+   ]
+  },
+  "AlwaysCanResolve": {
+   "holds": false,
+   "trace": [
+    "coord0 wakes, status --reconcile, plan: admit(f0) > start-session(f0) > bind(f0) > admit(f1) > start-session(f1) > bind(f1) > endturn | FAULT coord0's turn dies before admit(f0)",
+    "(from here field f0 can never be committed or failed by ordinary actions)"
+   ]
+  },
+  "NoBusyLoop": {
+   "holds": false,
+   "trace": [
+    "coord0 wakes, status --reconcile, plan: admit(f0) > start-session(f0) > bind(f0) > admit(f1) > start-session(f1) > bind(f1) > endturn | coord0 admit.mjs f0: 0 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f0e1 (session tool) | coord0 replace.mjs --step bound f0e1 | coord0 admit.mjs f1: 1 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f1e1 (session tool) | coord0 replace.mjs --step bound f1e1",
+    "coord0 status --endturn: starts watch.mjs (it takes watcher.lock), starts the alarm, acked_seq=seq read at turn start; turn ends",
+    "FAULT child f0e1 crashed; its turn-end note wakes coord0",
+    "-- this cycle repeats with no child, watcher, alarm or owner action --",
+    "coord0 wakes, status --reconcile, plan: endturn",
+    "coord0 status --endturn: watcher.lock held by a live watcher, kills the alarm (its exit is a wake to coord0) and starts a new one, acked_seq=seq read at turn start; turn ends   (back to the start of the cycle)"
+   ]
+  },
+  "EventuallyResolves": {
+   "holds": false,
+   "trace": [
+    "coord0 wakes, status --reconcile, plan: admit(f0) > start-session(f0) > bind(f0) > admit(f1) > start-session(f1) > bind(f1) > endturn | coord0 admit.mjs f0: 0 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f0e1 (session tool) | coord0 replace.mjs --step bound f0e1 | coord0 admit.mjs f1: 1 counted < 2; checkpoint = commits + e0 staging prefix <= cut (0); row admitted e1 | coord0 starts session f1e1 (session tool) | coord0 replace.mjs --step bound f1e1",
+    "child f0e1 journals a card (V falls)",
+    "child f1e1 journals a card (V falls)",
+    "coord0 status --endturn: starts watch.mjs (it takes watcher.lock), starts the alarm, acked_seq=seq read at turn start; turn ends",
+    "child f1e1 writes READY, its turn-end note wakes coord0",
+    "coord0 wakes, status --reconcile, plan: commit(f1e1) > endturn | coord0 commit.mjs f1e1: COMMIT created (wx), table committed",
+    "coord0 status --endturn: watcher.lock held by a live watcher, kills the alarm (its exit is a wake to coord0) and starts a new one, acked_seq=seq read at turn start; turn ends",
+    "alarm(coord0) fires after a long silence, which wakes coord0",
+    "coord0 wakes, status --reconcile, plan: replace(f0,planned hand-over,e1) > stop(f0) > admit(f0) > start-session(f0) > bind(f0) > endturn",
+    "coord0 replace.mjs f0 (planned hand-over): FENCE e1 -> e2 (no charge to R), staging cut=1 card(s)",
+    "coord0 stop.mjs f0: stop f0e1 confirmed; | FAULT coord0's turn dies before admit(f0)",
+    "-- a fair cycle in which field f0 is never resolved --",
+    "watcher(coord0) tick: no event   (back to the start of the cycle)"
+   ]
+  }
+ },
+ "seconds": 33.1,
+ "wall_seconds": 33.2,
+ "peak_mb": 187,
+ "max_rss_mb": 275,
+ "heap_limit_mb": 500,
+ "check_mem_mb": 460,
+ "bytes_per_state": 119,
+ "avg_record": 43,
+ "attempts": [
+  {
+   "mem_mb": 500,
+   "status": "complete",
+   "why": null,
+   "states": 1640477,
+   "seconds": 33.1,
+   "finished_at": "2026-11-17T12:39:28.463Z"
+  }
+ ],
+ "started_at": "2026-11-17T12:38:55.234Z",
+ "finished_at": "2026-11-17T12:39:28.463Z",
+ "fingerprint": "6cc878cc0baf4e6247d6362a707bc3958fe1743e889e530b0a43e22979856d03",
+ "node": "v24.22.1",
+ "host": "DESKTOP-8FQHJAP"
+}

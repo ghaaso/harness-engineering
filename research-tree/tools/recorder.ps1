@@ -1,5 +1,7 @@
 # logs the machine every two seconds to a file flushed to disk, and stops this build's own processes if they pile up
-param([string]$Log)
+# -HotSamples: how many samples in a row at 97 % CPU or more make the governor act (15 = 30 s); 0 switches that one
+# rule off, for a run that is meant to load every core (the model's ladder run). The memory and count rules stay.
+param([string]$Log, [int]$HotSamples = 15)
 $fs = New-Object IO.FileStream($Log,[IO.FileMode]::Append,[IO.FileAccess]::Write,[IO.FileShare]::ReadWrite,4096,[IO.FileOptions]::WriteThrough)
 $sw = New-Object IO.StreamWriter($fs); $sw.AutoFlush = $true
 $free = New-Object Diagnostics.PerformanceCounter('Memory','Available MBytes')
@@ -11,7 +13,7 @@ while ((Get-Date) -lt $end) {
   $f = [int]$free.NextValue(); $u = [int]$cpu.NextValue()
   $sw.WriteLine(('{0} free={1} cpu={2}% procs={3} node={4} ps={5}' -f (Get-Date).ToString('HH:mm:ss'), $f, $u, $ps.Count, $node, $pw))
   if ($u -ge 97) { $hot++ } else { $hot = 0 }
-  if ($f -lt 2500 -or $node -gt 60 -or $pw -gt 40 -or $hot -ge 15) {
+  if ($f -lt 2500 -or $node -gt 60 -or $pw -gt 40 -or ($HotSamples -gt 0 -and $hot -ge $HotSamples)) {
     $k = @(); try { Get-CimInstance Win32_Process | Where-Object { ($_.Name -eq 'node.exe' -or $_.Name -eq 'powershell.exe') -and $_.ProcessId -ne $PID -and ([string]$_.CommandLine) -match 'tcb-build' } | ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop; $k += $_.ProcessId } catch {} } } catch {}
     $sw.WriteLine(('{0} GOVERNOR free={1} node={2} ps={3} stopped={4}' -f (Get-Date).ToString('HH:mm:ss'), $f, $node, $pw, ($k -join ' '))); $hot = 0
   }
