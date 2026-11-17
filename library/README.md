@@ -10,7 +10,7 @@ added to**: no line is edited or deleted. Version 1 is tested by recall test 2 b
 
 | Path | What |
 |---|---|
-| `INDEX.md` | The board: one line per current record, `id [status] claim`, a table "before you do X, look up Y", the open tasks in work order, the known gaps. Read this first |
+| `INDEX.md` | The board: a table "before you do X, look up Y", one line per current record of the top session (`id [status] claim`), the open tasks in work order, a directory of every journal file, the known gaps. Read this first |
 | `GLOSSARY.md` | The words the records use (R57, the tree, tcb, 0b, FX-*, lane, skeleton, the check) |
 | `lookup.sh` | `bash library/lookup.sh <id or word>` prints `id | kind | status | claim`; `-f <id>` prints the whole line |
 | `journal/<date>/<writer>.jsonl` | The records. One JSON object per line. One file per writer per day, so two writers never write one file |
@@ -55,7 +55,7 @@ results 0300 to 0399, hypotheses 0400 to 0499, open tasks 0500 to 0599, mistakes
 
 1. The journal is only added to. A line is never edited or deleted.
 2. A correction is a new record whose `supersedes` names the old one. The old line stays and `INDEX.md` stops listing it.
-3. When a child session's finding contradicts a record, it writes its finding as a `result` or `fact` and adds a record of kind `open` whose claim begins "proposed correction of <id>". The top session decides and writes an `adjudication`. Nobody else supersedes another writer's record.
+3. When a child session's finding contradicts a record, it writes its finding as a `result` or `fact` and adds a record of kind `open` whose claim begins "proposed correction of <id>". The top session decides and writes an `adjudication`. Nobody else supersedes another writer's record. A proposed correction is closed by the adjudication that names it in `see`; the board then lists the adjudication, not the proposal.
 4. A record is written when the thing becomes true, by whoever found it, with its evidence.
 5. A `summary` or `textbook` figure is never used for a decision. Read the source and write a `quoted` record.
 6. `evidence` names sources, `see` names records. A record that only points at a document must copy the answer in or say "the library does not hold this".
@@ -84,12 +84,23 @@ An adjudication. The top session reads both, decides, and supersedes by its own 
 
 ## The board
 
-`INDEX.md` lists only records that are not superseded, at most 150 lines. The top session rebuilds it by hand
-when it ends a session in which records were added, and when it has collected the files of its child sessions;
-a child session never edits it. A recall test starts from a freshly rebuilt board. Check after a rebuild: every
-id in `journal/` is on the board or is named in a `supersedes` field.
+`INDEX.md` lists only records that are not superseded, at most 200 lines (board version 1.1, since fill 1). It
+lists the top session's records one by one and names every other journal file in its directory "Journal
+files", with what the file was written from and what to search it for. Records of a child session or of an
+extractor are listed one by one only where the top session's work rests on them; a run of ids may stand as one
+line ("o1-0301 to o1-0319"). The top session rebuilds the board by hand when it ends a session in which
+records were added, and when it has collected the files of its child sessions; a child session never edits it.
+A recall test starts from a freshly rebuilt board. Check after a rebuild: every id of the top session and of
+its child sessions is on the board (alone or inside a run), or is named in a `supersedes` field, or is a
+proposed correction closed by an adjudication; every other journal file is in the directory; no superseded id
+is on the board except in the line of the adjudication that replaced it.
+
+Records whose id begins with `x` come from fill 1: one small-model reader per evidence file, each record
+checked by a script (its numbers and words stand at the place it cites), 29 % also read by hand. Before a
+decision rests on one, read the place it cites (r57-0130).
 
 ## Not done yet
 
-No script builds the board; `lookup.sh` only reads. Nothing compares a `footprint` with the files. Records for
-most measured facts and published results are still only in the evidence files (open task r57-0501).
+No script builds the board; `lookup.sh` only reads. Nothing compares a `footprint` with the files. 1,791 of the
+2,524 extractor records were checked by script only (r57-0130). No recall test has run on the filled library
+yet.
