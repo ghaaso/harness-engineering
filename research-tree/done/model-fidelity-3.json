@@ -1,0 +1,84 @@
+{
+ "label": "fidelity-3a",
+ "part": "1 of 2 (as-built mechanisms; part 2 on the modelled fixes follows)",
+ "reviewed": "model/as-built/model-asbuilt-frozen.mjs (frozen 18:37) + configs-asbuilt-frozen.mjs + check.mjs; result files in model/results-as-built/ read directly, no process started",
+ "report": "model/as-built/FIDELITY-3.md",
+ "reproduces": "not rerun; every reported trace was read from its result file and walked against the script lines",
+ "mechanisms": [
+  {"id": "M1", "verdict": "as built, with a gap", "gap": "re-arm token abstracted to 'may fire whenever idle or mid-turn' (more wakes than built); 3-alarm cap M:373 can leave no current alarm after AlarmsBounded already failed"},
+  {"id": "M2", "verdict": "as built, with a gap", "gap": "the coordinator always runs reconcile and always starts the alarm except by fault x (fault o keeps AR, M:905); D2 not a behaviour"},
+  {"id": "M3", "verdict": "as built, with a gap", "gap": "start-session and bind merged into one act (M:394); stop-verify sample/tick acts absent; planner is plans(), not status next (checked to agree on the M3 trace: S:550, S:489)"},
+  {"id": "M4", "verdict": "as built in the worst reading, with a gap", "gap": "only in AB-FENCE-ALL/AB-ALL; all wake-group configs admit on true liveness (M:413-417); the 'process line matches' reading never run"},
+  {"id": "M5", "verdict": "as built, with a gap", "gap": "gp survives a watcher restart (M:760) while a new watcher's uncounted start evaluation rewrites last_tick_at (W:729, W:666): can over-discount; H_HANG=2 compresses ten suspends into two; timer branches (a)/(b) not distinguished"},
+  {"id": "M6", "verdict": "as built", "gap": "none in the mechanism; fences from admitted and reasons memory/cut/drop/tainted not modelled (scope)"},
+  {"id": "RC", "verdict": "as built in the fence configs", "gap": "wake-group configs still read true session existence (M:294)"},
+  {"id": "CE", "verdict": "as built, with a gap", "gap": "stale coordinator plans from the live table (M:313); as built it can read only run/status.json (profiles/coordinator.json read_prefixes), which may not show the admission; other unfenced acts (plan/ writes, helpers, session close/message) not modelled"},
+  {"id": "session-start", "verdict": "as built", "gap": "bind checks true session existence (M:551); start failure not modelled"},
+  {"id": "transcript-lag-and-stop-verify", "verdict": "as built, with two gaps that matter", "gap": "fault z moves the row to stopped (M:500) while as built an unconfirmed stop stays stop-requested (stop.mjs:441-446, CONTRACT.md:340); verify needs no watcher and no ticks (stop.mjs:362, 393); outcome by budget not growth/match"},
+  {"id": "committed-close", "verdict": "as built, with a gap", "gap": "SR then SV back to back in one turn, no ticks, SV always confirms (M:594-603); liveness-optimistic"},
+  {"id": "D1-supersede-chain", "verdict": "as built", "gap": "property is a 3-link proxy, not non-termination"},
+  {"id": "D5-hang", "verdict": "as built, with a gap", "gap": "tickEnabled (M:721-728) still assumes timeliness for every healthy child but one slow call; fresh +1 also fires on a new watcher's first tick (as built uncounted, W:729)"},
+  {"id": "D6-paths", "verdict": "p2 p4 p5 p7 as built; p1 p3 p3b p6 with gaps", "gap": "p1 lacks 'never runs reconcile'; p3/p3b shortest traces need an alarm to expire inside its own turn (untimed); p5's stale run.lock only from a reset; p6 is the unknown-fact branch"}
+ ],
+ "still_atomic_on_true_state": [
+  "tickEnabled M:721-728 (timeliness, except one SLOW call and paused children)",
+  "eligibleHO M:299-302 (planned hand-over only for a live, healthy child with one card)",
+  "plans M:313 (stale coordinator reads the live table)",
+  "OP.B M:551 (bind needs a truly existing session)",
+  "OP.F M:463 host class from the reset flag on every session; as built needs att.boot, written only by bind (replace.mjs:463, 1002), so a started-not-bound attempt is charged to R after a reset",
+  "OP.S M:474-507 (request+close+verify one step, outcome by budget, z -> stopped M:500, no ticks)",
+  "OP.SR/OP.SV M:594-603 (back to back, no ticks, always confirm)",
+  "owner zombie end merged with stop-verify@- M:852",
+  "admitCount M:413-417 and reconcile M:294 in every config without AB_SLOTCOUNT/AB_COMMIT_CLOSE/AB_TRANSCRIPT_LAG (all AB-W-*, AB-WAKE-ALL*)",
+  "macro M:676-702: ops between yield points atomic to every other actor; reconcile+plan+first ops one step M:878-908 (unproven reduction)",
+  "endturn without a list M:619: any watcher.lock counts as a record regardless of ce (S:647 requires watcher.json ce = ce)",
+  "gp M:760 survives a watcher restart"
+ ],
+ "counterexamples": [
+  {"defect": "D4a", "trace": "AB-ALL ReadyNotDiscarded 7; AB-READY-SPLIT 6 (43/43 parts)", "verdict": "real", "note": "window is one Write call's hook-to-landing time; the model's is unbounded"},
+  {"defect": "D4b", "trace": "AB-ALL Slots 6, OneSessionPerAttempt 5; AB-TRANSCRIPT-LAG 3", "verdict": "real, timing-dependent", "what_would_tell": "measure the delay from a session-tool start to its first transcript record with a cwd; prefer the alarm-woken form (a crash note is not a HARNESS-FACTS fact)"},
+  {"defect": "D3", "trace": "AB-ALL TwoCoordinatorsAct 8 / StaleWrites 8; AB-START-UNFENCED 7", "verdict": "real in a longer form; the shortest trace is an artefact", "note": "the stale coordinator can read only status.json, written by coord1's reconcile before its admit; real when coord1 runs a status build between admit and start (no fault) or dies there (one x); needs session tools allowed (not today: profiles/coordinator.json) and a stale coordinator ignoring R6"},
+  {"defect": "D4c", "trace": "AB-COMMIT-CLOSE AlwaysCanResolve 5 (complete), EventuallyResolves 12", "verdict": "real", "note": "needs a coordinator that commits a started row although status next says bind (S:543-548); commit.mjs:937 accepts it, stop.mjs:278 and replace.mjs:987 then refuse for ever, handover.mjs:322-330 stays not-quiescent"},
+  {"defect": "M2 gap", "trace": "AB-ALL WakeSourceAlive 1; AB-WAKE-ALL k=1,x=1 NoDeadlock 2", "verdict": "real"},
+  {"defect": "D1", "trace": "AB-ALL WakeChainBounded 13, AlarmsBounded 12", "verdict": "real", "note": "one link per alarm_ms; NoBusyLoop cannot see it"},
+  {"defect": "D5", "trace": "AB-ALL NoFalseSuspicion 8", "verdict": "real", "note": "shortest trace one tick short of the script (model's +1 on a new watcher's first tick)"},
+  {"defect": "M3 acknowledged without action", "trace": "AB-W-ACT-DUE k=2,o=1,cs=1 EventuallyResolves 13 (complete)", "verdict": "real", "note": "planner side verified: status next none (S:550), events_pending only above acked_seq (S:489)"},
+  {"defect": "M5 short suspends", "trace": "AB-W-PAUSE-GAP NoFalseSuspicion 6", "verdict": "real in kind, compressed", "what_would_tell": "Node setTimeout behaviour across a Windows suspend (CONTRACT section 7 item 6); as built needs about ten suspends or one 10-min freeze of the child alone"},
+  {"defect": "D6 p3b", "trace": "AB-WAKE-ALL k=1,u=1 NoDeadlock 6", "verdict": "real in kind; shortest trace has an untimed alarm expiry inside its own turn"},
+  {"defect": "D7-SLOTS", "trace": "D7-SLOTS SlotsR10/SlotsProc 7", "verdict": "artefact as built", "note": "relies on z -> stopped; as built the row stays stop-requested"}
+ ],
+ "caps_and_fixes": [
+  {"item": "at most 3 sessions per attempt", "hides": "nothing for safety; cuts a liveness-only livelock in configs where liveness is not checked"},
+  {"item": "owner ends a READY zombie, merged with re-verify", "hides": "yes, liveness: the coordinator wake and watcher ticks the re-verify needs; nothing escalates an idle READY zombie (class 25 needs spend past Z); inconsistent with the worst reading"},
+  {"item": "3 alarm processes per coordinator", "hides": "post-violation states with no current alarm; later traces through them may be artefacts"},
+  {"item": "environment steps never forced (u recovery, SLOW/STUCK return)", "hides": "nothing; makes some liveness failures artefacts (flagged)"},
+  {"item": "one planned slow call", "hides": "nothing that changes a verdict"},
+  {"item": "shared fairness ids", "hides": "nothing; may add spurious fair cycles"}
+ ],
+ "vacuous_or_weak": [
+  "RestartLimitGhost: says R8; can fail (D7-RESTART F 17 under a mutation); gf is the model's own count at the fence site, independent of rs",
+  "StaleWrites: stronger than R6's text (also forbids a session start), matches R57; can fail",
+  "CommitRecordStable: says R14; fails only with both WX and the epoch check removed; WX still not shown load-bearing with the epoch check",
+  "SlotsProc/SlotsR10: say R10 and amended R10; their only failure is not as built, and D7_SLOTS was never run with the as-built close (under D7_SLOTS alone the commit closes the child, an oracle)",
+  "LoopReported: says R5; fails under the mutation, BOUNDED with the rule",
+  "WakeSourceAlive: a reading of R6's bound with the amended clause; counts a child as a source (weaker than R6); on a first turn one fault silences, so R6's 'both' needs restating or the bound is broken - an owner wording question",
+  "WakeChainBounded and AlarmsBounded: proxies with no rule text behind them; WakeChainBounded cannot tell D1's never-quiescing loop from three turns of one outage"
+ ],
+ "fault_accounting": "One fault each: x turn death (or a crash killing background commands, same price), u an outage of any length, y alarm.json unreadable until re-registration, o a whole turn's acts omitted, p one pause, l one lost wake, z one unconfirmed stop, t one torn commit, r one reset (a left run.lock free), child faults. Free: transcript lag, READY in flight, a stale coordinator breaking R6, duplicate starts, commit before bind, early or mid-turn alarm exits, superseded exits, list recovery, slow/stuck return, owner acts. Untimed: millisecond and hour windows are equally free, the source of every timing-dependent verdict. One u buys the whole D1 chain.",
+ "fairness": "Weak fairness per process id over fault-free edges; owner wake only after two losses (l+x) or a reset, but owner zombie end and fresh-coordinator start always fair; environment ids 30/31 never forced; planned choices allowed in cycles; coordinator plan alternatives not forced. Liveness 'holds' rests on the owner and on the stop/close merges; no liveness verdict exists for AB-ALL.",
+ "r57": "Partly met. The eight named mechanisms (M1-M6, RC, CE) are modelled from what is on disk, each with a counterexample that walks against the scripts. Not met as a whole: stop/close still partly oracle (z -> stopped, no ticks), timeliness for all but one slow call, the stale coordinator reads the live table, host class from a reset flag, and no complete configuration with every flag on (AB-ALL BOUNDED at 2,858,368 states, liveness unchecked; AB-WAKE-ALL keeps the fence group's oracles).",
+ "left_for_r57": [
+  "unconfirmed stop keeps stop-requested; verify needs a live watcher and two ticks after its sample (fenced and committed)",
+  "stale coordinator plans from a snapshot taken at the last status.json write",
+  "host class from bn, not a reset flag on every session",
+  "run or rule out the 'process line matches' reading of slot counting",
+  "gp reset by a watcher's start evaluation",
+  "a complete as-built configuration (split by mechanism; AB-ALL estimated at >= 16 GB)"
+ ],
+ "deliberately_not_run": [
+  "every model run and trace print: traces read from the result files; a run changes no verdict of this part",
+  "AB-START-UNFENCED with a status.json snapshot: D3 is real in a longer form either way",
+  "a run with z keeping stop-requested: changes liveness only, and no as-built liveness verdict fits 400 MB today",
+  "the 'process line matches' slot reading: a model fix to list, no decision waits on it in this part"
+ ]
+}

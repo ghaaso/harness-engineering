@@ -1,0 +1,35 @@
+{
+  "label": "sem-fence",
+  "helper": "F",
+  "date": "2026-11-17",
+  "files_written": [
+    "BUILD/model/as-built/SEM-fence.md",
+    "BUILD/done/r3-sem-fence.json"
+  ],
+  "commands_run": "none (reader only)",
+  "verdicts": [
+    "CE for scripts is a sound fencing token: checkCe runs inside the same run-lock hold as every scripted act (lib.mjs:1467) and handover raise writes coord.json in its own hold (handover.mjs:313-343). Unfenced: session tools, Read of status.json, Write under plan/, helpers; the coordinator hook takes no --ce.",
+    "M6: the READY re-check and the CAS share one lock hold (replace.mjs:454-481), but READY is written by the child's Write/Edit tool with only an unlocked guard-hook epoch check before it (guard-hook.mjs:394-409); a torn READY reads as absent (replace.mjs:194-198), so the fence proceeds.",
+    "D3: the session start is a coordinator tool call that writes nothing on disk; replace start answers repeat on an admitted row (replace.mjs:867-873); the child hook checks the epoch only, so any number of sessions pass. Today session tools are not in the coordinator profile, so no session can be started at all.",
+    "M4: no process list -> slots null -> slots-unknown -> every admission refused (replace.mjs:847-852, admit.mjs:226,470); live and unknown count alike, so the process list matters only for a fenced attempt whose transcript lags.",
+    "Commit: exclusive create by temp + hard link (lib.mjs:659-695) and row update in one lock hold (commit.mjs:808-866); no script marks a row committed from the record, so model.mjs:188 is a branch the code lacks and it masks WX.",
+    "New, verified in code (reachability inferred): a row committed at step started can never be stopped (commit.mjs:843 vs stop.mjs:278, bind refuses committed replace.mjs:987): its slot is held for ever and handover stays not-quiescent for ever.",
+    "Inferred: if claude.exe's command line does not name the folder, stop verify can confirm a fenced attempt whose transcript lags (stop.mjs:426), so a late session of e1 runs beside e2 uncounted; and an idle READY child can be confirmed stopped without a close."
+  ],
+  "abstraction": "Split: child READY into hook then land (one bit rh); session-tool start then bind with SID known only within the turn; transcript visibility as an environment step (bit tv); one yield before OP.T for a stale coordinator; committed close as request, tool close, verify; old alarm survives the raise. Merge: fence check+CAS+ledger, ce check+act, start's decision+build+row, hook read+rh. Coordinator ce as current/stale. Delete model.mjs:188.",
+  "candidate_fixes": {
+    "D3": "fencing token checked at the resource: (a) prefixes named: coordinator hook with --ce creates start.json by exclusive create, plus (b); (b) not named: child hook claims the attempt by exclusive create of session.claim with its session id",
+    "D4a": "TOCTOU on revocation: READY intent as a test-and-set under the run lock in the child's hook (ready_claim in the row) with a tick lease; Q6 (a) in lib.fence readyCheck, (b) in replace's re-check",
+    "D4b": "at-most-once start: start-requested intent under the lock before the tool call, unknown until a start lease expires, then fence to a new epoch; claim file as backstop",
+    "D4c": "script-driven release by lease: watcher act for committed attempts not stopped; stop request accepts committed/started; prefixes branch decides who closes",
+    "M6": "move the READY source under the lock (the D4a claim); torn READY = unknown, not absent",
+    "CE": "token check at every resource: coordinator hook with --ce denies all but reading status when stale; session tools depend on the prefixes question",
+    "RC": "positive synchronous evidence (start intent, claim file) instead of absence of a transcript; keep unknown as an outcome"
+  },
+  "open_or_blocked": [
+    "Whether the harness Write tool replaces a file atomically, and whether PreToolUse input carries session_id (both unverified).",
+    "Whether claude.exe's command line names the attempt folder or session id (HARNESS-FACTS 10).",
+    "Ledger line written after the row in fence, admit and bind: a death between them leaves no line (not in my scope).",
+    "Lock holder liveness unknown while PowerShell fails: a dead holder's lock is never broken, every script exits 75 (relevant to D1)."
+  ]
+}

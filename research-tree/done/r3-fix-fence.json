@@ -1,0 +1,20 @@
+{
+  "label": "fix-fence",
+  "helper": "F",
+  "date": "2026-11-17",
+  "files_written": ["BUILD/model/as-built/FIX-fence.md", "BUILD/done/r3-fix-fence.json"],
+  "commands_run": "none (design only, no script changed)",
+  "fixes": [
+    {"id": "FX-OUT", "closes": ["D4a", "half-written READY", "M6 gap", "side: a committed step's READY blocks fences (inferred)"], "mechanism": "write-once outcome log wt/T-eE/outcome/<j>.json; the child's hook test-and-sets a ready slot from the Write tool's content (lock-free exclusive create); replace fence, in its lock hold, refuses on an uncommitted ready slot, else appends a fenced slot before the CAS", "depends": "Q6 (both branches equivalent); believed: hook input carries Write content", "ablation": "ReadyNotDiscarded, 5 steps"},
+    {"id": "FX-CLAIM", "closes": ["D4b double start", "D4b false stop confirm", "D3 child-side backstop", "RC gap"], "mechanism": "claim.json per attempt by exclusive create: the session id at the child's first tool call, or a tombstone written by fence; reconcile reads the claim; stop verify confirms only on a tombstone or a recorded close; slotCount counts unclaimed or unclosed folder sessions; start lease leads to an uncharged fence", "depends": "believed: session_id in hook input; a transcript-lag bound (else Slots holds only eventually)", "ablation": "OneSessionPerAttempt; Slots"},
+    {"id": "FX-CGATE", "closes": ["D3", "D4b coordinator retry", "CE gap: session tools, plan/ writes, helpers"], "mechanism": "coordinator hook: identity = coord.json.session vs hook session_id (raise retires the old one, first-come bind); stale -> deny all but Read; session-start tool -> start_issued CAS under the run lock; session-stop -> close_issued", "depends": "Q5: (a) as designed; (b) no session tools, no run possible, the gate still covers plan/ and helpers", "ablation": "Slots; TwoCoordinatorsAct restated"},
+    {"id": "FX-CLOSE", "closes": ["D4c", "committed-at-started never stoppable"], "mechanism": "act-due for a committed row that is not closed; stop request accepts committed/started; verify needs close_issued; a lease is rejected (a session never stops itself)", "depends": "Q5 (who can close; (b) owner)", "ablation": "AlwaysCanResolve; Slots"},
+    {"id": "FX-REDO", "closes": ["missing ledger line after a death"], "mechanism": "repeat paths of fence/start/bind append the missing line from the row; fsck reports", "depends": "none", "ablation": "test only (the model has no ledger lines)"}
+  ],
+  "handed_to_wake_group": "dead lock holder while the process list is unavailable: liveness only here; a lease break stays safe because writeTasks and appendLedger re-check the nonce before writing; FX-OUT and FX-CLAIM are lock-free",
+  "open_or_blocked": [
+    "Five believed harness facts in FIX-fence section 8 must be checked before the build",
+    "A late inert session still costs memory and tokens until a session closes it",
+    "A READY whose outputs commit rejects still blocks non-tainted fences (as today)"
+  ]
+}

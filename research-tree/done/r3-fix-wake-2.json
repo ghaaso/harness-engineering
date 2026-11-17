@@ -1,0 +1,30 @@
+{
+  "label": "r3-fix-wake-2",
+  "helper": "W",
+  "date": "2026-11-17",
+  "file": "model/as-built/FIX-wake.md",
+  "revision": 2,
+  "node_commands_run": 0,
+  "scripts_changed": 0,
+  "summary": {
+    "FX-W1": "Liveness is alive, dead or unknown, judged outside every lock; inside a hold the record's bytes are re-read. Branch L1 has no lease, and unknown counts as alive. Branch L2 uses a wall-clock lease, only while the process list is unknown. Endturn exit 1 names each dead source, so exit 2 no longer hides a dead alarm. A corrupt state file is an anomaly, not exit 67.",
+    "FX-W2": "The ensure exclusive-creates run/arm/<nonce>.json. Reconcile marks each outcome confirmed (a reused nonce fails), waits at least release_ms, then confirms or abandons the nonce in a second hold. An abandoned ensure exits only into the next turn's reconcile wait, or after alarm_ms. The retry step is cut.",
+    "FX-W3": "Only work-creating acts are gated: replace start, fence 'first', and the session-start tool. Revocations are never gated (new property RevocationNeverGated). Armed means run/turn.json has the current ce and arm=confirmed; the script and the hook check the same file. Endturn takes K from turn.json.",
+    "FX-W4": "Fresh means an alarm of the current ce is alive. The check runs every 5 min and alerts after 2 runs, before the 15-minute idle sleep. It also alerts after 3 runs with no process list. Both counts are in its own runs. D-wake/D-awake is an owner branch.",
+    "FX-W5": "Interval min(15*2^backoff, 60) ticks; rowAct excludes zombie-over rows.",
+    "FX-W6": "Reduced: a fix for the first tick of an epoch, and a hang deadline per operation kind (tool, bg-wait, model, idle), all counted in ticks. The ping, its ledger precondition and the power log are withdrawn; the M5 gap is open. In branch B2 the refund is capped at 1, and RestartLimit becomes a count of R+1.",
+    "FX-W7": "The watcher lock is broken only inside a run-lock hold, after a re-read. Each tick the watcher runs assertHeld, its appends and its watcher.json write in one run-lock hold. One shared watcher lease value. L1: no break while the list is unknown."
+  },
+  "r5_leases": {
+    "wall_clock": ["FX-W1 L2 alarm lease", "FX-W7 L2 watcher lease", "FX-W7 RL-yes run-lock lease"],
+    "ticks": ["FX-W6 deadlines", "FX-W5 re-raise interval"],
+    "own_runs": ["FX-W4 dead-man"],
+    "amended_r5": "Given in FIX-wake.md, R5 section; applies to branch L2 only. A suspend makes the leases look expired until each holder's next renewal: at most one superseded alarm or one lock break per source per resume, each costing one wake."
+  },
+  "refuter_wrong_or_partly": [
+    "A1.4: the old watcher already exits 64 within one tick after a ce raise (W:315 inside the loop at W:730-733), so a stale wake within a minute exists today.",
+    "A2.6 and A6.3: partly right."
+  ],
+  "open": ["M5 gap (power log withdrawn)", "A4.3 alert reach unverified", "A4.4 common-mode program-start failure", "imitating child bounded, not removed", "K when two reconciles run in one turn", "S1 turn death after an alarm wake"],
+  "owner_branches": ["L1/L2", "S1/S2", "H4 A/B", "D-wake/D-awake", "R1/R2", "B1/B2", "RL-yes/RL-no"]
+}

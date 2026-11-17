@@ -1,0 +1,27 @@
+{
+  "label": "sem-wake",
+  "helper": "W",
+  "date": "2026-11-17",
+  "files_written": [
+    "BUILD/model/as-built/SEM-wake.md",
+    "BUILD/done/r3-sem-wake.json"
+  ],
+  "verdicts": [
+    "M1: alarm re-arm by acked.json hash works as specified (W:768-792); a superseded alarm exits 0 only after its own full sleep (W:776-788), so each superseded alarm is one wake up to alarm_ms later; the model has at most one alarm per coordinator and no superseded exit (M:393-396, M:532).",
+    "M2: the arm is a separate coordinator tool call after reconcile exit 1 (S:593-602); death in between leaves no wake source (r3 arm-start-can-die: NoDeadlock 9/43 parts, 2 steps). Reconcile exits 67 on a corrupt alarm.json (S:354) or 75 on an unbreakable stale lock before it can ask. The only coordinator brief text (handover.mjs:351-354) names the default build, not --reconcile.",
+    "M3: act-due is edge-triggered and acked by a global seq the coordinator chooses (S:627-631); an acked act not taken waits for the alarm (1-2 h); the model's actionable() is level-triggered on true state (M:425-438, M:469).",
+    "M5: misses suspends up to about 2 delta when Node timers count suspend time, repeated short suspends, straddling suspends and child-only freezes; the model reads the fault bit s.pu (M:461) - an oracle.",
+    "RC/endturn: process list taken before the lock (S:198-205, S:614-620); endturn exit 2 hides alarm-missing (S:652-654); endturn reads watcher/alarm json with readState after writing acked.json (67 after the ack).",
+    "D1 confirmed by reading: a wake chain with period alarm_ms, not an untimed busy loop; alarm processes grow with the turn rate; drains once the list returns. D1b (inferred): stale watcher.lock + no list -> watcher 75 every ~30 s if the coordinator restarts it.",
+    "D2 confirmed: no coordinator brief in tcb/briefs or tcb/agents.",
+    "D5: hang counts distinct assistant message ids only (W:375-399, L:2561-2587); a child waiting on its own background job is suspected; also a first-tick-of-epoch hang increment (W:375 with fresh=true).",
+    "D6: seven paths listed in SEM-wake.md section 8."
+  ],
+  "recommended_abstraction": "SEM-wake.md section 9: ARM op after reconcile (x may fire before it); alarm list {par, sup} with an AlarmsBounded property; global proc-list bit with fault u; endturn split into E then SW/SA ops; M3 as per-row 3-bit last-raised act; M5 as long/short pause kinds read via w.gap; a budgeted healthy SLOW child mode.",
+  "open_or_blocked": [
+    "Node timer behaviour across Windows suspend is unknown (CONTRACT 7 item 6): M5 analysis gives both branches.",
+    "Whether background commands survive a crash of the session's claude.exe is unknown.",
+    "Endturn exit 2 handling and the K choice depend on the coordinator brief (D2); model both branches.",
+    "Rule 3 slip: I ran two short read-only node -e commands (JSON summaries of model-review/r3/sum-*.json) outside the lane; no process left running."
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "label": "asbuilt-fence",
+  "date": "2026-11-17",
+  "files_written": [
+    "model/as-built/model.mjs (flags AB_READY_SPLIT, AB_START_UNFENCED, AB_TRANSCRIPT_LAG, AB_SLOTCOUNT, AB_COMMIT_CLOSE, AB_HANDOVER_NOKILL, AB_NO_COMMIT_RECONCILE, AB_PROCLIST; fault kind u + bit pl and slotCountAB shared with the wake group)",
+    "model/as-built/configs.mjs (AB-* ids, K2U, AB_FENCE)",
+    "model/as-built/run-seq.mjs (sequential driver: whole or parts, one result file per configuration, resumable)",
+    "model/as-built/summ.mjs (verdict/trace printer), model/as-built/probe.mjs (state-growth probe)",
+    "model/as-built/CEX-fence.md",
+    "model/results-as-built/asbuilt-fence/*.json|.err (DF2-K2-R1, A-READY, AB-READY-SPLIT, AB-TRANSCRIPT-LAG, AB-START-UNFENCED, AB-COMMIT-CLOSE (+pre-zombie-fix), AB-NO-COMMIT-RECONCILE, AB-FENCE-ALL (+pre-zombie-fix), _progress.txt)"
+  ],
+  "baseline_proof": "flags off: DF2-K2-R1 2,608,525 states complete, all 14 hold; A-READY 2,558,288 states, verdicts and ReadyNotDiscarded trace byte-identical to results-as-built/baseline",
+  "verdicts": [
+    "D4a real: ReadyNotDiscarded fails in 6 steps with every fix on (AB-READY-SPLIT, 43/43 parts complete, one fault)",
+    "D4b real: Slots and OneSessionPerAttempt fail in 3 steps with the transcript lag alone (AB-TRANSCRIPT-LAG, BOUNDED run)",
+    "D3 real if the coordinator may use session tools: TwoCoordinatorsAct 7, OneSessionPerAttempt 8, Slots 9 with the unfenced start alone; the no-kill hand-over is not needed",
+    "D4c real: AlwaysCanResolve 5, EventuallyResolves 12 with the commit/close mechanism alone (AB-COMMIT-CLOSE, complete): a row committed at started holds a slot for ever, so a drained hand-over never happens",
+    "as-built reconcile (no COMMIT=>committed branch): all 14 hold, complete, graph differs from DF",
+    "AB-FENCE-ALL (BOUNDED 2.94 M states): Slots 6, TwoCoordinatorsAct 8, OneSessionPerAttempt 5, ReadyNotDiscarded 7, NoDeadlock 8 (process list down + lost wake: a wake-group question, D2/D6), AlwaysCanResolve 7 (D4c), EventuallyResolves 7 (artefact: process-list recovery not forced); others not refuted (bounded)"
+  ],
+  "model_fixes_during_round": [
+    "cap of N_max+1 sessions per attempt (without it a stale coordinator makes the state space infinite with no fault; no counterexample lost)",
+    "owner may end a zombie that wrote READY when slots are counted (removed an artefact liveness trace)"
+  ],
+  "open_or_blocked": [
+    "AB-FENCE-ALL, AB-TRANSCRIPT-LAG, AB-START-UNFENCED do not fit at 400 MB, whole or by parts: non-failing properties stay BOUNDED",
+    "one lane command (pid 7332) has no end line: I stopped my own chain to fix the unbounded state space",
+    "first-run liveness of AB-FENCE-ALL used for the table; the rerun after the zombie fix had liveness not checked (argued unchanged in CEX-fence.md)"
+  ],
+  "checks_guarding_costly_things": "ReadyNotDiscarded and NoStaleAccepted kept and reported; none weakened",
+  "deliberately_not_run": [
+    "AB-SLOTCOUNT alone: covered by AB-COMMIT-CLOSE, no attribution needed",
+    "AB-HANDOVER-NOKILL alone: D3 fails without it",
+    "AB-PROCLIST alone: its traces name it; one is an artefact",
+    "parts runs of every configuration: parts also BOUNDED at 400 MB, 30-50 min each for BOUNDED verdicts",
+    "AB-FENCE-ALL with fair process-list recovery: D4c already breaks liveness",
+    "A-WX + AB_NO_COMMIT_RECONCILE: answered by RV-WX-ONLY earlier",
+    "fix ablations, three faults, R=2, three fields: excluded by the ruling"
+  ]
+}

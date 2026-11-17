@@ -1,0 +1,54 @@
+{
+  "label": "asbuilt-wake",
+  "helper": "MB1",
+  "date": "2026-11-17",
+  "files_written": [
+    "model/as-built/model.mjs (wake flags AB_ALARM_SUPERSEDE, AB_ALARM_MIDTURN, AB_ARM_SPLIT, AB_ENDTURN_SPLIT, AB_EXIT2_START, AB_ACT_DUE, AB_PAUSE_GAP, AB_HANG_CALLS, AB_X_KILLS_BG, AB_FAIR_IDS, WAKE_PROPS; D7_RESTART, D7_FREEZE_RS, D7_STALE, D7_HANDOVER_CAS, D7_COMMIT, D7_SLOTS, D7_LOOPS, D7_NO_LOOP_RULE; faults o, y; planned s; ops AR, SW, SA; mode SLOW) - flags at model.mjs:93-122",
+    "model/as-built/check.mjs (properties by flag, D6 path diagnostics, BFS level sizes)",
+    "model/as-built/configs.mjs:66-85 (K2W, AB_WAKE, D7_OBS, AB-W-*, AB-WAKE-ALL, AB-WAKE-ALL-B1, AB-ALL, D7-*)",
+    "model/as-built/run-seq.mjs (aggregator unions property names)",
+    "model/as-built/showd.mjs (new: verdict, diagnostic and trace printer)",
+    "model/as-built/CEX-wake.md",
+    "model/results-as-built/asbuilt-wake/*.json (17) + _stderr.log"
+  ],
+  "baseline_proof": "every new flag off, final code: DF2-K2-R1 2,608,525 states, 7,745,683 transitions, complete, all 14 hold (unchanged)",
+  "verdicts": [
+    "D6 path 2 (M2 split) real: WakeSourceAlive fails in 1 step (turn dies between reconcile's alarm-missing and the alarm start); NoDeadlock/AlwaysCanResolve 2 in the complete part k=1,x=1",
+    "D1 real and caught only by the counted form: WakeChainBounded 9 (whole) / 12 (complete part k=1,u=1, one fault) while NoBusyLoop HOLDS in that part; AlarmsBounded 8 (3 alarm processes)",
+    "endturn exit 2 hides alarm-missing (branch B2): WakeSourceAlive 4, NoDeadlock 6, part k=1,u=1 complete; with B1 WakeSourceAlive not refuted (BOUNDED) but WakeChainBounded 6, AlarmsBounded 5",
+    "D5 real: NoFalseSuspicion 6 with one healthy slow call (H_HANG=2 stands for h=10)",
+    "M3 acked-not-acted real: EventuallyResolves 13 with ACT_DUE alone (AB-W-ACT-DUE k=2,o=1,cs=1, complete); planner side INFERRED",
+    "M5 short suspends: NoFalseSuspicion 6 (AB-W-PAUSE-GAP, timer branch b)",
+    "all seven D6 paths reachable (tags p1..p7, p3b); p6 real only if a crash kills background commands (unknown fact)",
+    "AB-ALL (fence + wake) BOUNDED at 2,858,368: Slots 6, TwoCoordinatorsAct 8, OneSessionPerAttempt 5, ReadyNotDiscarded 7, NoFalseSuspicion 8, WakeSourceAlive 1, WakeChainBounded 13, AlarmsBounded 12, StaleWrites 8; complete run estimated ~110 M states (~16 GB) to billions (coarse extrapolation)",
+    "D7: RestartLimitGhost F17 where RestartLimit H (D7-RESTART); StaleWrites F4 and A-FENCE-CE finite at 2,000,035 (D7-STALE); CommitRecordStable F13 (D7-COMMIT-NOFENCE), H where old AtMostOneCommit gives a false positive F6 (D7-COMMIT); SlotsProc/SlotsR10 F7 where Slots H (D7-SLOTS); LoopReported F8 with the rule removed, not refuted (BOUNDED) with it"
+  ],
+  "artefacts_identified": [
+    "AB-WAKE-ALL part k=2,o=2 EventuallyResolves 13: the slow call never returns because env proc 31 is not forced",
+    "D7-STALE EventuallyResolves 12: ablation artefact (stale coordinator's watcher exits 31 in a loop while coord1 is dead)",
+    "p3 tag: an alarm expiring inside the turn that started it is untimed"
+  ],
+  "open_items": [
+    "owner question D2 / exit 2: B1 vs B2 changes which defect shows (silence vs faster D1); not ruled here",
+    "the process list taken before the lock (S:198-205 vs S:593-602) is not modelled; INFERRED cost one superseded alarm",
+    "liveness of whole AB-WAKE-ALL and AB-ALL not checked (memory)"
+  ],
+  "rule_breaches": [
+    "two node invocations ran outside the lane: one `node -e` comparison during the work, and one empty `node -e \"\"` while preparing this report; both short, no runner started, pid 40648 untouched"
+  ],
+  "deliberately_not_run": [
+    "single-flag matrix beyond AB-W-PAUSE-GAP and AB-W-ACT-DUE (trace labels name the mechanism), incl. AB-W-ARM-SPLIT and AB-W-ALARM-SUPERSEDE alone",
+    "liveness of whole configurations (memory)",
+    "AB-WAKE-ALL-B1 whole and its other parts",
+    "remaining maximal parts of AB-WAKE-ALL",
+    "AB-ALL by parts (a part is as large as the whole)",
+    "three faults, R=2, three fields",
+    "a forced process-list recovery",
+    "D7-STALE with k=2"
+  ],
+  "guards_on_costly_things": [
+    "DF2-K2-R1 with all new flags off must stay 2,608,525 states, all 14 hold",
+    "AlarmsBounded stops a path at 3 alarms and ch saturates at 3, keeping the space finite",
+    "the session cap and handover CAS keep D7-STALE finite"
+  ]
+}

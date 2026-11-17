@@ -1,0 +1,43 @@
+{
+  "label": "model-prep",
+  "date": "2026-11-17",
+  "files_written": [
+    "model/as-built/model.mjs (byte-equal copy)",
+    "model/as-built/check.mjs (byte-equal copy)",
+    "model/as-built/configs.mjs (byte-equal copy)",
+    "model/as-built/configs-full.mjs (byte-equal copy, for D2-K2-R1 and the other full-matrix ids)",
+    "model/as-built/show.mjs (byte-equal copy)",
+    "model/as-built/rss-at-exit.mjs (new preload: prints max RSS and wall time at exit)",
+    "model/as-built/HOWTO-RUN.md",
+    "model/as-built/MODEL-MAP.md",
+    "model/results-as-built/baseline/{DF2-K2-R1,A-RECONCILE,A-READY,X-PAUSE-DISCOUNT,X-ARM-AT-START,D2-K2-R1}.{json,err}"
+  ],
+  "reproduction": {
+    "how": "whole configuration per process (no --bud), --mem-mb 400, through the lane, one at a time; one file per configuration",
+    "results": [
+      {"config": "DF2-K2-R1", "complete": true, "states": 2608525, "failing": [], "summary_md": "none", "match": true, "seconds": 15.4, "peak_mb_counted": 280, "max_rss_mb": 455},
+      {"config": "A-RECONCILE", "complete": true, "states": 3039233, "failing": ["Slots(3)", "OneSessionPerAttempt(3)"], "match": true, "seconds": 19.4, "peak_mb_counted": 344, "max_rss_mb": 493},
+      {"config": "A-READY", "complete": true, "states": 2558288, "failing": ["ReadyNotDiscarded(6)"], "match": true, "seconds": 15.6, "peak_mb_counted": 279, "max_rss_mb": 456},
+      {"config": "X-PAUSE-DISCOUNT", "complete": true, "states": 2775044, "failing": ["NoFalseSuspicion(6)"], "match": true, "seconds": 17.1, "peak_mb_counted": 313, "max_rss_mb": 469},
+      {"config": "X-ARM-AT-START", "complete": true, "states": 2365754, "failing": ["NoDeadlock(2)", "AlwaysCanResolve(2)"], "match": true, "seconds": 13.3, "peak_mb_counted": 265, "max_rss_mb": 457},
+      {"config": "D2-K2-R1 (extra)", "complete": true, "states": 3394587, "failing": ["Slots(6)", "ReadyNotDiscarded(6)", "NoFalseSuspicion(6)"], "match": "safety matches; the four liveness properties were NOT CHECKED: the analyses need 121 MB more than 400 MB leaves; run by parts", "seconds": 18.5, "peak_mb_counted": 297, "max_rss_mb": 498}
+    ],
+    "note": "Whole-configuration state counts are not the sums over parts in SUMMARY.md (the parts overlap); the verdicts and the shortest trace lengths agree. --mem-mb bounds the checker's count (typed arrays + heapUsed), not RSS (RSS ~ +175 MB). At 400 MB a whole configuration fits up to about 3.1 M states; above that, use --bud parts."
+  },
+  "protected_checksums": "sha256sum -c r3-protected.sha256 at the end: all 7 OK (model.mjs, check.mjs, configs.mjs, configs-full.mjs, run-resumable.mjs, run-all.mjs, show.mjs)",
+  "fidelity_check": "MODEL-MAP section 5 agrees with done/model-fidelity.json: M2, M5, M6, RC and CE are oracles; M3 is close to one; M1 is half-modelled; M4 is a mechanism on true liveness with no unknown class.",
+  "additions_beyond_fidelity": [
+    "n.to is dead (only ever set to 0: model.mjs:367,397)",
+    "wake() drops a wake that arrives mid-turn with no fault charge (model.mjs:89)",
+    "all watchers share fairness id 4, all alarms 5, every owner action 6 (model.mjs:481)",
+    "handover kills the alarm and watcher at once and wakes the coordinator (model.mjs:364-366); as built they exit 64 on their next check",
+    "the M3 watcher has no per-act key or acknowledgement: it exits on every tick while the predicate holds (model.mjs:469)",
+    "A-FENCE-CE grows without bound because OP.H checks only c.dr and quiescence, never c.ce===n.ce (model.mjs:361-367)"
+  ],
+  "two_fault_configurations": 31,
+  "open": [
+    "D2-K2-R1 liveness at 400 MB needs a per-part run (43 parts)",
+    "under the load note (15:40-18:00), lane runs are several times slower; rerun a 124 in the background with a longer timeout"
+  ],
+  "lane_use": "8 check runs + 2 show runs, all through tools/lane.mjs, one at a time; no exit 75 or 124"
+}
