@@ -1,4 +1,4 @@
-// Draws the order-of-work chart (two lanes, blocks as wide as their days, hand-off arrows)
+// Draws the order-of-work chart (two lanes, blocks as wide as their days, numbered hand-offs)
 // and writes it into index.html between <!--CHART:gantt--> and <!--/CHART:gantt-->.
 // Run from this folder: node charts.js.txt   (then node build-pdf.js.txt)
 const fs = require('fs');
@@ -7,16 +7,17 @@ const path = require('path');
 // Rows in the order of the two tables in index.html. Days must match the tables.
 const YOU = [
   ['WP11', '11', 1.5], ['WP10b-CI', '10b', 1.0], ['WP13', '13', 3.0], ['WP6c', '6c', 1.0],
-  ['WP2b', '2b', 2.0], ['WP2a-build', '2a', 2.0], ['WP3a', '3a', 3.0], ['WP9', '9', 2.5],
-  ['WP5', '5', 1.25], ['WP12b', '12b', 2.0], ['WP6a', '6a', 1.5], ['WP7', '7', 4.0],
+  ['WP2b', '2b', 2.0], ['WP2a-build', '2a', 2.0], ['WP3a', '3a', 3.5], ['WP9', '9', 2.5],
+  ['WP7', '7', 3.5], ['WP5', '5', 1.25], ['WP12b', '12b', 2.0], ['WP6a', '6a', 1.5],
 ];
 const ME = [
   ['D07', 'D07', 0.25], ['WP1', '1', 1.5], ['WP8', '8', 2.0], ['WP7-finish', '7f', 1.5],
   ['WP12', '12', 2.5], ['WP10a', '10a', 1.5], ['WP6b', '6b', 1.0], ['MTH-67', 'MTH', 1.5],
-  ['WP2a', '2a', 2.0], ['WP3b', '3b', 1.5], ['WP4', '4', 2.0], ['Ports', 'ports', 2.25],
-  ['WP10b', '10b', 1.0],
+  ['WP2a', '2a', 2.0], ['WP4', '4', 2.0], ['WP3b', '3b', 1.0], ['Ports', 'ports', 2.75],
+  ['WP10b', '10b', 1.0], ['WP7-replay', '7r', 0.5],
 ];
 const REVIEWS = 0.75; // spread across my lane, drawn as a strip
+const TOTAL_YOU = 24.75, TOTAL_ME = 21.75;
 
 function lay(rows) {
   let t = 0;
@@ -25,37 +26,53 @@ function lay(rows) {
 const you = lay(YOU), me = lay(ME);
 const sum = a => a.reduce((x, r) => x + r.d, 0);
 const youTotal = sum(you), meTotal = sum(me) + REVIEWS;
-if (Math.abs(youTotal - 24.75) > 1e-9 || Math.abs(meTotal - 21.25) > 1e-9) {
+if (Math.abs(youTotal - TOTAL_YOU) > 1e-9 || Math.abs(meTotal - TOTAL_ME) > 1e-9) {
   throw new Error(`day totals drifted: you ${youTotal}, me ${meTotal}`);
 }
+const find = (rows, id) => { const r = rows.find(q => q.id === id); if (!r) throw new Error('no row ' + id); return r; };
+
+// Dependencies the order must respect with no P0a delay (my lane only ever shifts later, which
+// helps every you -> me hand-off; the me -> you one is checked against the P0a limit below).
+const handoffs = [
+  ['you', 'WP2a-build', 'me', 'WP2a'], ['you', 'WP3a', 'me', 'WP3b'], ['you', 'WP9', 'me', 'Ports'],
+  ['you', 'WP6c', 'me', 'Ports'], ['you', 'WP2b', 'me', 'Ports'], ['you', 'WP10b-CI', 'me', 'Ports'],
+  ['you', 'WP10b-CI', 'me', 'WP10b'], ['you', 'WP7', 'me', 'WP7-replay'],
+];
+for (const [, a, , b] of handoffs) {
+  const ra = find(you, a), rb = find(me, b);
+  if (ra.e > rb.s + 1e-9) throw new Error(`order breaks: your ${a} ends ${ra.e}, my ${b} starts ${rb.s}`);
+}
+// my WP8 contract -> your WP7 and WP6a: the P0a delay my lane can take
+const p0aLimit = Math.min(find(you, 'WP7').s, find(you, 'WP6a').s) - find(me, 'WP8').e;
 
 // Geometry (SVG units; the figure scales to the page width)
-const W = 1000, X0 = 92, X1 = 984, DAYS = 25;
+const W = 1000, X0 = 92, X1 = 984, DAYS = 25, HGT = 350;
 const x = d => X0 + (d / DAYS) * (X1 - X0);
 const Y_YOU = 34, H = 50, Y_ME = 196, GAP = 2;
 const C = { you: '#2a78d6', me: '#eb6834', ink: '#0b0b0b', ink2: '#52514e', muted: '#898781', grid: '#e1e0d9', surface: '#fcfcfb' };
 const out = [];
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
-const fmt = n => (Number.isInteger(n) ? n.toFixed(1) : String(n)).replace(/\.0$/, '.0');
 
-out.push(`<svg viewBox="0 0 ${W} 330" role="img" aria-label="Order of work: your twelve rows and my thirteen rows as blocks sized by days, with arrows where one of us waits on the other" xmlns="http://www.w3.org/2000/svg" font-family="Inter, DejaVu Sans, sans-serif">`);
+out.push(`<svg viewBox="0 0 ${W} ${HGT}" role="img" aria-label="Order of work: your twelve rows and fourteen of my fifteen rows as blocks sized by days, my reviews as a thin strip, and five numbered hand-offs between us" xmlns="http://www.w3.org/2000/svg" font-family="Inter, DejaVu Sans, sans-serif">`);
 out.push(`<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="${C.ink2}"/></marker></defs>`);
-out.push(`<rect x="0" y="0" width="${W}" height="330" fill="${C.surface}"/>`);
+out.push(`<rect x="0" y="0" width="${W}" height="${HGT}" fill="${C.surface}"/>`);
 
 // grid and axis
+const AXIS_Y = Y_ME + H + 62;
 for (let d = 0; d <= DAYS; d += 5) {
-  out.push(`<line x1="${x(d)}" y1="${Y_YOU - 8}" x2="${x(d)}" y2="${Y_ME + H + 30}" stroke="${C.grid}" stroke-width="1"/>`);
-  out.push(`<text x="${x(d)}" y="${Y_ME + H + 48}" font-size="13" fill="${C.muted}" text-anchor="middle">${d}</text>`);
+  out.push(`<line x1="${x(d)}" y1="${Y_YOU - 8}" x2="${x(d)}" y2="${AXIS_Y - 14}" stroke="${C.grid}" stroke-width="1"/>`);
+  out.push(`<text x="${x(d)}" y="${AXIS_Y}" font-size="13" fill="${C.muted}" text-anchor="middle">${d}</text>`);
 }
-out.push(`<text x="${X1}" y="${Y_ME + H + 66}" font-size="13" fill="${C.muted}" text-anchor="end">days of work, counted from the start of each lane</text>`);
+out.push(`<text x="${X1}" y="${AXIS_Y + 18}" font-size="13" fill="${C.muted}" text-anchor="end">days of work, counted from the start of each lane</text>`);
 
 // lane labels
 out.push(`<text x="8" y="${Y_YOU + 22}" font-size="17" font-weight="700" fill="${C.ink}">You</text>`);
 out.push(`<text x="8" y="${Y_YOU + 40}" font-size="12" fill="${C.ink2}">24.75 d</text>`);
-out.push(`<text x="8" y="${Y_ME + 22}" font-size="17" font-weight="700" fill="${C.ink}">Me</text>`);
-out.push(`<text x="8" y="${Y_ME + 40}" font-size="12" fill="${C.ink2}">after P0a</text>`);
+out.push(`<text x="8" y="${Y_ME + 18}" font-size="17" font-weight="700" fill="${C.ink}">Me</text>`);
+out.push(`<text x="8" y="${Y_ME + 34}" font-size="12" fill="${C.ink2}">21.75 d,</text>`);
+out.push(`<text x="8" y="${Y_ME + 48}" font-size="12" fill="${C.ink2}">after P0a</text>`);
 
-function blocks(rows, y, fill, textFill) {
+function blocks(rows, y, fill, textFill, narrowY) {
   for (const r of rows) {
     const bx = x(r.s) + GAP / 2, bw = Math.max(1, x(r.e) - x(r.s) - GAP);
     out.push(`<rect x="${bx.toFixed(1)}" y="${y}" width="${bw.toFixed(1)}" height="${H}" rx="4" fill="${fill}"><title>${esc(r.id)}: ${r.d} days</title></rect>`);
@@ -65,46 +82,47 @@ function blocks(rows, y, fill, textFill) {
       out.push(`<text x="${cx.toFixed(1)}" y="${y + (big ? 22 : 30)}" font-size="${big ? 15 : 13}" font-weight="700" fill="${textFill}" text-anchor="middle">${esc(r.short)}</text>`);
       if (big) out.push(`<text x="${cx.toFixed(1)}" y="${y + 39}" font-size="12" fill="${textFill}" text-anchor="middle" opacity="0.9">${r.d} d</text>`);
     } else {
-      // too narrow: label above the lane, in text ink
-      out.push(`<text x="${cx.toFixed(1)}" y="${y - 6}" font-size="12" font-weight="700" fill="${C.ink2}" text-anchor="middle">${esc(r.short)}</text>`);
+      // too narrow for a label inside: name it outside the lane, in text ink
+      out.push(`<text x="${cx.toFixed(1)}" y="${narrowY}" font-size="12" font-weight="700" fill="${C.ink2}" text-anchor="middle">${esc(r.short)}</text>`);
     }
   }
 }
-blocks(you, Y_YOU, C.you, '#ffffff');
-blocks(me, Y_ME, C.me, C.ink);
+blocks(you, Y_YOU, C.you, '#ffffff', Y_YOU - 6);
+blocks(me, Y_ME, C.me, C.ink, Y_ME + H + 30);
+out.push(`<text x="${x(0.125).toFixed(1)}" y="${Y_ME + H + 44}" font-size="11" fill="${C.ink2}" text-anchor="start">day 0</text>`);
 
 // reviews strip under my lane
 const meEnd = me[me.length - 1].e;
 out.push(`<rect x="${x(0)}" y="${Y_ME + H + 6}" width="${(x(meEnd) - x(0)).toFixed(1)}" height="5" rx="2.5" fill="${C.me}" opacity="0.45"/>`);
-out.push(`<text x="${x(meEnd) + 6}" y="${Y_ME + H + 12}" font-size="12" fill="${C.ink2}">+ reviews, 0.75 d, spread</text>`);
+out.push(`<text x="${x(meEnd) + 8}" y="${Y_ME + H + 12}" font-size="12" fill="${C.ink2}">+ reviews, 0.75 d, spread</text>`);
 
 // hand-offs
-const find = (rows, id) => { const r = rows.find(q => q.id === id); if (!r) throw new Error('no row ' + id); return r; };
+const badges = [];
 function badge(cx, cy, n) {
   out.push(`<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="11" fill="#ffffff" stroke="${C.ink}" stroke-width="1.5"/>`);
   out.push(`<text x="${cx.toFixed(1)}" y="${(cy + 4.5).toFixed(1)}" font-size="13" font-weight="700" fill="${C.ink}" text-anchor="middle">${n}</text>`);
 }
 function down(fromRow, toRow, n) { // you -> me
   const x1 = x(fromRow.e) - 6, y1 = Y_YOU + H + 3, x2 = x(toRow.s) + 8, y2 = Y_ME - 4;
-  const my = (y1 + y2) / 2 - 10;
-  out.push(`<path d="M${x1.toFixed(1)},${y1} C${x1.toFixed(1)},${my} ${x2.toFixed(1)},${my} ${x2.toFixed(1)},${y2}" fill="none" stroke="${C.surface}" stroke-width="6"/>`);
-  out.push(`<path d="M${x1.toFixed(1)},${y1} C${x1.toFixed(1)},${my} ${x2.toFixed(1)},${my} ${x2.toFixed(1)},${y2}" fill="none" stroke="${C.ink2}" stroke-width="2" marker-end="url(#ah)"/>`);
+  const my = (y1 + y2) / 2 - 12;
+  const d = `M${x1.toFixed(1)},${y1} C${x1.toFixed(1)},${my} ${x2.toFixed(1)},${my} ${x2.toFixed(1)},${y2}`;
+  out.push(`<path d="${d}" fill="none" stroke="${C.surface}" stroke-width="6"/>`);
+  out.push(`<path d="${d}" fill="none" stroke="${C.ink2}" stroke-width="2" marker-end="url(#ah)"/>`);
   badges.push([(x1 + x2) / 2, my, n]);
 }
-const badges = [];
-// my WP8 contract -> your WP6a and WP7, routed along the lower part of the gap
-const w8 = find(me, 'WP8'), w6a = find(you, 'WP6a'), w7 = find(you, 'WP7');
+// 4: my WP8 contract -> your WP7, dashed, routed low in the gap and landing inside WP7
+const w8 = find(me, 'WP8'), w7 = find(you, 'WP7');
 const yR = Y_ME - 22;
-const xa = x(w8.e) - 8, xb = x(w6a.s) + 8, xc = x(w7.s) + 8;
+const xa = x(w8.e) - 8, xb = x(w7.s) + 44;
 const route = `M${xa.toFixed(1)},${Y_ME - 4} L${xa.toFixed(1)},${yR} L${xb.toFixed(1)},${yR} L${xb.toFixed(1)},${Y_YOU + H + 4}`;
 out.push(`<path d="${route}" fill="none" stroke="${C.surface}" stroke-width="6"/>`);
 out.push(`<path d="${route}" fill="none" stroke="${C.ink2}" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#ah)"/>`);
-out.push(`<path d="M${xb.toFixed(1)},${yR} L${xc.toFixed(1)},${yR} L${xc.toFixed(1)},${Y_YOU + H + 4}" fill="none" stroke="${C.ink2}" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#ah)"/>`);
-badges.push([(xa + xb) / 2, yR, 4]);
+badges.push([xa + 70, yR, 4]);
 
 down(find(you, 'WP2a-build'), find(me, 'WP2a'), 1);
 down(find(you, 'WP3a'), find(me, 'WP3b'), 2);
 down(find(you, 'WP9'), find(me, 'Ports'), 3);
+down(find(you, 'WP7'), find(me, 'WP7-replay'), 5);
 for (const [bx, by, n] of badges) badge(bx, by, n);
 
 out.push(`</svg>`);
@@ -115,6 +133,6 @@ const html = fs.readFileSync(file, 'utf8');
 const re = /<!--CHART:gantt-->[\s\S]*?<!--\/CHART:gantt-->/;
 if (!re.test(html)) throw new Error('chart markers missing in index.html');
 fs.writeFileSync(file, html.replace(re, `<!--CHART:gantt-->\n${svg}\n<!--/CHART:gantt-->`));
-console.log('gantt written; you', youTotal, 'me', meTotal, 'you lane ends', you[you.length - 1].e, 'my lane ends', meEnd);
+console.log(`gantt written; you ${youTotal}, me ${meTotal}; P0a can delay my lane by ${p0aLimit} days before WP8 holds up your WP7`);
 for (const r of you) console.log('you', r.id.padEnd(11), r.s, '->', r.e);
 for (const r of me) console.log('me ', r.id.padEnd(11), r.s, '->', r.e);
