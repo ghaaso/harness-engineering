@@ -880,7 +880,11 @@ model file the fence results came from is settled for the four "holds" by the pr
 
 From the coordinator, as the harness reported the helper runs. No money figures.
 
-- **About 6.8 million tokens over 31 runs of 15 helpers**, up to the final modelling pass.
+- **About 6.8 million tokens over 30 runs of 13 helpers**, up to the final modelling pass. (The
+  coordinator first gave "31 runs of 15 helpers"; that count was wrong and is corrected here by the
+  coordinator after the reader's check. The helpers: two designers with six runs each, two refuters
+  with three each, six modeller runs by five modellers, the join, the change list, the fidelity
+  reviewer with three, the writer.)
 
 | Helpers | Tokens |
 |---|---|
@@ -898,7 +902,14 @@ coordinator's.
 - **After the final modelling pass:** the change list's second pass (0.25 million) and the writer's
   second pass (0.30 million), together about 7.37 million before the reader's check, which is not
   counted.
-- **The coordinator's own tokens and the week's usage** are in the coordinator's report, not here.
+- **In all, added by the coordinator at the end:** the reader's check took 0.30 million, so the round
+  used about 7.67 million helper tokens over 33 runs of 14 helpers (13 on the strongest helper model,
+  the change list on the cheaper one).
+- **The coordinator's own window** stood at about 404,000 tokens at the end, twice the 200,000 line
+  of rule R59: a hand-over to a fresh coordinator was tried at 17:20 and the app refused it, because a
+  session may start another only on the owner's own words in it, not on a turn that a session's
+  message or a helper's notice began. **The week's usage** (all sessions together, not this round
+  alone) went from 26 % at 15:20 to 39 % at 22:10.
 
 **14. Reader's check** (helper K, `writeup-check`; text only, no Node).
 
