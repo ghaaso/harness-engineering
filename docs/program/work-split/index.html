@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Harness work split</title>
+<style>
+  :root {
+    --ink: #16181d;
+    --muted: #5b6270;
+    --faint: #8a909c;
+    --line: #dfe2e8;
+    --panel: #f5f6f8;
+    --blue: #2b6fd6;
+    --blue-soft: #e8f0fc;
+    --her: #2b6fd6;
+    --him: #8fb4ec;
+    --warn: #b4540a;
+    --warn-soft: #fdf1e6;
+    --mono: "JetBrains Mono", "DejaVu Sans Mono", monospace;
+  }
+  @page { size: A4; margin: 16mm 15mm 16mm 15mm; }
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    margin: 0 auto; max-width: 860px; padding: 0 16px; background: #fff; color: var(--ink);
+    font-family: "Inter", "DejaVu Sans", sans-serif; font-size: 10.2pt; line-height: 1.45;
+  }
+  h1 { font-size: 25pt; line-height: 1.12; margin: 6px 0 10px; letter-spacing: -0.01em; }
+  h2 { font-size: 15pt; margin: 26px 0 6px; padding-bottom: 6px; border-bottom: 2px solid var(--blue); }
+  h3 { font-size: 11.5pt; margin: 18px 0 4px; }
+  p { margin: 6px 0; }
+  .kicker { color: var(--blue); font-size: 8.5pt; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 600; margin-top: 4px; }
+  .lede { color: var(--muted); font-size: 11.5pt; margin: 4px 0 14px; }
+  .meta { color: var(--faint); font-size: 8.5pt; }
+  code, .id { font-family: var(--mono); font-size: 8.6pt; }
+  .id { font-weight: 600; white-space: nowrap; }
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0 8px; }
+  .card { border: 1px solid var(--line); border-radius: 6px; padding: 9px 10px; }
+  .card .n { font-size: 19pt; font-weight: 600; line-height: 1.1; }
+  .card .t { color: var(--muted); font-size: 8.3pt; margin-top: 3px; }
+  .bar { position: relative; display: flex; height: 26px; border-radius: 4px; overflow: hidden; margin: 10px 0 2px; font-size: 8.8pt; font-weight: 600; }
+  .bar .her { background: var(--her); color: #fff; display: flex; align-items: center; padding-left: 8px; }
+  .bar .him { background: var(--him); color: #0f2547; display: flex; align-items: center; justify-content: flex-end; padding-right: 8px; flex: 1; }
+  .barwrap { position: relative; }
+  .cap { position: absolute; top: -4px; bottom: -4px; border-left: 2px dashed var(--warn); }
+  .floor { position: absolute; top: -4px; bottom: -4px; border-left: 2px dotted var(--ink); }
+  .barlegend { display: flex; justify-content: space-between; color: var(--muted); font-size: 8.2pt; margin-bottom: 6px; }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0 4px; font-size: 8.9pt; }
+  th { text-align: left; font-weight: 600; color: var(--muted); background: var(--panel); padding: 5px 6px; border-bottom: 1px solid var(--line); font-size: 8.3pt; }
+  td { padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr { break-inside: avoid; }
+  td.num, th.num { text-align: right; white-space: nowrap; }
+  tfoot td { font-weight: 600; background: var(--panel); }
+  .tag { display: inline-block; font-family: var(--mono); font-size: 7.2pt; border: 1px solid #9aa1ad; border-radius: 3px; padding: 0 3px; line-height: 1.35; color: #3b414c; vertical-align: 1px; }
+  .who { display: inline-block; font-size: 7.8pt; font-weight: 600; border-radius: 10px; padding: 1px 7px; white-space: nowrap; }
+  .who.her { background: var(--her); color: #fff; }
+  .who.him { background: var(--him); color: #0f2547; }
+  .who.both { background: linear-gradient(90deg, var(--her) 50%, var(--him) 50%); color: #fff; text-shadow: 0 0 2px #0f2547; }
+  .small { font-size: 8.4pt; color: var(--muted); }
+  .step, .note, .warn { break-inside: avoid; }
+  h2, h3 { break-after: avoid; }
+  .note { background: var(--blue-soft); border-left: 3px solid var(--blue); padding: 9px 12px; margin: 12px 0; border-radius: 0 4px 4px 0; }
+  .warn { background: var(--warn-soft); border-left: 3px solid var(--warn); padding: 9px 12px; margin: 12px 0; border-radius: 0 4px 4px 0; }
+  ol, ul { margin: 6px 0; padding-left: 20px; }
+  li { margin: 3px 0; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .step { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+  .step h4 { margin: 0 0 4px; font-size: 9.6pt; }
+  .step ol { margin: 0; }
+  .pb { break-before: page; }
+  .avoid { break-inside: avoid; }
+  .foot { margin-top: 24px; color: var(--faint); font-size: 8pt; border-top: 1px solid var(--line); padding-top: 6px; }
+  @media (max-width: 640px) {
+    .cards { grid-template-columns: 1fr 1fr; }
+    .cols { grid-template-columns: 1fr; }
+    table { display: block; overflow-x: auto; }
+  }
+</style>
+</head>
+<body>
+
+<div class="kicker">Harness programme · work split · 17 November 2026</div>
+<h1>Who does what: Bilal and his teammate</h1>
+<p class="lede">This replaces the owner column of Part 4 in <code>HARNESS-IDEAS-AND-BOTTLENECKS-2026-11-14.pdf</code>. That edition was written for one person, one PC and one usage limit. It is now three days old. Since then one package has finished its first deliverable, the harness has its own repository and a second person with a second machine has joined. This page brings the packages up to date and assigns each one.</p>
+
+<div class="cards">
+  <div class="card"><div class="n">55 / 45</div><div class="t">teammate / Bilal, by estimated days of work <span class="tag">G</span>. The cap is 60 / 40.</div></div>
+  <div class="card"><div class="n">20.0 · 16.5</div><div class="t">person-days in this round: teammate · Bilal <span class="tag">G</span></div></div>
+  <div class="card"><div class="n">21</div><div class="t">assignments covering all 16 packages. Three packages are split where the PC is needed.</div></div>
+  <div class="card"><div class="n">D07</div><div class="t">the one decision still blocking every step that launches agents. It is set on day 0.</div></div>
+</div>
+
+<div class="barwrap">
+  <div class="bar"><div class="her" style="width:54.8%">Teammate · 20.0 d · 54.8 %</div><div class="him">Bilal · 16.5 d · 45.2 %</div></div>
+  <div class="floor" style="left:50%"></div>
+  <div class="cap" style="left:60%"></div>
+</div>
+<div class="barlegend"><span>Dotted line: 50 / 50. Dashed line: the 60 / 40 cap.</span><span>Days are focused work. Decisions and FixFlow's P0a are not counted.</span></div>
+
+<h2>Is the 14 November edition stale? Yes, in seven places</h2>
+<table>
+  <thead><tr><th style="width:24%">What changed</th><th>Where things stand on 17 November</th></tr></thead>
+  <tbody>
+    <tr><td><b>1. The attached copy is an earlier build</b></td><td>The attached PDF was built on 13 Nov at 21:45 UTC. The repository holds a later build of the same edition (14 Nov, 09:35 UTC), which already records WP12's rule and replay. Both builds are now behind the record.</td></tr>
+    <tr><td><b>2. WP12 is past its first deliverable</b></td><td>The split rule is written, replayed over 97 recorded session windows <span class="tag">M</span> and checked. On 14 Nov Bilal said yes to one trial wave at the 300k line. The trial's instruments are built and tested on the record. Nothing has run yet, because D07 is unanswered. Source: <code>SPLIT-RULE-2026-11.md</code> parts 5 and 6.</td></tr>
+    <tr><td><b>3. The hallucination headline is different now</b></td><td>The edition's "2 of 2 summaries wrong" has been replaced by a count. In 117 compaction summaries, 0 of 2,727 claims a script can recheck were wrong <span class="tag">M</span>. In 74 of the 117 (63.2 %), the last sections fall behind their own hand-over <span class="tag">M</span>. After a compaction, sessions make 1.35 mistakes per 100 calls, against 0.58 before <span class="tag">M</span>. Most of the rise is forgotten facts about the PC and its tools: <code>python</code> was called 0 times before a compaction and 12 times after. Sources: <code>SUMMARY-CHECK-2026-11.md</code>, <code>AFTER-COMPACTION-2026-11.md</code>.</td></tr>
+    <tr><td><b>4. WP7 has moved on</b></td><td>The Graphify arm was scored on 13 Nov: 0.564 against 0.700 for the typed store <span class="tag">M</span>. Graph v2 was designed on 13 Nov. On 14 Nov an embeddings arm (PyKEEN with PyTorch on CPU, in a container) was approved and trained. On 16 Nov its held-out run was at 174 of 210 units <span class="tag">M</span>, with no final score yet.</td></tr>
+    <tr><td><b>5. The harness has its own repository</b></td><td>Since 15 Nov the research has lived in <code>Tempest-Zero/harness-engineering</code> (private), with its data in a private release. The audit of 16 Nov added 190 omitted files. That partly answers B11 ("the work exists only on this PC") for the research. FixFlow's uncommitted work, the transcripts and the clinic testbed still exist only on the PC. When a package says "this repository", it now means <code>EMS_workshop1</code> for WP2b, WP6c and WP10b, and this repository for everything else.</td></tr>
+    <tr><td><b>6. There are two people on two machines</b></td><td>Several of the edition's rules assume one PC and one usage limit: "two lanes at a time", "one budget for the whole team", and the Windows machine traps. "One person should not hold two packages from the same start column" cannot work with two people and 16 packages. The teammate's MacBook Air (M5, 24 GB) is a second machine. If she uses her own Claude plan, the team has a second five-hour window. That is the first relief for the usage-limit half of bottleneck 3.</td></tr>
+    <tr><td><b>7. FixFlow's state</b></td><td>By 15 Nov, 13 phases were merged but nothing was deployed, and production is still down. Bilal's own pre-flight (P0a) has not started and is on the critical path. The edition already puts P0a ahead of Bilal's harness steps, so in the first stretch his harness time is the scarce one.</td></tr>
+  </tbody>
+</table>
+<p class="small">Unchanged: the 16 packages, their goals and their "done when" lines (the reference edition's cards still apply), and every open decision except those noted here. D07 is still unanswered in the record.</p>
+
+<h2>How the split was made</h2>
+<ol>
+  <li><b>Machine first.</b> Anything that needs the Windows PC stays with Bilal: its Docker, its slot lock, its logs, the frozen experiment images, or the raw transcripts. Raw conversations do not leave the PC (the repository's exclusion rule), so none of the teammate's packages depends on them.</li>
+  <li><b>The person who builds is not the person who judges.</b> Bilal writes WP8's frozen validation contract. The teammate builds the library, knowledge-store and retrieval pilots that the contract judges. She is the fresh reader of the contract before it is frozen, and he reviews her scripts before any of them may refuse anything.</li>
+  <li><b>Strengths.</b> Her CV shows Docker, CI/CD and GitHub Actions; queues (a BullMQ priority queue, Celery/Redis workers); staged LLM pipelines with schema-validated output (Zod, Pydantic) and retry; RAG with persistent per-user context; tree-sitter AST mining with fingerprint clustering; PyTorch training; React/Next.js dashboards. Bilal keeps the work that needs the record's history, FixFlow's domain, his own account's settings and the live trials.</li>
+  <li><b>Split where the PC is needed.</b> Three packages are split between the two. In WP2a she builds the container gate and he measures it on the PC. In WP3 she writes the scripts and he audits the transcripts. In WP10b she writes the CI check and he reviews the skills. WP7 has a closing step that only the PC can run (his) and a next deliverable (hers).</li>
+  <li><b>Sizes.</b> Sizes are in person-days of focused work. <span class="tag">E</span> means a design estimated the size; <span class="tag">G</span> means it is a guess until the first step reports. Bilal's decisions and FixFlow's P0a are not counted. His reviews and merges of her work are counted.</li>
+</ol>
+
+<h2>Final assignments: teammate</h2>
+<p class="small">Mac-side builds, CI, retrieval, data and pages. 10 assignments, 20.0 days <span class="tag">G</span>, 54.8 %.</p>
+<table>
+  <thead><tr><th style="width:3%">#</th><th style="width:20%">Package</th><th>First deliverable · done when</th><th style="width:20%">Needs</th><th class="num" style="width:7%">Days</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><span class="id">WP11</span> Decisions and pages</td><td>One decision board covering D05, D07–D26, KS-D1/D1b, LIB and GT-1/2, generated from a JSON file the way the FixFlow owner view is built, plus the run queue for the PC's check slot. <i>Done when</i> no package waits more than a day <span class="tag">T</span> on a decision, and every wait is logged.</td><td>Bilal's answers. Start first: the board speeds up every other row.</td><td class="num">1.5 <span class="tag">G</span></td></tr>
+    <tr><td>2</td><td><span class="id">WP6c</span> Docs true to code</td><td>An Alembic-head CI check for the facts CLAUDE.md states, and one corrections PR for PR #183's listed contradictions. <i>Done when</i> a planted wrong fact turns CI red, after a record-only run over recent merges.</td><td>Read access to EMS. Bilal merges through the coordinator.</td><td class="num">1.5 <span class="tag">G</span></td></tr>
+    <tr><td>3</td><td><span class="id">WP10b-CI</span> Skills and agents: CI check</td><td>A frontmatter CI check: every skill and agent has valid frontmatter, a pinned model and a short tool list. It runs record-only first.</td><td>Access to EMS, and Bilal's go through the coordinator.</td><td class="num">1.0 <span class="tag">G</span></td></tr>
+    <tr><td>4</td><td><span class="id">WP6b</span> Knowledge store: audit</td><td>The recurrence audit KS-0, with no code: count the same-cause repeats in FixFlow's history that a store could have served. The result decides KS-D1b (build or not).</td><td>KS-D1 yes. It never runs ahead of a ship phase.</td><td class="num">1.0 <span class="tag">E</span></td></tr>
+    <tr><td>5</td><td><span class="id">WP2b</span> FixFlow gates and CI</td><td>Measure each lane's gate waits from the slot logs Bilal exports. Make CI fail on skipped integration tests and on empty Jest runs, and re-run Node failures under Node 22. <i>Done when</i> a planted skip or empty run turns CI red, after record-only runs.</td><td>Bilal's go before any change to <code>ff-gates.sh</code> or <code>ff-slot.sh</code>.</td><td class="num">2.5 <span class="tag">G</span></td></tr>
+    <tr><td>6</td><td><span class="id">WP3a</span> Gate and merge scripts</td><td>The replay seal on recorded history; the claims file and a schema-validated typed verdict; a verdict script that re-runs cited tests at parent and head; a merge-queue script, record-only over the 65 recorded merges <span class="tag">M</span>. <i>Done when</i> the replay flags unread final heads with false flags under 10 % <span class="tag">T</span>, and no script refuses anything before D15.</td><td>The clinic repository (D24). D12–D20 as they come.</td><td class="num">3.5 <span class="tag">G</span></td></tr>
+    <tr><td>7</td><td><span class="id">WP2a-build</span> Clinic check: build half</td><td>A Linux container gate (a multi-arch image), a slot queue with priorities, a heartbeat that names a stalled test within 60 s <span class="tag">T</span>, and a reaper that only lists what it would remove. The image is handed to Bilal for the PC runs.</td><td>The clinic repository (D24).</td><td class="num">2.0 <span class="tag">G</span></td></tr>
+    <tr><td>8</td><td><span class="id">WP9</span> First use, real hosts</td><td>A zero-seed walk as a gate step inside her container gate, and a re-run of the load drill. The real-host rehearsal comes only after D21. <i>Done when</i> the walk fails before the 11 Nov real-data merge (<code>fb55599</code>) and passes after it.</td><td>WP2a-build. D21 and D09 for the real host.</td><td class="num">2.5 <span class="tag">E</span></td></tr>
+    <tr><td>9</td><td><span class="id">WP6a</span> The library</td><td>A draft limitation list built from <code>LIBRARY-PATHWAYS-2026-11.md</code> (each item with its "alone" and "last" weights) for Bilal to agree (LIB), then the held-out pilot written against WP8's contract.</td><td>LIB. The pilot also needs WP8's contract and D07.</td><td class="num">1.5 <span class="tag">G</span></td></tr>
+    <tr><td>10</td><td><span class="id">WP7</span> Retrieval: next deliverable</td><td>The index replay at zero tokens, scored against D23's marks, and the typed code store exposed as a query tool for the agent pilot (GT-1).</td><td>D23, WP8's protocol and the lookup test set (D26).</td><td class="num">3.0 <span class="tag">G</span></td></tr>
+  </tbody>
+  <tfoot><tr><td></td><td colspan="3">Teammate total</td><td class="num">20.0</td></tr></tfoot>
+</table>
+
+<h2>Final assignments: Bilal</h2>
+<p class="small">The PC, the transcripts, live trials, the contracts and the coordinator role. 11 assignments, 16.5 days <span class="tag">G</span>, 45.2 %. FixFlow's P0a comes first and is not counted here.</p>
+<table>
+  <thead><tr><th style="width:3%">#</th><th style="width:20%">Package</th><th>First deliverable · done when</th><th style="width:20%">Needs</th><th class="num" style="width:7%">Days</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><span class="id">WP5</span> Token budget</td><td>On day 0, the D07 proposal from the November tally, now set per account (D25). After that, before-and-after numbers for levers 3 (batch lookups) and 4 (write big files by script) on his own sessions. Lever 1 is the WP12 trial.</td><td>D13 and D18 for lever 2, later.</td><td class="num">1.5 <span class="tag">G</span></td></tr>
+    <tr><td>2</td><td><span class="id">WP1</span> Machine and recovery</td><td>A nightly copy of what is not on GitHub (EMS worktrees, scratchpads, transcripts, the clinic repository), a resume list, and the sensor logger. <i>Done when</i> the copy is verified and never more than 24 h old <span class="tag">T</span>, and after a reboot the resume list is shown and databases are healthy within 3 min <span class="tag">T</span>.</td><td>His own D04, D02 and D05 steps.</td><td class="num">1.5 <span class="tag">E</span></td></tr>
+    <tr><td>3</td><td><span class="id">WP8</span> Measurement</td><td>A rate sheet from the record (check time, review rounds, send-backs, limit episodes, each one tagged); the frozen validation contract and protocols; then the first count of claims a script can recheck, using WP3a's verdict script (PR-HALLU).</td><td>The teammate reads the contract fresh before it is frozen.</td><td class="num">2.0 <span class="tag">G</span></td></tr>
+    <tr><td>4</td><td><span class="id">WP7-finish</span> Close the embeddings run</td><td>Check where the held-out run stands (174 of 210 units on 16 Nov), then follow <code>recovered/coord/final/END-ORDER</code>: grader, leak audit, refuter. Write the result next to the graph test result.</td><td>The PC only, because its images and paths are frozen.</td><td class="num">1.0 <span class="tag">G</span></td></tr>
+    <tr><td>5</td><td><span class="id">WP12</span> B+ tree trial</td><td>The steps of part 6.6: D07; pick which count scores the trial; check that two sessions can hold different compaction windows at once; the baseline over recorded summaries (6.7); then one trial wave at 300k beside a matched wave that compacts earlier, and the scoring.</td><td>D07, and a FixFlow or testbed lane wave.</td><td class="num">2.5 <span class="tag">G</span></td></tr>
+    <tr><td>6</td><td><span class="id">WP3b</span> Transcript audit</td><td>Read the recorded transcripts on the PC: did the reviewer read the final head, and did the gate run before the fixes? Answer D12–D20 as each mechanism reaches him.</td><td>Transcripts on the PC.</td><td class="num">1.0 <span class="tag">G</span></td></tr>
+    <tr><td>7</td><td><span class="id">WP10a</span> Briefs and workflows</td><td>The save-as-run rule and one saved review-stage workflow. New from the after-compaction count: a card of PC facts that survives compaction (no <code>python</code> on PATH, shell length limits), tried as a rule.</td><td>D07 before anything that launches agents.</td><td class="num">1.5 <span class="tag">G</span></td></tr>
+    <tr><td>8</td><td><span class="id">WP2a-measure</span> Clinic check: PC half</td><td>Windows and container runs side by side, and one check's peak memory. The memory table and a second slot come after WP1's logger. <i>Done when</i> the median gate time is near 230 s <span class="tag">T</span> with zero Linux-only failures on main.</td><td>Her image (WP2a-build), WP1, D09, D10 and D11.</td><td class="num">1.5 <span class="tag">G</span></td></tr>
+    <tr><td>9</td><td><span class="id">WP4</span> Planner and lanes</td><td>The plan check replayed on FixFlow's next lane wave: its collision graph and lane count, given to the coordinator as a recommendation.</td><td>WP8's rate sheet. Easier after WP2a.</td><td class="num">2.0 <span class="tag">G</span></td></tr>
+    <tr><td>10</td><td><span class="id">WP10b</span> Skills: review and tally</td><td>A review of the 13 skills and 11 agents for domain correctness (Android, Odoo, accounting), and the trigger tally run under D07.</td><td>Her CI check (WP10b-CI).</td><td class="num">1.0 <span class="tag">G</span></td></tr>
+    <tr><td>11</td><td>Review and merge</td><td>Merge her FixFlow PRs (WP2b, WP6c, WP10b-CI) through the coordinator, review her scripts before they may refuse anything, and agree the LIB list.</td><td>—</td><td class="num">1.0 <span class="tag">G</span></td></tr>
+  </tbody>
+  <tfoot><tr><td></td><td colspan="3">Bilal total</td><td class="num">16.5</td></tr></tfoot>
+</table>
+
+<h2>All sixteen packages at a glance</h2>
+<table>
+  <thead><tr><th style="width:20%">Package</th><th>Status on 17 Nov (what changed since the edition)</th><th style="width:16%">Who</th></tr></thead>
+  <tbody>
+    <tr><td><span class="id">WP1</span> Machine</td><td>Open. The research is now copied to GitHub. The nightly copy is still needed for EMS, the scratchpads, the transcripts and the clinic repository.</td><td><span class="who him">Bilal</span></td></tr>
+    <tr><td><span class="id">WP2a</span> Clinic check</td><td>Open. Split into a build half (Mac) and a measuring half (PC).</td><td><span class="who both">Both</span></td></tr>
+    <tr><td><span class="id">WP2b</span> FixFlow gates</td><td>Open. Starts on Bilal's word.</td><td><span class="who her">Teammate</span></td></tr>
+    <tr><td><span class="id">WP3</span> Gate scripts</td><td>Open. Split into scripts and a transcript audit.</td><td><span class="who both">Both</span></td></tr>
+    <tr><td><span class="id">WP4</span> Planner</td><td>Open. Comes after WP8.</td><td><span class="who him">Bilal</span></td></tr>
+    <tr><td><span class="id">WP5</span> Token budget</td><td>D07 is still open and is now set per account. Lever 1 is now the WP12 trial.</td><td><span class="who him">Bilal</span></td></tr>
+    <tr><td><span class="id">WP6a</span> Library</td><td>Open. The limitation list is the next step.</td><td><span class="who her">Teammate</span></td></tr>
+    <tr><td><span class="id">WP6b</span> Knowledge store</td><td>Open. The audit comes before any build.</td><td><span class="who her">Teammate</span></td></tr>
+    <tr><td><span class="id">WP6c</span> Docs true to code</td><td>Open. Starts on Bilal's word.</td><td><span class="who her">Teammate</span></td></tr>
+    <tr><td><span class="id">WP7</span> Retrieval and graphs</td><td><b>Moved.</b> The Graphify arm is scored and graph v2 is designed. The embeddings run was at 174 of 210 units and is not scored. The installs of GT-2 that the run needed are done.</td><td><span class="who both">Both</span></td></tr>
+    <tr><td><span class="id">WP8</span> Measurement</td><td>Open. The hallucination count now has two baselines (the summary check and the after-compaction count).</td><td><span class="who him">Bilal</span></td></tr>
+    <tr><td><span class="id">WP9</span> First use</td><td>Open. Follows WP2a-build.</td><td><span class="who her">Teammate</span></td></tr>
+    <tr><td><span class="id">WP10a</span> Briefs</td><td>Open. Adds the PC-facts card lead.</td><td><span class="who him">Bilal</span></td></tr>
+    <tr><td><span class="id">WP10b</span> Skills and agents</td><td>Open. Split into a CI check and a review with the tally.</td><td><span class="who both">Both</span></td></tr>
+    <tr><td><span class="id">WP11</span> Decisions and pages</td><td>Open. The board must also carry the new decisions D24–D26.</td><td><span class="who her">Teammate</span></td></tr>
+    <tr><td><span class="id">WP12</span> B+ tree</td><td><b>First deliverable done.</b> The trial at 300k is approved and its instruments are built. The trial is waiting on D07.</td><td><span class="who him">Bilal</span></td></tr>
+  </tbody>
+</table>
+
+<h2 style="break-before: page">Order of work</h2>
+<p class="small">This is an order, not a calendar: neither person's weekly hours are known. Each person has at most two packages in flight at once.</p>
+<div class="cols">
+  <div class="step"><h4><span class="who her">Teammate</span></h4>
+    <ol>
+      <li>Onboarding (not counted): read the short edition's Part 1 and Part 2 and this page. Restore only the release data a package needs.</li>
+      <li>WP11 board → WP6c → WP10b-CI → WP6b audit. None of these needs the PC.</li>
+      <li>WP2a-build → WP3a, once the clinic repository is shared (D24).</li>
+      <li>WP2b, once Bilal gives his go → WP9, on her container gate.</li>
+      <li>WP6a list → WP7 index replay, once WP8's contract and D23 exist.</li>
+    </ol>
+  </div>
+  <div class="step"><h4><span class="who him">Bilal</span></h4>
+    <ol>
+      <li>Day 0 (about an hour): give access (below) and answer D07, D24, D25 and D26.</li>
+      <li>FixFlow P0a. It is the critical path and is not counted here.</li>
+      <li>WP1 → WP8 (rate sheet and contract) → WP7-finish.</li>
+      <li>WP12 baseline and trial → WP3b audit → WP10a.</li>
+      <li>WP2a-measure (after her image and his logger) → WP4 → WP5 levers → WP10b review. Reviews run throughout.</li>
+    </ol>
+  </div>
+</div>
+
+<h3>Hand-offs between the two</h3>
+<table>
+  <thead><tr><th style="width:30%">From</th><th style="width:30%">To</th><th>What passes</th></tr></thead>
+  <tbody>
+    <tr><td><span class="who her">Teammate</span> WP2a-build</td><td><span class="who him">Bilal</span> WP2a-measure</td><td>The container image and its run script, built for both arm64 and amd64.</td></tr>
+    <tr><td><span class="who her">Teammate</span> WP2a-build</td><td><span class="who her">Teammate</span> WP9</td><td>The gate that the zero-seed walk runs inside.</td></tr>
+    <tr><td><span class="who him">Bilal</span> WP8</td><td><span class="who her">Teammate</span> WP6a, WP7</td><td>The frozen validation contract and the pre-registered protocols. Her fresh read comes before the freeze.</td></tr>
+    <tr><td><span class="who her">Teammate</span> WP3a</td><td><span class="who him">Bilal</span> WP8</td><td>The verdict script that WP8 uses for its first count of claims (PR-HALLU).</td></tr>
+    <tr><td><span class="who him">Bilal</span> WP3b, D12–D20</td><td><span class="who her">Teammate</span> WP3a</td><td>Which mechanisms may refuse things, and when.</td></tr>
+    <tr><td><span class="who him">Bilal</span> PC slot logs</td><td><span class="who her">Teammate</span> WP2b</td><td>An export of the <code>ff-slot.sh</code> ticket log (no transcripts).</td></tr>
+    <tr><td><span class="who her">Teammate</span> WP11</td><td><span class="who him">Bilal</span> every decision</td><td>One board, and the queue for the PC's check slot.</td></tr>
+  </tbody>
+</table>
+
+<h2>Day 0, and the new decisions</h2>
+<div class="cols">
+  <div>
+    <h3>Access Bilal gives on day 0</h3>
+    <ol>
+      <li>Collaborator on <code>Tempest-Zero/harness-engineering</code>. She works on branches. A full data restore needs about 11 GB; WP7 needs only the graph-test parts.</li>
+      <li>Read access to <code>EMS_workshop1</code> for WP2b, WP6b, WP6c and WP10b-CI. Her changes are PRs that the coordinator merges.</li>
+      <li>The clinic testbed (D24). It lives only on the PC, at <code>f4276ed</code>. Check it for secrets, then push it to a private repository or hand her a git bundle.</li>
+    </ol>
+  </div>
+  <div>
+    <h3>Decisions to add to the board</h3>
+    <table>
+      <tbody>
+        <tr><td class="id">D07</td><td>The token budget per five-hour window, per account. It blocks every step that launches agents.</td></tr>
+        <tr><td class="id">D24</td><td>Share the clinic testbed with the teammate? WP2a-build, WP3a and WP9 need it. <b>This split assumes yes.</b></td></tr>
+        <tr><td class="id">D25</td><td>The teammate runs Claude Code on her own plan. Her runs then do not spend Bilal's window, and WP11's queue books only the PC's slot and his window. <b>Assumed yes.</b></td></tr>
+        <tr><td class="id">D26</td><td>Raw transcripts stay on the PC (the default). Export the WP7 lookup test set as tool inputs only, with no message text?</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="warn"><b>If an assumption fails.</b>
+  <ul>
+    <li><b>D24 no:</b> WP2a-build, WP3a and WP9 (8.0 days) fall to Bilal. Even with WP4 and WP5's levers moved to her, her share is about 42 %, under the 50 % floor. Re-cut the split rather than run it like that.</li>
+    <li><b>D26 no:</b> she builds the replay and Bilal runs it on the PC. Half a day moves to him, and the split becomes 53 / 47.</li>
+    <li><b>P0a takes Bilal's first stretch:</b> move WP5's levers (1.25 days) to her, which gives 58 / 42. Do not move WP4 as well: 64 % is over the cap.</li>
+  </ul>
+</div>
+
+<h2>Working rules for two people and two machines</h2>
+<table>
+  <thead><tr><th style="width:30%">Rule in the 14 Nov edition</th><th>From now on</th></tr></thead>
+  <tbody>
+    <tr><td>One person should not hold two packages from the same start column</td><td>Dropped: with two people it cannot hold. Each person has at most two packages in flight, and the 21 rows above are the whole round.</td></tr>
+    <tr><td>Two lanes at a time; one limit on heavy checks</td><td>These apply to the PC. The Mac has its own limit: the Air has no fan, so long runs slow down. Keep heavy containers short and run one at a time.</td></tr>
+    <tr><td>One budget for the whole team</td><td>One budget per account per five-hour window (D07 and D25). Runs on the PC are booked in WP11's queue.</td></tr>
+    <tr><td>Machine traps (<code>MSYS_NO_PATHCONV</code>, <code>C:/</code> paths, no <code>python</code> on PATH, antivirus, Docker subnets)</td><td>These are PC rules. On the Mac: write scripts in Node so they run on the PC unchanged; build images for both linux/arm64 and linux/amd64; never re-score a frozen protocol (the graph test or the embeddings run) on the Mac, because its locks are x86_64. New work on the Mac records its own lock.</td></tr>
+    <tr><td>A fresh pair of eyes before a decision</td><td>Each person is the fresh reader for the other: she reads WP8's contract and the WP12 trial write-up, and he reads her scripts before they may refuse anything.</td></tr>
+    <tr><td>Ship plan first; script before agent; replay before live; one fact, one command; Bilal's yes for anything that leaves the PC; state lives in the repo; tag every number</td><td>Unchanged.</td></tr>
+  </tbody>
+</table>
+
+<div class="note"><b>Why her Mac matters for the bottlenecks.</b> Bottleneck 11 ("work stops when this PC fails or I am away") and the usage-limit half of bottleneck 3 assumed a single machine and account. None of her 20 days runs on the PC. Once she has the day-0 access and two exports (the slot log and, if D26 is yes, the lookup test set), her rows keep moving through a PC power-off, and while Bilal is busy with P0a.</div>
+
+<p class="foot">Sources: the attached short edition (build of 13 Nov, 21:45 UTC) and the repository's later build of 14 Nov; the reference edition's package cards (pp. 121–128); <code>SPLIT-RULE-2026-11.md</code>; <code>SUMMARY-CHECK-2026-11.md</code>; <code>AFTER-COMPACTION-2026-11.md</code>; <code>GRAPH-V2-DESIGN-2026-11.md</code>; <code>evidence/harness-bottlenecks/graph2/graphify/RESULT.md</code> and <code>protocol-addendum-8.md</code>; <code>migration/TRAINING.md</code> and <code>COMPLETENESS-AUDIT-2026-11-16.md</code>; <code>OWNER-VIEW.md</code> (state of 15 Nov); <code>migration/clinic-manifest.json</code>; the teammate's CV. The sizes for split packages divide the edition's own estimates; every other size is a guess <span class="tag">G</span> until its first step reports.</p>
+
+</body>
+</html>
