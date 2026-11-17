@@ -37,18 +37,18 @@ once, right now.
 8. **Three parts have no paper behind them** and are reasoning only: the token allowance (weekly and
    5-hour), a check shared by separate programs, and units that last minutes with a handful of workers.
 
-## What limited us so far (25 episodes of our own work, r57-0123)
+## What limited us so far (25 episodes of our own work, r57-0129)
 
-| Limit | Episodes |
+| Limit | Episodes that name it |
 |---|---|
-| The queue in front of heavy commands (the check) | 8 |
-| Program starts blocked by the PC | 6 |
+| The queue in front of heavy commands (the check) | 9 |
+| Program starts blocked by the PC | 7 |
 | Memory | 4 |
 | Token allowance | 4 |
 | Processor | 3 |
 | Nothing | 1 |
 
-Five episodes had two limits at once. No single limit dominates, which is the owner's point. Blocked program
+Five episodes name two limits, and two have none recorded, so the counts add up to 28. No single limit dominates, which is the owner's point. Blocked program
 starts are a fault of the PC, not a scarce resource: no method below applies, and they stay with the PC
 diagnosis (`docs/program/evidence/pc-freezes-2026-11-17/`).
 
@@ -113,7 +113,7 @@ At agent speed that is hours, so it can only confirm the rule, not drive it.
 
 ## Several writers on one file (this replaces the single workflow of `E:several-writers-options.md`)
 
-- **Before work starts, from the change list** (r57-0111: 20 shared places). The 9 places that are separate
+- **Before work starts, from the change list** (r57-0128: 20 shared places). The 9 places that are separate
   entries or keys: own copies, merged later. The 7 ordered sequences and 4 places where the same statements
   change: a conflict is certain, so one owner at a time, or split first into separate entries (the skeleton
   step of r57-0401).
