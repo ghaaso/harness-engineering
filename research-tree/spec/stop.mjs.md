@@ -37,7 +37,11 @@ step `bound`. Step already `stop-requested`/`stopped` for E → exit 0, nothing 
 65. 2 The target's session: its `session`, else the first session among
 `transcriptsForFolder(folder)` (a session started but never bound). 3 Session found → step
 `stop-requested`, target `stop` = requested, `stop-request` line {session}. No session and no
-transcript → step `stopped`, target `stop` = confirmed, `stop` line {session: null, confirmed:
+transcript, but the target was admitted (it has a `manifest`) and its stop is not already
+confirmed → the same as a found session with session null (review U1-F5, R9/R10: a session the
+coordinator started may not show a transcript yet, so verify observes the folder's transcripts and
+processes over `stop_verify_deltas` ticks). No session, no transcript and never admitted (no
+`manifest`) → step `stopped`, target `stop` = confirmed, `stop` line {session: null, confirmed:
 true, grew: [], survivors: [], zombie_tokens: 0}, then the disposition (below).
 
 **verify.** 1 Pre-check without the lock: row epoch E, step `stop-requested` (else 65; `stopped`
@@ -83,8 +87,11 @@ test's own `spawnSleeper` children; ticks are moved by the test writing `run/wat
 - T1 request on a fenced row (epoch 2) whose attempt 1 has a session → step `stop-requested`,
   `attemptOf(row,1).stop` "requested", one `stop-request` line, exit 0; a repeat → exit 0, no new
   line.
-- T2 request on a fenced row whose attempt was admitted and never started (no session, no folder
+- T2 request on a fenced row whose attempt was never admitted (no manifest, no session, no folder
   transcript) → step `stopped`, stop "confirmed", a `stop` line with `confirmed:true`, state active.
+- T2b request on a fenced row whose attempt was admitted (manifest) but shows no session and no
+  folder transcript → step `stop-requested`, `stop-request` {session: null}; verify samples, then
+  confirms after `stop_verify_deltas` ticks; a live process naming the folder → `stop-unconfirmed`.
 - T3 request on a fenced row with no session but a folder transcript naming the folder as `cwd` →
   step `stop-requested`, the `stop-request` line names that session, `attemptOf(row,1).session` stays
   null; a later verify samples that session's transcripts.

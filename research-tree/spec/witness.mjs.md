@@ -101,7 +101,9 @@ correct hashes and `by-url` lines; pure-function tests import the exported `norm
   `effec-\ntive` in the text all match a plain ASCII quote; upper case in the quote matches.
 - T5 The number 300 characters past the quote's end with `w_chars` 300 is bound; at 301 it is not.
 - T6 Thousands and decimal variants: value 1234.5 matches `1,234.5`, `1 234,5`, `1234.5`; value
-  -3 matches `-3`, `−3` and an unsigned `3`; value 3 does not match `30` or `0.3`.
+  -3 matches `-3`, `−3` and an unsigned `3`; value 3 does not match `30` or `0.3`, nor a signed
+  `-3` or `−3`; value 12.5 with unit `%` matches `12.5%` and `12.5 percent`, with unit `ms` it
+  matches neither.
 - T7 `value: "not stated"` and the quote present: `witnessed`, `number_bound: false`.
 - T8 No `by-url` file: `unverifiable`, `no-snapshot`, exit 2; meta `reason: pdf`: `pdf`; meta
   `empty-text`: `empty-text`.

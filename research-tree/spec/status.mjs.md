@@ -137,7 +137,8 @@ state), R20 (a view, rebuilt), R40 (`not_run`), R58; decisions 3, 4, 5, 17, 25, 
 - T10 endturn K = head with a live watcher (sleeper record in `watcher.json` and `watcher.lock`, ce
   equal) and a live alarm → `acked.json` {acked_seq: K}, exit 0.
 - T11 endturn with no alarm → exit 1 `alarm-missing`, `acked.json` still written; with a watcher
-  record of an older ce → `watcher-missing`.
+  record of an older ce → `watcher-missing`; with a live `watcher.json` of this ce but
+  `watcher.lock` absent, or holding another live process → `watcher-missing` (review U1-F9).
 - T12 endturn K above head → exit 1 `acked-ahead`; K below stored → `acked-backwards`; file unchanged.
 - T13 intent open twice with the same subject → exit 0 once each, one `intent-open` line; with
   another subject → exit 1 `intent-differs`; done before open → exit 2; open then done → `.done`.

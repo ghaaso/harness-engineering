@@ -92,6 +92,11 @@ this ce exists and no slot is used, which is this script's quiescence over the t
   `stale_wake_sources`, `coord.json` ce 2 with the same tcb_commit and session null, one `ce-raise`
   {from:1, to:2}, `result.brief` names ce 2 and the commit, exit 0; the test ends its sleepers.
 - T7 a row at step admitted with no process and no transcript → `not-quiescent` (`unknown:1`).
+- T7b the in-lock re-check (step 3): a row moved to admitted after the pre-checks and before the
+  lock → exit 6 `not-quiescent`, coord unchanged, one `incident` line. Test seam (review U1-F8):
+  handover.mjs exports `doRaise(ctx, root, flags, dry, hooks)`, whose `hooks.beforeLock` runs after
+  the pre-checks; `main` runs only when the file is the process's entry script, and the command line
+  never passes hooks.
 - T9 raise `--ce 1` when coord is already at 2 → 64, nothing written; a second raise right after a
   successful one with `--ce 1` → 64.
 - T10 raise `--dry-run` → result with `to:2`, coord unchanged.

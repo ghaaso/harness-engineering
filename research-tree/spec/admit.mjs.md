@@ -130,6 +130,13 @@ slot, CONTRACT §4.10), so this spec is unchanged apart from the test T6c.
   refused with `slots-full`, exit 6 (no process list needed for those counts).
 - T16 check with a bound attempt that has a transcript (from `fakeTranscript`) under the test's
   `transcripts_root` but no matching process → counted `unknown`.
+- T16b (M4, review U1-F1) check with one row at step admitted (no process, no transcript) and a
+  candidate, reserve 1024, peak 1200, N_max 2, `--free-mb 2300` → exit 6 `memory` {pending: 1};
+  without the admitted row → admitted.
+- T10b (R44, review U1-F2) check `--task` on a review row, gate A read from files: a committed card
+  of the field covers a, the latest pack lists b in `not_covered` → admitted; no pack →
+  `gate-a-uncovered` [b]; `f5_given` true and the card still pending, no pack → [a, b]; the card
+  witnessed and the pack present → admitted.
 - T17 check with `tasks.json` holding a row with `step: "running"` → exit 67.
 - T18 check `--task nosuch` → exit 1 `no-task`; `--task Bad_Id` → exit 66.
 - T19 check with `gate.json` unparseable → reason `gate-missing` and exit 2 for that task.

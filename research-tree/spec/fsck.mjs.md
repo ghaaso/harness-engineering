@@ -72,9 +72,12 @@ Nothing else.
 ## Steps
 1. Parse args; `coord.json` missing → exit 2 `no-coordinator`; `readTasks` corrupt → 67.
 2. Phase 1, without the lock (git runs only here, CONTRACT §2.1): note ledger head H1; run checks 1-9.
-3. Phase 2, `withRunLock` + `checkCe` (64): if the head moved past H1, verify the chain from H1 and run
-   checks 1, 2, 4 on the objects and records named by the lines after H1 (so a passing line covers every
-   `intake`/`commit` before it, decision 18).
+3. Phase 2, `withRunLock` + `checkCe` (64): read `card_status.jsonl` and `witness.jsonl` again; if the
+   head moved past H1 or either status file changed, verify the chain from H1 and run checks 1, 2, 4
+   and the status coverage check 5 again over the current ledger and status files (so a passing line
+   covers every `intake`/`commit` before it, decision 18; and a status line whose covering
+   `promote`/`witness` ledger line was appended between phase 1's two reads is no spurious
+   `status-unlogged`, review U2-F7).
 4. result = fail if any failing item; else not_run if the tcb check did not run; else pass. Append the
    `fsck` line (in phase 2). If the ledger tail itself is broken, appendLedger refuses: no line, exit 3.
 
@@ -116,6 +119,8 @@ claude, frozen}, failing, anomalies: [{code, id}], head_checked: {seq, hash}}.
   3 `frozen-mismatch`; a frozen file named by a `protocol-freeze` line deleted → 3 `frozen-missing`.
 - T17 A repo with `core.hooksPath` and `core.fsmonitor` set in its config to a script that writes a
   marker file → fsck runs, the marker file is never created.
+- X2 (U2-F7) A status line phase 1 saw uncovered, whose covering `promote` ledger line is appended
+  while fsck waits for the lock → exit 0, the `fsck` line says pass.
 
 ## Needs the app
 - None: every check reads files and runs git inside the temp root. (Whether a real session obeys the

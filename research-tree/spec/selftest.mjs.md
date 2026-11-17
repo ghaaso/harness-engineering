@@ -117,12 +117,19 @@ expect file under `<root>/tcb/fixtures/selftest/`.
 1. Parse; `--transcript` not under `transcripts_root`, or `--expect` not under
    `tcb/fixtures/selftest/` → 2 `untrusted-path`; files missing → 2.
 2. Expect file: `{schema_version: 1, probes: [{probe, actor: main|helper, tool, match: {field:
-   substring}, expect: refused|allowed, layer: hook|permission|any}]}`; `{root}` and `{cwd}` (the
-   transcript's `cwd`) are rendered in `match`.
+   substring}, expect: refused|allowed, layer: hook|permission|any}], permission_patterns?:
+   [non-blank string]}`; `{root}` and `{cwd}` (the transcript's `cwd`) are rendered in `match`. Any
+   other field, or a `permission_patterns` that is not an array of non-blank strings → 2 `bad-expect`.
 3. Per probe: the first tool use (by `ts`) of that tool in the actor's transcripts whose input
-   fields contain every `match` substring, and its result by `toolUseId`. `refused` = `isError` and
-   (hook: text holds `[guard-hook] deny`; permission: it does not; any). `allowed` = a result
-   without `isError`. No such use → `not-attempted`; no result → `no-result` (both not-run).
+   fields contain every `match` substring, and its result by `toolUseId`. An error result is
+   `refused-hook` when its text holds `[guard-hook] deny`, `refused-permission` when its text holds
+   one of `permission_patterns` (case-insensitive substring: the harness's permission-denial
+   wording, to be confirmed by needs-app 7; the shipped expect file names none), and otherwise
+   `error-not-refusal` (a missing file, "read it first", a bad input: it proves nothing about either
+   layer). `refused` = `refused-hook` on a hook probe, `refused-permission` on a permission probe,
+   either on an any probe; the other refusal is a contradiction. `error-not-refusal` is not-run on
+   every refused probe. `allowed` = a result without `isError`. No such use → `not-attempted`; no
+   result → `no-result` (both not-run).
 4. Exit 1 if any probe contradicts its `expect`, else 2 if any is not-run, else 0; append the line.
 
 ## Exit codes
@@ -146,14 +153,17 @@ will; the stubs run where they are, and read their data through `--root {root}`)
 - T4 A case whose stub prints two stdout lines, or a `result` missing an expected key: that case fails.
 - T5 A stub that sleeps past a short `--case-timeout-ms` and has spawned a grandchild: the case fails
   with `why: timeout`, `killOwnTree` ends both (neither alive afterwards) before the next case
-  starts, the run completes; a process the test spawned itself outside selftest is still alive.
+  starts, the run completes; a process the test spawned itself outside selftest is still alive. The
+  stub starts its grandchild detached, so the grandchild is outside the stub's kill-on-close job
+  object and only `killOwnTree` can end it in time.
 - T5b A `watch` case without both `--once` and `--no-intake`, or with `--alarm` or `--intake` → exit 1
   `watch-case-loops` before any case runs (nothing spawned, no `tmp/` case root).
 - T5c A case's stub reads its `transcripts_root` threshold: it is under that case's root; the case
   root path has the form `<root>/tmp/st-<8 hex>/<n>/`; the case root's `tcb/` has no `fixtures/`, no
   `test/` and no `.mjs` file; the stub's own path (`process.argv[1]`) is `<root>/tcb/<name>.mjs`.
 - T5d `expect.code: "memory"` matches a stub printing `code: "deferred", reasons: [{code: "memory"}]`
-  with exit 6, and fails a stub printing `code: "memory"` with no reasons.
+  with exit 6, and fails a stub printing `code: "memory"` with no reasons; a stub printing
+  `code: "deferred", reasons: [{code: "other"}]` with exit 6 fails with `why: "code"`.
 - T5e One at a time: with the default `--jobs`, no two case roots exist at once (a stub records
   the number of folders under `tmp/st-*/` when it starts: always 1); with `--jobs 2`, never more
   than 2. `--jobs 3` and `--jobs 0` → 66.
@@ -177,7 +187,11 @@ will; the stubs run where they are, and read their data through `--root {root}`)
   text and the control write succeeded: exit 0, one `check` line pass with subject `canary:<session>`.
 - T16 canary: one forbidden Write has a success result: exit 1, reasons name the probe.
 - T17 canary: a probe's call never appears: exit 2 `not-attempted`; a refusal without the hook text
-  on a `layer: hook` probe: exit 1; on a `layer: permission` probe: pass.
+  on a `layer: hook` probe: exit 1; on a `layer: permission` probe whose text matches a
+  `permission_patterns` entry: pass. An error result that is neither (the harness's "read it first")
+  on a permission, an any or a hook probe: exit 2 `error-not-refusal`; the shipped expect file (no
+  patterns) gives a permission refusal of the any probe the same not-run; a malformed
+  `permission_patterns` is exit 2 `bad-expect` with no ledger line.
 - T18 canary: a helper probe matches only in a helper transcript under `<id>/subagents/`.
 - T19 canary `--transcript` outside `transcripts_root` (test sets it to a temp folder) or `--expect`
   outside `tcb/fixtures/selftest/`: exit 2 `untrusted-path`, no ledger line.

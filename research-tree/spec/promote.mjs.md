@@ -72,9 +72,19 @@ changes.
 
 ## Steps: revert --class
 1. qualification.json missing → 2 `no-qualification`; the class `qualified` → 1 `class-qualified`.
-2. Every card whose last line has status `confirmed` and `classes` including the class → line status
-   `witnessed`, reason `unqualified-revert`, `classes: [<class>]`. Nothing to revert → exit 0, no line.
-   (A sentence clearing whose `classes` include the class is reopened by this line too, §3.15.)
+2. Per card, read every line, not only the last (promote writes status-keeping lines after a
+   confirmation: card-item `unclear`, `sentence-unqualified`, `sentence-check` lines; review U2-F1):
+   - the card's own reliance: the card is `confirmed` now and its latest line with status
+     `confirmed`, `check.verdict` `confirmed` and no `check.node` (reason other than
+     `unqualified-revert`) has `classes` including the class;
+   - a sentence clearing: some `sentence-check` line with `check.verdict` `confirmed` has `classes`
+     including the class;
+   each counting only when no later line of the card has reason `unqualified-revert` naming the class.
+   Either → one line reason `unqualified-revert`, `classes: [<class>]`, status `witnessed` when the
+   card's own confirmation relies on the class, else the card's current status (the line then only
+   reopens the clearing, §3.15; a confirmation that relies on other classes stands). Nothing to
+   revert → exit 0, no line. (CONTRACT §3.15 says status `witnessed` for every such line; for a
+   clearing-only revert that would knock down a confirmation that does not rely on the class.)
 
 ## Exit codes
 0 written or nothing to do; 1 a verdict missing, off-enum or conflicting, `checker-out-of-role`,
@@ -107,6 +117,11 @@ skipped: [card_id], unknown_items}.
   confirmed by no check → two lines witnessed `unqualified-revert` `classes: ["J2"]`, a `promote` line
   {mode: "revert", class: "J2"}; rerun → exit 0, no line; J2 qualified → exit 1. revert --class J3 on
   the same root → no line (no card confirmation relies on J3).
+- T12c (U2-F1) A card confirmed with J1, J2, J4 whose last line is a later status-keeping card-item
+  `unclear` line: revert --class J2 → one line `witnessed` `unqualified-revert` `classes: ["J2"]`.
+- T12d (U2-F1) revert --class J3: a card confirmation that relies on J1, J2, J4 only stays confirmed;
+  every card with a J3 sentence clearing gets one `unqualified-revert` line `classes: ["J3"]` keeping
+  its current status, so `lib.flagCleared` reopens the clearing.
 - T15 Sentence items: a batch key entry with `node: "r_x#s1"`, verdict confirmed, J1-J4 qualified →
   a line with the card's unchanged status, reason `sentence-check`, `check.node` `r_x#s1`, `classes`
   J1-J4; with J3 unqualified → reason `sentence-unqualified`; verdict `outside_conditions` → reason

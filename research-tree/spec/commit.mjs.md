@@ -36,6 +36,10 @@ Nothing under `.git`.
 ## Steps: intake
 1. Parse; read transcripts and staging outside the lock (both are only read). A `staging/` or
    `in/checkpoint/` that is a junction or link out of the attempt folder → exit 3 `untrusted-path`.
+   The attempt folder and its `view/` must be real folders (no link or junction) inside the run
+   root's `wt/` and the attempt folder respectively; else exit 3 `untrusted-path`, nothing stored,
+   `incident` line, checked before anything is stored or written (review U2-F4; a `view/` created by
+   this run is checked again after creation).
 2. `withRunLock` + `checkCe`; `readTasks`; row missing → 1 `no-task`. `--epoch` ≠ row epoch → append
    `zombie-write` {epoch_seen: e, tokens: spendOf(that attempt's transcripts).total or null}, exit 65.
    Row not `active` at step `started`|`bound` → 65 `wrong-step`.
@@ -48,13 +52,20 @@ Nothing under `.git`.
 5. Cards first: `field` = row field (`wrong-field`); every `question_ids` entry in the row's
    `question_ids` (`question-not-owned`); `supersedes` and `supersede_reason` both or neither
    (`supersede-reason`); `supersedes` resolves to a stored or same-run card (`supersedes-missing`);
-   origin `session`/`checkpoint`: `source.url` appears verbatim in a tool-use input, tool-result text or
-   structured result of some attempt's transcripts (`url-not-in-transcript`, R34).
+   origin `session`/`checkpoint`: `source.url` appears verbatim in what some attempt's transcripts
+   (the session's and its helpers') show was found, never in what the session wrote itself
+   (`url-not-in-transcript`, R34; review U2-F2): the URL a WebFetch was sent to (`access.urls`, not
+   its `prompt`); the result text of a WebFetch, WebSearch or Agent/Task call; a structured result in
+   a helper transcript, or in the session's own transcript only when tied to an Agent/Task call. Never
+   a Write/Edit/Bash input or result, a Read result, a search query, or the session's own
+   StructuredOutput.
 6. Packs: `questions_sha` equals `lib.questionsSha` of the current frozen protocol's `question_ids`
    (`questions-sha`; no frozen protocol → the same code); `cards` sorted and unique (`not-sorted`);
-   each id a stored or same-run card (`fk-card`); `parent` a stored pack (`fk-parent`); each `index[].summary` ≤ `index_words` words and its `cards` in
+   each id a stored or same-run card (`fk-card`); `parent` a stored pack or a pack accepted in this
+   same intake, never one rejected in it (`fk-parent`; fixpoint over chains, review U2-F3: a child of
+   a rejected same-run parent would be stored with a dangling parent and the next fsck exits 3); each `index[].summary` ≤ `index_words` words and its `cards` in
    the pack (`index-invalid`; the cap is a threshold, so no static schema holds it). Reviews: `pack` a stored pack (`fk-pack`); `parent` a stored
-   review. Sentences (pack `conclusions`, review `sentences`): `sid` unique (`dup-sid`); a fact has ≥1
+   review or one accepted in this same intake (`fk-parent`, the same fixpoint). Sentences (pack `conclusions`, review `sentences`): `sid` unique (`dup-sid`); a fact has ≥1
    cite (`uncited-fact`); every cite in the named pack's `cards` (`cite-outside-pack`); review
    `verdicts[].supports` and `dismissals[].sid` name existing sids (`bad-sid`); dismissal `supports`
    in the pack (`cite-outside-pack`).
@@ -63,6 +74,8 @@ Nothing under `.git`.
    condition of c absent from `applies_to` → `scope-dropped`; a number in `text` (digits with optional
    decimals, thousands commas, sign, `%`; not touching a letter or `_`) equal to no numeric `value` or
    `baseline` of the cited cards when those are rounded to the decimals printed → `number-uncited`.
+   An unsigned number matches either sign ("fell 12.5%" for −12.47); a printed `+` or `-` must match
+   the value's sign too ("+12.5%" against −12.47 is uncited, review U2-F5).
 8. `putObject` each accepted object (`id-collision` → 3). Write `view/rejected.json` (full current
    list) and `view/committed.json` (every object accepted for this task+epoch so far, `{id, kind,
    file}`).
@@ -155,6 +168,15 @@ record {record_sha, outputs_sha, n, state, git: null}.
   intake adding one object lists both.
 - T25 a symbolic link or junction inside `staging/cards/` → listed by `walkFiles` as a link,
   rejected `untrusted-path`, never read.
+- X5 (U2-F2) a session card whose URL is only in the session's own Write input, a Read result, a
+  WebFetch prompt, a search query and its own StructuredOutput (all at once) → `url-not-in-transcript`;
+  the URL in a helper's WebSearch result → accepted.
+- X6 (U2-F3) a pack whose parent is a same-run pack rejected `questions-sha` → `fk-parent`, and a
+  review whose parent is a same-run review rejected `fk-pack` → `fk-parent`; a parent accepted in the
+  same run → both stored.
+- X7 (U2-F4) `view/` replaced by a junction out of the attempt → exit 3 `untrusted-path`, nothing
+  stored, nothing written behind it, one `incident` line.
+- X8 (U2-F5) card value −12.47: "+12.5%" → `number-uncited`; "-12.5%" and "fell 12.5%" → no flag.
 
 ## Needs the app
 - That a real reader's URLs appear in the child's or helper's transcript in the §4.8 shape (§7 item 7).

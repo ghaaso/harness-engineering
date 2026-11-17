@@ -49,7 +49,9 @@ line, and always when the newly reopened list is non-empty; that line then carri
   - PENDING: a cite is `pending` or `witnessed` (`support-unchecked`); an `intake` flag on this sid for
     which `lib.flagCleared` is false (`flag-open`, CONTRACT §3.15).
   - JUDGMENT: kind `judgment` (`judgment-kind`); no cites (`uncited`); a cite `unverifiable`
-    (`support-unverifiable`) or whose last status line carries `check.verdict` `unclear` (`support-unclear`).
+    (`support-unverifiable`) or whose last status line carries `check.verdict` `unclear` or reason
+    `unclear` (`support-unclear`; promote writes a card-item `outside_conditions` verdict as reason
+    `unclear` with the verdict kept in `check.verdict`, review U2-F6).
   - IN: every cite `confirmed`, none of the above.
 - **Verdict**: the highest label among the sentences in `supports`; none → JUDGMENT (`unsupported`).
 - **Dismissal** (R38): `reopened` if a support card is `rejected`/`superseded`, or a `confirmed` card
@@ -71,7 +73,10 @@ line, and always when the newly reopened list is non-empty; that line then carri
    `no-target` (the record is a file, so this is not a usage error).
 2. Compute labels in the order cards → sentences → verdicts → dismissals → certificates → targets.
 3. Newly reopened = `reopened` now and not `reopened` in the previous labels.json (absent file: all).
-4. `withRunLock` + `checkCe` (64); writeAtomic both views; append the `check` line if due.
+4. `withRunLock` + `checkCe` (64); under the lock, if any input moved since step 1 (a hash over
+   `card_status.jsonl`, the ledger, the object and commit listings and the previous labels.json),
+   compute steps 1-3 again from what is there now (no subprocess runs there), so an older run never
+   overwrites newer labels (review U2-F8); writeAtomic both views; append the `check` line if due.
 
 ## Exit codes
 10 `reopened` (a dismissal newly reopened; wins over 1, because the coordinator must act on it); 1
@@ -105,6 +110,14 @@ stale_certificates: [x_id], labels_sha}.
 - T13 A cite to an absent card → exit 2 `dangling`, no view written; torn last status line → ignored,
   exit as without it.
 - T14 Run twice with equal inputs → identical labels.json bytes, one `check` line only.
+- X2 (U2-F6) A cited card whose last line is a card-item `unclear` line with `check.verdict`
+  `outside_conditions` → JUDGMENT `support-unclear`.
+- X3 (U2-F9) A `protocol-amend` that changes `question_ids` → the pack's conclusions and the review's
+  sentences STALE `questions-changed`, exit 1.
+- X4 (U2-F10) |value − baseline| equal to the sesoi → untested `no-bound` (the bar is strict); a
+  bounding card whose conditions lack a declared `applies_to` value → untested `no-bound`.
+- X5 (U2-F8) A status line appended while tms waits for the lock → the labels written and the
+  `check` line's `labels_sha` are computed from it.
 - T15 `--ce` stale → 64, nothing written; lock busy → 75; `--dry-run` → no view, no line.
 
 ## Needs the app

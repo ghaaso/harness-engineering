@@ -977,6 +977,33 @@ test('T15 start copies every committed output; an edited stored object -> exit 3
     assert.equal(has(root, `wt/${RES}-e2`), false);
     assert.equal(ofKind(root, 'admit').length, 0);
   });
+  // Review U1 mutation R4: the commit record's own sha256 of an output is re-checked against the
+  // stored bytes (spec start step 5). Here the object is intact (getObject passes) and only the
+  // record names another sha256, with outputs_sha recomputed so nothing else in the record is off.
+  await t.test('a commit record whose sha256 for an intact object differs -> exit 3, row stays stopped, no folder', async (t2) => {
+    const w = mk();
+    t2.after(w.cleanup);
+    const { root } = w;
+    world(root);
+    const c = commitPack(root, RES, [CARD('f1-a-01')]);
+    const recRel = `store/commits/${RES}.pack.json`;
+    const rec = readJ(root, recRel);
+    const po = rec.outputs.find((o) => o.id === c.pack.id);
+    po.sha256 = po.sha256 === 'a'.repeat(64) ? 'b'.repeat(64) : 'a'.repeat(64);
+    rec.outputs_sha = sha(canon(rec.outputs));
+    const recText = canon(rec);
+    put(root, recRel, recText);
+    const a1 = att(RES, 1, { session: SID1, boot: BOOT_A, manifest: M0, settings_sha: Z64, stop: 'confirmed' });
+    table(root, [startRow({ steps: ['pack', 'review'], epoch: 2, reason: 'stall', restarts: 1, fails: [{ epoch: 1, class: 'stall', host: false, tick: 7 }], commits: { pack: sha(recText) }, attempts: [a1, att(RES, 2)] })]);
+    await seal(root);
+    const tb = read(root, 'run/tasks.json');
+    const j = await started(root, { epoch: 2 });
+    expectExit(j, 3, 'object-mismatch');
+    assert.ok(tb.equals(read(root, 'run/tasks.json')));
+    assert.equal(getRow(root, RES).step, 'stopped');
+    assert.equal(has(root, `wt/${RES}-e2`), false);
+    assert.equal(ofKind(root, 'admit').length, 0);
+  });
 });
 
 test('T16 start refused: exit 6 deferred with the slug, row unchanged, no folder, one incident line', async (t) => {

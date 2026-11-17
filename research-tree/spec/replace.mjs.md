@@ -146,7 +146,8 @@ F6, A4, A7, E5×E8; second model check M6 (READY re-check for every reason).
   the two staging files with their lengths and hashes, `spend_at_fence` = the fixture transcript's
   total.
 - T5 fence stall with a valid READY `{kind:ready, epoch:1}` in staging → exit 5 `ready-wins`, row
-  byte-identical, one `incident` line `{class:refusal}`; a READY with `epoch:0` or a torn READY does
+  byte-identical, one `incident` line `{class:refusal}`; a READY with `epoch:0`, a schema-valid
+  READY of another epoch (`epoch:2` in `wt/<task>-e1`, review U1-F7) or a torn READY does
   not count (fence applies); fence `tainted` with the same valid READY → applied (a READY never wins
   over a taint), restarts +1.
 - T5b (M6) fence `handover` on a bound row with a valid READY of epoch 1 → exit 5 `ready-wins`,
@@ -178,7 +179,8 @@ F6, A4, A7, E5×E8; second model check M6 (READY re-check for every reason).
   new file added after the fence → `in/checkpoint/prefix/a.card.json` has exactly the first 100
   bytes; the new file is absent; a rewritten file appears in `result.checkpoint.mismatched`.
 - T15 start copies every committed output; a stored object edited after commit → exit 3
-  `object-mismatch`, row stays `stopped`, no folder left.
+  `object-mismatch`, row stays `stopped`, no folder left; likewise a commit record whose `sha256`
+  for an intact object differs from the object's bytes (review U1 mutation R4).
 - T16 start refused (free memory below reserve + peak; or a dep not committed; or `halt` line not
   followed by an `owner` resume; or a `drain` line of this ce) → exit 6 `deferred`, reasons carry
   the slug, row unchanged, no folder, one `incident` line.

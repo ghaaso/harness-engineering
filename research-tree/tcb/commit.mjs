@@ -217,9 +217,10 @@ async function loadTranscripts(transcriptsRoot, row) {
 function urlEvidence(p, isMain, out) {
   const kindOf = new Map();
   for (const u of p.toolUses || []) {
-    const kind = (u.access && u.access.kind) || lib.toolAccess(u.name, u.input).kind;
+    const acc = u.access && typeof u.access.kind === 'string' ? u.access : lib.toolAccess(u.name, u.input);
+    const kind = acc.kind;
     if (typeof u.id === 'string') kindOf.set(u.id, kind);
-    if (kind === 'fetch') for (const url of (u.access && u.access.urls) || []) if (typeof url === 'string') out.push(url);
+    if (kind === 'fetch') for (const url of acc.urls || []) if (typeof url === 'string') out.push(url);
   }
   for (const r of p.toolResults || []) {
     const kind = kindOf.get(r.toolUseId);

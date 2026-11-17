@@ -1,0 +1,75 @@
+{
+ "fixed": [
+  {
+   "finding_id": "U1-F1",
+   "what": "Test only; admit.mjs unchanged. Check-mode test of the M4 pending reservation from gatherFacts. With an admitted row (no process) and reserve 1024, peak 1200, --free-mb 2300, the result is exit 6 memory {pending:1}; without that row the same call admits. Mutation A5 now fails.",
+   "test_added": "tcb/test/admit.test.mjs: T16b (M4) check: an admitted row with no process reserves one peak of memory; without it the same --free-mb admits"
+  },
+  {
+   "finding_id": "U1-F2",
+   "what": "Test only. Gate A is now tested through gateAFacts, read from the card, pack and status files: covered -> admitted, no pack -> [b], F5 with a pending card -> [a,b], F5 with a witnessed card -> admitted. Mutation A7 now fails.",
+   "test_added": "tcb/test/admit.test.mjs: T10b check gate A from files: a committed card covers a, the pack lists b as not covered; F5 counts only witnessed cards"
+  },
+  {
+   "finding_id": "U1-F3",
+   "what": "Test only. A default-mode watcher (--interval-ms 50 --no-intake, the test's own child, killed in finally) has its ce raised after the first tick. Expected: exit 64, watcher.lock released, at most one watcher.json write after the raise. Mutation W3 now fails.",
+   "test_added": "tcb/test/watch.test.mjs: T15 default-mode watcher: coord ce raised after its first tick -> exit 64, watcher.lock released, no tick after"
+  },
+  {
+   "finding_id": "U1-F4",
+   "what": "watch.mjs step e appends a halt only when the cluster holds a fail (task, epoch, class, tick) that no earlier halt line names. An owner resume therefore takes effect, and a new fail still halts. Mutation W8 and the mutation that drops '&& fresh' both fail. spec/watch.mjs.md updated.",
+   "test_added": "tcb/test/watch.test.mjs: 'T10 common cause: two fails 5 ticks apart but long past (ticks 10 and 15, ticks_total 100) give no 26' and 'T10 common cause: after an owner resume the same fails write no second halt line; a new fail halts again'"
+  },
+  {
+   "finding_id": "U1-F5",
+   "what": "stop.mjs request: an attempt with a manifest whose stop is not yet confirmed now goes to stop-requested with session null, even with no session and no transcript. Verify then observes it over stop_verify_deltas ticks, as R9/R10 require. Only a never-admitted attempt is confirmed at once. spec/stop.mjs.md updated (step 3, T2, T2b). Mutation mayRun=false fails all three T2b tests.",
+   "test_added": "tcb/test/stop.test.mjs: T2b request on a fenced row whose attempt was admitted but shows no session and no transcript (two subtests); T2 now uses a never-admitted attempt"
+  },
+  {
+   "finding_id": "U1-F6",
+   "what": "watch.mjs runs each intake step under spawnSync with a timeout of intake_step_timeout_ms (30 min when the parameter is missing) and SIGTERM, so only its own child is ended. A timeout counts as exit 70 with timeout:true and writes one not-run incident; the intake goes on. Removing the timeout fails the test, and so does dropping the timeout report. spec/watch.mjs.md updated.",
+   "test_added": "tcb/test/watch.test.mjs: T19 intake: a step that does not exit within intake_step_timeout_ms is ended, one incident, the next steps run"
+  },
+  {
+   "finding_id": "U1-F7",
+   "what": "Test only. A schema-valid READY of epoch 2 in wt/<task>-e1 lets the stall fence apply (exit 0, epoch 2, one fence line, no ready-wins). Mutation R2 now fails. spec/replace.mjs.md T5 updated.",
+   "test_added": "tcb/test/replace.test.mjs: T5 subtest 'a schema-valid READY of another epoch (2) in wt/<task>-e1 does not count: the fence applies'"
+  },
+  {
+   "finding_id": "U1-F8",
+   "what": "handover.mjs exports doRaise(ctx, root, flags, dry, hooks); hooks.beforeLock runs between the pre-checks and the lock. main runs only when the file is the entry script. A row moved to admitted in beforeLock gives exit 6 not-quiescent, coord unchanged, one incident. Mutation H4 (now line 328) fails. spec/handover.mjs.md T7b documents the seam.",
+   "test_added": "tcb/test/handover.test.mjs: T7b a row that reaches admitted between the pre-check and the lock is refused inside the lock: exit 6 not-quiescent, coord unchanged, one incident"
+  },
+  {
+   "finding_id": "U1-F9",
+   "what": "Test only. endturn with a live watcher.json of this ce exits 1 watcher-missing when watcher.lock is absent, and again when watcher.lock holds another live process. Mutation ST6 now fails. spec/status.mjs.md T11 updated.",
+   "test_added": "tcb/test/status.test.mjs: T11 endturn with a live watcher.json but watcher.lock absent, or naming another process, exits 1 watcher-missing"
+  },
+  {
+   "finding_id": "mutation-R4",
+   "what": "Not redundant with getObject's re-hash. getObject checks the bytes against the id; line 531 checks the commit record's own sha256 for that output (spec start step 5). New test: a record naming another sha256 for an intact object (outputs_sha recomputed) gives exit 3 object-mismatch, row stopped, no folder. Without line 531 it fails. spec/replace.mjs.md T15 updated.",
+   "test_added": "tcb/test/replace.test.mjs: T15 subtest 'a commit record whose sha256 for an intact object differs -> exit 3, row stays stopped, no folder'"
+  }
+ ],
+ "not_fixed": [
+  {
+   "finding_id": "mutation-S4",
+   "why": "Equivalent mutant. Inside the lock, recheck(row) refuses with 65 stale-epoch or wrong-step, and the next call, lib.updateRow with {epoch: E, steps: ['stop-requested']}, refuses the same row with the same exit and slugs (only the detail keys differ). In --dry-run the only possible difference is a race between two reads of the same file milliseconds apart in one process, and nothing can inject that. No seam was added to stop.mjs."
+  },
+  {
+   "finding_id": "note-main-guard",
+   "why": "An observation, not a finding; left unchanged. admit, replace, stop and handover run main only when path.resolve(fileURLToPath(import.meta.url)) equals path.resolve(process.argv[1]). Node gives the main module's import.meta.url as a realpath, but argv[1] is not resolved. So a script started through a junction or symlink would print nothing and exit 0. Comparing fs.realpathSync.native of both sides would close this; it should be one change across the unit."
+  }
+ ],
+ "tests": {
+  "command": "node tools/lane.mjs --label fix-U1-<file> --timeout-s 300 -- node --test --test-concurrency=1 tcb/test/<file>.test.mjs, one lane call per file (replace, admit, stop, watch, status, handover), cwd tcb-build. Mutations ran through review-tmp/fix-U1/mut2.sh, one lane call each, with the script restored and checked by cmp after each.",
+  "passed": 264,
+  "failed": 0,
+  "skipped": 16,
+  "output_tail": "replace 80: 78 pass, 2 skipped (88.6 s, rerun after the new R4 test). admit 38: 36 pass, 2 skipped (50.1 s). stop 39: 36 pass, 3 skipped (51.4 s). watch 69: 65 pass, 4 skipped (72.1 s). status 32: 30 pass, 2 skipped (145.4 s). handover 22: 19 pass, 3 skipped (46.6 s). Every skip is an app-only NA test. Every mutation fails its tests: A5, A7, W3, W8, no-fresh, mayRun=false, no-timeout, timeout-unreported, R2, H4, ST6, R4. On the two timeouts before the stop: fix-U1-full-admit-stop hung in stop T2b's second subtest, which spawns a sleeper and reads process lists through PowerShell Get-CimInstance. fix-U2, running at the same time (the lane allows 2), timed out 40 s earlier. Run alone now, admit takes 50 s, stop 51 s and T2b 7.4 s. Both timeouts fall in the minutes of the session stop, so the likely cause is a system-wide WMI/PowerShell stall, not a hanging test."
+ },
+ "lib_change_requests": [
+  "Not lib, but outside this unit: add the threshold intake_step_timeout_ms (unit ms, default 1800000, source guess, gate false) to tcb/thresholds.json (owned by U5c) and to the CONTRACT.md section 3.20 table. watch.mjs falls back to 1800000 when it is missing (th.get throws param-missing), so nothing breaks before then.",
+  "Not lib: after U1-F5, the stop of a fenced attempt that has a manifest but no visible session needs watcher ticks (run/watcher.json) before verify can confirm it. Any coordinator brief or runbook text that expects an immediate confirm for an admitted-but-not-started attempt should say that verify is needed."
+ ]
+}

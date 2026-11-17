@@ -740,3 +740,48 @@ test('X2 the session own StructuredOutput input and own structured_output attach
   assert.equal(j.result.candidates, 1, 'only the helper result is a candidate');
   assert.deepEqual(cardFiles(ctx), [`${idOf(helperCard)}.card.json`]);
 });
+
+// Mutation hv2 of review U2 (both link checks on staging/ and staging/harvested/ removed) survived: T11
+// only makes harvested/ itself a junction, which walkFiles also refuses. A junction at staging/ whose target
+// already holds a real harvested/ folder passes walkFiles (its top is no link), so only the realpath check
+// of step 5 keeps the card from being written outside the attempt.
+test('X3 staging/ a junction to an outside folder that holds a real harvested/: exit 3 untrusted-path, nothing written there, incident line', (t) => {
+  const ctx = setupH();
+  const card = cardN(1);
+  ctx.main();
+  ctx.helper('h1', (b) => { b.call({ text: 'done' }); b.structured(card); });
+  const outside = path.join(ctx.root, 'outside');
+  fs.mkdirSync(path.join(outside, 'harvested'), { recursive: true });
+  const staging = path.join(ctx.dir(), 'staging');
+  fs.rmSync(staging, { recursive: true, force: true });
+  if (!makeJunction(outside, staging)) return t.skip('cannot create a junction on this machine');
+  const j = go(ctx, 3);
+  assert.equal(j.code, 'tamper');
+  assertFirstReason(j, 'untrusted-path');
+  assert.deepEqual(listFiles(outside), [], 'nothing was written behind the junction');
+  const inc = ledgerKind(ctx.root, 'incident');
+  assert.equal(inc.length, 1, 'the tamper incident line');
+  assert.equal(inc[0].data.detail.code, 'untrusted-path');
+  verifyLedger(readLedger(ctx.root));
+});
+
+// Mutation hv4 of review U2 (the harvested-differs pre-check removed) survived: createExclusive refuses the
+// differing file too, but only when it reaches it. The pre-check refuses before anything is written, and a
+// --dry-run (which never calls createExclusive) reports the same tamper as a real run.
+test('X4 one card new and one whose file differs: exit 3 harvested-differs with nothing written; --dry-run exits 3 too', () => {
+  const ctx = setupH();
+  const [first, second] = [cardN(1), cardN(2)].sort((x, y) => (idOf(x) < idOf(y) ? -1 : 1));
+  ctx.main();
+  ctx.helper('h1', (b) => { b.call({ text: 'done' }); b.structured(first); b.structured(second); });
+  fs.mkdirSync(ctx.harvested(), { recursive: true });
+  const target = path.join(ctx.harvested(), `${idOf(second)}.card.json`);
+  const other = canon({ ...second, quote: 'another quote of five words' });
+  fs.writeFileSync(target, other);
+  const d = go(ctx, 3, ['--dry-run']);
+  assertFirstReason(d, 'harvested-differs');
+  assert.deepEqual(cardFiles(ctx), [`${idOf(second)}.card.json`]);
+  const j = go(ctx, 3);
+  assertFirstReason(j, 'harvested-differs');
+  assert.deepEqual(cardFiles(ctx), [`${idOf(second)}.card.json`], 'the new card is not written either');
+  assert.equal(fs.readFileSync(target, 'utf8'), other, 'the foreign file is left as it was');
+});

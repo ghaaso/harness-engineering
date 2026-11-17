@@ -814,3 +814,24 @@ test('X2 a promote line appended while fsck waits for the lock covers the status
     verifyLedger(readLedger(ctx.root));
   } finally { lock.release(); }
 });
+
+// U2-F7, the other half: phase 2 must judge the status files as they are under the lock, not as phase 1
+// read them. A status line with no covering promote line, appended while fsck waits (a promote that died
+// between its status lines and its ledger line), is status-unlogged even though the ledger head did not move.
+test('X2b a status line appended without its promote line while fsck waits for the lock: exit 3 status-unlogged', async (t) => {
+  if (!GIT_OK) return t.skip('git is not installed');
+  const ctx = baseline({ params: { lock_retries: 400 } });
+  const lock = holdLock(ctx.root);
+  try {
+    const pending = runAsync(['--root', ctx.root, '--ce', '1', '--now', NOW], ctx.root);
+    await new Promise((resolve) => setTimeout(resolve, 4000));
+    addStatus(ctx.root, ctx.A, 'witnessed', { seq: 2, witness_seq: 1 });
+    fs.rmSync(path.join(ctx.root, 'run', 'run.lock'), { force: true });
+    lock.release();
+    const r = await pending;
+    const j = shape(r, 'fsck', 3, null);
+    assertFail(j, 'status', 'status-unlogged', 'card_status:2');
+    assert.equal(lastFsck(ctx.root).data.result, 'fail');
+    verifyLedger(readLedger(ctx.root));
+  } finally { lock.release(); }
+});

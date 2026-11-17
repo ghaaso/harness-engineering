@@ -913,6 +913,7 @@ test('fixtures: the shipped cases of snap, witness, guard-hook and selftest pass
     fs.symlinkSync(TCB, jn, 'junction');
     const t0 = treeSha(TCB);
     const r = await runSt(R, 'run', U3.flatMap((s) => ['--only', s]), { timeoutMs: '60000', limitMs: 400000 });
+    assert.deepEqual(r.json?.reasons ?? null, [], `reasons: ${JSON.stringify(r.json?.reasons ?? r.stderr).slice(0, 2000)}`);
     assertLine(r, { exit: 0, mode: 'run' });
     const res = r.json.result;
     assert.equal(res.result, 'pass', `failed: ${JSON.stringify(res.failed)}; reasons: ${JSON.stringify(r.json.reasons).slice(0, 1500)}`);

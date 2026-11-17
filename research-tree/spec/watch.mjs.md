@@ -65,7 +65,10 @@ c. Per attempt k < e of any row, and per attempt fenced but not `stop: confirmed
    zombie_tokens > Z_frac·e_task → 25.
 d. freeMb < reserve_mb → 24 (R10: the coordinator parks the newest session).
 e. Non-host `fails` entries across rows with ticks_total − tick < W_cc_ticks, count ≥ 2 → 26 and,
-   unless already halted, one `halt` line {reason: "common-cause", fails}.
+   unless already halted, one `halt` line {reason: "common-cause", fails}. A cluster whose fails
+   (task, epoch, class, tick) are all named by an earlier `halt` line writes no new halt line, so an
+   owner resume takes effect while those fails are still inside W_cc_ticks; a fail no halt line has
+   named yet halts again (review U1-F4).
 f. Coordinator window (coord.session's main transcript `last_context`, parsed incrementally through
    `coord_file`): ≥ W_star_coord → 16 and one `drain` line per ce {window, w_star}; ≥ W_quality →
    15. A child's window ≥ `W_star_child` when that is a gate → 15 (b).
@@ -132,7 +135,11 @@ current epoch `harvest.mjs --task --epoch`, `commit.mjs intake --task --epoch`; 
 A step's exit: 0, 1, 6 or 10 → no incident (a definite outcome; the step's own ledger lines carry
 it, and tms's reopen is a `check` reason, g); 2 or 70 → one `incident` line {class: not-run, detail:
 {script, exit}}, intake continues; 64 or 3 ends intake with that code (a 3 has already written its
-tamper incident). Result `{steps: [{script, args, exit}]}`; exit 0.
+tamper incident). Each step runs with a `spawnSync` timeout of threshold `intake_step_timeout_ms`
+(missing from thresholds.json → 1800000, i.e. 30 min; review U1-F6): a step that does not exit by
+then is ended (only that child) and counts as exit 70 with `timeout: true` in its step entry and in
+its `incident` detail {script, exit: 70, timeout: true}; intake continues. Result `{steps: [{script,
+args, exit, timeout?}]}`; exit 0.
 
 ## Exit codes
 0 (`--once` quiet, alarm superseded, intake done), 10-17, 20-27, 30, 3 (`run-from-attempt`, tamper
@@ -161,7 +168,9 @@ All with `--once` or `--interval-ms 50` and `--no-intake` unless stated; fake tr
 - T8 soft (13) and hard (23) at ⌊0.8·e⌋ and ⌊0.9·e⌋; hard wins by precedence.
 - T9 `--free-mb` below reserve → exit 24.
 - T10 two non-host fails 5 ticks apart, W_cc_ticks 30 → exit 26 and one `halt` line; 40 ticks apart
-  → nothing; a host fail is not counted.
+  → nothing; a host fail is not counted; fails at ticks 10 and 15 with ticks_total 100 → nothing
+  (the window is measured against ticks_total); after a halt and an owner resume the same fails
+  write no second halt line, a new fail in the window does.
 - T11 coordinator window above W_star_coord (coord.session's fake transcript) → exit 16, one `drain`
   line for this ce; a second watcher of the same ce writes no second line.
 - T12 an edited middle ledger line → exit 27; an `incident {class: refusal, detail: {tamper:
@@ -171,7 +180,10 @@ All with `--once` or `--interval-ms 50` and `--no-intake` unless stated; fake tr
 - T14 onset keys: a condition acknowledged (`acked.json` acked_seq ≥ its line's seq) and still
   present → no new line and no exit; the condition absent for one tick and then present again → a
   new key (new onset_tick), one new `event` line carrying it, and an exit.
-- T15 coord ce raised before the tick → exit 64, no ledger line, no `watcher.json` change.
+- T15 coord ce raised before the tick → exit 64, no ledger line, no `watcher.json` change. A
+  default-mode watcher (`--interval-ms 50 --no-intake`, the test's own child, killed by the test if
+  it does not end) whose coord ce is raised after its first tick → exit 64, `watcher.lock` released,
+  at most one `watcher.json` write after the raise (review U1-F3).
 - T16 a second watcher while the first holds `watcher.lock` → 75; a lock whose holder is dead is
   broken and the watcher runs.
 - T17 `watcher.json` unparseable → 67; `tasks.json` unparseable → 67.
@@ -180,7 +192,9 @@ All with `--once` or `--interval-ms 50` and `--no-intake` unless stated; fake tr
   spawns none.
 - T19 `--intake` on a root whose step scripts are stubs in the test's own `tcb/scripts/` that exit
   0, 2, 0 → exit 0, one `incident` line naming the exit-2 step; stubs exiting 1, 6 and 10 → no
-  incident; a stub exiting 70 → one incident; a stub exiting 64 ends it with 64.
+  incident; a stub exiting 70 → one incident; a stub exiting 64 ends it with 64; a stub that does
+  not exit within `intake_step_timeout_ms` (1500 in the test) → ended, step exit 70 `timeout: true`,
+  one incident, the later steps run.
 - T20 `--alarm --sleep-ms 100` → `alarm.json` written, exit 30; a coord ce raised during the sleep →
   64; a second alarm (`--sleep-ms 2000`) started once `alarm.json` names the first: the first is not
   signalled, exits 0 `superseded` when it wakes, and `alarm.json` names the second.

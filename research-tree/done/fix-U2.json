@@ -1,0 +1,81 @@
+{
+ "fixed": [
+  {
+   "finding_id": "U2-F1",
+   "what": "promote.mjs planRevert now reads every line of a card, not only the last one. The card's own reliance comes from its latest checker-confirmed card-item line, and only while the card is confirmed now. A sentence clearing is any confirmed sentence-check line that names the class. Each counts only when no later unqualified-revert names the class. One revert line is written per card, with status witnessed only when the card's own confirmation relies on the class, else the current status. The earlier agent made the code change and I checked it. I updated spec/promote.mjs.md step 2 and added T12c/T12d to it. CONTRACT 3.15 still says witnessed; see lib_change_requests.",
+   "test_added": "promote.test.mjs T12c and T12d. Both fail on the pre-fix promote.mjs. T12d also catches the mutation where every revert line is witnessed."
+  },
+  {
+   "finding_id": "U2-F2",
+   "what": "commit.mjs urlEvidence counts only these as R34 evidence: the WebFetch access.urls; the result text of WebFetch, WebSearch and Agent calls; and the structured results of helper transcripts. Never Write/Edit/Bash inputs, Read results, a WebFetch prompt, a search query, or the session's own StructuredOutput. harvest.mjs no longer takes the session's own structured output as a candidate. The earlier agent made both changes. I added a fallback: when a tool use carries no access record, urlEvidence takes the URLs from lib.toolAccess. This changes nothing with the current parser. Specs updated: commit step 5 and harvest candidates.",
+   "test_added": "commit.test.mjs X5. It fails pre-fix, and five single-route mutations are each caught by X5. harvest.test.mjs X2 fails pre-fix."
+  },
+  {
+   "finding_id": "U2-F3",
+   "what": "commit.mjs keepParents (fixpoint): a pack or review parent must be stored or accepted in the same intake. A parent rejected in that run gives fk-parent. A parent left unstored for want of a transcript defers the child. The earlier agent made the change. I updated spec/commit.mjs.md step 6, which used to say 'a stored pack'.",
+   "test_added": "commit.test.mjs X6. It fails pre-fix, and the mutation that drops only the review-side check is also caught."
+  },
+  {
+   "finding_id": "U2-F4",
+   "what": "commit.mjs assertViewDir: the attempt folder and view/ must be real folders inside wt/. Otherwise intake exits 3 untrusted-path and writes the incident line. The check runs before anything is stored, and again after view/ is created. The earlier agent made the change. I updated spec/commit.mjs.md step 1.",
+   "test_added": "commit.test.mjs X7. It fails pre-fix, and the mutation that removes the check is caught."
+  },
+  {
+   "finding_id": "U2-F5",
+   "what": "number-uncited now requires a printed sign to match the value's sign. An unsigned number still matches either sign. The earlier agent made the change. I updated the spec, step 7.",
+   "test_added": "commit.test.mjs X8. It fails pre-fix."
+  },
+  {
+   "finding_id": "U2-F6",
+   "what": "tms.mjs now marks support-unclear when the card's last line has check.verdict unclear OR reason unclear. The earlier agent made the change. I updated the JUDGMENT rule in spec/tms.mjs.md.",
+   "test_added": "tms.test.mjs X2. It fails pre-fix, giving IN where JUDGMENT is expected."
+  },
+  {
+   "finding_id": "U2-F7",
+   "what": "fsck.mjs phase 2 now reads both status files again under the lock. It reruns the store checks and the status-coverage check when the ledger head moved or a status file changed. The earlier agent made the change. Its X2 test did not pin the re-read itself, so I added X2b and updated spec/fsck.mjs.md step 3.",
+   "test_added": "fsck.test.mjs X2 fails pre-fix. My new X2b covers a status line with no promote line, appended while fsck waits for the lock; fsck must exit 3 status-unlogged. X2b fails pre-fix with exit 0. It is the only test that catches the mutation where phase 2 reuses phase 1's status files."
+  },
+  {
+   "finding_id": "U2-F8",
+   "what": "tms.mjs takes an input fingerprint before computing and again under the lock. If the inputs moved, it computes again under the lock. The earlier agent made the change. I updated spec/tms.mjs.md step 4.",
+   "test_added": "tms.test.mjs X5. It fails pre-fix, and the mutation that removes the recompute is caught. The test relies on timing: on a very slow machine it can pass without exercising the race, but it cannot fail falsely."
+  },
+  {
+   "finding_id": "U2-F9",
+   "what": "No code change was needed; the test was missing. The earlier agent wrote it, and I listed it in spec/tms.mjs.md.",
+   "test_added": "tms.test.mjs X3. It catches mutation tm7-qsha."
+  },
+  {
+   "finding_id": "U2-F10",
+   "what": "No code change was needed; the tests were missing. The earlier agent wrote them, and I listed them in the spec.",
+   "test_added": "tms.test.mjs X4. Mutation tm4 (< changed to <=) and mutation tm6 (covers replaced by true) are each caught by their own assertion."
+  },
+  {
+   "finding_id": "MUT-hv2",
+   "what": "The reviewer called this survivor a redundant guard. It is not. If staging/ is a junction to an outside folder that already holds a real harvested/, walkFiles sees no link, and the removed check is the only guard. Under this mutation harvest exits 0 and writes the card outside the attempt. The check itself is right, so there is no code change. I updated the spec.",
+   "test_added": "harvest.test.mjs X3. It passes on the current code and fails under hv2."
+  },
+  {
+   "finding_id": "MUT-hv4",
+   "what": "Without the differs pre-check, a new card that sorts before the differing one gets written, and --dry-run exits 0 instead of 3. No code change. I updated spec step 6 and added X4 to the spec.",
+   "test_added": "harvest.test.mjs X4. It passes on the current code and fails under hv4."
+  }
+ ],
+ "not_fixed": [
+  {
+   "finding_id": "U2-F2-residual",
+   "why": "By the spec, a harvested card (a helper's structured result) is stored with origin harvested and never URL-checked. A helper's structured result also counts as R34 evidence for a session card. So a session can still get a card with an unfetched URL through by having a helper return it. Closing this is a spec decision: URL-check harvested cards against fetch/search evidence in the helper's own transcript. That also needs the full tool-result text from the library (see lib_change_requests). The witness (R25) stays the backstop."
+  }
+ ],
+ "tests": {
+  "command": "node tools/lane.mjs --label fix-U2 --timeout-s 300 -- node --test --test-concurrency=1 tcb/test/commit.test.mjs tcb/test/harvest.test.mjs tcb/test/fsck.test.mjs tcb/test/tms.test.mjs tcb/test/promote.test.mjs tcb/test/certify.test.mjs",
+  "passed": 131,
+  "failed": 0,
+  "skipped": 5,
+  "output_tail": "tests 136, pass 131, fail 0, cancelled 0, skipped 5 (needs-app), duration_ms 128012. Timeouts: the earlier 300 s timeouts were not a hanging test. lane/recorder.log shows CPU near 1% from 05:13 with 14 node processes idle and 18.5 GB free. The fix-U1 and fix-U2 commands stalled at the same moment, and the lane slots stayed held until about 05:27. The lane uses stdio inherit, so a session that stops reading its pipe blocks the test runner. The killed run had reached the tms tests: six tms run roots were made at 05:12:50 and never removed, and I removed them. Today the same command ended in 128 s. One slip: I ran a single empty 'node -' outside the lane; it exited at once. Full return: done/fix-U2.json"
+ },
+ "lib_change_requests": [
+  "lib.parseTranscript cuts tool-result text at 2,000 characters. R34 evidence for a URL past that cut in a WebSearch or WebFetch result is lost, so a card whose URL really was found gets rejected url-not-in-transcript. Request: add r.urls to each tool result, holding the http(s) URLs found in the full text (bounded count), so commit can check against them.",
+  "Not the library: CONTRACT.md 3.15, for its owner. It says every revert line has status witnessed. promote now writes witnessed only when the card's own card-item confirmation relies on the class; a line that only reopens a sentence clearing keeps the current status (review U2-F1). Suggest amending 3.15 to match; spec/promote.mjs.md step 2 already says this."
+ ]
+}

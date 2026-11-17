@@ -28,8 +28,11 @@ card, `<c_id>` = `objectId('c', card)`. Nothing else: no ledger kind exists for 
 
 ## Candidates
 - Helper transcripts: every `structured` entry's `data` of every helper of S.
-- The session's own transcript: every `structured` entry, and every tool result whose `toolUseId`
-  belongs to an `Agent`/`Task` tool use and whose whole `text` parses as JSON.
+- The session's own transcript: every `structured` entry tied to an `Agent`/`Task` tool use (its
+  `toolUseId`), and every tool result whose `toolUseId` belongs to an `Agent`/`Task` tool use and whose
+  whole `text` parses as JSON. The session's own `StructuredOutput` input or own `structured_output`
+  attachment is no candidate: it is the session's own claim, and commit does not check the URL of a
+  harvested card (R34, review U2-F2).
 - A candidate is a bare card, or a [reader-result] `{schema_version: 1, cards: card[], skipped: [...]}`
   (CONTRACT §3.22), whose `cards` are taken; nothing else is read.
 - Each card is checked with `checkFormat(root, 'card', value)` exactly as it is: no field is added,
@@ -50,7 +53,9 @@ card, `<c_id>` = `objectId('c', card)`. Nothing else: no ledger kind exists for 
    any entry in `links` → the same exit 3. A file there whose name is not `<c_id>.card.json` of its own
    canonical content is reported in `result.foreign` (audit's concern), never removed.
 6. `createExclusive` each card: `created` or `identical` (counted `already`); `exists-different` → exit 3
-   `harvested-differs` (the name is a content hash, so different bytes mean a foreign write).
+   `harvested-differs` (the name is a content hash, so different bytes mean a foreign write). Every
+   existing file is compared first, so a differing one exits 3 before any card is written, also
+   under `--dry-run`.
 7. Release; print the result.
 
 ## Exit codes
@@ -91,6 +96,13 @@ folder by exclusive create.
 - T12 A file already at `harvested/<c_id>.card.json` with other bytes → exit 3 `harvested-differs`.
 - T13 `--dry-run`: the result lists what would be written, `dry_run: true`, no folder or file created.
 - T14 stdout is one JSON line per §1.3 on every exit above; stderr only for people.
+- X2 (U2-F2) The session's own `StructuredOutput` input and own `structured_output` attachment holding
+  cards → no candidates, nothing written for them; a helper's result in the same run is still harvested.
+- X3 `staging/` a junction to an outside folder that already holds a real `harvested/` (walkFiles sees
+  no link there) → exit 3 `untrusted-path`, nothing written behind it, one `incident` line.
+- X4 one new card and one whose `harvested/<c_id>.card.json` holds other bytes → exit 3
+  `harvested-differs` before anything is written (the new card is not written either); `--dry-run`
+  exits 3 the same way.
 
 ## Needs the app
 - §7 item 7: that a real reader's schema-checked result appears as `StructuredOutput` input or a

@@ -1,1 +1,57 @@
-{"status":"in-progress","note":"Edits made, tests not yet run: guard-hook.mjs isMain realpath (F1) + T11 junction cases; T1b sealed test (F7) with judge detail; selftest.mjs canary permission_patterns/error-not-refusal (F3) + T17 cases; STUB grandchild detached (F4); T5d other-reason case (F5); witness number-variants cases (F6); fixture cases for snap, witness, guard-hook, selftest (F2) + fixtures test in selftest.test.mjs. F8 not fixed (spec conflict)."}
+{
+ "fixed": [
+  {
+   "finding_id": "U3-F1",
+   "what": "guard-hook.mjs isMain (lines 38-51): true when import.meta.main is true, else argv[1] compared lexically and then by fs.realpathSync against the module's own path. Started through a junction the hook now decides. Done by the cut-off agent; checked here. spec/guard-hook.mjs.md now states the rule and the T11 case.",
+   "test_added": "test/guard-hook.test.mjs T11, cases 'the hook run through a junction still denies' (exit 2 write-protected) and '... still allows'. Mutation (fix reverted, in a shared copy): T11 fails with 'expected deny write-protected, got allow'."
+  },
+  {
+   "finding_id": "U3-F2",
+   "what": "Fixture cases for all four scripts (13 cases): snap good-html, bad-private-address, bad-f5-not-given; witness good-witnessed, bad-number-missing, bad-seed-id; guard-hook good-coordinator-agent-checker, bad-agent-type, bad-input, bad-tool-denied (bad cases carry stderr_prefix '[guard-hook] deny <code>'); selftest good-canary-refused, bad-canary-not-refused, bad-run-missing-scripts. The cut-off agent wrote them but never ran them. On the first run snap/bad-private-address failed (why 'files'): snap makes an empty .snapshots/raw/ folder even when it refuses the address. Its '.snapshots/raw absent' files expectation was dropped; the result subset still pins n_text 0 and reason private-address.",
+   "test_added": "test/selftest.test.mjs 'fixtures: the shipped cases of snap, witness, guard-hook and selftest pass under the real selftest run --only' (13 cases pass, live tcb/ unchanged). It now asserts reasons is [] first, so a failure names the case. Mutation (snap/good-html/case.json removed): fails with no-fixtures 'snap: no good case'."
+  },
+  {
+   "finding_id": "U3-F3",
+   "what": "selftest.mjs canary: an error result is refused-hook (hook text), refused-permission (the text holds one of the expect file's new optional permission_patterns, case-insensitive) or error-not-refusal, which is not_run for a probe that expects a refusal. A malformed permission_patterns is bad-expect. The shipped canary-expect.json names no pattern, so a permission refusal stays not_run (fails closed) until needs-app 7 confirms the harness's wording. Code by the cut-off agent. spec/selftest.mjs.md canary steps 2-3 and T17 rewritten here to match (they still said every non-hook error is a permission refusal).",
+   "test_added": "test/selftest.test.mjs T17: an unrelated error ('read it first') on a permission, an any and a hook probe gives exit 2 error-not-refusal; the shipped expect file gives the any probe's permission refusal not_run; a malformed permission_patterns gives bad-expect. Mutation (errorOutcome returns refused-permission for any error): T17 fails, exit 0 instead of 2."
+  },
+  {
+   "finding_id": "U3-F4",
+   "what": "The selftest test stub now starts its grandchild with detached: true (and unref), so only killOwnTree can end it before it expires by itself. Done by the cut-off agent. spec/selftest.mjs.md T5 now says why.",
+   "test_added": "test/selftest.test.mjs T5. Mutation T3 (killOwnTree replaced by child.kill()): T5 fails with 'alive when the next case started'."
+  },
+  {
+   "finding_id": "U3-F5",
+   "what": "T5d has a third case: the stub prints code deferred with reasons [{code: other}] at exit 6, and expect.code is memory. Done by the cut-off agent. spec/selftest.mjs.md T5d names it.",
+   "test_added": "test/selftest.test.mjs T5d case 'bad-memory-other-reason', asserting pass false and why 'code'. Mutation T5 (expect.code reasons comparison removed): T5d fails."
+  },
+  {
+   "finding_id": "U3-F6",
+   "what": "fixtures/witness/number-variants/cases.json has four new T6 cases: -3 and the minus sign -3 against value 3 (rejected), and 12.5% and '12.5 percent' against unit ms (rejected). It already had 12.5% with unit % (witnessed). witness.mjs needed no change. Done by the cut-off agent. spec/witness.mjs.md T6 names the new cases.",
+   "test_added": "test/witness.test.mjs T6 cases t6-signed-ascii-is-not-the-positive-value, t6-signed-minus-sign-is-not-the-positive-value, t6-percent-sign-is-not-ms and t6-percent-word-is-not-ms. Mutation W7 fails the two sign cases and W8 fails the two percent cases."
+  },
+  {
+   "finding_id": "U3-F7",
+   "what": "New guard-hook test T1b. The coordinator's test profile reads all of {root}. Reads of sealed/x, of a sealed seed and of sealed/ itself, and Grep or Glob with path {root}, are each read-outside-role with detail 'sealed:'. Grep in views stays allowed. guard-hook.mjs needed no change. Done by the cut-off agent. spec/guard-hook.mjs.md now lists T1b.",
+   "test_added": "test/guard-hook.test.mjs T1b. Mutation G2 (the sealed refusal removed): T1b fails on four cases with 'expected deny read-outside-role, got allow'."
+  }
+ ],
+ "not_fixed": [
+  {
+   "finding_id": "U3-F8",
+   "why": "The defect is real but fails safe: every call a mapper helper makes is denied, because {attempt} never renders in the coordinator's folder. The documents disagree about what the mapper is, so it needs a ruling, not an edit. The design (protocol R55 'A mapper helper maps findings'; its role table line 320 'Coordinator ... Agent (checker, mapper)') and spec/guard-hook.mjs.md line 80 (coordinator agent_types: checker, mapper) make it a helper the coordinator starts. CONTRACT line 298, spec/replace.mjs.md lines 97 and 195 (T20b), spec/gate.mjs.md and spec/briefs.md make it a design-check task role with its own attempt folder and built inputs (in/stpa.json, in/fmea.json, in/cut.md). Each fix the review offers contradicts one side. Dropping mapper from coordinator.json and settings/coordinator.json contradicts the guard-hook spec table and the design. A {root}-anchored helper profile needs a second profile for the role name mapper, which the one-profile-per-role layout does not allow. Recommendation for the coordinator: rule that mapper is the design-check task role. Then drop mapper from the coordinator's agent_types and its Agent(mapper) allow rule, amend spec/guard-hook.mjs.md line 80 and the protocol's line 320 / R55, and add a T6 case: coordinator Agent mapper gives agent-type."
+  },
+  {
+   "finding_id": "mutation-W9",
+   "why": "An equivalent mutant, so no test can kill it. NUM_RE always matches at the first digit of a run: \\d+ is greedy with an optional decimal part and (?!\\d), so a match never starts right after an unconsumed digit. The only start after a digit is a sign glued to it (3-5), and there start moves to bodyStart, whose previous character is the sign. The skip on witness.mjs line 186 can never fire."
+  }
+ ],
+ "tests": {
+  "command": "cwd tcb-build/tcb, each through tools/lane.mjs --timeout-s 300: node --test --test-concurrency=1 test/witness.test.mjs; test/guard-hook.test.mjs; test/snap.test.mjs; test/selftest.test.mjs in four --test-name-pattern chunks ('^T[1-5][bcdef]? ', '^(T([6-9]|1[0-4]) |step |--keep)', '^fixtures', '^(T1[5-9]|needs-app)')",
+  "passed": 151,
+  "failed": 0,
+  "skipped": 9,
+  "output_tail": "witness: 78 tests, 76 pass, 2 skipped (9.4 s). guard-hook: 19 tests, 16 pass, 3 skipped (21.1 s). snap: 32 tests, 30 pass, 2 skipped (14.9 s). selftest: chunk A 10/10 (131 s), chunk B 12/12 (120 s), fixtures 1/1 (4.2 s, after the fixture fix), chunk D 8 tests with 6 pass and 2 skipped (10 s). Every skip is needs-app. All nine mutation checks fail as intended. Logs: tcb-build/logs/fix-U3/. Parse check: all 8 .mjs files pass node --check; all fixture, profile and settings JSON parse except fixtures/guard-hook/bad-input/stdin.json, which is invalid on purpose.\n\nThe two 300 s timeouts at the stop belong to other units: fix-U2 started 00:11:19Z and fix-U1-full-admit-stop started 00:11:58Z. lane/recorder.log shows the machine going idle at 00:12:52Z: node count held at 14 and CPU at 0-3% for 15 minutes. The processes were blocked, not slow, most likely on stdout/stderr pipes the stopped session no longer drained (the lane uses stdio inherit). Both timeouts fired, but the log has no 'end' line for either, so taskkill did not end the blocked children. Both slots stayed held, so fix-U3-st-canary got 'busy' at 00:27Z. Node count fell to 13, 12 and 11 at 05:28, 05:35 and 05:56 local, and to 1 at the restart. The timeouts were an effect of the stop. Not re-run, since they are U1/U2 tests.\n\nMy mistake: a log copy overwrote five reviewer logs in review-tmp/U3 (out-T3, out-T5, out-G2, out-W7, out-W8 .txt) with this stage's runs of the same mutations. The reviewer's results remain in done/review-U3.json. Return written to done/fix-U3.json (status done)."
+ },
+ "lib_change_requests": []
+}

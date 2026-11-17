@@ -23,7 +23,10 @@ stderr line `[guard-hook] deny <code>: <detail>`. **No other exit code ever**: a
 non-blocking error that lets the call through, so a usage error is a deny (not 66), the
 run-from-attempt check is a deny (not 3), and uncaught exceptions, rejections and an internal
 deadline (threshold `hook_deadline_ms`, 5000, guess) all exit 2 `internal`. It does not use
-`runMain`'s stdout line; it reads no clock to decide anything.
+`runMain`'s stdout line; it reads no clock to decide anything. Whether it runs as the entry is
+decided by `import.meta.main`, or by comparing the realpath of `process.argv[1]` with the module's
+own path (Node gives `import.meta.url` as the realpath): started through a junction or a symlink it
+still decides, never exits 0 without deciding.
 
 ## Reads (never writes)
 `tcb/profiles/<role>.json`, `tcb/thresholds.json`; task roles: `run/tasks.json` (`lib.readTasks`, no
@@ -111,6 +114,9 @@ inputs), R25 (witnessed fetches), §8.7, §8.20; problems G2, G10 (by the canary
 the exit code is 0 or 2, stdout is empty, and on 2 stderr starts `[guard-hook] deny <code>`)
 - T1 child Read of `{attempt}/in/brief.md` → 0; of `{root}/store/objects/c_x.json` → 2
   `read-outside-role`; of `{root}/sealed/seeds/b1-1.json` as coordinator → 2.
+- T1b With a test profile whose `read_prefixes` is `["{root}/"]`, a Read of `{root}/sealed/x` and a
+  Grep or Glob with path `{root}` (a folder that holds `sealed/`) are each 2 `read-outside-role`
+  with detail `sealed:` (step 7's own refusal, not the prefixes').
 - T2 child Write to `{attempt}/staging/card1.card.json` → 0; to `{attempt}/view/todo.json` → 2
   `write-outside-role`; to `{attempt}/staging/harvested/x` → 2; to `{attempt}/.claude/settings.json`,
   `{attempt}/staging/.CLAUDE/x`, `{attempt}/staging/.claude./x`, `{attempt}/staging/Claude.MD` and
@@ -140,7 +146,8 @@ the exit code is 0 or 2, stdout is empty, and on 2 stderr starts `[guard-hook] d
   with equal epoch → 2; `tasks.json` corrupt or missing → 2 `table-unreadable`.
 - T11 Fail-safe: no `--role`, unknown role, missing profile, a profile with an extra field, stdin not
   JSON, stdin empty, `hook_event_name: PostToolUse` → each 2; a hook copy run from `{root}/wt/x/`
-  → 2 `run-from-attempt`.
+  → 2 `run-from-attempt`; the hook started through a junction to `tcb/` still decides (a protected
+  Write → 2 `write-protected`, an allowed Read → 0).
 - T12 The module exports `decide(input, args, io)` (no side effect on import; `io` = its file
   readers): an `io` that throws a plain `Error` gives deny `internal`; as a process, an unparseable
   `thresholds.json` → 2, never 1 or 70; stdin never closed with `hook_deadline_ms` 200 → 2 promptly.
