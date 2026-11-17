@@ -1373,18 +1373,32 @@ failing property; `SUMMARY.md`; `DIGEST.md`) and `research-tree/model/results-la
 
 **12. The owner's ruling on testing (2026-11-17, about 17:50).**
 
-Recorded from the coordinating session's notes (`feedback-no-useless-testing` and the hand-over note of the
-build); its message with the ruling did not reach the session that writes this. The owner: "we also want
-to avoid useless extensive testing that wastes a shit ton of our time". Four cuts were put to him, and he
-answered "Yes, cut them":
+This is the owner's ruling, not a finding of the build. The coordinating session passed it on. The owner:
+"we also want to avoid useless extensive testing that wastes a shit ton of our time". The coordinating
+session then listed four cuts for the tree work, and he answered: "Yes, cut them". The four cuts, as he
+approved them:
 
-1. The corrected design is model-checked only at the sizes where its fixes act, not on the whole matrix.
-   R57's full run no longer means the 77 configurations of `model/RUN-FULL.md`. The run of groups 1 to 5
-   (point 11) stays; groups 6 to 11 are not planned.
-2. One attack round per fix; another only for a finding that would break it.
-3. Before the pilot, only three checks with the real app: the guard hook fires for helpers; a stop ends a
-   session with its helpers; a background command's exit wakes the coordinator. The other tests of
-   point 10 run only if the pilot shows a need.
-4. The full test suite runs once, at the end of a change.
+1. Model checking of the corrected design: only the sizes where the fixes act (hours), not the whole
+   matrix (weeks).
+2. Attack rounds on the fixes: one round per fix; another only for a finding that would break it.
+3. App checks before the pilot: only the three that could stop the pilot (the guard hook firing for
+   helpers, a stop ending a session with its helpers, a background command's exit waking the
+   coordinator); the rest only if the pilot shows a need.
+4. Full test-suite runs: once at the end of a change, not at every stage.
+
+The rule behind them, in the coordinating session's words: a test runs only if its result can change what
+we do next.
+
+What it changes:
+
+- **R57.** Its "full run" now means the sizes where the fixes act, not the 77 configurations of
+  `model/RUN-FULL.md`. The run of groups 1 to 5 (point 11) stays as it is; groups 6 to 11 are not run. A
+  cut-off part is rerun at a larger size only if it hides a property of the design with the fixes. The
+  nine cut-off parts of point 11 belong to A-FENCE-CE, a variant with a safeguard taken out, so none is
+  rerun.
+- **Before the pilot** (section 10, and point 10 of this section). The checks that need the real app
+  shrink to the three named in cut 3. Every other row of point 10 is marked "only if the pilot shows a
+  need". The ruling is about tests: it does not change the scripts and files that section 10 lists.
+- **Reviews and suites.** One attack round per fix, and the full suite once at the end of a change.
 
 The six questions of point 9 are not touched by this ruling and are still open.
