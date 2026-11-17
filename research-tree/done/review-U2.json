@@ -1,153 +1,274 @@
 {
-  "unit": "U2",
-  "verdict": "Not ready to trust. The 6 test files pass (116 pass, 0 fail, 5 needs-app skips), and 26 of 30 mutations of the core mechanisms were caught. Two of the 4 survivors were redundant guards; the other two left tms mechanisms untested. Five probes against the real scripts confirmed 4 defects, 2 of them high: (1) promote revert reads only a card's last status line, so an unqualified class's confirmations survive and an unrelated class reverts real ones; (2) commit's R34 URL check always passes, because the URL is in the Write tool use that created the card. Medium findings: commit accepts a pack whose parent is a rejected same-run pack, then fsck exits 3; commit writes view/*.json through a junction; number-uncited ignores sign; promote's outside_conditions card verdict is invisible to tms; fsck reads the status writers without the lock (a spurious tamper exit 3 is possible), and tms computes without the lock; tms tests miss questions-changed, the conditions cover, and the strict sesoi bar.",
-  "tests": {
-    "command": "node tools/lane.mjs --label review-U2 --timeout-s 300 -- node --test --test-concurrency=1 tcb/test/commit.test.mjs tcb/test/harvest.test.mjs tcb/test/fsck.test.mjs tcb/test/tms.test.mjs tcb/test/promote.test.mjs tcb/test/certify.test.mjs",
-    "passed": 116,
-    "failed": 0,
-    "skipped": 5,
-    "output_tail": "tests 121, suites 0, pass 116, fail 0, cancelled 0, skipped 5 (needs-app), duration_ms 104772"
+ "verdict": "Not ready to trust. The 6 test files pass (116 pass, 0 fail, 5 needs-app skips), and 26 of 30 mutations of the core mechanisms were caught. Two of the 4 survivors were redundant guards; the other two left tms mechanisms untested. Probes against the real scripts confirmed 4 defects, 2 of them high: (1) promote revert reads only a card's last status line, so an unqualified class's confirmations survive and an unrelated class reverts real ones; (2) commit's R34 URL check always passes, because the URL is in the Write tool use that created the card. Medium findings: commit accepts a pack whose parent is a rejected same-run pack, then fsck exits 3; commit writes view/*.json through a junction; number-uncited ignores sign; promote's outside_conditions card verdict is invisible to tms; fsck reads the status writers without the lock (a spurious tamper exit 3 is possible), and tms computes without the lock; tms tests miss questions-changed, the conditions cover, and the strict sesoi bar. Full return: C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/done/review-U2.json",
+ "tests": {
+  "command": "node tools/lane.mjs --label review-U2 --timeout-s 300 -- node --test --test-concurrency=1 tcb/test/commit.test.mjs tcb/test/harvest.test.mjs tcb/test/fsck.test.mjs tcb/test/tms.test.mjs tcb/test/promote.test.mjs tcb/test/certify.test.mjs",
+  "passed": 116,
+  "failed": 0,
+  "skipped": 5,
+  "output_tail": "tests 121, suites 0, pass 116, fail 0, cancelled 0, skipped 5 (needs-app), duration_ms 104772"
+ },
+ "findings": [
+  {
+   "id": "U2-F1",
+   "file": "tcb/promote.mjs",
+   "lines": "221-243 (230), with 199-212",
+   "severity": "high",
+   "kind": "spec-behaviour-missing",
+   "claim": "revert --class looks only at each card's LAST status line, but promote itself writes status-keeping lines after a confirmation: card-item unclear/outside_conditions lines, sentence-unqualified lines, and sentence-check lines with a non-confirmed verdict, none with classes; and sentence-check confirmed lines with classes J1-J4 carry the card's current status. So revert J2 leaves a J1/J2/J4 confirmation standing when a later status-keeping line is the last one; revert J3 knocks down a card confirmation that relied only on J1/J2/J4; and revert J3 writes no line for a witnessed card whose sentence check (classes J1-J4) cleared an R18 flag, so lib.flagCleared still counts the clearing. CONTRACT 3.15 says a revert line is written for every confirmation whose classes include Jk.",
+   "evidence": "Probe review-tmp/U2/tcb/test/promote-probe.test.mjs against the real script: A confirmed {J1,J2,J4}, then an unclear card-verdict line (status kept, no classes); revert --class J2 adds 0 lines and A stays confirmed. Second probe: A confirmed {J1,J2,J4} then sentence-check {J1-J4}; B witnessed then sentence-check {J1-J4}. revert J3 writes A:witnessed:unqualified-revert and nothing for B. Spec T12 builds only last-line confirmations.",
+   "fix": "In planRevert, per card: the card's reliance = classes of its latest checker-confirmed line (if the card is still confirmed); a sentence clearing = any sentence-check confirmed line whose classes include Jk with no later unqualified-revert naming Jk. Write one unqualified-revert line {classes:[Jk]} when either holds. Status: witnessed if the reliance includes Jk, else the current status. Add T12 cases."
   },
-  "findings": [
-    {
-      "id": "U2-F1",
-      "file": "tcb/promote.mjs",
-      "lines": "221-243 (230), with 199-212",
-      "severity": "high",
-      "kind": "spec-behaviour-missing",
-      "claim": "revert --class looks only at each card's LAST status line, but promote itself writes status-keeping lines after a confirmation: card-item unclear/outside_conditions lines, sentence-unqualified lines, and sentence-check lines with a non-confirmed verdict, none with classes; and sentence-check confirmed lines with classes J1-J4 carry the card's current status. So (a) revert J2 leaves a J1/J2/J4 checker confirmation standing when a later status-keeping line is the last one; (b) revert J3 knocks down a card confirmation that relied only on J1/J2/J4 when the last line is a confirmed sentence check; (c) revert J3 writes no line for a witnessed card whose sentence check (classes J1-J4) cleared an R18 flag, so lib.flagCleared still counts the clearing. CONTRACT 3.15 says a revert line is written 'for every confirmation whose classes include Jk'.",
-      "evidence": "Probe review-tmp/U2/tcb/test/promote-probe.test.mjs (output probe-promote.out) against the real script: card A witnessed, then confirmed {classes J1,J2,J4}, then a line written as promote writes an unclear card verdict (status confirmed, reason unclear, no classes); revert --class J2 adds 0 lines and A stays confirmed ('PROBE-J2 added=0 A_last=confirmed'). Second probe: A confirmed {J1,J2,J4}, then a sentence-check confirmed line {J1-J4}; B witnessed, then a sentence-check confirmed line {J1-J4}. revert --class J3 gives 'added=[\"A:witnessed:unqualified-revert\"] A_last=witnessed' and no line for B. Spec T12 builds only last-line confirmations, so no test sees this.",
-      "fix": "In planRevert, per card: the card's reliance = classes of its latest line with reason checker-confirmed (if the card is still confirmed); a sentence clearing is any sentence-check confirmed line whose classes include Jk with no later unqualified-revert naming Jk. Write one unqualified-revert line {classes:[Jk]} when either holds. Status: witnessed if the card's reliance includes Jk, else the current status. Add T12 cases for both orders."
-    },
-    {
-      "id": "U2-F2",
-      "file": "tcb/commit.mjs",
-      "lines": "195-203, 317-321 (also tcb/harvest.mjs 137-139)",
-      "severity": "high",
-      "kind": "check-cannot-fail",
-      "claim": "The R34 check ('reject a card whose URL is in no transcript') searches the inputs of EVERY tool use, including Write/Edit/Bash, by substring. A session that writes a card into staging with the Write tool puts the card's URL into that tool use's input, so every session-written card passes, fabricated URLs included. A second route: harvest takes the session's own StructuredOutput inputs as candidates, and commit never URL-checks origin 'harvested'. So a card the session typed itself gets the same pass.",
-      "evidence": "Probe review-tmp/U2/tcb/test/commit-probe.test.mjs (probe-commit.out): the transcripts fetch only A_URL; card b (B_URL) is staged, and a helper transcript holds just a Write tool use of staging/cards/b.card.json with b's JSON as content. intake stores b: 'PROBE-URL ... B_stored=true'. The spec's T6 transcripts have no Write tool use, which is why the test passes.",
-      "fix": "Build the URL corpus only from lib.toolAccess kinds fetch/search/read (access.urls, query) and from the tool results and structured results of those calls. Never use write or exec inputs, and never the session's own StructuredOutput. Compare by lib.urlKey equality against fetched URLs, plus substring only inside fetched result text. In harvest, take the session's own StructuredOutput inputs only from helper transcripts (or mark those cards so commit still URL-checks them). Add a test with the URL present only in a Write input."
-    },
-    {
-      "id": "U2-F3",
-      "file": "tcb/commit.mjs",
-      "lines": "354, 367, 384, 394",
-      "severity": "medium",
-      "kind": "fk-hole",
-      "claim": "A pack's (or review's) parent is accepted when it names any same-run candidate (packCandIds/reviewCandIds), including a candidate that is itself rejected. The child is stored with a dangling parent, and the next fsck reports fk-missing and exits 3 (tamper, all work stops). The spec says parent must be a stored pack (or review).",
-      "evidence": "Probe (probe-commit.out): pack P1 with a wrong questions_sha and pack P2 {parent: P1} staged together. intake rejects P1 'questions-sha' but stores P2 ('P1_stored=false P2_stored=true'). fsck then exits 3 with fk p_..->p_.. fk-missing.",
-      "fix": "Check parent against the accepted sets: stored(v.parent,'p') || (packById.has(v.parent) && v.parent !== c.id), evaluated after the other packs are judged (fixpoint as for supersedes). Do the same for reviews with the okReviews ids. Or follow the spec literally: stored only."
-    },
-    {
-      "id": "U2-F4",
-      "file": "tcb/commit.mjs",
-      "lines": "491-510, 562-570",
-      "severity": "medium",
-      "kind": "unsafe-write",
-      "claim": "intake writes wt/<task>-e<e>/view/rejected.json and committed.json with writeAtomic and never checks that view/ (or the attempt folder) is not a link. The untrusted attempt folder can turn view/ into a junction, and commit then writes, replacing any existing file of those names, wherever the junction points, including outside the run root. staging/ and in/checkpoint/ get exactly this check (spec T9), view/ does not.",
-      "evidence": "Probe (probe-commit2.out): view/ replaced by a junction to <root>/outside-target. intake exits 0 and the target folder gets committed.json and rejected.json.",
-      "fix": "Before writing, lstat the attempt dir and view/. A link, a non-directory or !lib.isUnder(viewDir, attemptDir) means exit 3 untrusted-path with the tamper incident, as for staging. Add a T9-style test for view/."
-    },
-    {
-      "id": "U2-F5",
-      "file": "tcb/commit.mjs",
-      "lines": "452-457",
-      "severity": "medium",
-      "kind": "statistic-wrong",
-      "claim": "number-uncited compares magnitudes only: Math.abs(Math.abs(r) - Math.abs(n)). A sign in the sentence text is parsed (spec: digits with a sign) and then thrown away, so '+12.5%' or 'rose 12.5%' against a card value of -12.47 raises no flag. By hand: r = roundTo(-12.47, 1) = -12.5 and n = 12.5, so ||r| - |n|| = 0, a hit. A sign flip is the R18(e) error this flag exists for.",
-      "evidence": "Code reading and the hand computation above. No test has a sign mismatch, and mutation cm4 (dropping the flag) is caught only through the magnitude case of T5.",
-      "fix": "When the text number carries an explicit sign (m[1] non-empty), compare signed: Math.abs(r - n) <= eps. Keep magnitude-only for unsigned numbers. Add a T5 case with '+12.5' against -12.47."
-    },
-    {
-      "id": "U2-F6",
-      "file": "tcb/promote.mjs",
-      "lines": "209-213 (with tcb/tms.mjs 289-290)",
-      "severity": "medium",
-      "kind": "cross-script-mismatch",
-      "claim": "For a card item with verdict outside_conditions, promote writes reason 'unclear' but keeps check.verdict 'outside_conditions'. tms marks support-unclear only when the last line's check.verdict === 'unclear'. So a confirmed card that a checker later found outside its conditions keeps the sentences citing it at IN instead of JUDGMENT.",
-      "evidence": "promote.mjs 204-213: const check = {batch, item, verdict}, then push(p, status, 'unclear', check) for outside_conditions. tms.mjs 290 tests ls.check.verdict === 'unclear' only. Spec promote step 6 maps outside_conditions to 'reason unclear'. Spec tms keys on check.verdict.",
-      "fix": "In tms (and in certify if it adopts the rule), treat ls.reason === 'unclear' || ls.check?.verdict === 'unclear' as support-unclear. Or have promote record check.verdict 'unclear' with the original verdict in another field. Add a tms test with an outside_conditions line."
-    },
-    {
-      "id": "U2-F7",
-      "file": "tcb/fsck.mjs",
-      "lines": "558-564, 587-597",
-      "severity": "medium",
-      "kind": "race",
-      "claim": "Phase 1 reads the ledger, then card_status.jsonl and witness.jsonl, all without the lock. Phase 2 re-reads only the ledger and objects. It never re-reads the status files or reruns check 5. If promote (or witness) appends its status lines between fsck's ledger read and its status read, those lines have no covering promote line in led1, so fsck reports status-unlogged, exits 3 (tamper) and appends a fail line. That fail line then blocks every commit record (fsck-stale) until a rerun. The phase-2 line also claims a head whose status lines it never checked.",
-      "evidence": "Code reading: led1 is read at 558 and statusLed/witnessLed at 561-562; checkStatus(led1.records, ...) runs at 564 and is never recomputed in finish(). promote appends status lines and then its promote line under the lock (promote.mjs 409-415), so the window is real. No test drives it; T13 covers only intake lines.",
-      "fix": "In finish() (under the lock), always re-read card_status.jsonl and witness.jsonl and rerun checkStatus and checkFk against led2. They are cheap and run no subprocess."
-    },
-    {
-      "id": "U2-F8",
-      "file": "tcb/tms.mjs",
-      "lines": "536-572",
-      "severity": "medium",
-      "kind": "race",
-      "claim": "compute() reads status, objects, commits and the ledger with no lock. The result is written under the lock without checking that those inputs are unchanged. A slower tms run (for example the watcher's) can overwrite a newer labels.json/repair.json with labels from older inputs, and it records a tms check line with that stale labels_sha and result. render's status_seq guard catches only status changes, not new commits (pack-repaired), intake flags or protocol amendments.",
-      "evidence": "Code reading: compute at 536, withRunLock at 550, no re-read inside the lock. The spec puts 'read everything without the lock' in step 1, but tms runs no subprocess, so nothing stops the work from moving under the lock.",
-      "fix": "Run compute() inside the withRunLock callback. Or, under the lock, compare the status file's last seq, the ledger head, and the object and commit listings with those compute used, and recompute if any moved."
-    },
-    {
-      "id": "U2-F9",
-      "file": "tcb/tms.mjs",
-      "lines": "298",
-      "severity": "medium",
-      "kind": "untested-mechanism",
-      "claim": "The questions-changed STALE rule (CONTRACT 3.18: an object's questions_sha differs from the current frozen protocol's) has no test. Deleting the line leaves all tms tests green, so a protocol amendment that changes question_ids could silently stop marking packs and reviews STALE.",
-      "evidence": "Mutation tm7-qsha (line 298 removed): tms.test.mjs 16 pass, 0 fail.",
-      "fix": "Add a test: a pack committed under protocol P1, then a protocol-amend with different question_ids. Its conclusions and the review sentences are STALE questions-changed, and exit 1 for its target."
-    },
-    {
-      "id": "U2-F10",
-      "file": "tcb/tms.mjs",
-      "lines": "389-397",
-      "severity": "medium",
-      "kind": "untested-mechanism",
-      "claim": "The R38 'standing' bar is not pinned by tests in two places. (a) The condition-cover requirement: covers() replaced by true survives, so a dismissal could stand on a card measured under other conditions. (b) The strict bound: |value - baseline| < sesoi changed to <= survives, because T9 uses 0.5 and 1.5 against 1.0 and never the equality case.",
-      "evidence": "Mutations tm6-covers and tm4-bound-le: tms.test.mjs 16 pass, 0 fail each.",
-      "fix": "Add T9 cases: |value - baseline| exactly equal to sesoi gives untested no-bound; a confirmed bounding card whose conditions lack a value the sentence's applies_to declares gives untested no-bound."
-    }
-  ],
-  "mutations": [
-    {"file": "tcb/commit.mjs", "what": "cm1: epoch fence removed (row.epoch !== epoch -> false)", "a_test_failed": true},
-    {"file": "tcb/commit.mjs", "what": "cm2: URL-in-transcript search removed", "a_test_failed": true},
-    {"file": "tcb/commit.mjs", "what": "cm3: fresh-passing-fsck requirement removed", "a_test_failed": true},
-    {"file": "tcb/commit.mjs", "what": "cm4: number-uncited flag removed", "a_test_failed": true},
-    {"file": "tcb/commit.mjs", "what": "cm5: staging junction/isUnder check removed", "a_test_failed": true},
-    {"file": "tcb/commit.mjs", "what": "cm6: untrusted-cards (rejected card in pack) refusal removed", "a_test_failed": true},
-    {"file": "tcb/commit.mjs", "what": "cm7: tainted audit refusal removed", "a_test_failed": true},
-    {"file": "tcb/harvest.mjs", "what": "hv1: card schema check removed", "a_test_failed": true},
-    {"file": "tcb/harvest.mjs", "what": "hv2: first link check (linkOrOut) removed alone; survives because walkFiles' link check is a second guard (no finding)", "a_test_failed": false},
-    {"file": "tcb/harvest.mjs", "what": "hv2b: both link checks removed", "a_test_failed": true},
-    {"file": "tcb/harvest.mjs", "what": "hv3: epoch fence removed", "a_test_failed": true},
-    {"file": "tcb/harvest.mjs", "what": "hv4: differs pre-check removed; survives because createExclusive's exists-different is a second guard (no finding)", "a_test_failed": false},
-    {"file": "tcb/fsck.mjs", "what": "fk1: object hash-prefix comparison removed", "a_test_failed": true},
-    {"file": "tcb/fsck.mjs", "what": "fk2: phase-2 recheck after the head moved removed", "a_test_failed": true},
-    {"file": "tcb/fsck.mjs", "what": "fk3: promote/witness line coverage check removed", "a_test_failed": true},
-    {"file": "tcb/fsck.mjs", "what": "fk4: untracked tcb files (ls-files --others) dropped", "a_test_failed": true},
-    {"file": "tcb/fsck.mjs", "what": "fk5: CLAUDE.md / claude.local.md detection removed", "a_test_failed": true},
-    {"file": "tcb/tms.mjs", "what": "tm1: precedence PENDING above STALE", "a_test_failed": true},
-    {"file": "tcb/tms.mjs", "what": "tm2: certificate read-set hash comparison removed (always VALID)", "a_test_failed": true},
-    {"file": "tcb/tms.mjs", "what": "tm3: every reopened dismissal counted as newly reopened", "a_test_failed": true},
-    {"file": "tcb/tms.mjs", "what": "tm4: sesoi bar < changed to <=", "a_test_failed": false},
-    {"file": "tcb/tms.mjs", "what": "tm5: open intake flags ignored", "a_test_failed": true},
-    {"file": "tcb/tms.mjs", "what": "tm6: dismissal condition cover ignored", "a_test_failed": false},
-    {"file": "tcb/tms.mjs", "what": "tm7: questions-changed STALE removed", "a_test_failed": false},
-    {"file": "tcb/promote.mjs", "what": "pr1: checker role check removed", "a_test_failed": true},
-    {"file": "tcb/promote.mjs", "what": "pr2: J1/J2/J4 qualification ignored", "a_test_failed": true},
-    {"file": "tcb/promote.mjs", "what": "pr3: witness card_sha comparison removed", "a_test_failed": true},
-    {"file": "tcb/promote.mjs", "what": "pr4: revert ignores the class", "a_test_failed": true},
-    {"file": "tcb/certify.mjs", "what": "ce1: supersession ignored in isConfirmed", "a_test_failed": true},
-    {"file": "tcb/certify.mjs", "what": "ce2: contra-plant condition removed", "a_test_failed": true},
-    {"file": "tcb/certify.mjs", "what": "ce3: R18 flag failures removed", "a_test_failed": true},
-    {"file": "tcb/certify.mjs", "what": "ce4: step_key comparison removed", "a_test_failed": true}
-  ],
-  "notes": [
-    "All paths are relative to tcb-build/. Mutations ran on one shared copy, review-tmp/U2/tcb/, via review-tmp/U2/mut.sh (one lane call each). The original was restored after each run, checked by cmp. The diffs and outputs are review-tmp/U2/<id>.diff and <id>.out.",
-    "Probes: review-tmp/U2/tcb/test/promote-probe.test.mjs, commit-probe.test.mjs and commit-probe2.test.mjs. Each is a copy of the unit's test file with PROBE tests appended, run with --test-name-pattern=PROBE. Outputs: probe-promote.out, probe-commit.out, probe-commit2.out. No unit file was edited.",
-    "Not checked by running: whether spawnSync('git') with cwd = root could resolve a git.exe planted in the run root (Windows search order). Worth a look if anything untrusted can write the root's top level.",
-    "Lib-owned, outside this unit: lib.checkerVerdicts turns a valid verdict followed by an off-enum one for the same item into verdict-off-enum, not verdict-conflict (conservative either way)."
-  ]
+  {
+   "id": "U2-F2",
+   "file": "tcb/commit.mjs",
+   "lines": "195-203, 317-321 (also tcb/harvest.mjs 137-139)",
+   "severity": "high",
+   "kind": "check-cannot-fail",
+   "claim": "The R34 URL check searches the inputs of EVERY tool use, Write/Edit/Bash included, by substring. A session that writes a card with Write puts the URL into that input, so every session-written card passes, fabricated URLs included. A second route: harvest takes the session's own StructuredOutput inputs as candidates, and commit never URL-checks origin 'harvested'.",
+   "evidence": "Probe review-tmp/U2/tcb/test/commit-probe.test.mjs: the transcripts fetch only A_URL; card b (B_URL) is staged, and the helper transcript holds only a Write of staging/cards/b.card.json with b's JSON. intake stores b (B_stored=true). Spec T6 transcripts have no Write tool use.",
+   "fix": "Build the URL corpus only from toolAccess kinds fetch/search/read (access.urls) and from those calls' results and helpers' structured results. Never use write or exec inputs, nor the session's own StructuredOutput. In harvest, take the session's own StructuredOutput only from helper transcripts, or mark such cards so commit URL-checks them. Add a test with the URL present only in a Write input."
+  },
+  {
+   "id": "U2-F3",
+   "file": "tcb/commit.mjs",
+   "lines": "354, 367, 384, 394",
+   "severity": "medium",
+   "kind": "fk-hole",
+   "claim": "A pack/review parent is accepted when it names any same-run candidate (packCandIds/reviewCandIds), including a rejected one. The child is stored with a dangling parent, and the next fsck exits 3 fk-missing (tamper, all work stops). The spec says the parent must be stored.",
+   "evidence": "Probe review-tmp/U2/tcb/test/commit-probe.test.mjs: P1 (wrong questions_sha) and P2 {parent: P1}; intake rejects P1 and stores P2; fsck then exits 3 with fk p_..->p_.. fk-missing.",
+   "fix": "Check parent against the accepted sets (packById / okReviews ids, fixpoint as for supersedes), or follow the spec: stored only."
+  },
+  {
+   "id": "U2-F4",
+   "file": "tcb/commit.mjs",
+   "lines": "491-510, 562-570",
+   "severity": "medium",
+   "kind": "unsafe-write",
+   "claim": "intake writes view/rejected.json and view/committed.json with writeAtomic and never checks that view/ is not a link. The untrusted attempt folder can make view/ a junction, and commit then writes, replacing any existing file of those names, wherever it points, including outside the run root.",
+   "evidence": "Probe review-tmp/U2/tcb/test/commit-probe2.test.mjs: view/ made a junction to <root>/outside-target. intake exits 0 and the target gets committed.json and rejected.json.",
+   "fix": "lstat the attempt dir and view/. A link, a non-directory or !isUnder(viewDir, attemptDir) means exit 3 untrusted-path with the incident, as for staging. Add a test."
+  },
+  {
+   "id": "U2-F5",
+   "file": "tcb/commit.mjs",
+   "lines": "452-457",
+   "severity": "medium",
+   "kind": "statistic-wrong",
+   "claim": "number-uncited compares magnitudes only: Math.abs(Math.abs(r)-Math.abs(n)). A sign in the text is parsed and then discarded, so '+12.5%' against a card value of -12.47 raises no flag. By hand: r=roundTo(-12.47,1)=-12.5 and n=12.5, so ||r|-|n||=0, a hit.",
+   "evidence": "Code reading and the hand computation above. No test has a sign mismatch.",
+   "fix": "When the text number has an explicit sign (m[1] non-empty), compare signed (|r-n|<=eps). Add a test."
+  },
+  {
+   "id": "U2-F6",
+   "file": "tcb/promote.mjs",
+   "lines": "209-213 (with tcb/tms.mjs 289-290)",
+   "severity": "medium",
+   "kind": "cross-script-mismatch",
+   "claim": "For a card-item verdict outside_conditions, promote writes reason 'unclear' but keeps check.verdict 'outside_conditions'. tms marks support-unclear only when check.verdict === 'unclear', so the sentences citing that card stay IN instead of JUDGMENT.",
+   "evidence": "promote.mjs 204-213 builds check {verdict} and pushes reason 'unclear'; tms.mjs 290 tests ls.check.verdict === 'unclear' only.",
+   "fix": "In tms treat ls.reason === 'unclear' || ls.check?.verdict === 'unclear' as support-unclear, or have promote record check.verdict 'unclear'. Add a test."
+  },
+  {
+   "id": "U2-F7",
+   "file": "tcb/fsck.mjs",
+   "lines": "558-564, 587-597",
+   "severity": "medium",
+   "kind": "race",
+   "claim": "Phase 1 reads the ledger, then card_status.jsonl and witness.jsonl, without the lock. Phase 2 never re-reads them or reruns check 5. If promote or witness appends its status lines between the two reads, fsck reports status-unlogged, exits 3 (tamper) and appends a fail line that blocks commit records until a rerun.",
+   "evidence": "Code reading: led1 is read at 558, the status files at 561-562, and checkStatus at 564 is never recomputed in finish(). promote appends status lines and then its ledger line under the lock (promote.mjs 409-415).",
+   "fix": "In finish(), under the lock, re-read both status files and rerun checkStatus and checkFk against led2."
+  },
+  {
+   "id": "U2-F8",
+   "file": "tcb/tms.mjs",
+   "lines": "536-572",
+   "severity": "medium",
+   "kind": "race",
+   "claim": "compute() reads everything without the lock, and the result is written under it without re-checking those inputs. A slower run can overwrite newer labels.json/repair.json with labels from older inputs and log a tms check line with that stale labels_sha. render's status_seq guard catches only status changes.",
+   "evidence": "Code reading: compute at 536, withRunLock at 550, nothing re-read inside the lock.",
+   "fix": "Run compute() inside the lock callback (no subprocess there), or compare the status last seq, ledger head and object/commit listings under the lock and recompute if any moved."
+  },
+  {
+   "id": "U2-F9",
+   "file": "tcb/tms.mjs",
+   "lines": "298",
+   "severity": "medium",
+   "kind": "untested-mechanism",
+   "claim": "The questions-changed STALE rule (CONTRACT 3.18) has no test: removing it leaves the tms tests green.",
+   "evidence": "Mutation tm7-qsha: 16 pass, 0 fail.",
+   "fix": "Add a test with a protocol-amend that changes question_ids: the conclusions and the review sentences are STALE questions-changed, exit 1."
+  },
+  {
+   "id": "U2-F10",
+   "file": "tcb/tms.mjs",
+   "lines": "389-397",
+   "severity": "medium",
+   "kind": "untested-mechanism",
+   "claim": "The R38 standing bar is not pinned: covers() replaced by true survives (a dismissal can stand on a card measured under other conditions), and < changed to <= survives (the equality case is untested).",
+   "evidence": "Mutations tm6-covers and tm4-bound-le: 16 pass, 0 fail each.",
+   "fix": "Add T9 cases: |value-baseline| == sesoi gives untested; a bounding card whose conditions lack a declared applies_to value gives untested."
+  }
+ ],
+ "mutations": [
+  {
+   "file": "tcb/commit.mjs",
+   "what": "epoch fence removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/commit.mjs",
+   "what": "URL-in-transcript search removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/commit.mjs",
+   "what": "fresh passing fsck requirement removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/commit.mjs",
+   "what": "number-uncited flag removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/commit.mjs",
+   "what": "staging junction/isUnder check removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/commit.mjs",
+   "what": "untrusted-cards refusal removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/commit.mjs",
+   "what": "tainted audit refusal removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/harvest.mjs",
+   "what": "card schema check removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/harvest.mjs",
+   "what": "first link check alone removed (walkFiles link check is a second guard; no finding)",
+   "a_test_failed": false
+  },
+  {
+   "file": "tcb/harvest.mjs",
+   "what": "both link checks removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/harvest.mjs",
+   "what": "epoch fence removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/harvest.mjs",
+   "what": "differs pre-check removed (createExclusive is a second guard; no finding)",
+   "a_test_failed": false
+  },
+  {
+   "file": "tcb/fsck.mjs",
+   "what": "hash-prefix comparison removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/fsck.mjs",
+   "what": "phase-2 recheck removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/fsck.mjs",
+   "what": "promote/witness coverage check removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/fsck.mjs",
+   "what": "untracked tcb files dropped",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/fsck.mjs",
+   "what": "CLAUDE.md detection removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/tms.mjs",
+   "what": "precedence PENDING above STALE",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/tms.mjs",
+   "what": "certificate read-set hash comparison removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/tms.mjs",
+   "what": "every reopened counted as newly reopened",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/tms.mjs",
+   "what": "sesoi bar < changed to <=",
+   "a_test_failed": false
+  },
+  {
+   "file": "tcb/tms.mjs",
+   "what": "open intake flags ignored",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/tms.mjs",
+   "what": "dismissal condition cover ignored",
+   "a_test_failed": false
+  },
+  {
+   "file": "tcb/tms.mjs",
+   "what": "questions-changed STALE removed",
+   "a_test_failed": false
+  },
+  {
+   "file": "tcb/promote.mjs",
+   "what": "checker role check removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/promote.mjs",
+   "what": "J1/J2/J4 qualification ignored",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/promote.mjs",
+   "what": "witness card_sha comparison removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/promote.mjs",
+   "what": "revert ignores the class",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/certify.mjs",
+   "what": "supersession ignored in isConfirmed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/certify.mjs",
+   "what": "contra-plant condition removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/certify.mjs",
+   "what": "R18 flag failures removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/certify.mjs",
+   "what": "step_key comparison removed",
+   "a_test_failed": true
+  }
+ ]
 }

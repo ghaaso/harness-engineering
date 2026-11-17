@@ -898,6 +898,40 @@ test('step 6 an unwritable tmp/ is not_run: exit 2 and no case certifies the tre
 // =============================================================================================
 // canary mode
 // =============================================================================================
+// =============================================================================================
+// the shipped fixture cases of unit U3's scripts (R41: one good and one bad case per script)
+// =============================================================================================
+test('fixtures: the shipped cases of snap, witness, guard-hook and selftest pass under the real selftest run --only (a junction to the live tcb/, no copy of it)', async () => {
+  const U3 = ['snap', 'witness', 'guard-hook', 'selftest'];
+  fs.mkdirSync(TMP, { recursive: true });
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(TMP, 'sf-')));
+  const jn = path.join(root, 'tcb');
+  const R = { root, p: (...s) => path.join(root, ...s), out: path.join(root, 'out') };
+  try {
+    fs.mkdirSync(R.p('run'), { recursive: true });
+    fs.writeFileSync(R.p('run', 'coord.json'), JSON.stringify({ schema_version: 1, ce: 1, started_at: NOW, tcb_commit: '0'.repeat(40) }));
+    fs.symlinkSync(TCB, jn, 'junction');
+    const t0 = treeSha(TCB);
+    const r = await runSt(R, 'run', U3.flatMap((s) => ['--only', s]), { timeoutMs: '60000', limitMs: 400000 });
+    assertLine(r, { exit: 0, mode: 'run' });
+    const res = r.json.result;
+    assert.equal(res.result, 'pass', `failed: ${JSON.stringify(res.failed)}; reasons: ${JSON.stringify(r.json.reasons).slice(0, 1500)}`);
+    assert.equal(res.partial, true);
+    assert.ok(res.cases_run >= 2 * U3.length, `cases run: ${res.cases_run}`);
+    assert.equal(res.passed, res.cases_run);
+    assert.equal(treeSha(TCB), t0, 'the live tcb/ is unchanged');
+    assert.ok(!fs.existsSync(R.p('run', 'selftest.json')) && !fs.existsSync(R.p('run', 'ledger.jsonl')), '--only writes no file and no ledger line');
+  } finally {
+    try { fs.rmdirSync(jn); } catch { /* not made */ } // the junction only, never its target
+    let jnLeft = true;
+    try { fs.lstatSync(jn); } catch { jnLeft = false; }
+    // never a recursive remove while the junction to the live tcb/ is still there
+    if (!jnLeft) {
+      try { fs.rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 }); } catch { /* best effort */ }
+    }
+  }
+});
+
 const HOOK = '[guard-hook] deny write-protected: refused by the test hook';
 const PERM = 'Permission to use this tool has been denied.';
 const SID = 'a1b2c3d4-0000-4000-8000-000000000001';

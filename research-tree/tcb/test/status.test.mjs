@@ -600,6 +600,25 @@ test('T11 endturn with a watcher record of an older ce exits 1 watcher-missing',
   });
 });
 
+// Review U1-F9: watcher.json alone is not a running watcher; watcher.lock must hold the pid and
+// start time that watcher.json records.
+test('T11 endturn with a live watcher.json but watcher.lock absent, or naming another process, exits 1 watcher-missing', async () => {
+  await withRoot({}, async (ctx) => {
+    meterLine(ctx.root);
+    liveWatcher(ctx);
+    const alarm = liveAlarm(ctx);
+    const lockFile = path.join(ctx.root, 'run', 'watcher.lock');
+    fs.rmSync(lockFile, { force: true });
+    const j1 = assertLine(endturn(ctx, 1), 1);
+    assert.ok(hasReason(j1, 'watcher-missing'), JSON.stringify(j1.reasons));
+    assert.ok(!hasReason(j1, 'alarm-missing'));
+    w(lockFile, JSON.stringify(lockRec(alarm, { script: 'watch', ce: 1 }))); // a live process, not the watcher.json one
+    const j2 = assertLine(endturn(ctx, 1), 1);
+    assert.ok(hasReason(j2, 'watcher-missing'), JSON.stringify(j2.reasons));
+    assert.ok(!hasReason(j2, 'alarm-missing'));
+  });
+});
+
 test('T12 endturn: K above the head exits 1 acked-ahead; K below the stored value exits 1 acked-backwards; file unchanged', async () => {
   await withRoot({}, async (ctx) => {
     meterLine(ctx.root); meterLine(ctx.root); meterLine(ctx.root);

@@ -1,30 +1,48 @@
 {
-  "label": "join:U1a",
-  "tests": {
-    "command": "node tools/lane.mjs --label join-U1a-final --timeout-s 600 -- node --test --test-concurrency=1 tcb/test/admit.test.mjs tcb/test/stop.test.mjs tcb/test/replace.test.mjs",
-    "passed": 129,
-    "failed": 0,
-    "skipped": 7,
-    "output_tail": "tests 136, pass 129, fail 0, cancelled 0, skipped 7 (admit NA1-NA2, stop NA1-NA3, replace NA1-NA2: needs the app), duration about 146 s; no tcbrt- temp root left under tcb-build/tmp. Separately: selftest.mjs run --only replace --only admit --only stop on one shared copy of tcb/ under tmp/u1a-st (removed afterwards): 14 of 14 fixture cases pass, all static checks pass."
+ "tests": {
+  "command": "node tools/lane.mjs --label join-U1a-final --timeout-s 600 -- node --test --test-concurrency=1 tcb/test/admit.test.mjs tcb/test/stop.test.mjs tcb/test/replace.test.mjs",
+  "passed": 129,
+  "failed": 0,
+  "skipped": 7,
+  "output_tail": "tests 136, pass 129, fail 0, cancelled 0, skipped 7 (admit NA1-NA2, stop NA1-NA3, replace NA1-NA2: needs the app), duration about 146 s; no tcbrt- temp root left under tcb-build/tmp. Separately, selftest.mjs run --only replace --only admit --only stop on one shared copy of tcb/ under tmp/u1a-st (removed afterwards): 14 of 14 fixture cases pass and all static checks pass. Return file: C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/done/join-U1a.json"
+ },
+ "rounds": 2,
+ "fixes": [
+  {
+   "file": "tcb/test/admit.test.mjs, tcb/test/replace.test.mjs, tcb/test/stop.test.mjs",
+   "what": "The tests imported ../scripts/lib.mjs and ../scripts/admit.mjs and ran ../scripts/<name>.mjs. They now use ../lib.mjs, ../admit.mjs and ../<name>.mjs, as the flat build layout requires.",
+   "wrong_side": "layout"
   },
-  "rounds": 2,
-  "fixes": [
-    {"file": "tcb/test/admit.test.mjs, tcb/test/replace.test.mjs, tcb/test/stop.test.mjs", "what": "Imported ../scripts/lib.mjs, ../scripts/admit.mjs and ran ../scripts/<name>.mjs; changed to ../lib.mjs, ../admit.mjs and ../<name>.mjs for the flat build layout.", "wrong_side": "layout"},
-    {"file": "tcb/test/admit.test.mjs, tcb/test/replace.test.mjs, tcb/test/stop.test.mjs", "what": "tcb/test/helpers.mjs (CONTRACT 4.11) still does not exist and is not this group's file. Each test now imports helpers.mjs when it exists and otherwise uses an in-file stand-in (makeRoot, fakeTranscript, spawnSleeper, fakeProc) taken from the stand-in in lib.test.mjs, made synchronous because 4.11 gives plain return values and these tests call the helpers without await. spawnSleeper's kill() returns a promise for the child's exit.", "wrong_side": "layout"},
-    {"file": "tcb/test/replace.test.mjs", "what": "T2 'differing e_task -> plan-differs' asserted the ledger byte-identical. The spec contradicts itself: its T2 says 'table and ledger unchanged', but its Writes section says 'incident {class: refusal} on exits 1, 5, 6', and R58 says every refusal is an incident line. Following Writes and R58, the test now asserts: table byte-identical, the old ledger bytes are an unchanged prefix, exactly one line added, which is an incident with class refusal, no second plan line, and the ledger verifies. This is stricter than before, not weaker.", "wrong_side": "spec_unclear"},
-    {"file": "tcb/fixtures/replace/bad-plan-unknown-dep/case.json", "what": "Expected run/ledger.jsonl 'absent' after exit 1 plan-invalid, against the same R58 and Writes rule (the refusal appends an incident line). Now expects run/tasks.json byte-identical (its sha256) and run/ledger.jsonl present.", "wrong_side": "spec_unclear"},
-    {"file": "tcb/replace.mjs", "what": "bind called lib.attemptOf(row, E) before checking the row's state and step, so a bind on a planned row (epoch 0, no attempts) exited 2 no-attempt instead of 65 wrong-step (fixture replace/bad-bind-wrong-step failed in selftest). The attempt is now looked up only after the step check says one must exist.", "wrong_side": "script"},
-    {"file": "tcb/stop.mjs", "what": "The stop sample was removed with fs.rmSync; the library now has removeFile with the Windows-sharing retries (the builder had asked for it), so stop uses lib.removeFile. Not a test failure.", "wrong_side": "script"}
-  ],
-  "still_failing": [
-    "Nothing in admit.test.mjs, stop.test.mjs or replace.test.mjs fails, and the group's 14 selftest fixture cases pass. Seven tests are skipped by design as needs-app.",
-    "tcb/test/helpers.mjs still does not exist. These three tests run on their own in-file stand-in. When helpers.mjs is written, its makeRoot, fakeTranscript and spawnSleeper must be synchronous (or these tests' mk(), fakeT(), verifyWorld() must be changed to await them), otherwise the tests fail to load their roots."
-  ],
-  "lib_change_requests": [],
-  "notes": [
-    "The builder's earlier lib requests are met by the library as it now is: ready.schema.json no longer requires schema_version; stop-sample.schema.json allows an integer target; TcbError and removeFile are exported; withRunLock passes retries on (T24 and stop T15 with lock_retries 3 give 75); currentDesign carries stpa/fmea ids (as hidden properties). The paths(root) key names were not checked against the scripts, which still spell some §2 paths with path.join.",
-    "admit spec T8 typo (e_task 1500 would be admitted by the stated rule) was already handled by the test writer with e_task 2500; spec text still says 1500.",
-    "Weak spots left as the test writer listed them: stop T12 cannot tell the in-lock re-check from the pre-check; replace T19 only shows the sentinel still exists; admit T10's gatherFacts rule (a committed card covers while f5 is false) has no script-level test.",
-    "One deviation from the boundaries: while reproducing the bind fixture by hand I ran replace.mjs once on a case root built with the shipped thresholds.json, whose transcripts_root is the real C:/Users/User/.claude/projects. The script only looked up a synthetic session id there (no transcript read, nothing written). All other runs used a root whose transcripts_root is under tcb-build/tmp."
-  ]
+  {
+   "file": "tcb/test/admit.test.mjs, tcb/test/replace.test.mjs, tcb/test/stop.test.mjs",
+   "what": "tcb/test/helpers.mjs (CONTRACT 4.11) still does not exist, and it is not this group's file. Each test now imports helpers.mjs when it exists and otherwise uses a stand-in inside the test file (makeRoot, fakeTranscript, spawnSleeper, fakeProc). The stand-in is taken from the one in lib.test.mjs and made synchronous, because these tests call the helpers without await.",
+   "wrong_side": "layout"
+  },
+  {
+   "file": "tcb/test/replace.test.mjs",
+   "what": "T2 'differing e_task -> plan-differs' asserted that the ledger was byte-identical. The spec contradicts itself here: its T2 says 'table and ledger unchanged', but its Writes section says there is an incident {class: refusal} on exits 1, 5 and 6, and R58 says every refusal is an incident line. I followed Writes and R58. The test now asserts that the table is byte-identical, that the old ledger bytes are an unchanged prefix, that exactly one line was added (an incident of class refusal), that there is no second plan line, and that the ledger verifies. This makes the test stricter, not weaker.",
+   "wrong_side": "spec_unclear"
+  },
+  {
+   "file": "tcb/fixtures/replace/bad-plan-unknown-dep/case.json",
+   "what": "The fixture expected run/ledger.jsonl to be 'absent' after exit 1 plan-invalid. That conflicts with the same R58 and Writes rule, because the refusal appends an incident line. It now expects run/tasks.json to be byte-identical (checked by its sha256) and run/ledger.jsonl to be present.",
+   "wrong_side": "spec_unclear"
+  },
+  {
+   "file": "tcb/replace.mjs",
+   "what": "bind called lib.attemptOf(row, E) before it checked the row's state and step. A bind on a planned row (epoch 0, no attempts) therefore exited 2 no-attempt instead of 65 wrong-step, and selftest failed the fixture replace/bad-bind-wrong-step. The attempt is now looked up only after the step check has established that one must exist.",
+   "wrong_side": "script"
+  },
+  {
+   "file": "tcb/stop.mjs",
+   "what": "This was not a test failure. stop removed its sample file with fs.rmSync. It now uses lib.removeFile, which the library exports now and which has the Windows file-sharing retries the builder asked for.",
+   "wrong_side": "script"
+  }
+ ],
+ "still_failing": [
+  "Nothing fails in admit.test.mjs, stop.test.mjs or replace.test.mjs, and this group's 14 selftest fixture cases pass. Seven tests are skipped by design as needs-app.",
+  "tcb/test/helpers.mjs still does not exist, so these three tests run on the stand-in inside each test file. Whoever writes helpers.mjs must make makeRoot, fakeTranscript and spawnSleeper synchronous. Otherwise these tests' mk(), fakeT() and verifyWorld() must be changed to await them.",
+  "I broke a boundary once. While reproducing the bind fixture by hand, I ran replace.mjs on a case root that used the shipped thresholds.json, whose transcripts_root is the real C:/Users/User/.claude/projects. The script looked up a synthetic session id there; it read no transcript and wrote nothing. Every other run used a transcripts_root under tcb-build/tmp."
+ ],
+ "lib_change_requests": []
 }

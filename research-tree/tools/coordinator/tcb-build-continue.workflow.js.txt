@@ -1,0 +1,198 @@
+export const meta = {
+  name: 'tcb-build-continue',
+  description: 'Continue the build of the research tree\'s trusted scripts from the files on disk after a PC reset: finish the library, join every group\'s scripts with its independently written tests, fold in the six model fixes, review per unit, fix, and run end to end',
+  phases: [
+    { title: 'Library', detail: 'finish lib.mjs and the schemas, join with its tests, review, fix', model: 'opus' },
+    { title: 'Join', detail: 'each group\'s scripts against the tests written from the specs' },
+    { title: 'Review', detail: 'the six model fixes in the execution unit; refute-by-default review per unit; fixes', model: 'opus' },
+    { title: 'Integrate', detail: 'an end-to-end run on synthetic fixtures; the whole test suite' },
+    { title: 'Model', detail: 'fidelity review of the extended protocol model, under a hard process and memory limit', model: 'opus' },
+  ],
+}
+
+const PAD = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad'
+const ROOT = PAD + '/tcb-build'
+const TCB = ROOT + '/tcb'
+const T = 'C:/Users/User/Documents/projects/harness-engineering'
+const V2 = T + '/docs/program/RESEARCH-TREE-PROTOCOL-v2-2026-11-16.md'
+const CONTRACT = ROOT + '/CONTRACT.md'
+const DONE = ROOT + '/done'
+const FIRST = DONE + '/first-run'
+const doneSet = new Set((args && args.done) || [])
+const fname = (label) => label.replace(/[^A-Za-z0-9_-]/g, '-')
+
+const CONTEXT = [
+  'CONTEXT',
+  '- What this is. A set of small Node scripts, the "trusted base" (tcb), that will run a research programme carried out by a tree of language-model sessions: a coordinator session, a child session per research field, helpers below them. The scripts do what sessions cannot be trusted to do: keep the task table, fence stale attempts, commit outputs atomically, watch progress, verify that a quoted passage and number really are in a stored copy of a source, compute labels and views, and measure the checks. The design is ' + V2 + ' (about 880 lines; rules R1 to R58). Never read it whole: search it by rule number or script name and read the lines around.',
+  '- The contract. ' + CONTRACT + ' and one spec file per script under ' + ROOT + '/spec/ (for example spec/replace.mjs.md; the library\'s is spec/lib.md) are the single source for file formats, the library\'s functions, every script\'s command line, exit codes and behaviours. They were attacked by two refuters and revised before anything was built.',
+  '- State of the build. The PC reset itself in the middle of this build, and the work continues from the files on disk. First drafts of 25 scripts exist, and their tests were written by other agents from the specs alone, without seeing the code. No test has been run yet. The notes those agents left (deviations from a spec, open points, what they need from the library, what cannot be tested without the app) are in ' + FIRST + '/ as build-<group>.json and tests-<group>.json (for example build-U1a.json).',
+  '- Layout. In this build folder the scripts and the library are flat: ' + TCB + '/<name>.mjs and ' + TCB + '/lib.mjs, with ' + TCB + '/schemas/, test/, fixtures/, profiles/, settings/, agents/ and briefs/ beside them. The contract\'s text says tcb/scripts/<name>.mjs: for this build the flat layout is the rule. A script finds the library, the schemas and its sibling scripts relative to its own file (import.meta.url), never through a path that contains "tcb/scripts"; a test finds a script relative to the test file.',
+  '- Rules for all code. Node.js 24, ES modules (.mjs), no packages (node: built-ins only), Windows 11 on NTFS. Tests use node:test and node:assert. Each test makes its own temporary run root with fs.mkdtempSync under ' + ROOT + '/tmp and removes it afterwards. No test touches the network (a test of the fetch script starts its own server on 127.0.0.1), kills a process it did not spawn itself, changes any setting of this machine, or reads or writes outside ' + ROOT + '. Fixtures are synthetic: never copy text from a real transcript, a real web page or any project file. Where the design counts model calls or ticks, the code reads no wall clock. Output for machines is JSON on stdout; messages for people go to stderr. Tokens are counted, never money.',
+  '- The lane (read this twice). The PC stalled twice during this build, each time while agents were running bursts of short-lived processes at the same moment. Every command of yours that starts Node goes through the lane, one call per command: `node ' + ROOT + '/tools/lane.mjs --label <your stage> --timeout-s 300 -- node --test <file>`. The same holds for a script run or a smoke run: put the whole command after the two dashes. The lane lets one command run at a time across all agents, at low priority and with a heap cap, and writes it to a log. Give that Bash call a timeout of 600000. Exit code 75 means the lane was busy: call again, that is normal. Never run Node outside the lane, never run two commands at once, never put a command in the background, and never leave a process running when a command ends: a test ends every process it started. Run a folder of tests with `--test-concurrency=1`. Reading and editing files needs no lane.',
+  '- No bursts. Nothing you write or run may create script files in bulk or start processes in bulk: no copy of the script folder per test case (one shared copy for a whole run at most); no more than two child processes alive at once inside a test or a script run unless the spec demands it; no real watcher, alarm or other long-running background process in a test (use the scripts\' own once or dry modes, or an injected clock); no PowerShell call where the value can be had without one.',
+  '- Single writer. You may create or edit only the files your brief names. Everything else is read-only for you: if another file needs a change, say so in your return and do not make it.',
+  '- Boundaries. This task is not about the product whose folder you start in: do not read or change its files. No web. Do not install or download anything. Do not start, stop or message any session. Never kill or signal a process you did not spawn yourself. Do not print secrets or the values of environment variables.',
+  '- Reading. Start from the files your brief names. Do not read a file of more than 300 lines whole: search it and read ranges.',
+].join('\n')
+
+const UNITS = [
+  { key: 'U1', name: 'execution', tier: 'opus', groups: [{ key: 'U1a', scripts: ['replace.mjs', 'admit.mjs', 'stop.mjs'] }, { key: 'U1b', scripts: ['watch.mjs', 'status.mjs', 'handover.mjs'] }] },
+  { key: 'U2', name: 'store and truth', tier: 'opus', groups: [{ key: 'U2a', scripts: ['commit.mjs', 'harvest.mjs', 'fsck.mjs'] }, { key: 'U2b', scripts: ['tms.mjs', 'promote.mjs', 'certify.mjs'] }] },
+  { key: 'U3', name: 'witness and guard', tier: 'opus', groups: [{ key: 'U3a', scripts: ['snap.mjs', 'witness.mjs'] }, { key: 'U3b', scripts: ['guard-hook.mjs', 'selftest.mjs'] }] },
+  { key: 'U4', name: 'views and assurance', tier: 'sonnet', groups: [{ key: 'U4a', scripts: ['render.mjs', 'audit.mjs'] }, { key: 'U4b', scripts: ['seed.mjs', 'check-queue.mjs'] }] },
+  { key: 'U5', name: 'pilot plan', tier: 'sonnet', groups: [{ key: 'U5a', scripts: ['protocol-freeze.mjs', 'compare.mjs', 'gate.mjs'] }, { key: 'U5b', scripts: ['cost.mjs'] }] },
+]
+
+let dead = 0
+const missing = [], notStarted = [], skipped = []
+async function stage(label, phaseName, lines, opts) {
+  if (doneSet.has(label)) { skipped.push(label); return { from_file: DONE + '/' + fname(label) + '.json' } }
+  if (dead >= 3) { notStarted.push(label); return null }
+  const prompt = lines.concat(['', CONTEXT, '', 'LAST STEP, always: write your whole return, as JSON, to ' + DONE + '/' + fname(label) + '.json (write a temporary file beside it, then rename it). This file is how the work is picked up again if the PC resets.']).join('\n')
+  const r = await agent(prompt, Object.assign({ label: label, phase: phaseName }, opts))
+  if (r == null) { dead++; missing.push(label); log('NULL ' + label + ' (' + dead + ' so far; at 3 no new agent starts)') }
+  return r
+}
+const ref = (r, what) => (r == null ? what + ': not available (that stage returned nothing).' : (r.from_file ? what + ': read it from ' + r.from_file + ' (it was finished before a restart).' : what + ' (JSON): ' + JSON.stringify(r)))
+
+const S = (props, req) => ({ type: 'object', properties: props, required: req })
+const STR = { type: 'string' }, INT = { type: 'integer' }, BOOL = { type: 'boolean' }
+const ARR = (items) => ({ type: 'array', items: items })
+const TESTRUN = S({ command: STR, passed: INT, failed: INT, skipped: INT, output_tail: STR }, ['command', 'passed', 'failed', 'skipped', 'output_tail'])
+const BUILT = S({ files_written: ARR(STR), what_was_missing: ARR(STR), deviations_from_the_spec: ARR(STR), lib_change_requests: ARR(STR), not_testable_without_the_app: ARR(STR), open_points: ARR(STR) }, ['files_written', 'what_was_missing', 'deviations_from_the_spec', 'lib_change_requests', 'not_testable_without_the_app', 'open_points'])
+const JOINED = S({ tests: TESTRUN, rounds: INT, fixes: ARR(S({ file: STR, what: STR, wrong_side: { type: 'string', enum: ['script', 'test', 'spec_unclear', 'library', 'layout'] } }, ['file', 'what', 'wrong_side'])), still_failing: ARR(STR), lib_change_requests: ARR(STR) }, ['tests', 'rounds', 'fixes', 'still_failing', 'lib_change_requests'])
+const FINDINGS = S({ findings: ARR(S({ id: STR, file: STR, lines: STR, severity: { type: 'string', enum: ['high', 'medium'] }, kind: STR, claim: STR, evidence: STR, fix: STR }, ['id', 'file', 'lines', 'severity', 'kind', 'claim', 'evidence', 'fix'])), mutations: ARR(S({ file: STR, what: STR, a_test_failed: BOOL }, ['file', 'what', 'a_test_failed'])), tests: TESTRUN, verdict: STR }, ['findings', 'mutations', 'tests', 'verdict'])
+const FIXED = S({ fixed: ARR(S({ finding_id: STR, what: STR, test_added: STR }, ['finding_id', 'what', 'test_added'])), not_fixed: ARR(S({ finding_id: STR, why: STR }, ['finding_id', 'why'])), tests: TESTRUN, lib_change_requests: ARR(STR) }, ['fixed', 'not_fixed', 'tests', 'lib_change_requests'])
+const E2E = S({ files_written: ARR(STR), steps: ARR(S({ step: STR, script: STR, ok: BOOL, detail: STR }, ['step', 'script', 'ok', 'detail'])), failures: ARR(S({ script: STR, what: STR, likely_cause: STR }, ['script', 'what', 'likely_cause'])), command: STR, output_tail: STR }, ['files_written', 'steps', 'failures', 'command', 'output_tail'])
+const FINAL = S({ fixes: ARR(S({ file: STR, what: STR }, ['file', 'what'])), lib_changes: ARR(STR), e2e_passes: BOOL, e2e_output_tail: STR, suite: TESTRUN, selftest_output_tail: STR, skipped_because_they_need_the_app: ARR(STR), still_wrong: ARR(STR) }, ['fixes', 'lib_changes', 'e2e_passes', 'e2e_output_tail', 'suite', 'selftest_output_tail', 'skipped_because_they_need_the_app', 'still_wrong'])
+const FIDELITY = S({ reproduces: BOOL, vacuous_or_weak: ARR(STR), model_errors: ARR(STR), fixes_modelled_as_oracles: ARR(STR), extra_flaws: ARR(S({ title: STR, detail: STR, fix: STR }, ['title', 'detail', 'fix'])), verdict: STR }, ['reproduces', 'vacuous_or_weak', 'model_errors', 'fixes_modelled_as_oracles', 'extra_flaws', 'verdict'])
+
+const files = (g) => g.scripts.map(s => TCB + '/' + s).join(', ')
+const specs = (g) => g.scripts.map(s => ROOT + '/spec/' + s + '.md').join(', ')
+const tests = (g) => g.scripts.map(s => TCB + '/test/' + s.replace('.mjs', '') + '.test.mjs').join(', ')
+
+// ---------- Model fidelity (independent; hard limits) ----------
+const fidelityP = stage('model:fidelity', 'Model', [
+  'A colleague extended an explicit-state model of a coordination protocol; the report is in ' + FIRST + '/model-extend.json and the model in ' + ROOT + '/model/ (model.mjs, check.mjs, configs.mjs, README.md). Check it, refuting by default; you may write only under ' + ROOT + '/model-review/.',
+  'Hard limit: this PC reset itself during an earlier attempt at this review. Never start run-all.mjs or run-resumable.mjs (another job runs the large configurations). Run parts yourself, `node check.mjs <configuration> --bud <budget> --mem-mb 400`, at most two processes at a time inside one lane command, and only configurations with two faults (DF2-K2-R1, D2-K2-R1 and the ablations A-* and X-*). The interrupted attempt left result files under ' + ROOT + '/model-review/ (k3-*.jsonl, k4*.jsonl, df3k2.json, big.json, guard.json): read them as evidence of what was explored before the reset and say that they come from an interrupted run.',
+  'The attempt that the last stall cut off left its work under ' + ROOT + '/model-review/r3/ (out/ and the sum-*.json summaries of many mutations): read it and reuse every result that is complete; do not run again what is already there. Run a batch of parts as ONE lane command. Do: (1) rerun the two-fault configurations and compare with the report; (2) for each safety property, copy the model, break the one mechanism that should protect it, and see that the checker reports a violation: a property that cannot be made to fail is vacuous; (3) say for each adopted fix whether it is modelled as a mechanism with its own failure modes or as an oracle that removes the bad branch; (4) say whether the search is exhaustive within its stated bounds (no silent cap, no pruning that hides traces); (5) read rules R1 to R12 of the design (section 2) and list the rules or fixes the model leaves out; (6) any flaw of the design that the model missed.',
+], { schema: FIDELITY, model: 'opus', effort: 'high' })
+
+// ---------- The model's restartable runner: its check was cut off by the stall ----------
+const runnerP = stage('runner:check', 'Model', [
+  'A colleague wrote a restartable runner for a model checker: ' + ROOT + '/model/run-resumable.mjs, ' + ROOT + '/model/configs-full.mjs and ' + ROOT + '/model/RUN-FULL.md; the report is in ' + DONE + '/runner-build.json. An earlier check of it was cut off when the PC stalled; its scratch files are under ' + ROOT + '/tmp/model-check/ and may be reused. Check the runner, refuting by default. What must be true: (1) the partition is exact: for three configurations of your choice the list of parts the new runner would run equals the list of ' + ROOT + '/model/run-all.mjs (same budgets, none missing, none twice); (2) the resume is true: a part counts as done only if its result file is complete and was written atomically; a half-written or bounded result is never taken for a complete one; end your own copy of the runner midway on a small configuration, start it again, and compare the totals with an uninterrupted run; (3) admission by free memory really waits (give it a floor higher than the free memory and see that nothing starts, then lower it); (4) a part that stays bounded is reported and makes the exit code non-zero; (5) the full-run command in RUN-FULL.md covers what it says and nothing in it would start more workers or more memory than its flags say; (6) the runner starts its worker processes at a gentle rate: add a flag --spawn-gap-ms (default 250) if it has none, and make many tiny parts run inside one worker process one after another instead of one process per part.',
+  'Every run of yours goes through the lane as one command, with --workers 2 and --mem-mb 400 on small configurations only. If you find a defect that you can fix safely in those three files, fix it, test the fix and say so; otherwise report it. You may write only those three files and scratch files under ' + ROOT + '/tmp/model-check/. Say plainly whether it is safe to start the full run. Put defects under findings (file, lines, severity, claim, evidence, fix), what you fixed in the verdict, and the tests you ran under mutations (what, a_test_failed = whether the runner behaved correctly).',
+], { schema: FINDINGS, model: 'opus', effort: 'high' })
+
+// ---------- Library ----------
+const libFinish = await stage('lib:finish', 'Library', [
+  'Finish the shared library of the trusted scripts. Its builder was cut off by the PC reset. ' + TCB + '/lib.mjs (about 3,300 lines, 87 exports) and 58 schema files under ' + TCB + '/schemas/ are on disk and parse, but may be incomplete. Check them against sections 3 and 4 of ' + CONTRACT + ' and against ' + ROOT + '/spec/lib.md: every format of section 3 has its schema file with every field, and every library function of section 4 exists with the stated signature and behaviour. The transcript parser and the process functions must fit ' + ROOT + '/probes/transcript-format.md and process-facts.md. Finish what is missing and correct what is wrong; do not rewrite what is right. Do not write tests and do not read ' + TCB + '/test/lib.test.mjs: the tests were written from the spec by another agent and must stay independent of the code. You may write only ' + TCB + '/lib.mjs and files under ' + TCB + '/schemas/. In what_was_missing list what you had to add or correct.',
+], { schema: BUILT, model: 'opus', effort: 'high' })
+
+const u3bFinishP = stage('finish:U3b', 'Join', [
+  'Finish one group of the trusted scripts whose builder was cut off by the PC reset: guard-hook.mjs and selftest.mjs, with the role files the group owns. Specs: ' + ROOT + '/spec/guard-hook.mjs.md and ' + ROOT + '/spec/selftest.mjs.md, within ' + CONTRACT + '. On disk from before the reset: ' + TCB + '/scripts/guard-hook.mjs and ' + TCB + '/scripts/selftest.mjs (first drafts, in the wrong folder: move them to ' + TCB + '/ and delete the empty ' + TCB + '/scripts/ folder), ' + TCB + '/agents/reader.md and checker.md, and the role files under ' + TCB + '/profiles/ and ' + TCB + '/settings/. Check each against its spec, finish what is missing, correct every path that still says tcb/scripts, and make sure a reader holds web search and web fetch only and a checker holds Read only. Do not write tests (they exist at ' + TCB + '/test/guard-hook.test.mjs and selftest.test.mjs, written from the specs; do not read them). You may write only those two scripts and the files under ' + TCB + '/agents/, ' + TCB + '/profiles/ and ' + TCB + '/settings/.',
+  'Redesign one thing in selftest.mjs before anything else, and change its spec (' + ROOT + '/spec/selftest.mjs.md) to match: a smoke run of this script wrote 1,275 script files in one second (a copy of the whole script folder for every case) and the PC stalled half a minute later. From now on a self-test run makes at most ONE copy of the script folder for the whole run (or none: the cases may run the scripts where they are, each against its own small run root of data files), checks after each case by a hash of the tree that the case did not change it, runs one case at a time by default (--jobs 1; never more than 2), prepares a case root only when that case is about to run, and never starts a real watcher, alarm or other background process: a case for watch.mjs, status.mjs or handover.mjs uses that script\'s once or dry mode. Every process a case starts is ended before the next case starts. Do not run any smoke of the old design. The tests of selftest.mjs must be adjusted to this by the join stage, so list every changed behaviour under deviations_from_the_spec.',
+], { schema: BUILT, model: 'opus', effort: 'high' })
+
+const libJoin = await stage('lib:join', 'Library', [
+  'The shared library ' + TCB + '/lib.mjs (with ' + TCB + '/schemas/) and its tests ' + TCB + '/test/lib.test.mjs were written by agents who did not see each other\'s work, both from ' + ROOT + '/spec/lib.md and ' + CONTRACT + '. Run `node --test ' + TCB + '/test/lib.test.mjs`. For each failure decide from the spec and the contract which side is wrong (the library, the test, an unclear spec, or only a path under the flat layout) and fix that side. At most four rounds. You may edit only the library, its schemas, its test file and its fixtures under ' + TCB + '/fixtures/lib/. When the suite passes, write the file ' + ROOT + '/lib.READY containing the test summary line. Report honestly what still fails.',
+  ref(libFinish, 'What the agent who finished the library reported'),
+], { schema: JOINED, model: 'opus', effort: 'high' })
+
+const libHarden = await stage('lib:harden', 'Library', [
+  'Make the shared library cheap to start, without changing what it guarantees. Measured on this PC: every script needs about 2.4 seconds to start, because taking the run lock asks PowerShell for a list of all processes only to learn the script\'s own start time (' + TCB + '/lib.mjs near REAL_SELF_START and in realProc), and all 24 scripts do this on every call. A self-test that runs every script dozens of times therefore floods the machine with PowerShell processes; the PC stalled twice in such runs.',
+  'Change the library so that: (1) a process learns its own start time without PowerShell, once, from its own clock (the time now minus process.uptime()); (2) a start time read through PowerShell for ANOTHER process (the holder of a lock that looks stale, a process that is to be stopped, the processes counted at admission) is compared with a recorded one with a tolerance of two seconds instead of by string equality, in every place that compares them (alive, killOwnTree, the stale-lock break; descendants keeps its rule that a child does not start before its parent); (3) no code path calls PowerShell unless it must judge another process: taking a free lock, appending to the ledger, validating and everything else on the normal path of a script start call none; (4) every exported function keeps its name and signature, and every file format stays as it is.',
+  'Update section 4 of ' + CONTRACT + ' and ' + ROOT + '/spec/lib.md where they describe this (own start time from the process\'s own clock; a tolerance of two seconds). Adjust the library\'s tests to the new rule and add these: a lock is taken and released with a process reader that throws on every call (so the normal path provably makes no PowerShell call); start times one second apart match, five seconds apart do not; a stale lock whose holder is gone is still broken only after verification. Run ' + TCB + '/test/lib.test.mjs through the lane until it passes. Measure and report the time of one real script start that takes the lock, before and after your change, each measured once through the lane.',
+  'You may write only ' + TCB + '/lib.mjs, files under ' + TCB + '/schemas/, ' + TCB + '/test/lib.test.mjs, ' + TCB + '/fixtures/lib/, section 4 of ' + CONTRACT + ' and ' + ROOT + '/spec/lib.md. In what_was_missing put what you changed; in open_points the two timings.',
+], { schema: BUILT, model: 'opus', effort: 'high' })
+
+const libReviewedP = (async () => {
+  const rv = await stage('lib:review', 'Library', [
+    'Review the shared library of the trusted scripts, refuting by default: ' + TCB + '/lib.mjs and ' + TCB + '/schemas/ against sections 3 and 4 of ' + CONTRACT + ' and ' + ROOT + '/spec/lib.md. Everything else is built on it. Read the code. Run its tests. In a scratch copy under ' + ROOT + '/review-tmp/lib/ make at least six mutations, one per mechanism (the lock\'s stale-break verification, the hash chain link, the compare-and-set of the fence, the staging cut, the atomic rename, the validator\'s additionalProperties check) and see that a test fails each time: a mutation no test catches is a finding. Look for: a race between a check and an act in the lock; a chain that can fork; a fence that can succeed twice; a temporary file that can collide; a validator that accepts what the schema forbids; a transcript parser that would miscount tokens on a real transcript (compare with ' + ROOT + '/probes/transcript-format.md); a PowerShell call built from unescaped input; a wall-clock read where a counter is meant. High and medium findings only, each with file and lines, the failing condition and the smallest fix. Do not edit the library.',
+  ], { schema: FINDINGS, model: 'opus', effort: 'high' })
+  if (!rv || rv.from_file || !(rv.findings.length || rv.mutations.some(m => !m.a_test_failed))) return { review: rv, fix: rv && rv.from_file ? { from_file: DONE + '/lib-fix.json' } : null }
+  const fx = await stage('lib:fix', 'Library', [
+    'Apply the reviewer\'s findings to the shared library ' + TCB + '/lib.mjs (and its schemas, tests and fixtures: you are their single writer for this step). For each finding you fix, add or adjust a test so that it fails before the fix and passes after; for each mutation no test caught, add the missing test. Do not change a function\'s signature or a file format: other scripts are built against them; if a finding can only be fixed by such a change, do not make it and say why under not_fixed. Run the suite and report.',
+    ref(rv, 'The review'),
+  ], { schema: FIXED, model: 'opus', effort: 'high' })
+  return { review: rv, fix: fx }
+})()
+
+// ---------- Joins, in two slices of five ----------
+async function joinGroup(u, g, extraWait) {
+  if (extraWait) await extraWait
+  const opus = u.tier === 'opus'
+  return stage('join:' + g.key, 'Join', [
+    'Bring one group of the trusted scripts and its tests together: ' + g.scripts.join(', ') + ' (' + files(g) + ') with ' + tests(g) + ' and the fixtures under ' + TCB + '/fixtures/<script-name>/. ' + (opus ? 'The scripts and the tests were written by agents who did not see each other\'s work, both from the specs ' : 'The scripts and their tests were written from the specs ') + specs(g) + '. The shared library is now ready.',
+    'First read the notes of the agents who wrote them: ' + FIRST + '/build-' + g.key + '.json' + (opus ? ' and ' + FIRST + '/tests-' + g.key + '.json' : '') + '. Then run `node --test` on each test file. For each failure decide from the spec and the contract which side is wrong (the script, the test, an unclear spec, the library, or only a path under the flat layout) and fix the script or the test. Do not edit ' + TCB + '/lib.mjs: if the library is wrong, say so under lib_change_requests and work around nothing. At most four rounds. Never make a test pass by weakening it. You may edit only this group\'s scripts, tests and fixtures. Report honestly what still fails.',
+  ], { schema: JOINED, model: opus ? 'opus' : 'sonnet', effort: 'high' })
+}
+const G = {}
+for (const u of UNITS) for (const g of u.groups) G[g.key] = { u: u, g: g }
+const slice1 = ['U1a', 'U1b', 'U2a', 'U2b', 'U3a'], slice2 = ['U3b', 'U4a', 'U4b', 'U5a', 'U5b']
+const J = {}
+const s1 = await Promise.all(slice1.map(k => joinGroup(G[k].u, G[k].g, null)))
+slice1.forEach((k, i) => { J[k] = s1[i] })
+log('first slice of joins done: ' + slice1.map((k, i) => k + ' ' + (s1[i] && s1[i].tests ? s1[i].tests.passed + ' passed, ' + s1[i].tests.failed + ' failed' : 'no result')).join('; '))
+
+// the six model fixes go into unit U1 while the second slice of joins runs
+const modelfixP = stage('modelfix:U1', 'Review', [
+  'A second, larger model check of the coordination rules (165 million states explored) found six flaws that are still in the design as the specs state it, each with a fix that the model shows to be needed. They are in ' + ROOT + '/inputs/model-findings-2.json (flaws_still_in_the_design, with a trace each; ablations shows which property breaks without each fix).',
+  'Fold all six into the execution unit: first the specs (' + ROOT + '/spec/watch.mjs.md, status.mjs.md, admit.mjs.md, replace.mjs.md, handover.mjs.md and, if a shared format or an exit code changes, ' + CONTRACT + '), then the scripts (watch.mjs, status.mjs, admit.mjs, replace.mjs, handover.mjs under ' + TCB + '/), then the tests: each fix gets at least one test that fails without it.',
+  'The six. (M1) The coordinator never kills its own wake source: the alarm is re-armed by writing a token that the running alarm reads. (M2) The alarm is armed at the start of a turn, in status --reconcile, so that a turn that dies before its end still leaves a wake source. (M3) The watcher exits on the planner\'s own predicate (a row that can be acted on, a free slot for a pending row, a drain that is ready, an event after the acknowledged one), so that a live watcher cannot stay silent while work waits. (M4) Admission counts rows that are admitted but not yet started as reservations. (M5) A tick whose gap is more than twice the tick period is not counted toward a hang (one one-sided clock check, the only wall-clock read in the watcher), so that a sleeping PC does not look like a hang. (M6) replace re-checks for a READY of the current epoch under the lock for every reason, a planned hand-over included.',
+  'Where a spec already does one of these (the contract was revised after an attack), say so and add only the missing test. You are the single writer of unit U1\'s specs, scripts, tests and fixtures for this step. Do not edit ' + TCB + '/lib.mjs: put what the library needs under lib_change_requests. Run the unit\'s tests and report. In "fixed" use the ids M1 to M6.',
+  ref(J.U1a, 'The join of replace, admit and stop'), ref(J.U1b, 'The join of watch, status and handover'),
+], { schema: FIXED, model: 'opus', effort: 'high' })
+
+const s2P = Promise.all(slice2.map(k => joinGroup(G[k].u, G[k].g, k === 'U3b' ? u3bFinishP : null)))
+
+async function reviewUnit(u, before) {
+  await before
+  const scripts = u.groups.flatMap(g => g.scripts)
+  const rv = await stage('review:' + u.key, 'Review', [
+    'Review one unit of the trusted scripts, refuting by default: unit ' + u.key + ' (' + u.name + '): ' + scripts.map(s => TCB + '/' + s).join(', ') + (u.key === 'U5' ? ', the briefs under ' + TCB + '/briefs/ and ' + TCB + '/thresholds.json' : '') + (u.key === 'U3' ? ', and the role files under ' + TCB + '/agents/, ' + TCB + '/profiles/ and ' + TCB + '/settings/' : '') + '. Judge them against their specs under ' + ROOT + '/spec/, ' + CONTRACT + ' and the rules of the design that the specs name.',
+    'Read the code. Run the unit\'s tests. For each script make at least two mutations in a scratch copy under ' + ROOT + '/review-tmp/' + u.key + '/ that break the mechanism the script exists for (remove the epoch check, the lock, the hash comparison, the search for the quote, the three-valued result, the blinding) and see that a test fails: a mutation no test catches is a finding. Look for: a behaviour of the spec that the code does not do; an unsafe action (a kill of a process not proven to belong to the attempt, a write outside the run root, a network call outside snap.mjs, a path or a command built from untrusted text); a race between a check and the act that follows; a wall-clock read where the design counts; a "pass" where a check did not run; a statistic computed wrongly (check any formula by hand on a small case); a brief that hints at the hoped-for result or names a model tier. High and medium findings only, each with file and lines, the failing condition and the smallest fix. Do not edit the unit\'s files.',
+  ], { schema: FINDINGS, model: 'opus', effort: 'high' })
+  if (!rv || rv.from_file) return { key: u.key, review: rv, fix: rv && rv.from_file ? { from_file: DONE + '/fix-' + u.key + '.json' } : null }
+  if (!(rv.findings.length || rv.mutations.some(m => !m.a_test_failed))) return { key: u.key, review: rv, fix: null }
+  const fx = await stage('fix:' + u.key, 'Review', [
+    'Apply the reviewer\'s findings to unit ' + u.key + ' of the trusted scripts (you are the single writer of this unit\'s scripts, tests, fixtures and other files for this step; never edit ' + TCB + '/lib.mjs: put what the library needs under lib_change_requests). For each finding you fix, add or adjust a test so that it fails before the fix and passes after. For each mutation no test caught, add the missing test. Run the unit\'s tests and report. If you disagree with a finding after checking the spec, do not apply it and say why under not_fixed.',
+    ref(rv, 'The review'),
+  ], { schema: FIXED, model: u.tier === 'opus' ? 'opus' : 'sonnet', effort: 'high' })
+  return { key: u.key, review: rv, fix: fx }
+}
+
+const s2 = await s2P
+slice2.forEach((k, i) => { J[k] = s2[i] })
+const modelfix = await modelfixP
+const unitWait = { U1: Promise.resolve(modelfix), U2: Promise.resolve(), U3: Promise.resolve(), U4: Promise.resolve(), U5: Promise.resolve() }
+const unitsDone = await Promise.all(UNITS.map(u => reviewUnit(u, unitWait[u.key])))
+const libRev = await libReviewedP
+
+// ---------- Integration ----------
+const e2e = await stage('e2e:build', 'Integrate', [
+  'Write and run an end-to-end dry run of the trusted scripts on synthetic data: ' + ROOT + '/e2e/run-e2e.mjs (you may write only under ' + ROOT + '/e2e/). It builds a temporary run root and walks one small field through the whole path, calling the real scripts in ' + TCB + '/ as child processes, one at a time, in the order the contract (' + CONTRACT + ') and the specs (' + ROOT + '/spec/) give: freeze a protocol; admit and start an attempt (the session-start step, which only the app can do, is simulated by writing a small synthetic transcript and the attempt\'s staging files by hand); commit; harvest cards; snapshot two synthetic pages from a server the script starts on 127.0.0.1; witness; queue a check and record a verdict; promote; compute labels; render the views and the seven measures; certify; seed faults and measure a checker\'s detection on them; audit; fsck; run watcher ticks over a synthetic transcript that stalls; reconcile and end a turn; hand over; write the design cut; compare two synthetic arms; compute unit costs from the synthetic transcripts. Then the faults: a commit with a stale epoch is refused; a write by a replaced attempt is logged and not accepted; a torn file is not read as done; a retracted card marks the sentence that cites it stale; a quote that is not in the page is not witnessed; a check that did not run is not a pass. Print one line per step with ok or FAIL. Run it and report every failure with the script at fault and the likely cause. Do not edit the scripts.',
+], { schema: E2E, model: 'sonnet', effort: 'high' })
+
+const final = await stage('e2e:fix', 'Integrate', [
+  'Bring the trusted scripts to a state where the end-to-end run and the whole test suite pass, and say honestly what does not. You are now the single writer of everything under ' + TCB + '/, of ' + ROOT + '/e2e/, and of the contract and specs for the one correction named below. (1) Read the library change requests that the earlier stages left: every file under ' + DONE + '/ and ' + FIRST + '/ has a "lib_change_requests" list (search for it); apply those that are right, judged against ' + CONTRACT + '; a request that would change a shared format must be applied in every script that uses it. (2) Fix the failures of the end-to-end run at the script at fault, or in the run script when it is the run script that is wrong; rerun `node ' + ROOT + '/e2e/run-e2e.mjs` until it passes or you can say exactly why not. (3) Run the whole suite, `node --test --test-concurrency=4 ' + TCB + '/test/`, and fix what fails. (4) Run `node ' + TCB + '/selftest.mjs` as its spec says. (5) Correct the contract and the specs where they still say tcb/scripts/, so that the text and the code agree on the flat layout. (6) List the tests that are skipped because they need the app, and anything still wrong. Never make a test pass by weakening it: a behaviour that cannot be met is reported, not hidden.',
+  ref(e2e, 'The end-to-end result'),
+], { schema: FINAL, model: 'opus', effort: 'high' })
+
+const fidelity = await fidelityP
+const runnerChk = await runnerP
+const sum = (t) => (t ? { passed: t.passed, failed: t.failed, skipped: t.skipped } : null)
+const brief = (r) => (r == null ? null : (r.from_file ? { from_file: r.from_file } : r))
+return {
+  root: ROOT,
+  coverage: { missing: missing, not_started: notStarted, skipped_as_done: skipped },
+  library: { finish: brief(libFinish), join: libJoin && libJoin.tests ? { tests: sum(libJoin.tests), rounds: libJoin.rounds, still_failing: libJoin.still_failing } : brief(libJoin), review: libRev.review && libRev.review.findings ? { findings: libRev.review.findings.length, uncaught_mutations: libRev.review.mutations.filter(m => !m.a_test_failed).length, verdict: libRev.review.verdict } : brief(libRev.review), fix: libRev.fix && libRev.fix.fixed ? { fixed: libRev.fix.fixed.length, not_fixed: libRev.fix.not_fixed, tests: sum(libRev.fix.tests) } : brief(libRev.fix) },
+  joins: Object.keys(J).map(k => ({ group: k, result: J[k] && J[k].tests ? { tests: sum(J[k].tests), rounds: J[k].rounds, fixes: J[k].fixes.length, still_failing: J[k].still_failing } : brief(J[k]) })),
+  modelfix: modelfix && modelfix.fixed ? { fixed: modelfix.fixed, not_fixed: modelfix.not_fixed, tests: sum(modelfix.tests) } : brief(modelfix),
+  units: unitsDone.map(u => ({ unit: u.key, review: u.review && u.review.findings ? { findings: u.review.findings.map(f => f.severity + ' ' + f.file + ': ' + f.claim), mutations: u.review.mutations.length, uncaught: u.review.mutations.filter(m => !m.a_test_failed).length, verdict: u.review.verdict } : brief(u.review), fix: u.fix && u.fix.fixed ? { fixed: u.fix.fixed.length, not_fixed: u.fix.not_fixed, tests: sum(u.fix.tests) } : brief(u.fix) })),
+  e2e: e2e && e2e.steps ? { steps: e2e.steps.length, failed_first_run: e2e.failures.length } : brief(e2e),
+  final: brief(final),
+  fidelity: brief(fidelity),
+  harden: brief(libHarden),
+  runner_check: brief(runnerChk),
+}

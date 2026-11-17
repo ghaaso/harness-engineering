@@ -1,153 +1,304 @@
 {
-  "step": "review-U1",
-  "unit": "U1 (execution): replace.mjs, admit.mjs, stop.mjs, watch.mjs, status.mjs, handover.mjs",
-  "findings": [
-    {
-      "id": "U1-F1",
-      "file": "tcb/admit.mjs",
-      "lines": "469-487",
-      "severity": "medium",
-      "kind": "untested-mechanism",
-      "claim": "The memory reservation for admitted-but-not-running sessions (`pending`, M4) is computed in gatherFacts but no test exercises it: deleting the `pending += 1` for a row with no matched process leaves all 30 admit tests green.",
-      "evidence": "Mutation A5 (line 486 -> `void 0;`): node --test admit.test.mjs, 28 pass / 0 fail / 2 skip. T7 tests only decide() with a literal `pending`; no check/start test has an admitted row with a working process list and a --free-mb between peak and peak*(pending+1)+reserve.",
-      "fix": "Add a check-mode test: one row at active/admitted (no process, no transcript), candidate at active/stopped, thresholds reserve 1024 / peak 1200, --free-mb 2300 -> exit 6 with reason memory {pending: 1}; without the admitted row -> admitted."
-    },
-    {
-      "id": "U1-F2",
-      "file": "tcb/admit.mjs",
-      "lines": "336-369, 491",
-      "severity": "medium",
-      "kind": "untested-mechanism",
-      "claim": "Gate A as read from files (gateAFacts: approved ids of the current protocol, committed cards of the field, their last status, the latest pack's not_covered) is never exercised; only decide() is tested with a literal gateA object.",
-      "evidence": "Mutation A7 (line 357, without F5 a committed card covers only when its status is witnessed) leaves all 30 admit tests green. Any error in how gate A is computed before a review start would pass unnoticed.",
-      "fix": "Add a check --task test on a review row: frozen protocol with ids [a,b], a committed card of the field covering a (status pending, f5_given false), a committed pack with not_covered [{question_id: b}] -> admitted; remove the pack's entry -> gate-a-uncovered {ids:[b]}; with f5_given true and the card pending -> gate-a-uncovered {ids:[a,b]}."
-    },
-    {
-      "id": "U1-F3",
-      "file": "tcb/watch.mjs",
-      "lines": "315, 719-724",
-      "severity": "medium",
-      "kind": "untested-mechanism",
-      "claim": "The per-tick ce check of the default-mode watcher (R4: the ce check is the first act of every evaluation) is untested. With it removed, a quiet watcher of an old ce keeps looping, keeps watcher.lock and keeps rewriting watcher.json; it only dies if some new condition forces a ledger append (withRunLock then gives 64). The successor's watcher then gets 75 and its endturn reports watcher-missing forever.",
-      "evidence": "Mutation W3 (line 315 -> `void 0;`): node --test watch.test.mjs, 61 pass / 0 fail. T15 uses --once, where runWatcher's own checkCe (line 699) refuses before evaluate runs; no test raises coord.ce while a default-mode watcher is sleeping between ticks.",
-      "fix": "Add a test: start `watch.mjs --root R --ce 1 --interval-ms 50 --no-intake` on a quiet root (child process, killed by the test in after()), raise coord.json to ce 2 after the first watcher.json write, expect exit 64 within a bounded wait, watcher.lock released and watcher.json not written after the raise."
-    },
-    {
-      "id": "U1-F4",
-      "file": "tcb/watch.mjs",
-      "lines": "468-490",
-      "severity": "medium",
-      "kind": "spec-gap-unsafe-loop",
-      "claim": "An owner resume cannot take effect while the two fails are still inside W_cc_ticks: every tick with runFlags.halted false and a qualifying cluster appends a new `halt` line, so the owner's `owner {act: resume}` is undone at the next tick, for up to W_cc_ticks (30) ticks. In addition the window relative to ticks_total (`tick - f.tick < wcc`) is untested: with it removed, two old fails 5 ticks apart halt the run forever, and every resume is undone at once.",
-      "evidence": "Code: `if (!runFlags.halted) appends.push({ kind: 'halt', ... })` (line 489); lib.runFlags clears halted only by a later owner resume (lib.mjs 3356-3357), so the watcher re-halts on the same fails. Mutation W8 (line 474, `tick - f.tick < wcc` -> `true`): the three T10 tests pass (the 40-ticks-apart case is caught only by the pairwise cluster filter, not by the window against now).",
-      "fix": "Append a halt only when no halt or owner-resume line is newer than the newest fail of the cluster (e.g. compare the cluster's max tick with the `fails` recorded in the last halt line, or skip when the last owner resume has a higher seq than the last halt naming the same fails). Add a test: fails at ticks 10 and 15, ticks_total 100, W_cc_ticks 30 -> no 26 and no halt line; and one with a resume after the halt -> no second halt line."
-    },
-    {
-      "id": "U1-F5",
-      "file": "tcb/stop.mjs",
-      "lines": "252-316",
-      "severity": "medium",
-      "kind": "unsafe-confirm-without-observation",
-      "claim": "`stop request` confirms a stop at once, with no process list and no wait, whenever the target attempt has no bound session and no folder transcript yet. For a row fenced at step admitted (the typical memory park of the newest session, a cut or a drop) whose session the coordinator has already started but which has not yet written its first transcript line, or whose transcript lands in a project folder transcriptsForFolder does not find, the slot is freed (stop confirmed, state parked/cut/dropped) while the session runs. R9 (the design) asks for 2 delta of non-growth and R10 counts every live child, stop-unconfirmed included; the spec's request step allows this shortcut, but nothing observes it.",
-      "evidence": "Lines 283-309: `session = att.session ?? pre.tt.folderSessions[0] ?? null`; if null, the update sets stop 'confirmed', step 'stopped' and dispose() runs, without proc.list(). slotCount then skips the attempt (stop confirmed), so admit can start another session.",
-      "fix": "Confirm at once only when the target attempt was never admitted (no `manifest` on the attempt). Otherwise set step stop-requested with session null and let `verify` sample the folder's transcripts and the processes naming the folder over stop_verify_deltas ticks. At least, take proc.list() outside the lock and refuse the immediate confirm when attemptProcesses(list, {folder}) matches or the list fails."
-    },
-    {
-      "id": "U1-F6",
-      "file": "tcb/watch.mjs",
-      "lines": "814-836",
-      "severity": "medium",
-      "kind": "liveness",
-      "claim": "Intake steps run through spawnSync with no timeout. One step that never exits (snap.mjs --new waiting on the network, a script stuck on a lock) blocks the detached intake forever; the watcher sees the intake pid alive and never spawns another (lines 560-570), and no class, incident or status anomaly reports it. Harvest, commit intake, witness, promote and tms then stop running silently.",
-      "evidence": "Line 817: `spawnSync(process.execPath, [...], { cwd: root, shell: false, windowsHide: true, stdio: 'ignore' })` without `timeout`; step i only checks `proc.alive(state.intake.pid)`.",
-      "fix": "Pass `timeout` (a new threshold, e.g. intake_step_timeout_ms) to spawnSync; spawnSync ends only its own child, which is allowed. A timed-out step (r.error code ETIMEDOUT or r.signal set) gets the same `incident` {class: not-run, detail: {script, exit: 70, timeout: true}} and intake continues. Optionally the watcher records the intake's spawn tick and raises an anomaly when it is still alive after K ticks."
-    },
-    {
-      "id": "U1-F7",
-      "file": "tcb/test/replace.test.mjs (tests of tcb/replace.mjs readyValid)",
-      "lines": "replace.mjs 196; replace.test.mjs 565-573",
-      "severity": "medium",
-      "kind": "untested-mechanism",
-      "claim": "The epoch comparison of the READY re-check (R7/M6: only a READY of epoch E wins) is never exercised. The test meant for it writes READY epoch 0, which the ready schema already rejects (epoch minimum 1), so deleting `v.epoch !== epoch` leaves T5 and T5b green.",
-      "evidence": "Mutation R2 (line 196 drops `|| v.epoch !== epoch`): 12 of 12 T5/T5b tests pass. ready.schema.json: `\"epoch\": { \"type\": \"integer\", \"minimum\": 1 }`.",
-      "fix": "In T5 use a schema-valid READY of another epoch, e.g. `{kind:'ready', task, epoch: 2}` in wt/<task>-e1/staging, and expect the stall fence to apply (exit 0, epoch 2)."
-    },
-    {
-      "id": "U1-F8",
-      "file": "tcb/handover.mjs",
-      "lines": "305-331",
-      "severity": "medium",
-      "kind": "untested-mechanism",
-      "claim": "The in-lock quiescence re-check of `raise` (no row reached admitted/started/bound with stop not confirmed since the pre-check) is untested: deleting the line that collects such rows leaves every handover test green. The spec lists this race as app-only (NA4), but it can be reached without a race through a seam, and nothing else guards it if admission is ever started while draining.",
-      "evidence": "Mutation H4 (line 322 -> `void 0;`): node --test handover.test.mjs, 18 pass / 0 fail / 4 skip. The pre-check refusals (T5, T7) are caught by the slotCount pre-check, so they do not test the re-check.",
-      "fix": "Make the gap between pre-check and lock reachable in a test (e.g. an exported doRaise with an injectable `beforeLock` hook, or a test-only env seam that runs a callback after the pre-check) that moves a row to admitted; expect exit 6 not-quiescent, coord unchanged, one incident."
-    },
-    {
-      "id": "U1-F9",
-      "file": "tcb/status.mjs",
-      "lines": "644-648",
-      "severity": "medium",
-      "kind": "untested-mechanism",
-      "claim": "Endturn's watcher check requires `watcher.lock` to hold the pid and start time of `watcher.json` (spec --endturn step 2), but no test exercises that part: removing it leaves T10, T11 and M1 green. Impact is small (pid plus start time already identify a live process), but a watcher that has released its lock and is exiting would be reported as running.",
-      "evidence": "Mutation ST6 (line 645 drops the wlock conditions): 4 of 4 selected tests pass.",
-      "fix": "Add an endturn test: watcher.json of this ce naming a live sleeper while watcher.lock is absent (or names another pid) -> exit 1 watcher-missing."
-    }
-  ],
-  "mutations": [
-    {"id": "R1", "file": "tcb/replace.mjs", "what": "line 472: M6 READY re-check for every reason removed (if (false))", "a_test_failed": true, "caught_by": "T5b handover/memory/cut/drop"},
-    {"id": "R2", "file": "tcb/replace.mjs", "what": "line 196: readyValid no longer compares the READY's epoch", "a_test_failed": false, "caught_by": null},
-    {"id": "R3", "file": "tcb/replace.mjs", "what": "line 460: host class no longer compares boot ids (always differs)", "a_test_failed": true, "caught_by": "T6 recorded A, current A"},
-    {"id": "R4", "file": "tcb/replace.mjs", "what": "line 531: commit record sha256 comparison of a checkpoint object removed", "a_test_failed": false, "caught_by": null, "note": "redundant: lib.getObject re-hashes the bytes against the id, which T15 catches; not a finding"},
-    {"id": "R5", "file": "tcb/replace.mjs", "what": "lines 884, 897: guardUnder(dir, root) of the attempt folder removed", "a_test_failed": true, "caught_by": "T19 wt/ junction -> path-escape"},
-    {"id": "R6", "file": "tcb/replace.mjs", "what": "line 457: owner drop line requirement removed", "a_test_failed": true, "caught_by": "T10 no owner line"},
-    {"id": "R7", "file": "tcb/replace.mjs", "what": "line 991: bind wrong-folder check on the transcript cwd removed", "a_test_failed": true, "caught_by": "T22"},
-    {"id": "R8", "file": "tcb/replace.mjs", "what": "line 900: removal of a partial attempt folder after a failed start disabled", "a_test_failed": true, "caught_by": "T15, T18"},
-    {"id": "A1", "file": "tcb/admit.mjs", "what": "line 242: memory formula without peak x pending", "a_test_failed": true, "caught_by": "T7"},
-    {"id": "A2", "file": "tcb/admit.mjs", "what": "line 232: slots-full uses > instead of >=", "a_test_failed": true, "caught_by": "T6, T6b, T6c, T15"},
-    {"id": "A3", "file": "tcb/admit.mjs", "what": "line 258: budget check ignores the reservation", "a_test_failed": true, "caught_by": "T8"},
-    {"id": "A4", "file": "tcb/admit.mjs", "what": "line 263: draining reason removed", "a_test_failed": true, "caught_by": "T9"},
-    {"id": "A5", "file": "tcb/admit.mjs", "what": "line 486: pending count of admitted rows with no live process removed", "a_test_failed": false, "caught_by": null},
-    {"id": "A6", "file": "tcb/admit.mjs", "what": "line 193: gate-stale ignores the hazards sha", "a_test_failed": true, "caught_by": "T4"},
-    {"id": "A7", "file": "tcb/admit.mjs", "what": "line 357: gate A without F5 counts only witnessed cards as covering", "a_test_failed": false, "caught_by": null},
-    {"id": "S1", "file": "tcb/stop.mjs", "what": "line 387: wait for stop_verify_deltas ticks removed", "a_test_failed": true, "caught_by": "T5"},
-    {"id": "S2", "file": "tcb/stop.mjs", "what": "line 397: files absent from the sample no longer count as growth", "a_test_failed": true, "caught_by": "T7"},
-    {"id": "S3", "file": "tcb/stop.mjs", "what": "line 420: survivors no longer block confirmation", "a_test_failed": true, "caught_by": "T8"},
-    {"id": "S4", "file": "tcb/stop.mjs", "what": "line 432: epoch/step re-check under the lock removed", "a_test_failed": false, "caught_by": null, "note": "redundant: the following lib.updateRow is a CAS on epoch E and step stop-requested and gives the same 65 (T12 passes through it); not a finding"},
-    {"id": "S5", "file": "tcb/stop.mjs", "what": "line 424: zombie tokens no longer subtract spend_at_fence", "a_test_failed": true, "caught_by": "T9"},
-    {"id": "S6", "file": "tcb/stop.mjs", "what": "line 182: limit -> failed disposition removed", "a_test_failed": true, "caught_by": "T10"},
-    {"id": "S7", "file": "tcb/stop.mjs", "what": "line 283: folder-transcript session lookup removed from request", "a_test_failed": true, "caught_by": "T3"},
-    {"id": "W1", "file": "tcb/watch.mjs", "what": "line 399: pause discount (M5) removed", "a_test_failed": true, "caught_by": "M5"},
-    {"id": "W2", "file": "tcb/watch.mjs", "what": "line 417: READY of the epoch no longer voids stall/hang/loop", "a_test_failed": true, "caught_by": "T6, X2"},
-    {"id": "W3", "file": "tcb/watch.mjs", "what": "line 315: ce check at the start of each evaluation removed", "a_test_failed": false, "caught_by": null},
-    {"id": "W4", "file": "tcb/watch.mjs", "what": "line 637: acked_seq no longer silences acknowledged keys", "a_test_failed": true, "caught_by": "T14"},
-    {"id": "W5", "file": "tcb/watch.mjs", "what": "line 780: alarm arm token ignored (always fires)", "a_test_failed": true, "caught_by": "M1"},
-    {"id": "W6", "file": "tcb/watch.mjs", "what": "line 446: zombie-write de-duplication removed", "a_test_failed": true, "caught_by": "T7"},
-    {"id": "W7", "file": "tcb/watch.mjs", "what": "line 650: coalesce_ticks ignored", "a_test_failed": true, "caught_by": "T6 coalesce 2"},
-    {"id": "W8", "file": "tcb/watch.mjs", "what": "line 474: common-cause window against ticks_total removed", "a_test_failed": false, "caught_by": null},
-    {"id": "ST1", "file": "tcb/status.mjs", "what": "line 626: acked-backwards refusal removed", "a_test_failed": true, "caught_by": "T12"},
-    {"id": "ST2", "file": "tcb/status.mjs", "what": "line 522: halted/draining no longer blocks replace-fence in next", "a_test_failed": true, "caught_by": "T3 halt, T3 drain"},
-    {"id": "ST3", "file": "tcb/status.mjs", "what": "line 594: reconcile never asks for the alarm (M2)", "a_test_failed": true, "caught_by": "M2, T7"},
-    {"id": "ST4", "file": "tcb/status.mjs", "what": "line 264: several-sessions refusal of reconcile removed", "a_test_failed": true, "caught_by": "T8"},
-    {"id": "ST5", "file": "tcb/status.mjs", "what": "line 139: quote/text file must be under plan/notes check removed", "a_test_failed": true, "caught_by": "T14 path-outside-root"},
-    {"id": "ST6", "file": "tcb/status.mjs", "what": "line 645: endturn no longer checks watcher.lock against watcher.json", "a_test_failed": false, "caught_by": null},
-    {"id": "H1", "file": "tcb/handover.mjs", "what": "line 274: quiescence pre-check threshold raised to > 99", "a_test_failed": true, "caught_by": "T5 unconfirmed"},
-    {"id": "H2", "file": "tcb/handover.mjs", "what": "lines 261, 309: drain requirement removed (pre-check and in-lock)", "a_test_failed": true, "caught_by": "T4"},
-    {"id": "H3", "file": "tcb/handover.mjs", "what": "line 192: init coord-exists refusal removed", "a_test_failed": true, "caught_by": "T2"},
-    {"id": "H4", "file": "tcb/handover.mjs", "what": "line 322: in-lock quiescence re-check removed", "a_test_failed": false, "caught_by": null}
-  ],
-  "tests": {
-    "command": "node tools/lane.mjs --label review-U1-base-<x> --timeout-s 300 -- node --test --test-concurrency=1 tcb/test/<file> (four lane calls: replace; admit+stop; watch; status+handover), cwd = tcb-build",
-    "passed": 245,
-    "failed": 0,
-    "skipped": 17,
-    "output_tail": "replace: tests 78 pass 76 fail 0 skipped 2 | admit+stop: tests 66 pass 61 fail 0 skipped 5 | watch: tests 65 pass 61 fail 0 skipped 4 (68.6 s) | status+handover: tests 53 pass 47 fail 0 skipped 6 (173 s). Every skip is a 'needs the app' NA test."
+ "findings": [
+  {
+   "id": "U1-F1",
+   "file": "tcb/admit.mjs",
+   "lines": "469-487",
+   "severity": "medium",
+   "kind": "untested-mechanism",
+   "claim": "The memory reservation for sessions that are admitted but not yet running (pending, M4) is computed in gatherFacts, but no test exercises it.",
+   "evidence": "Mutation A5 (line 486 changed to `void 0;`): admit.test.mjs gives 28 pass, 0 fail. T7 tests only decide() with a literal pending value. No check or start test has an admitted row together with a working process list and a --free-mb at which pending would change the answer.",
+   "fix": "Add a check-mode test: one row at active/admitted (no process, no transcript) and a candidate at active/stopped, with reserve 1024, peak 1200 and --free-mb 2300. Expect exit 6, reason memory {pending:1}. Without the admitted row, expect admitted."
   },
-  "notes_not_findings": [
-    "watch.mjs 349-399: on first sight of a task (or a new epoch) the calls already made are taken as the baseline (newCalls 0), so that tick counts toward hang even when the session made calls. Spec says counters reset, i.e. new calls = calls. With hang_ticks 10 this brings a hang at most one tick early; the builder declared it (build-U1b) and T2-T4 rely on it.",
-    "spec/admit.mjs.md T8 is arithmetically wrong (10000 - 8000 - 0 = 2000 >= 1500 is admitted); the test uses e_task 2500 and the code follows the rule. The spec text should be corrected.",
-    "admit/status/handover call lib.slotCount without {root}, so relative attempt folders are matched as substrings in command lines; this can only over-count (fail-safe).",
-    "handover init refusal coord-exists writes no incident line although the spec's Writes list says 'incident on refusals'; T2 does not ask for one."
-  ],
-  "scratch": "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/review-tmp/U1/ (mut.sh, orig/, out-<id>.txt, base-*.txt); the scratch tcb copy was restored after every mutation and the unit's files were not edited",
-  "verdict": "All 262 tests of the unit pass (245 pass, 17 app-only skips). 40 mutations were run, at least two per script; 31 were caught. Of the 9 not caught, 2 are redundant with a check the tests do reach (R4: getObject re-hashes; S4: updateRow's CAS). The other 7 are findings: A5 (pending memory reservation), A7 (gate A from files), W3 (the per-tick ce check of a looping watcher), W8 (the W_cc window against now), R2 (the READY epoch comparison, whose test uses a schema-invalid epoch 0), and the low-impact H4 and ST6. Three behaviour findings beyond the mutations: the watcher re-halts at every tick after an owner resume while the fails stay inside W_cc (F4); stop request confirms a stop of an admitted-but-not-yet-visible session with no observation (F5); a hung intake step blocks every later intake silently (F6). No kill, no write outside the run root, no network call, no command built from untrusted text, and no wall-clock read where the design counts (the pause discount is the one permitted, one-sided use). The formulas checked by hand (memory, reservation, slots, soft/hard floors, zombie, W_cc) are right."
+  {
+   "id": "U1-F2",
+   "file": "tcb/admit.mjs",
+   "lines": "336-369, 491",
+   "severity": "medium",
+   "kind": "untested-mechanism",
+   "claim": "Gate A as read from files (gateAFacts) is never exercised. Only decide() is tested, with a literal gateA object.",
+   "evidence": "Mutation A7 (line 357: without F5, a committed card covers only when its status is witnessed) leaves all 30 admit tests green.",
+   "fix": "Add a check --task test on a review row: a frozen protocol with ids [a,b], a committed card of the field covering a, and a pack with not_covered b. Expect admitted. Remove the pack entry and expect gate-a-uncovered [b]. With f5_given true and the card still pending, expect gate-a-uncovered [a,b]."
+  },
+  {
+   "id": "U1-F3",
+   "file": "tcb/watch.mjs",
+   "lines": "315, 719-724",
+   "severity": "medium",
+   "kind": "untested-mechanism",
+   "claim": "No test covers the ce check at the start of each tick of the default-mode watcher. Without it, a quiet watcher of an old ce keeps looping, keeps holding watcher.lock and keeps rewriting watcher.json. The successor's watcher then exits 75 every time and its endturn reports watcher-missing.",
+   "evidence": "Mutation W3 (line 315 changed to `void 0;`): watch.test.mjs gives 61 pass, 0 fail. T15 uses --once, where runWatcher's own checkCe at line 699 fires before evaluate runs.",
+   "fix": "Add a test: run `watch.mjs --interval-ms 50 --no-intake` as the test's own child, raise coord.json to ce 2 after the first tick, and expect exit 64 within a bounded wait, with watcher.lock released and no watcher.json write after the raise."
+  },
+  {
+   "id": "U1-F4",
+   "file": "tcb/watch.mjs",
+   "lines": "468-490",
+   "severity": "medium",
+   "kind": "spec-gap-unsafe-loop",
+   "claim": "After an owner resume, the watcher appends a new halt line at the next tick for as long as the two fails stay inside W_cc_ticks, so the resume cannot take effect for up to 30 ticks. Also, the W_cc window measured against ticks_total is untested: without it, two old fails halt the run forever.",
+   "evidence": "Line 489 appends a halt whenever `!runFlags.halted`, and lib.runFlags (lib.mjs 3356-3357) clears halted only through an owner resume line. Mutation W8 (line 474: `tick - f.tick < wcc` replaced by `true`) passes all three T10 tests.",
+   "fix": "Skip the halt append when the last owner resume is newer than the last halt that names the same fails, or when the cluster's newest fail tick is not newer than the fails recorded in the last halt line. Add tests: fails at ticks 10 and 15 with ticks_total 100 give no 26; a resume after a halt gives no second halt line."
+  },
+  {
+   "id": "U1-F5",
+   "file": "tcb/stop.mjs",
+   "lines": "252-316",
+   "severity": "medium",
+   "kind": "unsafe-confirm-without-observation",
+   "claim": "stop request confirms the stop at once, with no process list and no waiting, whenever the target attempt has no bound session and no folder transcript. This frees the slot of a session the coordinator has already started but whose transcript is not visible yet. That is the typical case of parking the newest session for memory, a cut or a drop of an admitted row. R9 requires 2Δ without growth and R10 counts every live child, so this breaks both.",
+   "evidence": "Lines 283-309: when `att.session ?? pre.tt.folderSessions[0]` is null, the code sets stop to confirmed and step to stopped and runs dispose(), without calling proc.list(). slotCount then skips the attempt.",
+   "fix": "Confirm at once only when the target attempt was never admitted (no manifest). Otherwise move to stop-requested with session null and let verify sample the folder's transcripts and processes over stop_verify_deltas ticks. At minimum, refuse the immediate confirm when attemptProcesses(list,{folder}) matches or when the process list fails."
+  },
+  {
+   "id": "U1-F6",
+   "file": "tcb/watch.mjs",
+   "lines": "814-836",
+   "severity": "medium",
+   "kind": "liveness",
+   "claim": "Intake steps run under spawnSync with no timeout. One step that never exits (for example snap.mjs --new hanging on the network) blocks the detached intake forever. The watcher sees the intake pid alive and never spawns another one, and nothing reports it.",
+   "evidence": "Line 817 calls spawnSync without a timeout, and step i (lines 560-570) checks only proc.alive of the intake pid.",
+   "fix": "Pass a timeout from a new threshold to spawnSync (it ends only its own child). Treat a timeout as exit 70: write one not-run incident {script, exit:70, timeout:true} and continue with the next step."
+  },
+  {
+   "id": "U1-F7",
+   "file": "tcb/test/replace.test.mjs (covers tcb/replace.mjs readyValid)",
+   "lines": "replace.mjs 196; replace.test.mjs 565-573",
+   "severity": "medium",
+   "kind": "untested-mechanism",
+   "claim": "No test exercises the epoch comparison in the READY re-check (R7/M6). The test meant for it uses a READY with epoch 0, which the ready schema already rejects (minimum 1).",
+   "evidence": "Mutation R2 (removes `|| v.epoch !== epoch` at line 196): all 12 T5/T5b tests still pass.",
+   "fix": "In T5, use a schema-valid READY of another epoch ({kind:'ready', task, epoch:2} in wt/<task>-e1/staging) and expect the stall fence to apply (exit 0, epoch 2)."
+  },
+  {
+   "id": "U1-F8",
+   "file": "tcb/handover.mjs",
+   "lines": "305-331",
+   "severity": "medium",
+   "kind": "untested-mechanism",
+   "claim": "The quiescence re-check that raise makes under the lock (no row reached admitted, started or bound since the pre-check) is untested. Removing it leaves every handover test green.",
+   "evidence": "Mutation H4 (line 322 changed to `void 0;`): handover.test.mjs gives 18 pass, 0 fail. T5 and T7 are caught by the slotCount pre-check, so they never reach the re-check.",
+   "fix": "Add a seam (an exported doRaise with a beforeLock hook) so a test can move a row to admitted between the pre-check and the lock. Expect exit 6 not-quiescent, coord unchanged, one incident line."
+  },
+  {
+   "id": "U1-F9",
+   "file": "tcb/status.mjs",
+   "lines": "644-648",
+   "severity": "medium",
+   "kind": "untested-mechanism",
+   "claim": "No test covers the part of endturn's watcher check that requires watcher.lock to hold the pid and start time recorded in watcher.json. The impact is low.",
+   "evidence": "Mutation ST6 (removes the wlock conditions at line 645): T10, T11 and M1 all pass.",
+   "fix": "Add an endturn test: watcher.json of this ce names a live sleeper while watcher.lock is absent or names another pid. Expect exit 1 watcher-missing."
+  }
+ ],
+ "mutations": [
+  {
+   "file": "tcb/replace.mjs",
+   "what": "R1 l.472 M6 READY re-check for every reason removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/replace.mjs",
+   "what": "R2 l.196 readyValid epoch comparison removed",
+   "a_test_failed": false
+  },
+  {
+   "file": "tcb/replace.mjs",
+   "what": "R3 l.460 host class ignores boot comparison",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/replace.mjs",
+   "what": "R4 l.531 commit-record sha256 check removed (redundant with getObject re-hash)",
+   "a_test_failed": false
+  },
+  {
+   "file": "tcb/replace.mjs",
+   "what": "R5 l.884,897 guardUnder of the attempt folder removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/replace.mjs",
+   "what": "R6 l.457 owner drop line requirement removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/replace.mjs",
+   "what": "R7 l.991 bind wrong-folder check removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/replace.mjs",
+   "what": "R8 l.900 partial folder cleanup disabled",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/admit.mjs",
+   "what": "A1 l.242 memory formula without peak x pending",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/admit.mjs",
+   "what": "A2 l.232 slots-full > instead of >=",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/admit.mjs",
+   "what": "A3 l.258 budget ignores reservation",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/admit.mjs",
+   "what": "A4 l.263 draining reason removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/admit.mjs",
+   "what": "A5 l.486 pending count of admitted rows removed",
+   "a_test_failed": false
+  },
+  {
+   "file": "tcb/admit.mjs",
+   "what": "A6 l.193 gate-stale ignores hazards sha",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/admit.mjs",
+   "what": "A7 l.357 gate A without F5 counts only witnessed cards",
+   "a_test_failed": false
+  },
+  {
+   "file": "tcb/stop.mjs",
+   "what": "S1 l.387 wait for stop_verify_deltas removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/stop.mjs",
+   "what": "S2 l.397 new files no longer count as growth",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/stop.mjs",
+   "what": "S3 l.420 survivors no longer block confirm",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/stop.mjs",
+   "what": "S4 l.432 in-lock recheck removed (redundant with updateRow CAS)",
+   "a_test_failed": false
+  },
+  {
+   "file": "tcb/stop.mjs",
+   "what": "S5 l.424 zombie tokens without spend_at_fence",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/stop.mjs",
+   "what": "S6 l.182 limit->failed disposition removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/stop.mjs",
+   "what": "S7 l.283 folder-transcript session lookup removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/watch.mjs",
+   "what": "W1 l.399 pause discount removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/watch.mjs",
+   "what": "W2 l.417 READY no longer voids stall/hang/loop",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/watch.mjs",
+   "what": "W3 l.315 per-tick ce check removed",
+   "a_test_failed": false
+  },
+  {
+   "file": "tcb/watch.mjs",
+   "what": "W4 l.637 acked_seq no longer silences keys",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/watch.mjs",
+   "what": "W5 l.780 alarm arm token ignored",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/watch.mjs",
+   "what": "W6 l.446 zombie-write dedupe removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/watch.mjs",
+   "what": "W7 l.650 coalesce_ticks ignored",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/watch.mjs",
+   "what": "W8 l.474 W_cc window vs ticks_total removed",
+   "a_test_failed": false
+  },
+  {
+   "file": "tcb/status.mjs",
+   "what": "ST1 l.626 acked-backwards refusal removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/status.mjs",
+   "what": "ST2 l.522 halted/draining no longer blocks replace-fence",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/status.mjs",
+   "what": "ST3 l.594 reconcile never asks for the alarm",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/status.mjs",
+   "what": "ST4 l.264 several-sessions refusal removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/status.mjs",
+   "what": "ST5 l.139 plan/notes path check removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/status.mjs",
+   "what": "ST6 l.645 endturn watcher.lock check removed",
+   "a_test_failed": false
+  },
+  {
+   "file": "tcb/handover.mjs",
+   "what": "H1 l.274 quiescence pre-check threshold > 99",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/handover.mjs",
+   "what": "H2 l.261,309 drain requirement removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/handover.mjs",
+   "what": "H3 l.192 init coord-exists refusal removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "tcb/handover.mjs",
+   "what": "H4 l.322 in-lock quiescence re-check removed",
+   "a_test_failed": false
+  }
+ ],
+ "tests": {
+  "command": "node tools/lane.mjs --label review-U1-base-<x> --timeout-s 300 -- node --test --test-concurrency=1 tcb/test/<file> (4 lane calls: replace; admit+stop; watch; status+handover), cwd tcb-build",
+  "passed": 245,
+  "failed": 0,
+  "skipped": 17,
+  "output_tail": "replace: 78 tests, 76 pass, 0 fail, 2 skipped | admit+stop: 66 tests, 61 pass, 0 fail, 5 skipped | watch: 65 tests, 61 pass, 0 fail, 4 skipped | status+handover: 53 tests, 47 pass, 0 fail, 6 skipped. Every skip is an app-only NA test."
+ },
+ "verdict": "All 262 tests of the unit pass: 245 pass, 17 skipped, and every skip is an app-only test. I ran 40 mutations, at least two per script, and the tests caught 31. Of the 9 they missed, 2 are covered by an equivalent check that the tests do reach: R4 by getObject's re-hash and S4 by the compare-and-set in updateRow. The other 7 are findings: R2, A5, A7, W3 and W8, plus H4 and ST6, which matter less. Three findings are about behaviour, not test gaps. First, the watcher appends a new halt line at every tick after an owner resume while the fails stay inside W_cc (F4). Second, stop request confirms the stop of an admitted session that has no visible transcript yet, without observing anything (F5). Third, one intake step that never exits silently blocks every later intake (F6). I found no kill, no write outside the run root, no network call, no command built from untrusted text, and no wall-clock read where the design counts; the M5 pause discount is the one permitted, one-sided use. I checked the memory, reservation, slot, soft/hard, zombie and W_cc formulas by hand and they are correct. Two smaller deviations are in notes_not_findings: on first sight of a task, the watcher counts that tick toward hang (at most one tick early), and the arithmetic in spec admit T8 is wrong (the code and the test follow the rule). The full return is at C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/done/review-U1.json. The scratch folder is C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/review-tmp/U1/, and I did not edit the unit's files."
 }

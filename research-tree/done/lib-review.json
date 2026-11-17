@@ -1,108 +1,159 @@
 {
-  "stage": "lib-review",
-  "verdict": "The library holds up under its own tests: 177 pass and 2 are skipped as needs-app. 13 of 14 mutations are caught. Every mechanism the brief names fails a test when it is broken: stale-break verification, alive-null counted as alive, chain link (written and verified), fence/updateRow compare-and-set, writeTasks rev CAS, staging-cut prefix hash, READY exclusion, nlink link detection, atomic rename, rename retry, additionalProperties, required, temp nonce. One mutation survives: the re-check of the lock just before the ledger write (lib.mjs:1485). Two defects can break a LIVE lock. First, realProc.alive answers false (dead) when the CIM query fails, which was demonstrated. Second, the own-clock start time is compared symmetrically with a 2 s tolerance. A broken live lock gives two writers, so the ledger chain can fork and the task table can lose an update. Also medium: PowerShell is spawned on every ordinary lock contention; an empty or unparseable lock file blocks forever; the T21 test leaks its reader child when the writer fails (it hung a mutation run until the lane's 300 s timeout); card.quote's 15-word cap has no length bound. No high or medium defect was found in the hash chain itself, the fence CAS, the staging cut, the temp-file naming, the validator's keyword handling or the transcript parser's token counting against probes/transcript-format.md. psOne interpolates only an integer pid, and the library reads no wall clock where a counter is meant.",
-  "findings": [
-    {
-      "id": "LR-1",
-      "file": "tcb/lib.mjs",
-      "lines": "2625-2633, 2681-2693 (consumed at 1255-1268, 1298-1300, 1310-1344)",
-      "severity": "high",
-      "kind": "lock-breaks-live-holder",
-      "claim": "realProc.alive returns false (dead) when Get-CimInstance fails, so a waiter breaks a live holder's run.lock or watcher.lock. Contract 4.4/4.9 says a PowerShell failure is null, which counts as alive. list() likewise returns [] instead of throwing proc-unavailable.",
-      "evidence": "psOne runs `$x=Get-CimInstance Win32_Process -Filter 'ProcessId=N'; if($x){...} else {'NONE'}`. A failed CIM query is a non-terminating error, so $x is $null, 'NONE' is printed and powershell exits 0. execFileSync therefore does not throw and alive() returns false at line 2689. Reproduced here with the same script shape and a failing query: stdout 'NONE', exit 0, the CimException only on stderr. In acquireLock, isStale then returns true and breakStale renames the live lock. The re-read matches the record judged stale, so the waiter creates its own lock and appends lock-break. The holder's next assertHeld throws lock-lost, but a write already between its assertHeld and the append, or its release() (read nonce, then unlink), runs against the new holder: two seq n+1 ledger lines (a fork), or a lost tasks.json update. The same failure in PS_LIST leaves $p = @(), so list() returns [] with exit 0. stop verify then sees no survivors, and slotCount sees no live process. WMI quota or provider errors are most likely exactly when the PC is under memory pressure.",
-      "fix": "Make every CIM failure terminating: prefix PS_LIST, PS_BOOT and psOne with `$ErrorActionPreference='Stop';` (or add `-ErrorAction Stop` to each Get-CimInstance). A failed query then exits 1, execFileSync throws, and alive returns null, list throws proc-unavailable 2, boot returns null. Add a test with a fake exe or script that writes NONE to stderr-error and exits 0 vs exits 1, or a realProc seam taking the script text."
-    },
-    {
-      "id": "LR-2",
-      "file": "tcb/lib.mjs",
-      "lines": "1128-1135, 1138-1143, 2690-2692",
-      "severity": "medium",
-      "kind": "lock-breaks-live-holder",
-      "claim": "The lock record's start time comes from the holder's own clock (Date.now() minus process.uptime()) and is matched to the CIM CreationDate symmetrically within 2 s. A live holder whose start-up took more than 2 s, or whose wall clock stepped between its creation and its first lock, is judged dead (alive false) and its lock is broken.",
-      "evidence": "process.uptime() counts from Node's own start, after the executable is mapped and loaded. CreationDate is when Windows created the process. The lane runs every command at below-normal priority, and the build has seen PC stalls under memory pressure and a scanner (360 Total Security per the owner's notes). Under those conditions a start-up delay over 2 s is plausible. The record then differs from CreationDate by more than START_TOLERANCE_MS, sameStartTime returns false, alive returns false, and the waiter breaks the live lock, with the same fork consequences as LR-1. A w32time step after a reset shifts the own-clock start by the step size in the same way. T85 only checks the gap on an idle machine.",
-      "fix": "Compare one-sided for lock holders. The holder is the same process when listed CreationDate <= recorded start + START_TOLERANCE_MS. A process that reused the pid was created after the holder recorded its start, so it is still told apart, while a slow start-up (recorded start later than CreationDate by any amount) no longer reads as dead. For example, add sameOrLaterStart(listed, recorded) and use it in realProc.alive when judging a lock record."
-    },
-    {
-      "id": "LR-3",
-      "file": "tcb/lib.mjs",
-      "lines": "1255-1268, 1294-1302",
-      "severity": "medium",
-      "kind": "process-burst / check-then-act window",
-      "claim": "Every waiter that finds run.lock or watcher.lock held by a holder it has not judged yet spawns one powershell.exe (about 2 s, a CIM query). The record it judges was read before that 2 s call, and the rename comes after it.",
-      "evidence": "isStale is called on every 'exists' iteration with a parsed record, and the judged cache only dedupes by nonce. Under ordinary contention (the watcher appending events while the coordinator runs status, replace or commit), each script waiting on a short-lived holder therefore launches PowerShell, once per distinct holder it sees. These are the bursts of short-lived processes that preceded the PC stalls. When a lock really is stale and several scripts wait, the record judged 2 s earlier has often already been replaced. The rename then hits a fresh holder's lock and the restore path runs. While the lock is renamed away, that holder's assertHeld fails (lock-lost mid-operation), and a third process can slip in, which turns the restore into an .orphan.",
-      "fix": "Judge a holder only after the same nonce has been seen unchanged for K consecutive retries (a counter, for example K = 50, about 5 s at retryMs 100; far longer than any critical section). Re-read the lock bytes immediately before the rename in breakStale and skip the break if they changed. Normal contention then costs no PowerShell, and the act follows its check closely."
-    },
-    {
-      "id": "LR-4",
-      "file": "tcb/lib.mjs",
-      "lines": "1154-1168, 1237-1253, 1294-1304",
-      "severity": "medium",
-      "kind": "liveness after crash",
-      "claim": "A lock file that is empty or unparseable is never judged stale, so every script exits 75 (lock-busy) until a person deletes it.",
-      "evidence": "tryCreate opens run.lock with 'wx' and then writes and fsyncs the record. A hard reset in between (46 hard resets are on record for this PC) can leave a zero-length or garbled run.lock. readLockRecord returns record null for it, isStale(null) is false, and acquireLock waits out its retries and throws lock-busy 75, on every later call by every script. Nothing in lib, fsck or status names the condition: status only reports .orphan files. handover cleans *.stale and *.orphan, not run.lock.",
-      "fix": "When the raw bytes of the lock stay unparseable and unchanged across the whole retry budget (a counter, not a clock), break the lock with the same rename / compare-bytes / create protocol and append lock-break with stale null and the byte count. At the least, give status an anomaly 'lock-unreadable' so the coordinator is told why every script returns 75."
-    },
-    {
-      "id": "LR-5",
-      "file": "tcb/test/lib.test.mjs",
-      "lines": "lib.mjs 1485 (untested); tests T39-T47",
-      "severity": "medium",
-      "kind": "mutation survives",
-      "claim": "Removing appendLedger's re-check of the lock just before the write (lib.mjs:1485, handle.assertHeld()) fails no test. Contract 4.4 says assertHeld is called before every write, and this re-check is what stops a holder whose lock was taken during the tail read from forking the chain.",
-      "evidence": "Mutation M11 (line 1485 replaced by `void 0;`) ran T39-T47 through the lane: 9 pass, 0 fail. Only the assertHandle at entry (line 1443) is exercised by T42. No test loses the lock between the tail read and the append.",
-      "fix": "Add a test that installs setFsSeam({openSync}): on the ledger's 'r' open by tailInfo, overwrite run.lock with another nonce, then expect appendLedger to throw lock-lost 75 and the ledger bytes to be unchanged. Do the same for writeTasks between its rev read and writeAtomic (line 1609)."
-    },
-    {
-      "id": "LR-6",
-      "file": "tcb/test/lib.test.mjs",
-      "lines": "786-808",
-      "severity": "medium",
-      "kind": "test leaks a process",
-      "claim": "T21 never ends its reader child when writeAtomic throws: the test hangs and leaves a live node process.",
-      "evidence": "The child is spawned at 792. The stop file is written and the child awaited only after the 200 writes (799-801), with no try/finally. Under mutation M5b, where rename has no sharing retry, writeAtomic threw at once, the reader kept running, and the run hung until the lane's 300 s timeout (lane exit 124, out-M5b.txt). A real defect in writeAtomic would do the same in CI or a selftest run, against the build rule that a test ends every process it starts.",
-      "fix": "Wrap the 200 writes (line 799) in try { ... } finally { fs.writeFileSync(stop, '1'); if (child.exitCode === null) child.kill(); await closed; }, and keep the assertions after the finally."
-    },
-    {
-      "id": "LR-7",
-      "file": "tcb/schemas/card.schema.json",
-      "lines": "27 (lib.mjs 1025-1029, 2005)",
-      "severity": "medium",
-      "kind": "validator accepts what the format forbids",
-      "claim": "card.quote ('string <=15w', CONTRACT 3.1) carries x-maxWords 15 but no maxLength. wordCount splits only on JS \\s, so a quote with no \\s separators (CJK text, words joined by U+200B or U+2060, or punctuation) of any length counts as one word and passes.",
-      "evidence": "In wordCount, /\\s+/u does not match U+200B ZERO WIDTH SPACE or U+2060 WORD JOINER. For example, 'a\\u200bb\\u200bc...' with 500 tokens gives wordCount 1. A Chinese or Japanese passage of a whole paragraph is also 1 to 15 'words'. The schema has no maxLength on quote, so a session can store arbitrarily long source text in a card. The 15-word cap's purposes (a short exact quote, bounded pack tokens) then fail silently. The same holds for the 8-80 word caps in sentence, hazards, fmea, stpa and review, but those are the session's own prose.",
-      "fix": "Add a maxLength to quote (for example 200 code points) and to the other x-maxWords fields, sized as about 12 code points per allowed word. Alternatively, have wordCount also split on \\p{Cf} and count CJK characters as words."
-    }
-  ],
-  "mutations": [
-    { "file": "review-tmp/lib/tcb/lib.mjs:1319", "what": "M1a stale-break verification: breakStale skips the re-read comparison (`if (true)` for sameRecord(moved, held))", "a_test_failed": true },
-    { "file": "review-tmp/lib/tcb/lib.mjs:1267", "what": "M1b stale judgement: alive null counted as dead (`judged.get(key) !== true`)", "a_test_failed": true },
-    { "file": "review-tmp/lib/tcb/lib.mjs:1512", "what": "M2a hash chain link: verifyLedger's prev check removed", "a_test_failed": true },
-    { "file": "review-tmp/lib/tcb/lib.mjs:1456", "what": "M2b hash chain link: appendLedger links every line to 64 zeros instead of the tail hash", "a_test_failed": true },
-    { "file": "review-tmp/lib/tcb/lib.mjs:1631", "what": "M3 fence compare-and-set: updateRow's epoch check removed", "a_test_failed": true },
-    { "file": "review-tmp/lib/tcb/lib.mjs:1603", "what": "M8 writeTasks rev CAS removed", "a_test_failed": true },
-    { "file": "review-tmp/lib/tcb/lib.mjs:1804", "what": "M4a staging cut: readCutPrefix accepts a prefix whose sha256 differs from the cut", "a_test_failed": true },
-    { "file": "review-tmp/lib/tcb/lib.mjs:1070", "what": "M4b staging cut: walkFiles treats a hard-linked file (nlink 2) as a plain file", "a_test_failed": true },
-    { "file": "review-tmp/lib/tcb/lib.mjs:1755", "what": "M9 staging cut: READY.json no longer excluded", "a_test_failed": true },
-    { "file": "review-tmp/lib/tcb/lib.mjs:776,781", "what": "M5a atomic rename: writeAtomic writes the target in place ('w'), no temp, no rename", "a_test_failed": true },
-    { "file": "review-tmp/lib/tcb/lib.mjs:781", "what": "M5b atomic rename: rename without the Windows-sharing retry (caught by T21/T21b, but T21 then leaked its reader and the run hit the lane's 300 s timeout, see LR-6)", "a_test_failed": true },
-    { "file": "review-tmp/lib/tcb/lib.mjs:2054", "what": "M6 validator: additionalProperties false ignored", "a_test_failed": true },
-    { "file": "review-tmp/lib/tcb/lib.mjs:2038", "what": "M10 validator: required not enforced", "a_test_failed": true },
-    { "file": "review-tmp/lib/tcb/lib.mjs:761", "what": "M7 tempName without the 8-hex nonce", "a_test_failed": true },
-    { "file": "review-tmp/lib/tcb/lib.mjs:1485", "what": "M11 appendLedger's assertHeld right before the write removed (SURVIVED, see LR-5)", "a_test_failed": false }
-  ],
-  "tests": {
-    "command": "node tools/lane.mjs --label lib-review --timeout-s 300 -- node --test --test-concurrency=1 tcb/test/lib.test.mjs (cwd tcb-build)",
-    "passed": 177,
-    "failed": 0,
-    "skipped": 2,
-    "output_tail": "T96f ... ok; T97 makeRoot ... ok (stand-in helpers: tcb/test/helpers.mjs does not exist yet, so T97/T98 exercise the test file's stand-in); T98 ok. tests 179, pass 177, fail 0, skipped 2 (T82 needs-app claim, T92 needs-app), duration_ms 70314"
+ "verdict": "The library holds up under its own tests: 177 pass and 2 are skipped as needs-app. 13 of 14 mutations are caught. Every mechanism the brief names fails a test when it is broken: stale-break verification, alive-null counted as alive, chain link (written and verified), fence/updateRow CAS, writeTasks rev CAS, staging-cut prefix hash, READY exclusion, nlink link detection, atomic rename, rename retry, additionalProperties, required, temp nonce. One mutation survives: appendLedger's re-check of the lock just before the write (lib.mjs:1485). Two defects can break a LIVE lock. First, realProc.alive answers false (dead) when the CIM query fails; this was reproduced: the query printed NONE and PowerShell exited 0. Second, the own-clock start time is compared symmetrically within a 2 s tolerance. A broken live lock means two writers, so the ledger chain can fork and the task table can lose an update. Also medium: one PowerShell per lock contention; an empty or unparseable lock blocks forever; the T21 test leaks its reader child when the writer fails (it hung a mutation run until the lane's 300 s timeout); card.quote's 15-word cap has no length bound. No high or medium defect was found in the hash chain itself, the fence CAS, the staging cut, temp naming, the validator's keyword handling or the transcript parser's counting against probes/transcript-format.md. psOne interpolates only an integer pid. No wall-clock read stands where a counter is meant. Full return: C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/done/lib-review.json",
+ "findings": [
+  {
+   "id": "LR-1",
+   "file": "tcb/lib.mjs",
+   "lines": "2625-2633, 2681-2693 (consumed at 1255-1268, 1298-1300, 1310-1344)",
+   "severity": "high",
+   "kind": "lock-breaks-live-holder",
+   "claim": "realProc.alive returns false (dead) when Get-CimInstance fails, so a waiter breaks a live holder's run.lock or watcher.lock. Contract 4.4/4.9 says a PowerShell failure is null, which counts as alive. list() likewise returns [] instead of throwing proc-unavailable.",
+   "evidence": "psOne runs `$x=Get-CimInstance ...; if($x){...} else {'NONE'}`. A failed CIM query is non-terminating, so $x is $null, 'NONE' is printed and powershell exits 0. Reproduced with the same script shape and a failing query: stdout NONE, exit 0, the CimException only on stderr. alive() then returns false (line 2689) and isStale returns true. breakStale's re-read matches the record judged stale, so the waiter takes the lock and appends lock-break. A holder already between assertHeld and its append, or inside release() (read nonce, then unlink), then writes against the new holder: two seq n+1 lines, or a lost tasks.json update. In PS_LIST the same failure leaves $p=@(), so list() returns [] with exit 0: stop verify sees no survivors and slotCount sees no live process.",
+   "fix": "Prefix PS_LIST, PS_BOOT and psOne with `$ErrorActionPreference='Stop';` (or add -ErrorAction Stop to each Get-CimInstance). A failed query then exits 1, execFileSync throws, and alive returns null, list throws proc-unavailable 2, boot returns null. Add a test through a realProc seam."
   },
-  "notes": [
-    "Mutations were run in one scratch copy, review-tmp/lib/ (tcb/lib.mjs restored from lib.orig.mjs after each, now byte-equal to tcb/lib.mjs). Runner: review-tmp/lib/mut.sh. Outputs: review-tmp/lib/out-<id>.txt and out-baseline.txt. Each run used --test-name-pattern for the section's tests, through the lane.",
-    "Checked and not found: a chain fork under a correctly held lock (tail read, hash re-check and append all under the lock); a fence succeeding twice (the CAS is inside updateRow under the lock; T55's two-process race passes); a temp-name collision (the pid plus 32 random bits, with wx); a PowerShell call built from unescaped input (psOne interpolates only an integer pid, checked at 2682, and lock pids are Number.isInteger-checked at 1256); a wall-clock read where a counter is meant (only edgeFacts, the information-only ledger ts fallback and the designed own-clock start).",
-    "Transcript parser against probes/transcript-format.md: one call per message.id with the usage of its last record, <synthetic> skipped, the four usage fields as the probe names them, tool_result user records not ending a turn, 1 MiB chunks with byte carry (UTF-8 safe). No miscount found on the probe's shapes. Unverified risk, not a finding: the probe did not examine resumed or child sessions. If a resumed session's file copies earlier records with their message.ids, spendOf over several files counts them twice; deduping calls by id across all inputs of spendOf would guard against it. Lines over 1 MiB are rebuilt with Buffer.concat per chunk (quadratic copying for multi-MB lines): a cost, not a miscount.",
-    "Low, not listed: fence() skips the CAS when expectEpoch is undefined or null (updateRow 1631); the one caller, replace.mjs:469, passes flags.epoch, so it is latent (fix: usage 66 when expectEpoch is not an integer). appendLedger accepts a watcher.lock handle (watch.mjs uses run.lock correctly). writeAtomic's catch unlinks the temp name even when the wx open failed with EEXIST.",
-    "spec/lib.md T46 says 8 processes x 50 lines; the test uses 2 x 200, in line with the build's no-burst rule. T2's con-research case follows the contract's pattern (legal), as the build notes say.",
-    "No library file was edited. Files written: done/lib-review.json and the scratch folder review-tmp/lib/ only. One file, review-lib-run1.txt, was briefly written at the tcb-build root and moved into review-tmp/lib/out-baseline.txt."
-  ]
+  {
+   "id": "LR-2",
+   "file": "tcb/lib.mjs",
+   "lines": "1128-1135, 1138-1143, 2690-2692",
+   "severity": "medium",
+   "kind": "lock-breaks-live-holder",
+   "claim": "The lock record's own-clock start time (Date.now() minus process.uptime()) is matched to the CIM CreationDate symmetrically within 2 s. A live holder whose start-up took more than 2 s, or whose wall clock stepped after its creation, is judged dead and its lock is broken.",
+   "evidence": "process.uptime() counts from Node's own start, after the exe is loaded; CreationDate is when Windows created the process. The lane runs everything at below-normal priority, and the PC stalls under memory pressure and a scanner, so a start-up delay over 2 s is plausible. sameStartTime then returns false, alive returns false, and the lock is broken, with the same fork consequence as LR-1. T85 checks the gap only on an idle machine.",
+   "fix": "Compare one-sided for lock holders: same process iff listed CreationDate <= recorded start + START_TOLERANCE_MS. A pid reused by a later process is still told apart, because it was created after the holder recorded its start; a slow start-up no longer reads as dead."
+  },
+  {
+   "id": "LR-3",
+   "file": "tcb/lib.mjs",
+   "lines": "1255-1268, 1294-1302",
+   "severity": "medium",
+   "kind": "process-burst / check-then-act window",
+   "claim": "Every waiter that finds a lock held by a holder it has not judged yet spawns one powershell.exe (about 2 s). The record it judges was read before that call, and the rename comes after it.",
+   "evidence": "isStale runs on every 'exists' iteration; the cache only dedupes by nonce. Ordinary contention (watcher plus status, replace or commit) therefore launches PowerShell once per distinct holder seen: the short-lived process bursts that preceded the PC stalls. With a truly stale lock and several waiters, the 2 s-old judgement often renames a fresh holder's lock. The restore path then runs; during it that holder gets lock-lost and a third process can slip in, turning the restore into an .orphan.",
+   "fix": "Judge a holder only after the same nonce has been seen unchanged for K consecutive retries (a counter, for example 50, about 5 s). Re-read the lock bytes right before the rename in breakStale and skip the break if they changed."
+  },
+  {
+   "id": "LR-4",
+   "file": "tcb/lib.mjs",
+   "lines": "1154-1168, 1237-1253, 1294-1304",
+   "severity": "medium",
+   "kind": "liveness after crash",
+   "claim": "An empty or unparseable lock file is never judged stale, so every script exits 75 until a person deletes it.",
+   "evidence": "tryCreate opens with wx, then writes and fsyncs. A hard reset in between (frequent on this PC) can leave a zero-length run.lock. readLockRecord then returns record null, isStale(null) is false, and acquireLock throws lock-busy 75 on every later call by every script. Neither status (which reports only .orphan) nor handover (which cleans *.stale and *.orphan) names it.",
+   "fix": "When the raw lock bytes stay unparseable and unchanged across the whole retry budget (a counter), break the lock with the same rename / compare-bytes / create protocol and append lock-break {stale: null, bytes}. At the least, report a 'lock-unreadable' anomaly in status."
+  },
+  {
+   "id": "LR-5",
+   "file": "tcb/test/lib.test.mjs",
+   "lines": "lib.mjs 1485 (untested); tests T39-T47",
+   "severity": "medium",
+   "kind": "mutation survives",
+   "claim": "Removing appendLedger's re-check of the lock right before the write (lib.mjs:1485, handle.assertHeld()) fails no test, although it is the guard against forking the chain after the lock was lost during the tail read (contract 4.4: assertHeld before every write).",
+   "evidence": "Mutation M11 (line 1485 replaced by `void 0;`): T39-T47 through the lane gave 9 pass, 0 fail. Only the entry assertHandle (1443) is exercised by T42.",
+   "fix": "Add a test that uses setFsSeam({openSync}) to overwrite run.lock with another nonce when tailInfo opens the ledger, and expects lock-lost 75 with the ledger bytes unchanged. Do the same for writeTasks between its rev read and writeAtomic (1609)."
+  },
+  {
+   "id": "LR-6",
+   "file": "tcb/test/lib.test.mjs",
+   "lines": "786-808",
+   "severity": "medium",
+   "kind": "test leaks a process",
+   "claim": "T21 never ends its reader child when writeAtomic throws: the test hangs and leaves a live node process.",
+   "evidence": "The child is spawned at 792. The stop file and await come only after the 200 writes (799-801), with no try/finally. Under mutation M5b, writeAtomic threw, the reader kept running, and the run hung until the lane's 300 s timeout (exit 124, review-tmp/lib/out-M5b.txt).",
+   "fix": "Wrap the writes in try { ... } finally { fs.writeFileSync(stop,'1'); if (child.exitCode === null) child.kill(); await closed; } and assert after the finally."
+  },
+  {
+   "id": "LR-7",
+   "file": "tcb/schemas/card.schema.json",
+   "lines": "27 (lib.mjs 1025-1029, 2005)",
+   "severity": "medium",
+   "kind": "validator accepts what the format forbids",
+   "claim": "card.quote ('<=15w', CONTRACT 3.1) has x-maxWords 15 but no maxLength. wordCount splits only on JS \\s, so a quote with no \\s separators (CJK text, words joined by U+200B or U+2060) of any length passes as one word.",
+   "evidence": "/\\s+/u does not match U+200B or U+2060: 'a​b​...' with 500 tokens gives wordCount 1, and a CJK paragraph counts as 1 to 15 words. No maxLength exists on quote, so the 15-word cap, which keeps quotes short and pack tokens bounded, fails silently.",
+   "fix": "Add a maxLength to quote (for example 200 code points) and to the other x-maxWords fields, or make wordCount also split on \\p{Cf} and count CJK characters as words."
+  }
+ ],
+ "mutations": [
+  {
+   "file": "review-tmp/lib/tcb/lib.mjs:1319",
+   "what": "M1a stale-break verification: breakStale skips the re-read comparison (sameRecord forced true)",
+   "a_test_failed": true
+  },
+  {
+   "file": "review-tmp/lib/tcb/lib.mjs:1267",
+   "what": "M1b stale judgement: alive null counted as dead",
+   "a_test_failed": true
+  },
+  {
+   "file": "review-tmp/lib/tcb/lib.mjs:1512",
+   "what": "M2a hash chain link: verifyLedger prev check removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "review-tmp/lib/tcb/lib.mjs:1456",
+   "what": "M2b hash chain link: appendLedger links to 64 zeros instead of the tail hash",
+   "a_test_failed": true
+  },
+  {
+   "file": "review-tmp/lib/tcb/lib.mjs:1631",
+   "what": "M3 fence compare-and-set: updateRow epoch check removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "review-tmp/lib/tcb/lib.mjs:1603",
+   "what": "M8 writeTasks rev CAS removed",
+   "a_test_failed": true
+  },
+  {
+   "file": "review-tmp/lib/tcb/lib.mjs:1804",
+   "what": "M4a staging cut: readCutPrefix ignores the prefix sha256",
+   "a_test_failed": true
+  },
+  {
+   "file": "review-tmp/lib/tcb/lib.mjs:1070",
+   "what": "M4b staging cut: hard-linked file (nlink 2) treated as plain",
+   "a_test_failed": true
+  },
+  {
+   "file": "review-tmp/lib/tcb/lib.mjs:1755",
+   "what": "M9 staging cut: READY.json not excluded",
+   "a_test_failed": true
+  },
+  {
+   "file": "review-tmp/lib/tcb/lib.mjs:776,781",
+   "what": "M5a atomic rename: writeAtomic writes the target in place, no temp or rename",
+   "a_test_failed": true
+  },
+  {
+   "file": "review-tmp/lib/tcb/lib.mjs:781",
+   "what": "M5b atomic rename without the sharing retry (caught, but T21 leaked its reader and hit the lane timeout)",
+   "a_test_failed": true
+  },
+  {
+   "file": "review-tmp/lib/tcb/lib.mjs:2054",
+   "what": "M6 validator: additionalProperties false ignored",
+   "a_test_failed": true
+  },
+  {
+   "file": "review-tmp/lib/tcb/lib.mjs:2038",
+   "what": "M10 validator: required not enforced",
+   "a_test_failed": true
+  },
+  {
+   "file": "review-tmp/lib/tcb/lib.mjs:761",
+   "what": "M7 tempName without the 8-hex nonce",
+   "a_test_failed": true
+  },
+  {
+   "file": "review-tmp/lib/tcb/lib.mjs:1485",
+   "what": "M11 appendLedger's assertHeld right before the write removed (survived, LR-5)",
+   "a_test_failed": false
+  }
+ ],
+ "tests": {
+  "command": "node tools/lane.mjs --label lib-review --timeout-s 300 -- node --test --test-concurrency=1 tcb/test/lib.test.mjs (cwd tcb-build)",
+  "passed": 177,
+  "failed": 0,
+  "skipped": 2,
+  "output_tail": "T96f ok; T97 makeRoot ok (stand-in helpers: tcb/test/helpers.mjs does not exist yet); T98 ok. tests 179, pass 177, fail 0, cancelled 0, skipped 2 (T82 needs-app claim, T92 needs-app), duration_ms 70314"
+ }
 }

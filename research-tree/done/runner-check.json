@@ -1,5 +1,5 @@
 {
- "verdict": "SAFE TO START the full run with the command in RUN-FULL.md, after the fixes below. The partition, resume, admission and bounded handling hold. Three defects were fixed in run-resumable.mjs and RUN-FULL.md, and each fix was tested. One limit stays open: the memory reservation for an 8000 MB big part (8950 MB) is extrapolated from measurements at 400-2000 MB; check max_rss_mb in the first big parts' result files. FIXED: (a) requirement 6: new --spawn-gap-ms (default 250); before, up to --workers processes started at once and every part had its own process. Parts with estimate <= --batch-max-est (default 81; 3,750 of the 9,154 parts) now run one after another in a host process, each in a fresh worker thread with the heap limit of --mem-mb. A host counts as one worker; --batch-parts (default 100) replaces a host after that many parts. Also new: --plan-parts (the part list as JSON). Building this, I hit a Node 24/Windows behaviour (verified with a probe): after an IPC disconnect a child emits 'exit' but never 'close'. My first version hung on it; the host is now ended by a message and handled on 'exit' or 'close', whichever comes first. (b) Admission reserved S+150 MB per worker. Measured peak working sets were 550 MB at S=400, 1198 MB at S=1000 and 2254 MB at S=2000, because grown typed arrays are copied and the old copy is held until a collection. The reservation is now S + 150 + S/10. (c) The memory-sampling timer was reset by every finished part, so working sets were never sampled while parts finished faster than every 5 s (the build's r-full has max_rss_mb null in all 43 DF2-K2-R1 records). Sampling now runs every --poll-s regardless. RUN-FULL.md was updated to match: command, how it runs, admission, peak memory (about 7.2 GB normal, about 9 GB big), D2-K2-R1 marked new, and a test-evidence section for this check. Convention: in mutations, a_test_failed is set as the brief defines it: true = the runner behaved correctly in that test.",
+ "verdict": "SAFE TO START the full run with the command in RUN-FULL.md, after the fixes below. The partition, resume, admission and bounded handling hold. Three defects were fixed in run-resumable.mjs and RUN-FULL.md, and each fix was tested. One limit stays open: the memory reservation for an 8000 MB big part (8950 MB) is extrapolated from measurements at 400-2000 MB; check max_rss_mb in the first big parts' result files.\n\nFIXED:\n(a) Requirement 6. New flag --spawn-gap-ms (default 250). Before, up to --workers processes started at once and every part had its own process. Now the parts with estimate <= --batch-max-est (default 81; 3,750 of the 9,154 parts) run one after another in a host process, each in a fresh worker thread with the heap limit of --mem-mb. A host counts as one worker, and --batch-parts (default 100) replaces a host after that many parts. Also new: --plan-parts, which prints the part list as JSON. Building this, I hit a Node 24/Windows behaviour, verified with a probe: after an IPC disconnect a child emits 'exit' but never 'close'. My first version hung on it. The host is now ended by a message and handled on 'exit' or 'close', whichever comes first.\n(b) Admission reserved S+150 MB per worker. Measured peak working sets were 550 MB at S=400, 1198 MB at S=1000 and 2254 MB at S=2000, because grown typed arrays are copied and the old copy is held until a collection. The reservation is now S + 150 + S/10.\n(c) The memory-sampling timer was reset by every finished part, so working sets were never sampled while parts finished faster than every 5 s. The build's own r-full has max_rss_mb null in all 43 DF2-K2-R1 records. Sampling now runs every --poll-s regardless.\n\nRUN-FULL.md was updated to match: command and flags, how it runs, admission, peak memory (about 7.2 GB normal, about 9 GB big), D2-K2-R1 marked new, and a test-evidence section for this check.\n\nConvention: in mutations, a_test_failed is set as the brief defines it: true = the runner behaved correctly in that test. The return file is C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/done/runner-check.json.",
  "findings": [
   {
    "id": "RC-1",
@@ -8,8 +8,8 @@
    "severity": "high",
    "kind": "process-burst",
    "claim": "The runner started up to --workers check.mjs processes in the same tick and one process per part. That is 9,154 process starts, about 4 a second through the 1,118 group-1 parts of about 1 s each. These are the short-lived process bursts that stalled the PC. There was no --spawn-gap-ms.",
-   "evidence": "Original schedule(): for (const p of todo) { if (running.size >= WORKERS || !admit(MEM)) break; if (!startPart(p, false)) break; ... } with no delay; startPart spawns one process per part. After the fix: r-floor ran 43 parts in 2 host processes started 256 ms apart; r-full ran 86 parts in 16 process starts (4 hosts, 12 part processes), smallest gap 250 ms; r-proc (--batch-max-est 0) made 43 starts, smallest gap 251 ms; r-bnd made 45 starts, smallest gap 262 ms; at most 2 parts at once (overlap.mjs).",
-   "fix": "FIXED. --spawn-gap-ms (default 250): at most one process start per gap, retried by a short timer. --batch-max-est (default 81): small parts run one after another in a host process, each in a fresh worker thread (resourceLimits.maxOldGenerationSizeMb = --mem-mb, the same check.mjs --mem-mb). A host counts as one worker of --mem-mb and is ended when idle or after --batch-parts (default 100) parts. The result is the same: A-ALARM via hosts and via 43 processes gave 0 per-part differences."
+   "evidence": "The original schedule() started parts in a loop with no delay, and startPart spawned one process per part. After the fix: r-floor ran 43 parts in 2 host processes started 256 ms apart. r-full ran 86 parts with 16 process starts (4 hosts, 12 part processes), smallest gap 250 ms. r-proc (--batch-max-est 0) made 43 starts, smallest gap 251 ms. At most 2 parts ran at once (overlap.mjs).",
+   "fix": "FIXED. --spawn-gap-ms (default 250) allows at most one process start per gap. --batch-max-est (default 81) runs small parts one after another in a host process, each in a fresh worker thread with resourceLimits = --mem-mb and the same check.mjs --mem-mb. A host counts as one worker and is ended when idle or after --batch-parts (default 100) parts. Results are unchanged: A-ALARM via hosts and via 43 processes gave 0 per-part differences."
   },
   {
    "id": "RC-2",
@@ -17,41 +17,93 @@
    "lines": "original 66-75, 292-297; now 84-95, 324-330; RUN-FULL.md Admission and Peak memory",
    "severity": "medium",
    "kind": "memory-accounting",
-   "claim": "Admission and RUN-FULL.md treated a worker of size S as S+150 MB, but its flags do not cap its memory: --max-old-space-size limits only the JS heap. check.mjs keeps its store in typed arrays, and grow() copies an array while the old copy stays until a collection. The real peak grows with S. RUN-FULL.md's peaks (6.6 GB normal, 8.2 GB big) were therefore understated.",
-   "evidence": "Measured through the lane, with process.resourceUsage().maxRSS: check.mjs A-FENCE-CE --bud k=1,cs=1 at --max-old-space-size=400 --mem-mb 360 peaked at 550 MB while check.mjs counted 281 MB (tmp/model-check/mem400.err). The earlier, cut-off check measured 1198 MB at 1000 and 2254 MB at 2000 (mem1000.err, mem2000.err). That is S+150, S+198 and S+254: the overshoot grows with S.",
-   "fix": "FIXED: reserveOf(S) = S + 150 + ceil(S/10), used for admission, for the headroom of running workers, and in the start-up check (590, 1250 and 2350 MB, all at or above the measurements; 1800 MB at 1500; 8950 MB at 8000). A big part now starts only with about 13 GB free (8950 + 4000 floor); 16-19 GB were free. NOT VERIFIED above 2000 MB: the 8000 MB figure is extrapolated, so check max_rss_mb in the first big parts' result files."
+   "claim": "Admission and RUN-FULL.md treated a worker of size S as S+150 MB, but its flags do not cap its memory: --max-old-space-size limits only the JS heap. check.mjs keeps its store in typed arrays, and grow() copies an array while the old copy stays until a collection. The real peak grows with S, so the documented peaks (6.6 GB normal, 8.2 GB big) were understated.",
+   "evidence": "Measured through the lane with process.resourceUsage().maxRSS: check.mjs A-FENCE-CE --bud k=1,cs=1 at --max-old-space-size=400 / --mem-mb 360 peaked at 550 MB while check.mjs counted 281 MB (tmp/model-check/mem400.err). The earlier, cut-off check measured 1198 MB at 1000 and 2254 MB at 2000 (mem1000.err, mem2000.err). That is S+150, S+198 and S+254.",
+   "fix": "FIXED. reserveOf(S) = S + 150 + ceil(S/10) is now used for admission, for the headroom of running workers, and in the start-up check: 590, 1250 and 2350 MB at the measured sizes, 1800 MB at 1500, 8950 MB at 8000. A big part now starts only with about 13 GB free. Not verified above 2000 MB: check max_rss_mb in the first big parts' result files."
   },
   {
    "id": "RC-3",
    "file": "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/model/run-resumable.mjs",
-   "lines": "original 396-397 (clearTimeout(timer); timer = setTimeout(() => sampleRss().then(schedule), POLL_MS)); now 512-553",
+   "lines": "original 396-397; now 512-553",
    "severity": "medium",
    "kind": "monitoring",
-   "claim": "Every schedule() call, one per finished part, cleared and re-armed the 5 s sampling timer. While parts finished faster than every 5 s, the workers' working set was never sampled. Admission then counted every worker at its full reservation, which is conservative. But the result files' max_rss_mb, which RUN-FULL.md presents as the sampled working set, stayed null.",
-   "evidence": "The build's own tmp/model-test/r-full/DF2-K2-R1/*.json: all 43 records have \"max_rss_mb\": null. After the fix, r-full and r-final have parts with rss figures (6 and 4 lines with 'rss <n> MB').",
-   "fix": "FIXED: a separate poll timer that is armed once and not reset by schedule(); a separate gap timer for --spawn-gap-ms."
+   "claim": "Every schedule() call, one per finished part, cleared and re-armed the 5 s sampling timer. While parts finished faster than every 5 s, the working set was never sampled. Admission then counted full reservations, which is conservative, but the result files' max_rss_mb stayed null.",
+   "evidence": "In tmp/model-test/r-full/DF2-K2-R1/*.json, all 43 records have max_rss_mb null. After the fix, r-full and r-final have parts with rss figures.",
+   "fix": "FIXED. A separate poll timer is armed once and not reset by schedule(), and a separate gap timer handles --spawn-gap-ms."
   }
  ],
  "mutations": [
-  {"file": "run-resumable.mjs vs run-all.mjs", "what": "(1) Partition: run-all.mjs with the fake-spawn preload (no real children) for A-ALARM, DF2-K3-R2 and D3-K4F-R2, against the runner's --plan-parts. 43/43, 140/140 and 343/343 parts: equal lists, none missing, none twice (cmp-plan.mjs, ra3.log, plan-full.json).", "a_test_failed": true},
-  {"file": "run-resumable.mjs vs run-all.mjs", "what": "(1) Partition, all 77 configurations: 9,154 parts against the earlier full run-all spawn record (fake-runall.log). 77 equal, 0 unequal.", "a_test_failed": true},
-  {"file": "run-resumable.mjs", "what": "(6) My first host version, mixed run of A-ALARM and DF2-K2-R1: it hung after 37 parts (lane timeout). Cause, confirmed by ipc-probe.mjs: after the parent disconnects the IPC channel, the child emits 'exit' but never 'close'. Fixed (the host is ended by a message; handled on exit or close).", "a_test_failed": false},
-  {"file": "run-resumable.mjs", "what": "(2) Uninterrupted reference r-full (A-ALARM + DF2-K2-R1, --batch-max-est 27): 86 parts complete, 4,073,127 states and 11,491,895 transitions (run-all's 413,666+3,659,461 and 831,242+10,660,653). Exit 0.", "a_test_failed": true},
-  {"file": "run-resumable.mjs", "what": "(2) Killed midway: the lane's taskkill /T /F at 8 s after 65 parts, with no leftover temporary file and the runner gone. The restart reported '65 final', ran 21, and cmp-res.mjs found 0 differences from r-full.", "a_test_failed": true},
-  {"file": "run-resumable.mjs", "what": "(2) Final code with --batch-parts 5 (hosts replaced mid-run): killed at 6 s after 53 parts, then restarted. 0 differences from r-full, at most 2 parts at once. No node process of this check left afterwards (Win32_Process query).", "a_test_failed": true},
-  {"file": "run-resumable.mjs", "what": "(2) Damaged files in a copy of r-full: a torn file, a missing file with a complete-looking .tmp-4242 beside it, a wrong fingerprint, another part's result under this part's name, and a record marked bounded at 400 MB. Exactly the first four reran, the tmp file was removed, and the bounded part was reported as BOUNDED with exit 1, never as complete. Then --rerun-bounded: exit 0, 0 differences.", "a_test_failed": true},
-  {"file": "run-resumable.mjs", "what": "(3) --floor-mb 25000 with about 18.3 GB free: 15 s, 0 process starts, no part file, 'waiting for memory' logged. The same folder with --floor-mb 12000 ran to completion (413,666 states).", "a_test_failed": true},
-  {"file": "run-resumable.mjs", "what": "(6) --batch-max-est 0: 43 part processes, smallest gap 251 ms, all at heap 400. Same results as the 2-host run (0 differences).", "a_test_failed": true},
-  {"file": "run-resumable.mjs", "what": "(4) --mem-mb 56 --big-mem-mb 58: all 43 parts bounded in host threads, retried alone at 58 MB, and still BOUNDED. Listed as BOUNDED, properties '?', exit 1. A second start reran nothing (exit 1). --big-mem-mb 400 reran all 43 alone (max at once 1) and came back to 413,666 states, exit 0.", "a_test_failed": true},
-  {"file": "run-resumable.mjs (original)", "what": "(5) Memory against the flags: check.mjs at --max-old-space-size=400 / --mem-mb 360 peaked at 550 MB working set (check.mjs counted 281). With the earlier 1198@1000 and 2254@2000, the original S+150 reservation is too small above 400 MB. Fixed (RC-2).", "a_test_failed": false},
-  {"file": "run-resumable.mjs (original)", "what": "(5) Memory sampling: the build's r-full records all have max_rss_mb null, because the sampling timer was reset by each finished part. Fixed (RC-3); records now carry rss figures.", "a_test_failed": false},
-  {"file": "RUN-FULL.md", "what": "(5) Coverage: --plan gives 77 configurations and 9,154 parts in the documented 11-group order and counts. The doc wrongly marked D2-K2-R1 as already in configs.mjs; it is new (fixed). Workers: at most --workers processes (hosts included), big parts alone, plus one tasklist sample every 5 s.", "a_test_failed": true}
+  {
+   "file": "run-resumable.mjs vs run-all.mjs",
+   "what": "(1) Partition: run-all.mjs with the fake-spawn preload (no real children) for A-ALARM, DF2-K3-R2 and D3-K4F-R2, against the runner's --plan-parts. 43/43, 140/140 and 343/343 parts: equal lists, none missing, none twice.",
+   "a_test_failed": true
+  },
+  {
+   "file": "run-resumable.mjs vs run-all.mjs",
+   "what": "(1) Partition, all 77 configurations against the earlier full run-all spawn record: 9,154 = 9,154, 77 equal, 0 unequal.",
+   "a_test_failed": true
+  },
+  {
+   "file": "run-resumable.mjs",
+   "what": "(6) My first host version hung after 37 parts. Cause, confirmed by ipc-probe.mjs: after the parent disconnects the IPC channel, the child emits 'exit' but never 'close'. Fixed: the host is ended by a message and handled on exit or close.",
+   "a_test_failed": false
+  },
+  {
+   "file": "run-resumable.mjs",
+   "what": "(2) Uninterrupted reference r-full (A-ALARM + DF2-K2-R1, mixed hosts and processes): 86 parts complete, 4,073,127 states and 11,491,895 transitions, equal to run-all's figures. Exit 0.",
+   "a_test_failed": true
+  },
+  {
+   "file": "run-resumable.mjs",
+   "what": "(2) Killed by the lane's taskkill /T /F at 8 s after 65 parts. The restart reused those 65 and ran 21, with 0 per-part differences from r-full.",
+   "a_test_failed": true
+  },
+  {
+   "file": "run-resumable.mjs",
+   "what": "(2) Final code with --batch-parts 5: killed at 6 s after 53 parts, then restarted. 0 differences from r-full, at most 2 parts at once, and no node process of this check left afterwards.",
+   "a_test_failed": true
+  },
+  {
+   "file": "run-resumable.mjs",
+   "what": "(2) Damaged files: a torn file, a missing file with a complete tmp file beside it, a wrong fingerprint, another part's result, and a record marked bounded. Exactly the first four reran and the tmp file was removed. The bounded record was reported as BOUNDED with exit 1, never as complete. --rerun-bounded then gave exit 0 and 0 differences.",
+   "a_test_failed": true
+  },
+  {
+   "file": "run-resumable.mjs",
+   "what": "(3) --floor-mb 25000 with about 18.3 GB free: 0 process starts in 15 s and a 'waiting for memory' log. On the same folder, --floor-mb 12000 ran to completion.",
+   "a_test_failed": true
+  },
+  {
+   "file": "run-resumable.mjs",
+   "what": "(6) --batch-max-est 0: 43 part processes, smallest gap 251 ms, results equal to the 2-host run.",
+   "a_test_failed": true
+  },
+  {
+   "file": "run-resumable.mjs",
+   "what": "(4) --mem-mb 56 --big-mem-mb 58: all 43 parts were bounded, retried alone, and stayed BOUNDED with exit 1. A second start reran nothing. --big-mem-mb 400 reran them alone, one at a time, back to 413,666 states, exit 0.",
+   "a_test_failed": true
+  },
+  {
+   "file": "run-resumable.mjs (original)",
+   "what": "(5) Memory: at size 400, a worker peaked at 550 MB of working set while check.mjs counted 281 MB. With 1198@1000 and 2254@2000, the original S+150 reservation is too small above 400 MB. Fixed (RC-2).",
+   "a_test_failed": false
+  },
+  {
+   "file": "run-resumable.mjs (original)",
+   "what": "(5) Memory sampling never ran while parts finished quickly: max_rss_mb was null in the build's records. Fixed (RC-3).",
+   "a_test_failed": false
+  },
+  {
+   "file": "RUN-FULL.md",
+   "what": "(5) --plan gives 77 configurations and 9,154 parts in the documented order. D2-K2-R1 was wrongly marked as existing; fixed. At most --workers processes (hosts included), big parts alone.",
+   "a_test_failed": true
+  }
  ],
  "tests": {
-  "command": "node tools/lane.mjs --label runner-check-* --timeout-s <=290 -- node model/run-resumable.mjs --only <A-ALARM[,DF2-K2-R1]> --results tmp/model-check/<dir> --workers 2 --mem-mb <=400 --big-mem-mb <=400 [...], plus cmp-plan.mjs, cmp-res.mjs, gaps.mjs and overlap.mjs from tmp/model-check",
+  "command": "node tools/lane.mjs --label runner-check-* -- node model/run-resumable.mjs --only A-ALARM[,DF2-K2-R1] --results tmp/model-check/<dir> --workers 2 --mem-mb <=400 --big-mem-mb <=400 [...], plus cmp-plan.mjs, cmp-res.mjs, gaps.mjs, overlap.mjs",
   "passed": 13,
   "failed": 0,
   "skipped": 0,
-  "output_tail": "r-final: Total 4073127 states, 11491895 transitions in 86 parts: 86 complete; cmp-res r-full vs r-final differences 0; spawns {starts:29, host:17, part:12, min_gap_ms:256}; overlap max_at_once 2. r-bnd-3: 43 COMPLETE at 400 MB, alone. r-floor: 0 starts at floor 25000. cmp-plan: 9154 = 9154, all 77 equal."
+  "output_tail": "r-final: 86 complete, 4073127 states, 11491895 transitions; cmp-res r-full vs r-final: 0 differences; spawns: 29 starts (17 hosts, 12 parts), min gap 256 ms; max 2 parts at once. r-bnd-3: 43 COMPLETE at 400 MB, alone. r-floor: 0 starts at floor 25000. cmp-plan: 9154 = 9154, all 77 equal."
  }
 }
