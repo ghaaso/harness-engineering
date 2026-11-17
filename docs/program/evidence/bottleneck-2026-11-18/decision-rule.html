@@ -1,0 +1,366 @@
+<title>Bottleneck Rule</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+/* Layout: one working column. The tool sits first (controls left, widths right); the record follows below it. */
+:root{
+  --bg:#f3f6f6; --surface:#ffffff; --sunk:#e9eeee; --fg:#152120; --muted:#566664; --line:#d2dbda;
+  --accent:#0a6a66; --accent-soft:#d6ebe9; --bind:#a63a12; --bind-soft:#f6e1d7; --ok:#2f6b2a;
+  --font-text:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-head:"Space Grotesk","IBM Plex Sans",system-ui,sans-serif;
+  --font-num:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0f1615; --surface:#172120; --sunk:#1f2b2a; --fg:#e4edeb; --muted:#9db0ad; --line:#2c3b39;
+  --accent:#58c9bf; --accent-soft:#17403d; --bind:#ff9a6b; --bind-soft:#4a2415; --ok:#8fd088; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#0f1615; --surface:#172120; --sunk:#1f2b2a; --fg:#e4edeb; --muted:#9db0ad; --line:#2c3b39;
+  --accent:#58c9bf; --accent-soft:#17403d; --bind:#ff9a6b; --bind-soft:#4a2415; --ok:#8fd088; color-scheme:dark }
+body{background:var(--bg);color:var(--fg);font-family:var(--font-text);font-size:16px;line-height:1.5}
+.wrap{max-width:1180px;margin:0 auto;padding-block:28px 56px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:36px}
+h1{font-family:var(--font-head);font-size:2rem;line-height:1.15;margin:0;text-wrap:balance}
+h2{font-family:var(--font-head);font-size:1.3rem;margin:0 0 4px;text-wrap:balance}
+h3{font-size:.8rem;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin:0;font-weight:600}
+p{margin:0;max-width:68ch}
+.lead{font-size:1.08rem}
+.muted{color:var(--muted)}
+.num{font-family:var(--font-num);font-variant-numeric:tabular-nums}
+.chip{display:inline-block;font-size:.78rem;font-weight:600;padding:2px 9px;border-radius:999px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.chip.bind{background:var(--bind-soft);border-color:var(--bind);color:var(--bind)}
+.chip.acc{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+header{display:flex;flex-direction:column;gap:12px}
+.headrow{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+section{display:flex;flex-direction:column;gap:14px}
+.tool{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;align-items:start}
+.tool .result{position:sticky;top:calc(env(safe-area-inset-top,0px) + 16px)}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.presets{display:flex;flex-wrap:wrap;gap:8px}
+button{font:inherit;font-size:.9rem;padding:6px 12px;border-radius:7px;border:1px solid var(--line);background:var(--sunk);color:var(--fg);cursor:pointer}
+button:hover{border-color:var(--accent)}
+button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--surface)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.group{display:flex;flex-direction:column;gap:10px}
+.ctl{display:grid;grid-template-columns:minmax(0,1fr) 5.5rem;gap:2px 10px;align-items:center}
+.ctl label{font-size:.93rem}
+.ctl output{text-align:right;font-family:var(--font-num);font-size:.93rem}
+.ctl input[type=range]{grid-column:1 / -1;width:100%;accent-color:var(--accent);margin:0}
+.ctl small{grid-column:1 / -1;color:var(--muted);font-size:.8rem}
+select{font:inherit;font-size:.93rem;padding:6px 8px;border-radius:7px;border:1px solid var(--line);background:var(--surface);color:var(--fg);max-width:100%}
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:9.5rem minmax(0,1fr) 4.5rem;gap:10px;align-items:center}
+.bar .name{font-size:.93rem}
+.track{height:22px;background:var(--sunk);border-radius:5px;overflow:hidden}
+.fill{height:100%;background:var(--accent);border-radius:5px;min-width:3px}
+.bar.is-min .fill{background:var(--bind)}
+.bar.is-min .name{font-weight:600;color:var(--bind)}
+.bar .val{text-align:right;font-family:var(--font-num)}
+.verdict{border-left:4px solid var(--bind);background:var(--bind-soft);border-radius:0 8px 8px 0;padding:14px 16px;display:flex;flex-direction:column;gap:6px}
+.verdict.idle{border-left-color:var(--accent);background:var(--accent-soft)}
+.verdict strong{font-family:var(--font-head);font-size:1.15rem}
+.note{font-size:.85rem;color:var(--muted)}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:640px;font-size:.93rem}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:.78rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;background:var(--sunk)}
+tr:last-child td{border-bottom:0}
+td.win{background:var(--accent-soft);font-weight:600}
+tr.scarce td:first-child{font-weight:600;color:var(--bind)}
+ol.steps{margin:0;padding-left:1.3rem;display:flex;flex-direction:column;gap:8px;max-width:76ch}
+ul.plain{margin:0;padding-left:1.2rem;display:flex;flex-direction:column;gap:6px;max-width:76ch}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.stat b{display:block;font-family:var(--font-num);font-size:1.5rem;font-weight:500}
+.stat span{font-size:.85rem;color:var(--muted)}
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;align-items:start}
+.epi .bar{grid-template-columns:13rem minmax(0,1fr) 2rem}
+code{font-family:var(--font-num);font-size:.86em;background:var(--sunk);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+@media (max-width:820px){ .tool,.two{grid-template-columns:minmax(0,1fr)} .tool .result{position:static} .bar{grid-template-columns:7.5rem minmax(0,1fr) 3.6rem} .epi .bar{grid-template-columns:9rem minmax(0,1fr) 2rem} h1{font-size:1.6rem} }
+</style>
+
+<div class="wrap">
+<header>
+  <div class="headrow"><span class="chip bind">Hypothesis: nothing was run on this PC</span><span class="chip">18 November 2026</span></div>
+  <h1>From the current bottleneck to the method</h1>
+  <p class="lead">One calculation, repeated every time a piece of work starts or finishes. For each resource, work out how many units it can carry right now. Run at the smallest number. The resource that gives the smallest number is the bottleneck at that moment.</p>
+  <p class="muted">A unit is one piece of work that starts at one moment: an agent's piece, a run of the test suite, a model run, a build. Move the workload below and watch the bottleneck change.</p>
+</header>
+
+<section aria-labelledby="try">
+  <h2 id="try">Move the workload</h2>
+  <div class="tool">
+    <div class="panel">
+      <div class="group">
+        <h3>Start from a job like ours</h3>
+        <div class="presets" id="presets"></div>
+        <p class="note">Measured here: one suite run takes 596 s and peaks at 494 MB with about 3 busy threads; the PC has 24 threads and about 15 GB free; the lane has 2 slots. Every other value is an input for you to move, not a measurement.</p>
+      </div>
+      <div class="group" id="g-unit"><h3>One unit of this work</h3></div>
+      <div class="group" id="g-check"><h3>The check</h3>
+        <div class="ctl"><label for="mode">How the check is used</label><span></span>
+          <select id="mode" style="grid-column:1 / -1">
+            <option value="change">One check per change</option>
+            <option value="piece">One task split into pieces, each checked once</option>
+            <option value="none">This work uses no check</option>
+          </select></div>
+      </div>
+      <div class="group" id="g-pc"><h3>The PC and the allowance</h3></div>
+    </div>
+    <div class="panel result">
+      <h3>How many units each resource can carry now</h3>
+      <div class="bars" id="bars"></div>
+      <div class="verdict" id="verdict"></div>
+      <p class="note" id="plan"></p>
+      <p class="note">The rule acts only at the gate: it holds new units back. It stops running work in one case, memory at its floor, because memory fails as a cliff and not as a slope.</p>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="writers">
+  <h2 id="writers">Several writers on one file: the one real switch</h2>
+  <p>Scheduling needs no switch, because the smallest number is recomputed at every event. How writers share a file is different: either each works on its own copy and the copies are merged, or one owner writes at a time. The choice is made per file, by cost, and the cost is counted in whatever is scarce.</p>
+  <div class="two">
+    <div class="panel" id="g-writers"><h3>One shared file</h3>
+      <div class="ctl"><label for="scarce">What is scarce right now</label><span></span>
+        <select id="scarce" style="grid-column:1 / -1">
+          <option value="clock">Nothing but clock time</option>
+          <option value="tok">Tokens</option>
+          <option value="check">The check</option>
+        </select></div>
+    </div>
+    <div class="panel">
+      <h3>Expected cost of each way</h3>
+      <div class="tablewrap"><table style="min-width:0"><thead><tr><th>Counted in</th><th>Own copies, merged</th><th>One owner at a time</th></tr></thead><tbody id="wtable"></tbody></table></div>
+      <div class="verdict idle" id="wverdict"></div>
+      <p class="note">Reasoned from Agrawal, Carey and Livny 1987: locking wins when resources are scarce, optimistic control when they are plentiful. The chance of a conflict on our files is not measured yet. Places where a conflict is certain (7 ordered sequences, 4 places where the same statements change) get one owner from the start, or are split first.</p>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="steps">
+  <h2 id="steps">The rule, in order</h2>
+  <ol class="steps">
+    <li><b>Measure each kind of unit first.</b> Busy threads, peak memory, time in the check, time outside it, tokens. A new kind runs alone until its figures are steady.</li>
+    <li><b>Work out each number</b> at every start and finish: memory, processor, the check, shared files, tokens, and how many units are ready.</li>
+    <li><b>Run at the smallest.</b> Two resources within one unit of each other count as two limits at once. If "ready" is the smallest, capacity is idle: start more work.</li>
+    <li><b>Act only at the gate.</b> An agent's unit is minutes of work, too costly to throw away.</li>
+    <li><b>Choose the next unit</b> that fits what is free on every resource at once. Short check jobs first. A unit queued for the check holds nothing else.</li>
+    <li><b>Cross-check with the wait.</b> A queue at the check that never empties means the check is the bottleneck, whatever the processor shows.</li>
+  </ol>
+</section>
+
+<section aria-labelledby="bybn">
+  <h2 id="bybn">By bottleneck: what the rule does</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Bottleneck now</th><th>What the rule does</th><th>Measured in the papers</th><th>How far it holds</th></tr></thead>
+    <tbody>
+      <tr><td>Processor</td><td>Holds new units; shares and slows; kills nothing</td><td>85 % of peak kept at twice the load; 3 % slowdown from sharing at Google</td><td>Quoted, narrowed to its systems</td></tr>
+      <tr><td>Memory</td><td>Admits only what fits with a reserve; counts paused agents; at the floor stops the least important unit</td><td>The collapse is a model from 1968. Caps set from measured use left 23 to 31 % slack against 46 to 60 % by hand</td><td>Quoted</td></tr>
+      <tr><td>The check</td><td>Keeps it busy; short jobs first; starts no worker past the check's number; makes the check wider or shorter</td><td>Worker counts within 1 % of the best, in a simulator</td><td>Quoted; a check shared by separate programs is in no paper</td></tr>
+      <tr><td>Shared files</td><td>Per file: own copies, or one owner</td><td>1.5 times better mean response than the best fixed level, on one bank trace</td><td>Quoted, narrowed</td></tr>
+      <tr><td>Token allowance</td><td>Charges every token to its unit; admits only what the window can still pay for; cheaper model where its quality gap is small</td><td>Nothing for a window of hours or days</td><td>Reasoning only</td></tr>
+      <tr><td>Two at once</td><td>Smallest number; next unit by fit on all resources. Never "share whatever is the bottleneck now"</td><td>That rule gave 75 Mbps against 160 in one run with two flows</td><td>Quoted, one run</td></tr>
+      <tr><td>None</td><td>Starts one more unit per event until a resource binds</td><td></td><td>Quoted</td></tr>
+      <tr><td>The PC blocks program starts</td><td>Outside the rule: a fault of the PC, not a scarce resource</td><td></td><td></td></tr>
+    </tbody></table></div>
+  <p class="note">Tokens are a budget, not a rate. Units side by side cost the same tokens in total as one after another, so the allowance limits how many run at once only when a window is nearly spent. Otherwise it decides how many units can be done before the reset, and on which model.</p>
+</section>
+
+<section aria-labelledby="basis">
+  <h2 id="basis">What this rests on</h2>
+  <div class="stats">
+    <div class="stat"><b>79</b><span>papers read, not all in full</span></div>
+    <div class="stat"><b>16</b><span>claims a decision rests on, each given to a refuter</span></div>
+    <div class="stat"><b>4 / 12 / 0</b><span>confirmed / narrowed to the paper's conditions / refuted</span></div>
+    <div class="stat"><b>25</b><span>past jobs of ours, sorted by what limited them</span></div>
+    <div class="stat"><b>0</b><span>runs on this PC</span></div>
+  </div>
+  <div class="two">
+    <div class="panel epi">
+      <h3>What limited our own 25 jobs</h3>
+      <div class="bars" id="epi"></div>
+      <p class="note">Five jobs had two limits at once. No single limit dominates.</p>
+    </div>
+    <div class="panel">
+      <h3>Not in any paper read</h3>
+      <ul class="plain">
+        <li>An allowance that refills over hours or days, or tokens beside processor and memory.</li>
+        <li>A serial step shared by separate programs. Every paper's serial section lives inside one program.</li>
+        <li>Units that last minutes with 3 to 16 workers. The papers' thresholds were tuned on work lasting microseconds, so only the shape of each rule carries over. Every number has to be computed here.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="meas">
+  <h2 id="meas">To set the numbers: eight measurements</h2>
+  <p>No number in the rule is set yet. Seven of these are small runs and wait for your word. One is a count from a log we already have.</p>
+  <ol class="steps">
+    <li>Per kind of unit: peak memory and busy threads over time. <span class="chip">needs a run</span></li>
+    <li>The time a unit spends outside the check, per piece and per change. <span class="chip">needs a run</span></li>
+    <li>Whether one suite run slows down when a second runs beside it. <span class="chip">needs a run</span></li>
+    <li>The suite with its test files side by side. <span class="chip">needs a run</span></li>
+    <li>Conflict counts: a merge of dummy edits on our own neighbouring lines. <span class="chip">needs a run</span></li>
+    <li>Tokens per unit by kind and by model; whether the 5-hour window is fixed or rolling; how cached reads count. <span class="chip">needs a run</span></li>
+    <li>The lane's wait with one slot against two. <span class="chip acc">a count from the log</span></li>
+    <li>A memory-bandwidth counter, only if the first three show a slowdown that memory and threads do not explain. <span class="chip">needs a run</span></li>
+  </ol>
+</section>
+
+<section aria-labelledby="src">
+  <h2 id="src">The record behind this page</h2>
+  <p class="muted">In the harness repository, folder <code>docs/program/evidence/bottleneck-2026-11-18/</code>: <code>DECISION-RULE.md</code> (this rule in full), <code>o1-report.md</code> and <code>o2-report.md</code> (the two literature reports), their <code>-claims.md</code> and <code>-refute.md</code> files, and <code>own-data.md</code>. Library records <code>r57-0406</code> to <code>r57-0408</code>, <code>r57-0511</code>, <code>r57-0705</code>.</p>
+</section>
+</div>
+
+<script>
+(function(){
+  var HW = 24;
+  var S = {threads:3, mem:0.5, tout:30, tok:220, ready:14, mode:'change', tcheck:9.9, slots:2, free:15, reserve:2.5, left:54, perPoint:700,
+           p:30, redoMin:30, redoTok:220, waitMin:15, scarce:'clock'};
+  var CTL = {
+    'g-unit':[
+      ['threads','Busy threads per unit',0.1,24,0.1,''],
+      ['mem','Peak memory per unit',0.1,12,0.1,' GB'],
+      ['tout','Time a unit works outside the check',1,180,1,' min'],
+      ['tok','Tokens per unit',10,1000,10,'k'],
+      ['ready','Units ready to start',1,40,1,'']],
+    'g-check':[
+      ['tcheck','Time one check takes',1,60,0.1,' min','596 s measured, one run'],
+      ['slots','Check slots (the lane)',1,4,1,'','2 today']],
+    'g-pc':[
+      ['free','Free memory',2,31,0.5,' GB'],
+      ['reserve','Memory held in reserve',0,8,0.5,' GB'],
+      ['left','Share of the week left',0,100,1,' %'],
+      ['perPoint','Tokens per 1 % of the week',300,1500,50,'k','rough: two observations, differs by model']],
+    'g-writers':[
+      ['p','Chance that two writers conflict on it',0,100,1,' %'],
+      ['redoMin','Time to redo a unit after a conflict',5,180,5,' min'],
+      ['redoTok','Tokens to redo a unit',10,1000,10,'k'],
+      ['waitMin','Time a writer waits for the owner',1,120,1,' min']]
+  };
+  var PRESETS = [
+    ['Fix builders with the suite',{threads:3,mem:0.5,tout:30,tok:220,ready:14,mode:'change',tcheck:9.9,slots:2,free:15,reserve:2.5,left:54}],
+    ['The same, one check slot',{threads:3,mem:0.5,tout:30,tok:220,ready:14,mode:'change',tcheck:9.9,slots:1,free:15,reserve:2.5,left:54}],
+    ['Model run, many workers',{threads:1.5,mem:0.7,tout:20,tok:10,ready:24,mode:'none',tcheck:9.9,slots:2,free:15,reserve:2.5,left:54}],
+    ['Memory-heavy check parts',{threads:2,mem:6,tout:15,tok:10,ready:6,mode:'none',tcheck:9.9,slots:2,free:15,reserve:2.5,left:54}],
+    ['Paper readers',{threads:0.3,mem:0.4,tout:6,tok:220,ready:5,mode:'none',tcheck:9.9,slots:2,free:15,reserve:2.5,left:54}],
+    ['Week nearly spent',{threads:0.3,mem:0.4,tout:6,tok:220,ready:12,mode:'none',tcheck:9.9,slots:2,free:15,reserve:2.5,left:1}]
+  ];
+  var NAMES = {mem:'Memory',cpu:'Processor',check:'The check',tok:'Token allowance',ready:'Units ready'};
+  var DOES = {
+    mem:'Admit only units that fit with the reserve, and count paused agents. At the floor, stop the least important unit first.',
+    cpu:'Hold new units at the gate. Share the processor and slow down; kill nothing.',
+    check:'Keep the check busy, short jobs first. Start no worker past this number: more would only queue. Make the check itself wider or shorter.',
+    tok:'The window is nearly spent. Admit only what it can still pay for, use the cheaper model where its quality gap is small, and give shared files one owner so nothing is redone.',
+    ready:'Capacity is idle: every resource could carry more than is ready. Start more work.'
+  };
+  function widths(s){
+    var w = {};
+    w.mem = Math.max(0, Math.floor((s.free - s.reserve) / s.mem));
+    w.cpu = Math.max(0, Math.floor(HW / s.threads));
+    if (s.mode === 'none') w.check = Infinity;
+    else if (s.mode === 'change') w.check = Math.floor(s.slots * (s.tout + s.tcheck) / s.tcheck);
+    else w.check = Math.max(1, Math.round(Math.sqrt(s.tout / s.tcheck)));
+    w.tok = Math.floor(s.left * s.perPoint / s.tok);
+    w.ready = s.ready;
+    return w;
+  }
+  function decide(s){
+    var w = widths(s), keys = ['mem','cpu','check','tok','ready'];
+    var min = Math.min.apply(null, keys.map(function(k){return w[k];}));
+    var binding = keys.filter(function(k){return k !== 'ready' && w[k] <= min + 1;});
+    var idle = w.ready === min && binding.filter(function(k){return w[k] === min;}).length === 0;
+    return {w:w, min:min, binding:binding, idle:idle};
+  }
+  function writers(s){
+    var p = s.p / 100;
+    return {
+      clock:[p * (s.redoMin + s.tcheck), s.waitMin, ' min'],
+      tok:[p * s.redoTok, 0, 'k tokens'],
+      check:[1 + p, 1, ' check runs']
+    };
+  }
+  if (typeof document === 'undefined') { globalThis.__rule = {widths:widths, decide:decide, writers:writers, S:S, PRESETS:PRESETS}; return; }
+
+  function fmt(v, unit){ var n = Math.round(v * 10) / 10; return (n % 1 === 0 ? String(n) : n.toFixed(1)) + (unit || ''); }
+  function el(tag, cls, text){ var e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+
+  Object.keys(CTL).forEach(function(gid){
+    var g = document.getElementById(gid);
+    CTL[gid].forEach(function(c){
+      var d = el('div','ctl'), lab = el('label','',c[1]), out = el('output'), inp = document.createElement('input');
+      lab.htmlFor = c[0]; out.id = 'o-' + c[0]; out.htmlFor = c[0];
+      inp.type = 'range'; inp.id = c[0]; inp.min = c[2]; inp.max = c[3]; inp.step = c[4]; inp.value = S[c[0]];
+      inp.addEventListener('input', function(){ S[c[0]] = parseFloat(inp.value); mark(null); render(); });
+      d.appendChild(lab); d.appendChild(out); d.appendChild(inp);
+      if (c[6]) d.appendChild(el('small','',c[6]));
+      g.appendChild(d);
+    });
+  });
+  var pre = document.getElementById('presets');
+  PRESETS.forEach(function(p, i){
+    var b = el('button','',p[0]); b.type = 'button'; b.setAttribute('aria-pressed', i === 0 ? 'true' : 'false');
+    b.addEventListener('click', function(){ Object.keys(p[1]).forEach(function(k){ S[k] = p[1][k]; }); sync(); mark(b); render(); });
+    pre.appendChild(b);
+  });
+  function mark(btn){ Array.prototype.forEach.call(pre.children, function(b){ b.setAttribute('aria-pressed', b === btn ? 'true' : 'false'); }); }
+  function sync(){
+    Object.keys(CTL).forEach(function(gid){ CTL[gid].forEach(function(c){ document.getElementById(c[0]).value = S[c[0]]; }); });
+    document.getElementById('mode').value = S.mode; document.getElementById('scarce').value = S.scarce;
+  }
+  document.getElementById('mode').addEventListener('change', function(e){ S.mode = e.target.value; mark(null); render(); });
+  document.getElementById('scarce').addEventListener('change', function(e){ S.scarce = e.target.value; render(); });
+
+  function render(){
+    Object.keys(CTL).forEach(function(gid){ CTL[gid].forEach(function(c){ document.getElementById('o-' + c[0]).textContent = fmt(S[c[0]], c[5]); }); });
+    var checkOff = S.mode === 'none';
+    document.getElementById('tcheck').disabled = checkOff; document.getElementById('slots').disabled = checkOff || S.mode === 'piece';
+    var d = decide(S), w = d.w, keys = ['mem','cpu','check','tok','ready'];
+    var cap = Math.max(10, Math.min(40, Math.max.apply(null, keys.map(function(k){ return isFinite(w[k]) ? w[k] : 0; }))));
+    var bars = document.getElementById('bars'); bars.textContent = '';
+    keys.forEach(function(k){
+      var row = el('div','bar' + (w[k] === d.min ? ' is-min' : '')), tr = el('div','track'), f = el('div','fill');
+      row.appendChild(el('div','name',NAMES[k]));
+      if (isFinite(w[k])) { f.style.width = (Math.min(w[k], cap) / cap * 100) + '%'; tr.appendChild(f); }
+      row.appendChild(tr);
+      row.appendChild(el('div','val num', isFinite(w[k]) ? (w[k] > cap ? w[k] + '+' : String(w[k])) : 'not used'));
+      bars.appendChild(row);
+    });
+    var v = document.getElementById('verdict'); v.textContent = ''; v.className = 'verdict' + (d.idle ? ' idle' : '');
+    var atMin = d.binding.filter(function(k){ return w[k] === d.min; });
+    var held = Math.max(0, S.ready - d.min);
+    if (d.idle) {
+      v.appendChild(el('strong','','No bottleneck: capacity is idle'));
+      v.appendChild(el('span','','Run all ' + S.ready + ' ready units. ' + DOES.ready));
+    } else {
+      var names = d.binding.map(function(k){ return NAMES[k].toLowerCase(); });
+      v.appendChild(el('strong','','Bottleneck now: ' + names.join(' and ') + (d.binding.length > 1 ? ' (two at once)' : '')));
+      v.appendChild(el('span','','Run ' + d.min + (d.min === 1 ? ' unit' : ' units') + ' at once. ' + (held > 0 ? held + ' of the ' + S.ready + ' ready wait at the gate.' : 'Nothing waits at the gate.')));
+      atMin.forEach(function(k){ v.appendChild(el('span','',DOES[k])); });
+      if (d.binding.length > 1) v.appendChild(el('span','','With two limits, the next unit to start is the one that fits both.'));
+    }
+    document.getElementById('plan').textContent = 'Before the week resets, the allowance pays for about ' + w.tok + ' such units in total, however many run at once.';
+
+    var c = writers(S), rows = [['clock','Clock time'],['tok','Tokens'],['check','The check']];
+    var tb = document.getElementById('wtable'); tb.textContent = '';
+    rows.forEach(function(r){
+      var tr = el('tr', r[0] === S.scarce ? 'scarce' : ''), a = c[r[0]][0], b = c[r[0]][1], u = c[r[0]][2];
+      tr.appendChild(el('td','',r[1] + (r[0] === S.scarce ? ' (scarce)' : '')));
+      var ta = el('td','num' + (r[0] === S.scarce && a <= b ? ' win' : ''), fmt(a, u)), tb2 = el('td','num' + (r[0] === S.scarce && b < a ? ' win' : ''), fmt(b, u));
+      tr.appendChild(ta); tr.appendChild(tb2); tb.appendChild(tr);
+    });
+    var cs = c[S.scarce], own = cs[0] <= cs[1], wv = document.getElementById('wverdict'); wv.textContent = '';
+    wv.appendChild(el('strong','', own ? 'Own copies, merged afterwards' : 'One owner at a time'));
+    wv.appendChild(el('span','', own
+      ? 'Redoing is expected to cost no more than waiting, counted in what is scarce. Every merge still passes the check.'
+      : 'Waiting is expected to cost less than redoing, counted in what is scarce. The file goes back to own copies only after a run of quiet units.'));
+  }
+  var E = [['The queue at the check',8],['Program starts blocked by the PC',6],['Memory',4],['Token allowance',4],['Processor',3],['Nothing',1]];
+  var epi = document.getElementById('epi');
+  E.forEach(function(e){
+    var row = el('div','bar'), tr = el('div','track'), f = el('div','fill'); f.style.width = (e[1] / 8 * 100) + '%';
+    row.appendChild(el('div','name',e[0])); tr.appendChild(f); row.appendChild(tr); row.appendChild(el('div','val num',String(e[1]))); epi.appendChild(row);
+  });
+  sync(); render();
+})();
+</script>
