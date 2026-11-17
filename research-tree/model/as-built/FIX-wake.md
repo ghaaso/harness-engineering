@@ -5,11 +5,11 @@
 | Fix | Verdict (REFUTE-wake-3 §3) | Last change | Last change attacked? |
 |---|---|---|---|
 | FX-W1 | stands with a change | rev 4: a **per-script flag allow-list** for the coordinator, replacing the deny-list; exit markers pruned only when no slot names them | **no** |
-| FX-W2 | **stands** | rev 3: confirm by counting live, unmarked slots; 10 s query, 45 s deadline | yes (pass 3) |
-| FX-W3 | stands with a change | rev 4: an alarm that fires with no reconcile since its registration writes an `unarmed` record, which the dead-man reads | **no** |
-| FX-W4 | stands with a change | rev 4: reads `watcher-busy.json`; list failures counted as 3 of the last 5 runs; the `stuck` latency is stated | **no** |
-| FX-W5 | **stands** | rev 3: the stuck counter | yes (pass 3) |
-| FX-W6 | stands with a change | rev 4: the age cap is an uncharged act-due, not a charged fence | **no** |
+| FX-W2 | **stands**; modelled: holds only with FX-W4 | rev 5: premises (a) and (b) stated, plus "correct only with FX-W4" (Revision 5 notes N3); the endturn-closes-every-turn rule (N2) | **no** (rev 5); rev 3 attacked in pass 3 |
+| FX-W3 | stands with a change | rev 5: brief rule "every turn ends with endturn, also after handover exit 2 and exit 75" (N2); rev 4: the `unarmed` record | **no** |
+| FX-W4 | stands with a change; modelled: **hole** in once-per-onset | rev 5: re-alert while the cause holds, pace P1/P2 (N1); premise (c) stated | **no** |
+| FX-W5 | **stands**; modelled | rev 3: the stuck counter | yes (pass 3) |
+| FX-W6 | stands with a change; modelled: holds under B1 only | rev 5: the B1 premise stated (N3); rev 4: the age cap asks the coordinator, uncharged | **no** |
 | FX-W7 | stands with a change | rev 4: each tick evaluates a copy of the state, adopted only after a successful hold | **no** |
 
 The owner ruled (charter, section "The owner's ruling on testing") that there is no further attack round. Each rev-4 change gets at most one targeted check, the schedule named for it in "For the modeller".
@@ -24,7 +24,18 @@ Read with `SEM-wake.md` (as-built behaviour, SEM §n), `REFUTE-wake.md` (A1.1-A7
 
 No script was changed and no Node command was run. "Inferred" means reasoned, not checked.
 
-## What stays open after revision 4
+## What stays open after revision 5
+
+Rev-5 rows come first. Their changes are in "Revision 5 notes" at the end and have not been attacked.
+
+| Open defect | Why it is open | What would close it | Whose decision |
+|---|---|---|---|
+| A coordinator that omits endturn anyway (N2 residue) | The rule "every turn ends with endturn" lives in the brief only | E1: FX-W4 recovers. E2: the alarm defers its exit once while a turn is open | Owner: E1 or E2 |
+| The re-alert pace (N1) | Liveness needs repeated alerts; their pace costs nagging | P1 (every 30 min) or P2 (backoff to 2 h) | Owner: P1 or P2 |
+| Premise (b) under S2: every turn shorter than 0.5 × `alarm_ms` (N3) | Unmeasured | Probe: the longest recorded coordinator turn; else slot 2's period becomes 2 × `alarm_ms` | Probe, then the owner |
+| Premises (a) and (c) (N3) | Stated; each fails only toward the safe side (an unconfirmed turn, a spurious alert) | — | Stated |
+
+The table below is carried over from revision 4.
 
 | Open defect | Why it is open | What would close it | Whose decision |
 |---|---|---|---|
@@ -545,3 +556,60 @@ L1/L2, S1/S2, B1/B2, R1/R2, RL-yes/RL-no, and H7 a/b (a fact, not a ruling). H4 
 | 18 | Skipped-tick state | hung-lock (transient) | FX-W7 `FIX_TICK_COPY` | NoFalseSuspicion; no duplicate append | holds; the hang count advances with the sub-flag off (rev 4) |
 
 Not run, under the ruling: schedule 4 with an extra `sp` (three faults); schedule 15 combined with B2's second episode beyond two faults; every "each flag alone" matrix.
+
+---
+
+## Revision 5 notes (answers to `ABLATION-wake.md`; nothing below is attacked)
+
+### N1. FX-W4 alerts once per onset; an alerted turn that dies before call 1 leaves silence
+
+**Verdict: a hole in the design.** I took "once per onset" from REFUTE-wake-2 B4.5 in rev 3. An alert is a wake the owner acts on, and an alerted turn can die like any other (one x). After that the cause still holds, and no source reports it again (`ABLATION-wake.md` §1 and §6.1: FXW-4 NoDeadlock F 8; FXW-ALL F 7). Classical name: a watchdog must keep barking while the fault persists. "Alert once" is the shape of notification deduplication. It is not the shape of a watchdog.
+
+**Smallest change** (FX-W4 step 3; the modeller's `CAND_REALERT` becomes the design):
+- After an alert, while the same cause holds, alert again every `realert_runs` runs, counted in the dead-man's own runs.
+- The cause clearing for one run ends the onset, as now.
+
+**Owner ruling, the pace.** Both branches give liveness, because alerts recur infinitely often while the cause holds:
+- **P1 constant:** `realert_runs` = 6 (every 30 min).
+- **P2 backoff:** 6, 12, 24 runs, then capped at 24 (every 2 h).
+
+B4.5's cost (nagging) is the price either way. P2 nags less and waits longer.
+
+**Targeted check.** Configuration C_X (WA + FX-W1 + FX-W2 + the hard-kill branch + `FIX_DEADMAN`), part k=1, x=1. Schedule: no alarm, so the dead-man alerts and the owner wakes the coordinator; that turn dies before call 1 (x).
+- NoDeadlock and AlwaysCanResolve must **fail** with `FIX_REALERT` off. This is the FXW-4 run as done.
+- They must **hold** with it on (FXW-4R reproduces this).
+- The pace is untimed, so P1 and P2 are one model.
+
+### N2. A turn that ends without endturn (hand-over exit 2) leaves its fired alarm un-replaced
+
+**Verdict: a hole in the design, partly mine.** I checked the scripts and FIX-JOIN:
+- `handover raise` exits 2 when the process list fails (handover.mjs:271-276).
+- FIX-JOIN 2b row 8 ends the turn on exit 75 and retries nothing. That rule came from my FX-W3 brief (rev 3, A4-A6).
+- The fence group's rule ends the turn after a failed raise.
+
+So two of the system's own instructions end a turn without row 9 (endturn). The tri-state check in endturn (FX-W1 step 3: exit 1 on a marked slot, after which the coordinator ensures again) is exactly what would replace an alarm that fired mid-turn. FX-W2 cut the in-turn retry (rev 2) on the premise that endturn closes every turn. The modeller found it does not (`ABLATION-wake.md` §2: NoSilenceAfterFirstCall F 9 at one fault u).
+
+**Smallest change with one slot.** A rule of the brief and of FIX-JOIN 2b, in place of "end the turn": **"Every turn's last call is `status --endturn`, also after `handover` exit 2 and after any exit 75. Act on its exit 1 once (ensure again or start the watcher), then end the turn. If endturn itself exits 75, end the turn."** For a compliant coordinator this closes the gap with S1. It is smaller than S2 because it adds no process and no slot. The modeller named the same change (INFERRED, not run).
+
+**What it does not cover.** A coordinator that omits endturn anyway. A brief alone is a wish (my own D2 principle). There are two owner branches for that residue:
+- **E1 (brief only):** the omission is recovered by FX-W4 at the next dead-man alert. Silence lasts until then (5-10 min with WakeToRun).
+- **E2 (brief + enforced backstop, "defer once"):** an alarm whose period ends while a turn of its ce is open defers its exit **once**, by one more `alarm_ms`, and exits at the next end whatever it finds. "Open" means `turn.json.turn_seq` is newer than the slot's `turn_seq_at_reg` and `arm` is not `spent`. Its wake would be consumed mid-turn anyway. The single deferral bounds the cost when the open turn died before endturn: one extra alarm period of latency, never silence. Who runs it: the alarm, with a file read and no lock. It changes premise (b) below: a deferred alarm fires at most once more, at 2 × `alarm_ms`. E2 is a new mechanism, so it needs its own check before it is adopted.
+
+**Probe:** none for E1. E2 needs the check below run with E2 on.
+
+**Targeted check.** Configuration FXW-4R (WA + FX-W1 + FX-W2 + FX-W4, S1), part k=1, u=1. Schedule: draining; `handover raise` exits 2 (u); the next turn's ensure says `present`; the old alarm fires mid-turn (marked); reconcile says `arm-unconfirmed`; `handover` exits 2 again.
+- NoSilenceAfterFirstCall must **fail** with the turn ending after exit 2 (as modelled).
+- It must **hold** when every turn's last act is endturn with its exit-1 act. Model this as: the hand-over exit-2 path and the exit-75 path go to endturn.
+- E2 only: the same schedule with endturn omitted (fault o) must hold NoSilenceAfterFirstCall's liveness form (NoDeadlock) without FX-W4's alert.
+
+### N3. What the design must state: FX-W2 needs FX-W4; FX-W6 holds only under B1; three timing premises
+
+**Verdict: assumptions to state. None is the model's reading alone.** Sentences to add (rev 5):
+
+- **FX-W2, "Does not cover":** "FX-W2 is correct only together with FX-W4. Without the dead-man, a death before call 1 leaves no source (FXW-12-S2: NoDeadlock F 2). FX-W2 shortens and bounds the M2 window; it does not close the p0 path."
+- **FX-W6, "Owner branches":** "The modelled result (NoFalseSuspicion holds) is for branch B1 only. It rests on the environment bound 'a healthy operation of kind k ends within its kind's deadline', which the watcher does not compute. B2 (the refund) is not modelled; in B2, NoFalseSuspicion may fail once per task by design."
+- **Timing premise (a), FX-W2:** "An alarm does not fire between its own ensure and the same turn's reconcile hold 2." It holds because `alarm_ms` (1 h) far exceeds the time from call 1 to the end of hold 2 (at most `arm_confirm_ms` = 45 s after call 2, which the coordinator issues next). It can fail only if the PC sleeps between the two calls while timers keep counting (H7 b, open). Then the turn is `unconfirmed`, which is the safe side: no work is created, and the alarm's exit wakes. **Probe: none.**
+- **Timing premise (b), FX-W2:** "At most one current alarm of a coordinator fires inside one of its turns." Under S1 there is one current slot, so (b) holds trivially. Under S2 both slots are registered together and fire at 1 × and 1.5 × `alarm_ms`, so (b) needs **every coordinator turn to be shorter than 0.5 × `alarm_ms`** (30 min). Under E2 add one deferral (2 × `alarm_ms`). **Probe:** the longest coordinator turn in the recorded transcripts (a read-only measurement). **Owner ruling if it can exceed 30 min:** either the S2 period of slot 2 rises to 2 × `alarm_ms` (the premise becomes "turn < 1 × `alarm_ms`"), or the case is stated as not covered.
+- **Timing premise (c), FX-W4:** "A pending wake starts the coordinator's call 1 within one `deadman_period` (5 min)." If it is violated (a blocked program start, a sleeping PC), the dead-man may alert while a wake is pending. That is a spurious alert, the safe direction: a cost, not a hole. **Probe:** none, although the owner's PC record of blocked program starts (memory: program-start blocks) makes violations likely to be seen.
+
+**Targeted check:** none new. The premises are already encoded in the model (alarm byte bit 5 for a; one firing per turn for b; no counting while a wake is pending for c). The check is that the modeller names them in its verdict lines as premises, not as properties of the fixes.

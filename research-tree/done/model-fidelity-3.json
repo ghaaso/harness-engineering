@@ -81,4 +81,65 @@
   "a run with z keeping stop-requested: changes liveness only, and no as-built liveness verdict fits 400 MB today",
   "the 'process line matches' slot reading: a model fix to list, no decision waits on it in this part"
  ]
+,
+ "part2": {
+  "label": "fidelity-3b",
+  "reviewed": ["model/as-built/model-fixes-fence-frozen.mjs", "model/as-built/configs-fixes-fence-frozen.mjs", "model/as-built/check-fixes-fence-frozen.mjs", "model/as-built/ABLATION-fence.md", "model/as-built/FIX-fence.md rev 4 (sections 0b, 1-4, 6, 12)", "model/results-as-built/fixes-fence/*.json"],
+  "report": "model/as-built/FIDELITY-3.md part 2 (sections 9-14)",
+  "provenance": "Result files carry no model hash. They were written 19:05-19:48, and the Q5b run ended 20:33. model.mjs was last written at 20:09 and is byte-identical to the frozen copy. No result is shown to come from the frozen file, and the Q5b parts run spans that 20:09 write. A repeat of one recorded run on the frozen file is recommended to the modeller.",
+  "fix_verdicts": {
+   "FX-OUT": {"verdict": "relied on with a stated limit: safety only", "holds_reliable": ["ReadyNotDiscarded", "NoStaleAccepted"], "limits": ["The commit kills the slot's writer even mid-write (MF:824). This is an oracle that FX-OUT itself makes necessary, and without it the run failed AlwaysCanResolve 7. The real closer, the as-built close plus FX-CLOSE, was never run jointly", "C_OUT has no AB_STOP_HELD, AB_SLOTCOUNT, AB_PROCLIST or D7_SLOTS", "The slot+tombstone death-point merge is never exercised: no configuration has both FX_OUT and FX_CLAIM", "Schedules 1 and 7 (tainted) cannot be expressed"], "ablation": "real: FX-OUT-X = C_OUT+FX_PLAN-FX_OUT, ReadyNotDiscarded F 6 = D4a"},
+   "FX-CLAIM": {"verdict": "relied on with a stated limit: safety only, under a stronger assumption than stated", "limits": ["With FX_CLAIM on, MF:1144 lets a session only die before its first tool call; it cannot stall. The ablation trace uses exactly that stall (FX-CLAIM-X step 2), so the flag removes the fix and a behaviour. Reading (i) as modelled means every live session makes its first tool call, or dies, within the lease. INFERRED: allowing the stall fails Slots as in the ablation", "Step 7 is modelled on true liveness (MF:240). The design counts dead folder sessions that have no done file, and nothing closes them in a tombstoned attempt. INFERRED liveness hole (slot leak); Slots carries over, liveness does not", "No D7_SLOTS (SlotsProc and SlotsR10 unchecked), no AB_PROCLIST, no watcher death (H2); schedule 8 reaches only the uncharged part"], "completeness": "43 of 43 parts complete with liveness analysed (40 at 1500 MB, the 3 r parts at 3000 MB); ABLATION misquotes the cs=1,r=1 part as 17.3 M (file: 11,799,897)", "ablation": "partly real: D4b's mechanism through the lease, but it relies on a stall the flag forbids"},
+   "FX-CGATE-Q5a": {"verdict": "relied on with a stated limit", "limits": ["C_CGATE has no transcript lag, no AB_SLOTCOUNT, no AB_STOP_HELD and no lease", "The nonce bind is merged into the successor's start (schedule 14), and the hook-to-effect window is merged (INFERRED benign with one current coordinator)", "Snapshot write points are a subset of the real ones (status.mjs:582, watch.mjs:834). This does not change the holds, because every stale start is refused"], "ablation": "real: FX-CGATE-X, TwoCoordinatorsAct F 7 = D3 with the snapshot read"},
+   "FX-CGATE-Q5b": {"verdict": "cannot be relied on", "why": "BOUNDED: 8 parts BOUNDED and 2 not run, and liveness was also unanalysed in the complete parts cv=2, cd=2 and l=1,r=1 (analysed in 30 of 43). NoDeadlock F 15 rests on an INFERRED 'hand-over skipped' rule. The Slots F 13 artefact is plausible but not shown"},
+   "FX-CLOSE": {"verdict": "relied on with a stated limit", "limits": ["The close, its effect and the Post done record are one step, and a dead session needs no record. That is justified only because the process list is always available (no AB_PROCLIST); with u, across a hand-over, a dead child needs the owner, and the model's owner end covers only zombies", "PROBE 10(a) (a close that is only a request) is not modelled, nor is 10(b)", "Verify reads s.al (MF:863)"], "ablation": "real: FX-CLOSE-X AlwaysCanResolve F 5 = D4c; the NOOWNEREND sub-flag F 7 is real"},
+   "FX-PLAN": {"verdict": "relied on with a stated limit", "limits": ["Its ablation (FX-PLAN-X F 3) shows a defect created by FX-CGATE's one-shot start, not an as-built defect. 13(a) is blocked by FX-CGATE and 13(b) is FX-CLOSE's", "The watcher delegates to planAct only for admitted, started-unbound, fenced and committed rows (no class 17 for a torn fence on a bound row); rowAct is not rewired; the step-1 owner branch is absent; H2 is not modelled"]}
+  },
+  "gaps_from_part1": {
+   "stop_verify": "Closed as meant: an unconfirmed verify stays stop-requested and resamples; vt advances only on watcher ticks; the owner's end does not confirm. Still open: only z makes a verify unconfirmed (part-1 gap 4)",
+   "stale_snapshot": "Closed as meant: the stale coordinator plans from t.se (MF:417)",
+   "D7-SLOTS-HELD": "Honest: exactly D7-SLOTS + AB_STOP_HELD, complete with 3,093,274 states; SlotsProc and SlotsR10 hold",
+   "D3_rerun": "Honest: the trace shows coord1's admit with its status build, then the stale start from the snapshot"
+  },
+  "modeller_left_claims": {
+   "C_OUT_C_CGATE_old_stop_verify": "Right. The liveness holds of FX-OUT and FX-CGATE are optimistic; Slots is not affected",
+   "lease_reading_ii": "Right: fault-free traces, F 8. Design note: a crash fence that refused on finding a claim would remove the charge failure, not the Slots one",
+   "Q5b": "BOUNDED is right; liveness was analysed in only 30 of 43 parts; the artefact claim is unproven",
+   "not_expressible": "Right for each. Also: schedule 8 is reached only up to its uncharged part, and u is in no configuration"
+  },
+  "property_forms": {
+   "OneWriterPerAttempt": "an observer on wr; can fail (FX-CGATE-X F 10)",
+   "NoChargeWithoutFault": "weaker than its rule: silent after any unrelated fault (n.B.k === P.BUD.k, MF:671); can fail (FX-CLAIM-II F 8)"
+  },
+  "deliberately_not_run": [
+   "a repeat of one recorded run on the frozen file (provenance): the brief limits me to printing traces; recommended to the modeller",
+   "FX-CLAIM with a pre-claim stall allowed, and step 7 counting dead folder sessions: both need model edits I may not make",
+   "Q5b with AB_STOP_HELD and AB_SLOTCOUNT: Q5b stays open either way",
+   "any trace print through the lane: every trace needed was in the result files"
+  ]
+ }
+,
+ "part3": {
+  "label": "fidelity-3c",
+  "reviewed": ["model/as-built/frozen-wake/{model,check,configs,run-seq}.mjs (21:12; model sha256 d527b879, configs 3e818cb8 = the hash recorded in FXW-4R*, FXW-5-3000, FXW-6-3000, FXW-ALL, provenance/*)", "model/as-built/ABLATION-wake.md", "FIX-wake.md rev 4", "model/results-as-built/fixes-wake/*", "model/results-as-built/provenance/*"],
+  "report": "model/as-built/FIDELITY-3.md part 3 (sections 15-16)",
+  "fix_verdicts": {
+   "FX-W1": {"verdict": "relied on with a stated limit", "limits": ["Five complete maximal parts, never the whole configuration", "Judged inside FXW-4R, which carries the non-design CAND_REALERT", "Its effect is on silence; liveness comes from FX-W4", "No o or y faults in any part, so the exit-67 change is untested", "Allow-list and marker-prune not modelled"], "ablation": "real: FXW-4R-X1 k=1,u=1 NoSilenceAfterFirstCall F 5 (W3)"},
+   "FX-W2": {"verdict": "relied on with a stated limit", "limits": ["The same five parts, inside FXW-4R", "Rests on timing premises (a) and (b)", "Schedules 2 (x,o), 8 and 9 not covered", "p6 hard kill open by design; S2 adds its own p6 silence"], "ablation": "real: FXW-4R-X2 NoSilenceAfterFirstCall F 1 (M2 gap)"},
+   "FX-W4": {"verdict": "cannot be relied on as designed", "why": "NoDeadlock F 8 and AlwaysCanResolve F 7 at one fault x: once-per-onset never alerts again after the alerted turn dies before call 1", "with_candidate_realert": "Holds in the five parts, but CAND_REALERT is not the design. The owner's answer is merged into the dead-man step on proc 3's weak fairness (the owner always answers at once). WakeToRun is assumed. The list window is a saturating counter. The stuck, busy and unarmed inputs are absent. The untimed dead-man can run several times in one turn"},
+   "FX-W5": {"verdict": "relied on with a stated limit", "limits": ["Shown only in part k=2,o=1,cs=1 (FXW-5__o1cs1 complete, all hold; that file has no hash)", "In the whole run, liveness is masked by the hand-over/u failures (NoDeadlock F 6, EventuallyResolves F 5)", "Re-raise at every tick (untimed); stuck_count not modelled"]},
+   "FX-W6": {"verdict": "relied on with a stated limit: the holds is its premise", "limits": ["NoFalseSuspicion holds by construction (a SLOW child's hang count is capped below the threshold, WM:1136)", "Kinds, the transcript-tail reading, idle and the age cap are not modelled", "Step 1 alone is untested"], "ablation": "real: FXW-6-X NoFalseSuspicion F 6 (CEX-wake 4.5)"}
+  },
+  "time_and_actors": "A tick is a watcher step gated by tickEnabled (the timeliness oracle). A suspend is the pause discount (AB_PAUSE_GAP only in FXW-ALL). No lease bits, so L1 only. The alarm fires at any time, subject to premises (a) and (b). The dead-man is proc 3, weakly fair. The owner's answer to an alert sits on proc 3's fairness line. The owner's other acts are never forced",
+  "part1_wake_gaps": {"closed": ["gp across a watcher restart (AB_GP_RESTART, on only in FXW-ALL)", "D6 p3/p3b, closed by premises (a) and (b)"], "open": ["1 tickEnabled (B1 premise under FX-W6)", "M1 token/alarm cap", "M2 (no o in any part)", "M3 rowAct start/bind merge", "11 endturn without a list", "D6 p1 (FX-W3)", "p6 (hard kill, by design)", "no complete as-built configuration"]},
+  "modeller_claims": {
+   "FX-W4_gap": "Right: one fault, F 8 / F 7. The re-alert closes it within the five parts at K=2, with the owner answering every alert; its pace is the owner's call",
+   "handover_exit2_no_endturn": "Right in the model: F 9, with the same F 9 in B1, and S2 removes it. But 'no endturn after exit 2' is the brief, INFERRED (handover.mjs:271-276 only exits 2). 'endturn after exit 2' is a third remover that was not run",
+   "FX-W6_B1": "Right and stronger than stated: under B1 as modelled, the property cannot fail",
+   "joint_run": "No interaction seen, but the run is shallow: 2,579,912 states, 1,350,125 expanded, levels 0-13 complete. Traces of 14 steps or more were not seen; the fence-fix traces run to 15-17. Liveness only covers dead ends and cycles inside the expanded part. FX-W3, FX-W7, FX-REDO, Q5b and reading (ii) are absent"
+  },
+  "provenance_part2": "Settled for the four holds (FX-OUT-PLAN, FX-CLOSE, FX-CGATE, the FX-CLAIM r parts): exact equality on the final model with the wake flags off. Not re-run: the 40 FX-CLAIM parts at 1500 MB, the ablations and Q5b (a difference there is unlikely, INFERRED)",
+  "closing": "FIDELITY-3.md section 16",
+  "deliberately_not_run": ["FXW-4R with endturn after hand-over exit 2 (needs a model edit; belongs with FX-W3's brief)", "FX-W6 with step 1 alone (B1 carries the holds; no verdict changes)", "the joint run above 400 MB (my cap)"]
+ }
 }

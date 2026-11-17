@@ -14,6 +14,10 @@
 import { FAULTS, makeParams, initial, canon, encode, decode, successors, invariants, ownerLegit, isTerm } from './model.mjs';
 import { CONFIGS } from './configs.mjs';
 
+// provenance (MB2b, at the coordinator's request): sha256 of the model and the configs as they were when this run started
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+const SHA = Object.fromEntries(['model.mjs', 'configs.mjs'].map((f) => [f, createHash('sha256').update(readFileSync(new URL('./' + f, import.meta.url))).digest('hex')]));
 const args = process.argv.slice(2);
 const id = args[0];
 const memMB = +(args[args.indexOf('--mem-mb') + 1] || 0) || 1500;
@@ -86,8 +90,9 @@ if (P.D7_COMMIT) SAFETY.push('CommitRecordStable');
 if (P.D7_SLOTS) SAFETY.push('SlotsProc', 'SlotsR10');
 if (P.D7_LOOPS) SAFETY.push('LoopReported');
 if (P.FX_PROPS) SAFETY.push('OneWriterPerAttempt', 'NoChargeWithoutFault'); // round 3, fence fixes (MB2a)
+if (P.WFX_PROPS) SAFETY.push('NoSilenceAfterFirstCall'); // round 3, wake fixes (MB2b)
 // diagnostics (not properties): the D6 path by which the current coordinator was left with no wake source
-const DIAG = P.WAKE_PROPS ? ['D6:p1', 'D6:p2', 'D6:p3', 'D6:p3b', 'D6:p4', 'D6:p5', 'D6:p6', 'D6:p7', 'D6:lost', 'D6:other'] : [];
+const DIAG = P.WAKE_PROPS ? ['D6:p0', 'D6:p1', 'D6:p2', 'D6:p3', 'D6:p3b', 'D6:p4', 'D6:p5', 'D6:p6', 'D6:p7', 'D6:lost', 'D6:other'] : [];
 const first = {}; // prop -> {src, k (successor index) | null, dst}
 const F = P.FIELDS;
 let complete = true, why = '';
@@ -269,6 +274,6 @@ try {
   analyses();
 } catch (e) { anaErr = String(e.message || e); for (const p of ['NoDeadlock', 'AlwaysCanResolve', 'NoBusyLoop', 'EventuallyResolves']) props[p] ??= { holds: 'not checked: ' + anaErr }; }
 
-const res = { id, part: budArg, title: cfg.title, base: cfg.base || null, states: N, transitions: nE, complete, bounded_why: why || null, seconds: Math.round((Date.now() - T0) / 100) / 10, peak_mb: Math.round(used() / 1048576), bytes_per_state: Math.round(used() / Math.max(1, N)), avg_record: Math.round(aTop / Math.max(1, N)), props, ...(DIAG.length ? { diag } : {}), levels_done: levels, level_open: { found: N - levels.reduce((a, b) => a + b, 0), expanded_upto: expanded } };
+const res = { id, sha256: SHA, part: budArg, title: cfg.title, base: cfg.base || null, states: N, transitions: nE, complete, bounded_why: why || null, seconds: Math.round((Date.now() - T0) / 100) / 10, peak_mb: Math.round(used() / 1048576), bytes_per_state: Math.round(used() / Math.max(1, N)), avg_record: Math.round(aTop / Math.max(1, N)), props, ...(DIAG.length ? { diag } : {}), levels_done: levels, level_open: { found: N - levels.reduce((a, b) => a + b, 0), expanded_upto: expanded } };
 process.stdout.write(JSON.stringify(res) + '\n');
 for (const [p, v] of Object.entries(props)) log(`${v.holds === true ? 'HOLDS' : v.holds === false ? 'FAILS' : 'UNKNOWN'} ${p}${v.trace ? ` (${v.trace.length} steps)` : ''}`);

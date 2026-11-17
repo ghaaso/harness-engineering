@@ -42,7 +42,9 @@ const bud = cfg.over.BUD;
 let parts = argv.includes('--parts') ? maximalMultisets(bud).map((m) => [`k=${bud.k}`, ...Object.entries(m).map(([a, b]) => `${a}=${b}`)].join(',')) : [null];
 if (opt('--only', null)) parts = opt('--only', '').split(';');
 
-let res = { id, title: cfg.title, base: cfg.base || null, mode: parts[0] === null ? 'whole' : 'parts', parts_total: parts.length, parts: {} };
+import { createHash } from 'node:crypto';
+const SHA = Object.fromEntries(['model.mjs', 'configs.mjs'].map((f) => [f, createHash('sha256').update(fs.readFileSync(path.join(HERE, f))).digest('hex')])); // provenance at start
+let res = { id, sha256: SHA, title: cfg.title, base: cfg.base || null, mode: parts[0] === null ? 'whole' : 'parts', parts_total: parts.length, parts: {} };
 try { const old = JSON.parse(fs.readFileSync(OUT, 'utf8')); if (old.id === id && old.mode === res.mode) res.parts = old.parts || {}; } catch { /* new */ }
 
 const PROPS = ['NoStaleAccepted', 'AtMostOneCommit', 'Slots', 'RestartLimit', 'TwoCoordinatorsAct', 'SingleWatcher', 'FailedTaskStopped', 'OneSessionPerAttempt', 'ReadyNotDiscarded', 'NoFalseSuspicion', 'NoDeadlock', 'AlwaysCanResolve', 'NoBusyLoop', 'EventuallyResolves'];

@@ -4,12 +4,12 @@
 
 | Fix | Verdict (REFUTE-fence-3) | Last change | That change attacked? |
 |---|---|---|---|
-| FX-OUT | Stands with a change | Rev 4: no fenced slot and no tombstone when attempt E has no manifest (H1) | No |
-| FX-CLAIM | Stands | Rev 4: dependency on a live watcher stated (H2); no step changed. Last step change was rev 3 (`nostart` failure-only, wall floor) | Rev 3 change: yes (stands) |
+| FX-OUT | Stands with a change | Rev 5: liveness depends on FX-CLOSE, now stated (no step changed). Last step change, rev 4: no fenced slot and no tombstone when attempt E has no manifest (H1) | No |
+| FX-CLAIM | Stands (FIDELITY-3 found a design hole, fixed in rev 5) | Rev 5 (Revision 5 notes, points 1 and 2): a tombstone confirms at once only when no folder session is visible; every session step 7 counts gets a close; a lease-expiry fence is refused once a claim exists; the timing assumption is restated | No |
 | FX-CGATE | Stands with a change | Rev 4: a "no such session" close is recorded as such; verify decides whether it counts (H3) | No |
 | FX-CLOSE | Stands with a change | Rev 4: verify counts a "no such session" done only for this coordinator's own start, or with a process list that matches nothing (H3) | No |
 | FX-REDO | Stands | Rev 2: exact post-state, `redo` lines | Yes (stands) |
-| FX-PLAN | Stands with a change | Rev 4: the owner rule ends once every needed close is recorded (P1); `started` with no claim follows the admitted rule (P2) | No |
+| FX-PLAN | Stands with a change | Rev 5: a new act `close-session <sid>` for every session that step 7 counts and no attempt's stop is closing; the lease act passes `--if-unclaimed`. Rev 4: the owner rule ends once every needed close is recorded (P1); `started` with no claim follows the admitted rule (P2) | No |
 
 Rev 4 changes only the four points above. The refuter's P3, P4, P5 and the "one source for the
 fence's refusal rules" note are recorded in sections 10 and 11, not fixed (outside this round's
@@ -943,3 +943,129 @@ FX_REDO is not modelled; it is tested through the fs seam.
 
 Schedules 1 and 2 need no harness fault, only a coordinator acting outside its brief. The model must
 let the coordinator take any script or tool act, not only the briefed ones.
+
+## Revision 5 notes (after FIDELITY-3 part 2; not attacked)
+
+Each point was checked against my own steps and the scripts.
+
+### Point 1. Dead or inert folder sessions in a tombstoned attempt
+
+**Verdict: a design hole.** The reviewer is right (FIDELITY-3 9.2 b).
+- FX-CLAIM step 7 counts every folder session with no done file.
+- Step 6 confirms a tombstoned attempt at once, and no act ever closes its folder sessions.
+- So nothing writes a done file for:
+  - a session that died after its transcript appeared and before its first tool call;
+  - a late session made inert by the tombstone.
+
+That session is counted for ever. Two such deaths fill N_max = 2.
+
+**Smallest change.** Two rules, plus one guard on the first:
+- **FX-CLAIM step 6.** A tombstone confirms at once **only when no folder session is visible**.
+  Otherwise the stop is requested for every folder session and goes through FX-CLOSE verify (b) as
+  usual.
+- **FX-PLAN.** A new act, `close-session <sid>`, for every session that step 7 counts and no
+  attempt's stop is already closing. It covers late sessions that appear after a stop was
+  confirmed. Its done file counts under rev 4's H3 rule: a "no such session" counts when this
+  coordinator made the start, or when a process list matches nothing for that session. Otherwise
+  the act becomes `owner` (the owner's act `closed`).
+- **Guard: no new mechanism.** The close tool, the done record, the H3 rule and the owner act all
+  exist already. The only new piece is the planner act, and its runner is the watcher (class 17)
+  and status.
+
+**Needs:**
+- PROBE 10(b) and process-list availability; without them every such orphan ends with the owner.
+- No owner ruling.
+
+**Check for the modeller.**
+- Configuration: C_D4B + FX_CLAIM + FX_PLAN + FX_CLOSE + AB_STOP_HELD, with step 7 counting
+  `tv && !dn` whether the session is alive or dead.
+- Schedule: two children die after their transcript appears and before their first tool call
+  (2 faults, K = 2, N_max = 2). Each lease expires, each crash fence tombstones its attempt, and a
+  third task waits.
+- Property: AlwaysCanResolve. It must fail without the rule (an immediate confirm, and no
+  `close-session` act). It must hold with it, given process-list availability or `by` equal to the
+  starter.
+
+### Point 2. What the start lease assumes
+
+**Verdict: an assumption to state, plus one small change.**
+
+What the design needs for Slots is weaker than the model's reading (i). It needs: "every live
+session either claims, or has a visible transcript, within the lease." With point 1's change, a
+session that stalls before its first tool call but has a visible transcript is counted by step 7.
+Its attempt is no longer confirmed at once, so Slots holds.
+
+Under the reviewer's reading (ii), with no bound on transcript lag, a stalled session with no visible
+transcript is tombstoned and confirmed, and another task is admitted. Slots then fails with no fault.
+The design keeps that case as "Slots eventually within N_max" (FX-CLAIM, timing assumption).
+
+**Sentence to add (FX-CLAIM, timing assumption).** "Slots as an invariant assumes that every started
+session makes its first tool call, or shows its transcript, within the lease (`start_lease_ticks` and
+`start_lease_ms`). A first model call longer than the lease is a stall: without a visible transcript
+it can break Slots (reading ii), and with one it is counted and closed."
+
+**Smallest change: the reviewer's suggestion.** The lease act becomes
+`replace-fence --reason crash --if-unclaimed`. Inside the fence's hold, if the tombstone create finds
+a session claim, the fence exits 5 `claimed-late` with nothing written; FX-OUT step 3 runs before
+it, so no slot exists either. The planner then orders `bind`.
+- This removes the charge on a healthy session whose claim came late.
+- It does not remove the Slots failure under reading (ii), which stays an assumption.
+
+**Needs:**
+- PROBE 5 must measure both transcript lag and the time to a child's first tool call. The lease is
+  set above both.
+- An owner ruling only if the probe finds no bound. The owner then chooses "Slots eventually" or a
+  longer lease.
+
+**Check for the modeller.**
+- Configuration: C_D4B + FX_CLAIM + FX_PLAN, with the pre-claim stall allowed while FX_CLAIM is on
+  (MF:1144).
+- (a) Lease reading "claim or visible transcript within the lease", with point 1's change. Schedule:
+  start; the session's transcript appears; the session stalls; the lease expires. Property: Slots
+  must hold with point 1 and fail without it.
+- (b) Reading (ii). Schedule: the session claims after the lease expired but before the fence's
+  tombstone. Property: NoChargeWithoutFault must fail without `--if-unclaimed` and hold with it.
+
+### Point 3. FX-OUT's liveness: a child alive after its commit
+
+**Verdict: a model reading only, plus a dependency to state.** No step changes.
+- After commit the row is no longer `active`, so the hook denies every tool the child calls
+  (guard-hook.mjs:406-407). The child is inert: it can spend tokens but cannot write.
+- Its slot is released by FX-PLAN step 3 (committed at `started` or `bound` -> `stop-request`), and
+  then by FX-CLOSE's close and verify.
+- So FX-OUT is closed by FX-CLOSE by design. The model's oracle close stands in for that pair. The
+  gap is the joint run that was never made, not the design.
+- A row with several steps stays `active` after an earlier step commits, and its child is meant to
+  keep working.
+
+**Sentence to add (FX-OUT, Not covered).** "Liveness and Slots after a commit depend on FX-PLAN step 3
+and FX-CLOSE: a READY accepted from the hook's slot may leave the child running, inert, until it is
+closed."
+
+**Needs:**
+- No probe beyond PROBE 10 (FX-CLOSE's).
+- No owner ruling.
+
+**Check for the modeller.**
+- Configuration: C_OUT + FX_PLAN + FX_CLOSE + AB_STOP_HELD, with AB_COMMIT_CLOSE off (no oracle).
+- Schedule: the child keeps looping after its ready slot (1 fault). Commit follows, then the
+  stop-request, the close and verify.
+- Property: AlwaysCanResolve and SlotsProc. They must fail with FX_CLOSE off; the superseded file
+  `FX-OUT-before-commit-close-oracle.json` already shows AlwaysCanResolve F 7. They must hold with
+  FX_CLOSE on.
+
+### Change log, rev 5
+
+| Point | Verdict | Change |
+|---|---|---|
+| 1 Dead or inert folder sessions in a tombstoned attempt | Design hole | Step 6 confirms at once only with no visible folder session; a new FX-PLAN act `close-session <sid>` for counted orphans |
+| 2 Lease reading | Assumption to state + small change | The timing sentence restated; the lease fence gets `--if-unclaimed` (`claimed-late`, exit 5) |
+| 3 FX-OUT liveness | Model reading; dependency stated | A sentence under FX-OUT "Not covered" (guard-hook.mjs:406-407 makes the child inert) |
+
+**New flags for the modeller.**
+
+| Flag | Property when off | Check |
+|---|---|---|
+| FX_CLAIM_ORPHANCLOSE | AlwaysCanResolve | Point 1 |
+| FX_CLAIM_IFUNCLAIMED | NoChargeWithoutFault | Point 2 (b) |
+| (none; joint configuration) | AlwaysCanResolve, SlotsProc | Point 3 |

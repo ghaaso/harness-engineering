@@ -112,3 +112,45 @@ const FXC = [
   ['D7-SLOTS-HELD', 'D7-SLOTS with the held stop verify (FIDELITY-3 gap 1 closed)', { ...FIXES, D7_SLOTS: true, AB_STOP_HELD: true, BUD: K2, R: 1 }, 'D7-SLOTS'],
 ];
 for (const [id, title, over, base] of FXC) CONFIGS.push({ id, order: 0, title, over, base });
+
+// ---- round 3, the wake-group FIXES (helper MB2b, ABLATION-wake.md; FIX-wake.md rev 4 + FIX-JOIN.md). C_X = the as-built
+// wake flags X's defect needs + X (+ a new fix X depends on); the ablation = C_X - X. FX-W3 and FX-W7 are not modelled.
+const WA = { ...FIXES, ...D7_OBS, AB_PROCLIST: true, AB_ALARM_SUPERSEDE: true, AB_ALARM_MIDTURN: true, AB_ARM_SPLIT: true, AB_ENDTURN_SPLIT: true, AB_FAIR_IDS: true, WAKE_PROPS: true, WFX_PROPS: true, BUD: K2W, R: 1 };
+const C_W12 = { ...WA, FIX_ARM_FIRST: true, FIX_ALARM_MARKER: true };
+const AWD = { ...FIXES, AB_PROCLIST: true, WAKE_PROPS: true, BUD: K2W, R: 1 }; // = AB-W-<flag> without the flag
+const WXC = [
+  ['FXW-12', 'FX-W2 + FX-W1 (S1, L1) on the as-built arm, endturn, supersede and mid-turn alarm', C_W12, 'AB-WAKE-ALL'],
+  ['FXW-12-X2', 'ablation of FX-W2: C_W12 without FIX_ARM_FIRST (as-built armAtStart, tri-state view)', { ...C_W12, FIX_ARM_FIRST: false }, 'FXW-12'],
+  ['FXW-12-X1', 'ablation of FX-W1: C_W12 without FIX_ALARM_MARKER', { ...C_W12, FIX_ALARM_MARKER: false }, 'FXW-12'],
+  ['FXW-12-S2', 'owner branch S2: C_W12 with two alarm slots', { ...C_W12, ALARM_SLOTS: 2 }, 'FXW-12'],
+  ['FXW-12-B1', 'owner branch B1 (endturn exit 2 starts both): C_W12 + AB_EXIT2_START', { ...C_W12, AB_EXIT2_START: true }, 'FXW-12'],
+  ['FXW-4', 'FX-W4 dead-man on C_W12 with the hard-kill branch (a crash kills its background commands)', { ...C_W12, AB_X_KILLS_BG: true, FIX_DEADMAN: true }, 'FXW-4-X'],
+  ['FXW-4-X', 'ablation of FX-W4: C_W12 + AB_X_KILLS_BG', { ...C_W12, AB_X_KILLS_BG: true }, 'FXW-4'],
+  ['FXW-5', 'FX-W5 (R1) on AB-W-ACT-DUE', { ...AWD, AB_ACT_DUE: true, FIX_ACT_RERAISE: true }, 'AB-W-ACT-DUE'],
+  ['FXW-6', 'FX-W6 (B1) on AB-W-HANG-CALLS', { ...AWD, AB_HANG_CALLS: true, FIX_OP_DEADLINE: true }, 'AB-W-HANG-CALLS'],
+  ['FXW-ALL', 'joint: every as-built flag of both groups + all modelled fixes of both groups (FX-W3, FX-W7, FX-REDO not modelled)',
+    { ...FIXES, ...AB_FENCE, ...AB_WAKE, WAKE_PROPS: true, WFX_PROPS: true, ...D7_OBS, FX_PROPS: true, AB_STOP_HELD: true, AB_STALE_SNAPSHOT: true, AB_GP_RESTART: true,
+      FX_OUT: true, FX_CLAIM: true, FX_CGATE: true, FX_CLOSE: true, FX_PLAN: true,
+      FIX_ARM_FIRST: true, FIX_ALARM_MARKER: true, FIX_DEADMAN: true, FIX_ACT_RERAISE: true, FIX_OP_DEADLINE: true, BUD: K2W, R: 1 }, 'AB-ALL'],
+];
+for (const [id, title, over, base] of WXC) CONFIGS.push({ id, order: 0, title, over, base });
+CONFIGS.push({ id: 'FXW-4-X1', order: 0, title: 'ablation of FX-W1 inside C_W4', over: { ...C_W12, AB_X_KILLS_BG: true, FIX_DEADMAN: true, FIX_ALARM_MARKER: false }, base: 'FXW-4' });
+CONFIGS.push({ id: 'FXW-4-X2', order: 0, title: 'ablation of FX-W2 inside C_W4', over: { ...C_W12, AB_X_KILLS_BG: true, FIX_DEADMAN: true, FIX_ARM_FIRST: false }, base: 'FXW-4' });
+CONFIGS.push({ id: 'FXW-4-S2', order: 0, title: 'owner branch S2 inside C_W4', over: { ...C_W12, AB_X_KILLS_BG: true, FIX_DEADMAN: true, ALARM_SLOTS: 2 }, base: 'FXW-4' });
+// isolating FX-W1 / FX-W2 behind the FX-W4 gap: C_W4 + the modeller's candidate re-alert (not the design), and its ablations
+const C_W4R = { ...C_W12, AB_X_KILLS_BG: true, FIX_DEADMAN: true, CAND_REALERT: true };
+CONFIGS.push({ id: 'FXW-4R', order: 0, title: 'C_W4 + candidate re-alert (modeller, not design)', over: C_W4R, base: 'FXW-4' });
+CONFIGS.push({ id: 'FXW-4R-X1', order: 0, title: 'FXW-4R without FX-W1', over: { ...C_W4R, FIX_ALARM_MARKER: false }, base: 'FXW-4R' });
+CONFIGS.push({ id: 'FXW-4R-X2', order: 0, title: 'FXW-4R without FX-W2', over: { ...C_W4R, FIX_ARM_FIRST: false }, base: 'FXW-4R' });
+CONFIGS.push({ id: 'FXW-4R-S2', order: 0, title: 'FXW-4R, branch S2', over: { ...C_W4R, ALARM_SLOTS: 2 }, base: 'FXW-4R' });
+CONFIGS.push({ id: 'FXW-4R-B1', order: 0, title: 'FXW-4R, branch B1 (endturn exit 2 starts both)', over: { ...C_W4R, AB_EXIT2_START: true }, base: 'FXW-4R' });
+// ---- final pass (MB2b, label fixes-final): FIX-fence rev 5 points 1 and 3, FIX-JOIN point 1's targeted check
+CONFIGS.push({ id: 'FN-R5-DEAD', order: 0, title: 'rev 5 point 1 without the rule: C_D4B, step 7 counts dead visible folder sessions', over: { ...C_D4B, FX_R5_DEADCOUNT: true }, base: 'FX-CLAIM' });
+CONFIGS.push({ id: 'FN-R5', order: 0, title: 'rev 5 point 1 with the rule: FN-R5-DEAD + FX_R5_ORPHAN', over: { ...C_D4B, FX_R5_DEADCOUNT: true, FX_R5_ORPHAN: true }, base: 'FN-R5-DEAD' });
+CONFIGS.push({ id: 'FN-OUT-CLOSE', order: 0, title: 'rev 5 point 3: FX-OUT + FX-PLAN + FX-CLOSE (+ FX-CGATE records), held stop verify, commit oracle off (AB_COMMIT_CLOSE), 1 fault', over: { ...C_CLOSE, AB_READY_SPLIT: true, FX_OUT: true, BUD: { ...K2, k: 1 } }, base: 'FX-OUT-PLAN' });
+CONFIGS.push({ id: 'FN-OUT-CLOSE-X', order: 0, title: 'rev 5 point 3 ablation: FN-OUT-CLOSE without FX_CLOSE', over: { ...C_CLOSE, AB_READY_SPLIT: true, FX_OUT: true, FX_CLOSE: false, BUD: { ...K2, k: 1 } }, base: 'FN-OUT-CLOSE' });
+CONFIGS.push({ id: 'FN-JOIN-WSTART', order: 0, title: 'FIX-JOIN point 1: C_D4B (lease at watcher ticks) + C_W4R; a crash kills the watcher, the next turn restarts it (L1, list known)', over: { ...C_D4B, ...C_W4R }, base: 'FX-CLAIM' });
+CONFIGS.push({ id: 'FN-JOIN-WSTART-D', order: 0, title: 'FN-JOIN-WSTART with the design FX-W4 (no candidate re-alert)', over: { ...C_D4B, ...C_W4R, CAND_REALERT: false }, base: 'FN-JOIN-WSTART' });
+CONFIGS.push({ id: 'FN-N2', order: 0, title: 'FIX-wake rev 5 N2: FXW-4R + every turn ends with endturn (handover exit 2 and exit 75 included)', over: { ...C_W4R, FIX_ENDTURN_ALWAYS: true }, base: 'FXW-4R' });
+CONFIGS.push({ id: 'FN-JOIN-WSTART-1F', order: 0, title: 'FN-JOIN-WSTART with one field (to complete the targeted schedule)', over: { ...C_D4B, ...C_W4R, FIELDS: 1 }, base: 'FN-JOIN-WSTART' });
+CONFIGS.push({ id: 'FN-OUT-CLOSE-K2', order: 0, title: 'FN-OUT-CLOSE at two faults (K2)', over: { ...C_CLOSE, AB_READY_SPLIT: true, FX_OUT: true }, base: 'FN-OUT-CLOSE' });

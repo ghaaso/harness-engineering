@@ -195,6 +195,8 @@ One line per FIDELITY-3 gap (section 2 numbering, plus section 7):
   start-session/bind act (section 4).
 - FX-PLAN step 1's refusal branch (`owner`) is not modelled; FX-REDO is not modelled.
 - Three faults: not run (round rule: two faults only).
+- Final pass (MB2b): the FX-OUT-without-commit-oracle run and FIX-fence rev 5 point 1 (dead orphans) are checked in
+  `ABLATION-wake.md`, section "Final pass", files in `model/results-as-built/final/`.
 
 ## 6. Deliberately not run
 

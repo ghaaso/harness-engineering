@@ -27,7 +27,7 @@ export const RSN = { FIRST: 0, STALL: 1, HANG: 2, LOOP: 3, HO: 4, CRASH: 5 };
 // SR/SV (as-built, AB_COMMIT_CLOSE): stop.mjs request and verify of a committed row's last attempt
 // AR/SW/SA (as-built wake group): the coordinator's own background tool calls that start the alarm after reconcile's
 // exit 1 (AR, AB_ARM_SPLIT), and the watcher / the alarm after endturn's missing reasons (SW, SA, AB_ENDTURN_SPLIT)
-export const OP = { F: 1, S: 2, A: 3, T: 4, B: 5, M: 6, D: 7, H: 8, Y: 9, E: 10, SR: 11, SV: 12, AR: 13, SW: 14, SA: 15 };
+export const OP = { F: 1, S: 2, A: 3, T: 4, B: 5, M: 6, D: 7, H: 8, Y: 9, E: 10, SR: 11, SV: 12, AR: 13, SW: 14, SA: 15, EN: 16, RC: 17 };
 const RNAME = ['first', 'stall', 'hang', 'loop', 'planned hand-over', 'crash (start lease expired, no claim)'];
 const MNAME = ['ok', 'stuck in a slow call', 'loops (same call)', 'loops (varied calls, no progress)', 'crashed', 'idle (every tool call denied)', 'healthy but slow (a call longer than the hang threshold, or waiting on its own job)'];
 // u (as-built, AB_PROCLIST): the process list becomes unavailable (proc.list fails) until an environment step restores it
@@ -40,6 +40,8 @@ export const KINDS = [...FAULTS, 'h', 'd', 's'];
 const PLANNED = (k) => k === 'h' || k === 'd' || k === 's';
 const MKIND = { 1: 'cs', 3: 'cv', 4: 'cd' };
 
+// one process checks one configuration: XB = the wake-fix state byte is encoded (set by makeParams)
+let XB = false;
 export function makeParams(over = {}) {
   const base = {
     FIELDS: 2, R: 1, NMAX: 2, HMAX_TASK: 1, C_STALL: 1, H_HANG: 2, LOOP: 3,
@@ -153,6 +155,12 @@ export function makeParams(over = {}) {
     FX_Q5B: false,             // owner branch Q5b (open question 5): the coordinator has no session tools; the owner starts
                                // an admitted row's session by hand (once) and the closes are the owner's (merged, see
                                // ABLATION-fence.md); with FX_PLAN the planner answers `owner` for those acts
+    FIX_ENDTURN_ALWAYS: false, // FIX-wake rev 5 N2 (brief rule, compliant coordinator): every turn's last call is endturn, also
+                               // after handover exit 2 and after reconcile's exit 75 (endturn's own exit 75 still ends the turn)
+    FX_R5_DEADCOUNT: false,    // final pass (FIX-fence rev 5 point 1 check): step 7 counts a visible folder session with no
+                               // close-done record whether it is alive or dead (the script cannot tell; no merged close)
+    FX_R5_ORPHAN: false,       // rev 5 point 1: a tombstone confirms at once only with no visible folder session left; a dead
+                               // visible one gets its done record from the close's "no such session" (H3: list answers)
     FX_LEASE_NOBOUND: false,   // modeller's reading (ii) of FX-CLAIM's timing assumption: the start lease may expire before
                                // a healthy started session's first tool call (off = reading (i): it expires only when no
                                // live healthy unclaimed session of the attempt exists)
@@ -168,8 +176,35 @@ export function makeParams(over = {}) {
     AB_STALE_SNAPSHOT: false,  // gap 2 (FIDELITY-3 sec 3 D3): a stale coordinator plans from status.json as of its last
                                // write (t.se: the epoch a row showed admitted in it), written by the current coordinator's
                                // reconcile and, as an alternative, by a status build right after its admit
+    // ---- round 3, the wake-group FIXES (helper MB2b, model/as-built/ABLATION-wake.md; FIX-wake.md rev 4 + FIX-JOIN.md).
+    // All off = the model above (the extra state byte `x` exists only when one of them is on).
+    FIX_ARM_FIRST: false,      // FX-W2: the turn's first call is `watch --alarm --ensure` (op EN: register into a free slot,
+                               // else `present`), then reconcile is its own op RC (yield before it) that counts the live
+                               // slots (confirmed / arm-unconfirmed); armAtStart (alarm-missing + AR) is gone; endturn's dead
+                               // alarm is answered by another ensure
+    ALARM_SLOTS: 1,            // owner branch S1 (1) / S2 (2) of FX-W2
+    FIX_ALARM_MARKER: false,   // FX-W1: an alarm writes its exit marker just before it exits (merged with the exit); every
+                               // reader is tri-state (marker or listed-gone = dead, no list and no marker = unknown, never
+                               // dead); endturn exits 1 on any dead source and 2 only when none is dead; alarm.json corrupt is
+                               // an anomaly, not exit 67
+    FIX_DEADMAN: false,        // FX-W4: status --deadman, a periodic task outside the tree (proc 3): runs_no_alarm (list
+                               // answers, no alarm of the current ce alive) and a list-failure window; alert at >= 2 / >= 3,
+                               // once per onset; the alert reaches the owner, who wakes the current coordinator
+    FIX_ACT_RERAISE: false,    // FX-W5 (branch R1): the watcher raises an acknowledged act-due again while its condition
+                               // holds (row acts: aks back to 1; a hang/stall/loop event re-appended when acked and still true)
+    FIX_OP_DEADLINE: false,    // FX-W6 (branch B1): the first tick of an epoch counts nothing; an in-call child's hang is
+                               // judged against its kind's deadline, which under B1 a healthy call ends within (the healthy
+                               // slow child's count is capped below it: the stated bound, an environment premise)
+    CAND_REALERT: false,       // the modeller's candidate for the FX-W4 gap found here (ABLATION-wake 1): re-alert while the
+                               // cause persists two runs after an alert. Not part of the design; used only to isolate FX-W1/W2
+    AB_GP_RESTART: false,     // FIDELITY-3 gap 12: a newly started watcher's uncounted first evaluation rewrites
+                               // last_tick_at (W:729), so the wall gap (gp) does not survive a watcher restart
+    WFX_PROPS: false,          // check NoSilenceAfterFirstCall: WakeSourceAlive except a death before the turn's first tool
+                               // call (tag p0, FX-W2's stated scope) and the owner's cases
   };
-  return { ...base, ...over, BUD: { ...base.BUD, ...(over.BUD || {}) } };
+  const P = { ...base, ...over, BUD: { ...base.BUD, ...(over.BUD || {}) } };
+  XB = !!(P.FIX_ARM_FIRST || P.FIX_ALARM_MARKER || P.FIX_DEADMAN);
+  return P;
 }
 
 // ---------------------------------------------------------------- state
@@ -189,7 +224,7 @@ export function initial(P) {
   // wake group: ar = alarm.json names the current ce; rl = a stale run.lock is left; cj = alarm.json is unreadable;
   // gp = a long pause happened since the last evaluation (the wall gap the next tick sees); ra = run-level act-due
   // raised (bit 0 handover, bit 1 run-terminal); rk = their ack state (as aks). C[i].ch = the supersede chain (D1)
-  return { ce: 0, ws: 0, syn: 0, to: 0, pl: 1, ar: 0, rl: 0, cj: 0, gp: 0, ra: 0, rk: 0, seq: 0, ack: 0, B: { ...P.BUD }, T, S: [], W: [], A: [], E: [], C: [{ ce: 0, wk: 1, boot: 1, dr: 0, rd: 0, pc: null, ch: 0 }] };
+  return { ce: 0, ws: 0, syn: 0, to: 0, pl: 1, ar: 0, rl: 0, cj: 0, gp: 0, ra: 0, rk: 0, x: 0, y: 0, seq: 0, ack: 0, B: { ...P.BUD }, T, S: [], W: [], A: [], E: [], C: [{ ce: 0, wk: 1, boot: 1, dr: 0, rd: 0, pc: null, ch: 0 }] };
 }
 const cloneT = (t) => ({ st: t.st, ep: t.ep, step: t.step, rs: t.rs, hv: t.hv, fail: t.fail, cut: t.cut, ctn: t.ctn, ncr: t.ncr, cmE: t.cmE, rsn: t.rsn, wep: t.wep, cs: t.cs, hs: t.hs, rep: t.rep, cl: t.cl, bn: t.bn, ad: t.ad, aks: t.aks, ry: t.ry, gf: t.gf, ol: t.ol, orr: t.orr, cm: t.cm, sj: t.sj, le: t.le, ns: t.ns, vr: t.vr, sq: t.sq, vt: t.vt, se: t.se });
 // as-built session fields: rh = READY hook passed, write not landed; tv = transcript visible; bd = its session id
@@ -198,7 +233,7 @@ const cloneT = (t) => ({ st: t.st, ep: t.ep, step: t.step, rs: t.rs, hv: t.hv, f
 const cloneS = (s) => ({ f: s.f, ep: s.ep, m: s.m, p: s.p, pf: s.pf, tc: s.tc, al: s.al, z: s.z, mv: s.mv, nc: s.nc, sig: s.sig, pu: s.pu, par: s.par, hb: s.hb, hd: s.hd, rh: s.rh, tv: s.tv, bd: s.bd, sc: s.sc, ch: s.ch, dn: s.dn, wr: s.wr });
 export function clone(x) {
   return {
-    ce: x.ce, ws: x.ws, syn: x.syn, to: x.to, pl: x.pl, ar: x.ar, rl: x.rl, cj: x.cj, gp: x.gp, ra: x.ra, rk: x.rk, seq: x.seq, ack: x.ack,
+    ce: x.ce, ws: x.ws, syn: x.syn, to: x.to, pl: x.pl, ar: x.ar, rl: x.rl, cj: x.cj, gp: x.gp, ra: x.ra, rk: x.rk, x: x.x, y: x.y, seq: x.seq, ack: x.ack,
     B: { ...x.B },
     T: x.T.map(cloneT), S: x.S.map(cloneS), W: x.W.map((w) => ({ par: w.par, ph: w.ph, lk: w.lk, gap: w.gap })),
     A: x.A.slice(), E: x.E.map((e) => ({ f: e.f, ep: e.ep, cls: e.cls, seq: e.seq })),
@@ -209,6 +244,22 @@ export function clone(x) {
 const aPar = (a) => a & 7;
 const aSup = (a) => (a >> 3) & 1;
 const alarmsOf = (n, i) => n.A.filter((a) => aPar(a) === i).length;
+// ---- wake fixes (MB2b). n.x: bits 0-1 slot records of the current ce (FX-W2; without it bit 0 is unused and alarm.json is
+// n.ar), bits 2-3 exit markers of the slots' alarms (FX-W1), bits 4-5 dead-man runs_no_alarm, bits 6-7 its list-failure
+// window (FX-W4). n.y: bit 0 the dead-man has alerted for the present onset. Alarm byte bit 4 = its slot (FX-W2)
+const aSlot = (a) => (a >> 4) & 1;
+const slotRec = (n, k, P) => (P.FIX_ARM_FIRST ? (n.x >> k) & 1 : k === 0 ? n.ar : 0);
+const slotMk = (n, k) => (n.x >> (2 + k)) & 1;
+const setBit = (n, b, v) => { n.x = v ? n.x | (1 << b) : n.x & ~(1 << b); };
+// the alarm process a slot names is alive (not superseded); without FX-W2 the current alarm of alarm.json
+const slotProc = (n, k, P) => n.A.some((a) => aPar(a) === n.ce && !aSup(a) && (!P.FIX_ARM_FIRST || aSlot(a) === k));
+// lib.liveness (FX-W1 step 1): 0 dead, 1 alive, 2 unknown. Without the marker: as built, a record and no list is unknown
+function slotVerdict(n, k, P) {
+  if (!slotRec(n, k, P)) return 0;
+  if (P.FIX_ALARM_MARKER && slotMk(n, k)) return 0;
+  if (!n.pl) return 2;
+  return slotProc(n, k, P) ? 1 : 0;
+}
 // the process list is modelled (fault u, bit pl) when any flag reads it
 const PLU = (P) => P.AB_PROCLIST || P.AB_ARM_SPLIT || P.AB_ENDTURN_SPLIT;
 const term = (st) => st === ST.C || st === ST.F;
@@ -237,7 +288,7 @@ function slotCountAB(n, P) {
   // the claim holder (the modelled reading: the text also names a holder of an unconfirmed attempt, which today's term
   // already counts; counting it twice only admits less, so a Slots verdict here carries over). A dead session is merged
   // with its "no such session" close (FX-CGATE step 6(b), counted by FX-CLOSE because this coordinator started it).
-  if (P.FX_CLAIM) for (const s of n.S) if (s.al && s.tv && !s.dn && !s.ch) k++;
+  if (P.FX_CLAIM) for (const s of n.S) if ((s.al || P.FX_R5_DEADCOUNT) && s.tv && !s.dn && !s.ch) k++;
   return k;
 }
 function wake(n, i) { const c = n.C[i]; if (!c) return; if (c.pc !== null) return; /* fact 2: seen at the next tool call of the running turn */ c.wk = Math.min(3, c.wk + 1); }
@@ -249,6 +300,7 @@ export function canon(n, P) {
   n.S = n.S.filter((s) => {
     const t = n.T[s.f];
     if (s.al && s.p < 2) return true;
+    if (P.FX_CLAIM && P.FX_R5_DEADCOUNT && s.tv && !s.dn && !s.ch) return true; // still counted by step 7
     if (P.D7_SLOTS && s.al) return true; // D7: a READY child's process lives until it is closed
     if (t.st === ST.A && s.ep === t.ep) return true;
     if (t.st === ST.A && s.ep === t.ep - 1 && (t.step === STEP.FENCED || t.step === STEP.STOPPED)) return true; // restore source
@@ -272,6 +324,8 @@ export function canon(n, P) {
   for (const c of n.C) if (c.pc === null && !c.wk) c.dr = c.ce < n.ce ? 0 : c.dr;
   n.S.sort((a, b) => a.f - b.f || a.ep - b.ep || a.par - b.par || a.al - b.al || a.p - b.p || a.m - b.m || a.z - b.z || a.rh - b.rh || a.tv - b.tv || a.bd - b.bd || a.sc - b.sc || a.ch - b.ch || a.dn - b.dn || a.wr - b.wr);
   n.W.sort((a, b) => a.par - b.par || a.ph - b.ph || a.lk - b.lk || a.gap - b.gap);
+  n.A = n.A.map((a) => ((a & 32) && n.C[aPar(a)] && n.C[aPar(a)].pc === null ? a & ~32 : a));
+  if (P.FIX_ARM_FIRST) for (const c of n.C) if (c.pc === null) c.ch = 0;
   n.A.sort((a, b) => a - b);
   return n;
 }
@@ -285,6 +339,7 @@ export function encode(n, buf) {
   buf[i++] = n.ce; buf[i++] = n.ws | (n.syn << 1) | (n.to << 2) | (n.pl << 3) | (n.ar << 4) | (n.rl << 5) | (n.cj << 6) | (n.gp << 7); buf[i++] = n.seq;
   buf[i++] = B.k; buf[i++] = B.cs | (B.cv << 4); buf[i++] = B.cd | (B.z << 4); buf[i++] = B.p | (B.l << 4); buf[i++] = B.x | (B.t << 4); buf[i++] = B.r | (B.h << 4); buf[i++] = B.d | ((B.u || 0) << 4);
   buf[i++] = (B.o || 0) | ((B.y || 0) << 4); buf[i++] = (B.s || 0) | (n.ra << 4) | (n.rk << 6);
+  if (XB) { buf[i++] = n.x; buf[i++] = n.y; }
   buf[i++] = n.T.length; buf[i++] = n.S.length; buf[i++] = n.W.length; buf[i++] = n.A.length; buf[i++] = n.E.length; buf[i++] = n.C.length;
   for (const t of n.T) {
     buf[i++] = t.st | (t.step << 2) | (t.fail << 5) | (t.cut << 6) | (t.ctn << 7);
@@ -321,6 +376,7 @@ export function decode(b) {
   const x = b[i++]; n.ws = x & 1; n.syn = (x >> 1) & 1; n.to = (x >> 2) & 1; n.pl = (x >> 3) & 1; n.ar = (x >> 4) & 1; n.rl = (x >> 5) & 1; n.cj = (x >> 6) & 1; n.gp = (x >> 7) & 1; n.seq = b[i++];
   const B = { k: b[i++] }; let y = b[i++]; B.cs = y & 15; B.cv = y >> 4; y = b[i++]; B.cd = y & 15; B.z = y >> 4; y = b[i++]; B.p = y & 15; B.l = y >> 4; y = b[i++]; B.x = y & 15; B.t = y >> 4; y = b[i++]; B.r = y & 15; B.h = y >> 4; y = b[i++]; B.d = y & 15; B.u = y >> 4;
   y = b[i++]; B.o = y & 15; B.y = y >> 4; y = b[i++]; B.s = y & 15; n.ra = (y >> 4) & 3; n.rk = (y >> 6) & 3;
+  n.x = 0; n.y = 0; if (XB) { n.x = b[i++]; n.y = b[i++]; }
   n.B = B;
   const nT = b[i++], nS = b[i++], nW = b[i++], nA = b[i++], nE = b[i++], nC = b[i++];
   n.T = []; n.S = []; n.W = []; n.A = []; n.E = []; n.C = [];
@@ -478,7 +534,7 @@ function plans(n, i, P) {
 
 const opName = (o) => {
   const [k, f, x, y] = o;
-  return k === OP.F ? (x === RSN.FIRST ? `replace(f${f},first)` : `replace(f${f},${RNAME[x]},e${y})`) : k === OP.S ? `stop(f${f})` : k === OP.A ? `admit(f${f})` : k === OP.T ? `start-session(f${f}${y ? 'e' + y : ''})` : k === OP.B ? `bind(f${f})` : k === OP.M ? `commit(f${f}e${y})` : k === OP.D ? 'drain(W*_coord)' : k === OP.H ? 'handover' : k === OP.Y ? 'synthesis' : k === OP.SR ? `stop-request(f${f} committed)` : k === OP.SV ? `stop-verify(f${f} committed)` : k === OP.AR ? 'start-alarm(arm)' : k === OP.SW ? 'start-watcher' : k === OP.SA ? 'start-alarm' : 'endturn';
+  return k === OP.F ? (x === RSN.FIRST ? `replace(f${f},first)` : `replace(f${f},${RNAME[x]},e${y})`) : k === OP.S ? `stop(f${f})` : k === OP.A ? `admit(f${f})` : k === OP.T ? `start-session(f${f}${y ? 'e' + y : ''})` : k === OP.B ? `bind(f${f})` : k === OP.M ? `commit(f${f}e${y})` : k === OP.D ? 'drain(W*_coord)' : k === OP.H ? 'handover' : k === OP.Y ? 'synthesis' : k === OP.SR ? `stop-request(f${f} committed)` : k === OP.SV ? `stop-verify(f${f} committed)` : k === OP.AR ? 'start-alarm(arm)' : k === OP.SW ? 'start-watcher' : k === OP.SA ? 'start-alarm' : k === OP.EN ? 'watch --alarm --ensure' : k === OP.RC ? 'status --reconcile' : 'endturn';
 };
 
 function killAlarmsOf(n, i, P, why) {
@@ -493,6 +549,7 @@ function killAlarmsOf(n, i, P, why) {
 // kept (state bound; AlarmsBounded already fails at 3). Returns a label fragment.
 function startAlarm(n, i, P) {
   if (P.AB_ARM_SPLIT || P.AB_ENDTURN_SPLIT) { if (n.C[i].ce === n.ce) n.ar = 1; n.cj = 0; } // a6 rewrites alarm.json (repairs an unreadable one)
+  if (P.FIX_ALARM_MARKER && n.C[i].ce === n.ce) setBit(n, 2, 0); // the new alarm has no exit marker
   if (!P.AB_ALARM_SUPERSEDE) { const killed = killAlarmsOf(n, i, P); n.A.push(i); return killed ? ' kills the alarm and starts a new one,' : ' starts the alarm,'; }
   const had = n.A.includes(i);
   if (had) { n.A = n.A.map((a) => (a === i ? i | 8 : a)); n.C[i].ch = Math.min(3, n.C[i].ch + 1); }
@@ -679,9 +736,15 @@ function runOp(st, i, P, L) {
     if (t.st !== ST.A || t.step !== STEP.FENCED) { next(n); out.push({ lab: L && `${who} ${opName(op)} skipped`, n, viol: [] }); return out; }
     // FX-CLAIM step 6: the fenced attempt holds a tombstone (no session ever claimed it) -> the stop is confirmed at once;
     // its sessions (if any) are left alive and inert (every tool call denied attempt-cancelled)
-    if (P.FX_CLAIM && !n.S.some((s) => s.f === f && s.ep === t.ep - 1 && s.ch)) {
+    let r5 = '';
+    if (P.FX_CLAIM && P.FX_R5_ORPHAN && !n.S.some((s) => s.f === f && s.ep === t.ep - 1 && s.ch)) {
+      // rev 5 step 6: stop requested for every folder session; a dead one answers "no such session" and its done record
+      // counts when a process list matches nothing (H3; merged into this step)
+      if (n.pl || !PLU(P)) for (const s of n.S) if (s.f === f && s.ep === t.ep - 1 && !s.al && s.tv && !s.dn) { s.dn = 1; r5 = ' dead folder session closed (no such session, done record);'; }
+    }
+    if (P.FX_CLAIM && !n.S.some((s) => s.f === f && s.ep === t.ep - 1 && s.ch) && !(P.FX_R5_ORPHAN && n.S.some((s) => s.f === f && s.ep === t.ep - 1 && s.tv && !s.dn))) {
       t.step = STEP.STOPPED; for (const s of n.S) if (s.f === f && s.ep === t.ep - 1) s.sc = 1; // only the tombstoned attempt
-      let lab = L && `${who} stop.mjs f${f}: the attempt e${t.ep - 1} holds a tombstone -> stop confirmed at once`;
+      let lab = L && `${who} stop.mjs f${f}:${r5} the attempt e${t.ep - 1} holds a tombstone -> stop confirmed at once`;
       if (t.fail) { t.st = ST.F; t.step = 0; lab = L && lab + '; task FAILED, escalated'; }
       next(n); out.push({ lab, n, viol: sv }); return out;
     }
@@ -830,11 +893,12 @@ function runOp(st, i, P, L) {
     spend(n, 'd'); c.dr = 1; next(n); out.push({ lab: L && `${who} reaches W*_coord: drains (coord.json), every start blocked`, n, viol: sv }); return out;
   }
   if (k === OP.H) {
-    if (P.AB_PROCLIST && !n.pl) { c.pc = null; out.push({ lab: L && `${who} handover raise: no process list -> exit 2 (proc-unavailable, handover.mjs:271-276); turn ends`, n, viol: [] }); return out; }
+    if (P.AB_PROCLIST && !n.pl) { c.pc = P.FIX_ENDTURN_ALWAYS ? [[OP.E, 0, 0, 0]] : null; out.push({ lab: L && `${who} handover raise: no process list -> exit 2 (proc-unavailable, handover.mjs:271-276); ${P.FIX_ENDTURN_ALWAYS ? 'goes to endturn (N2)' : 'turn ends'}`, n, viol: [] }); return out; }
     if (!c.dr || !readyToHandOver(n, P)) { c.pc = null; out.push({ lab: L && `${who} handover skipped: not quiescent; turn ends`, n, viol: [] }); return out; }
     if (P.D7_HANDOVER_CAS && c.ce !== n.ce) { c.pc = null; out.push({ lab: L && `${who} handover.mjs raise: CAS on ce fails (read ${c.ce}, coord.json ${n.ce}); turn ends`, n, viol: [] }); return out; }
     c.pc = null;
     if (P.AB_ARM_SPLIT || P.AB_ENDTURN_SPLIT) n.ar = 0; // alarm.json now names an older ce
+    if (XB) n.x &= ~15; // FX-W1/W2: the slot records and their markers name an older ce (free for the successor)
     if (!P.AB_HANDOVER_NOKILL) {
       for (const w of n.W.filter((w) => w.par === i)) { if (w.lk) n.ws = 1; if (P.KILL_WAKES) wake(n, i); }
       n.W = n.W.filter((w) => w.par !== i);
@@ -882,6 +946,25 @@ function runOp(st, i, P, L) {
     // a process list taken before it (t4, t7-t10). It starts nothing; the starts are the turn's later tool calls SW/SA.
     if (n.rl && !n.pl) { c.pc = null; out.push({ lab: L && `${who} status --endturn: run.lock held by a dead holder that cannot be judged (no process list) -> exit 75 after ~30 s, nothing acked, nothing reported; turn ends`, n, viol: sv, d6: 'p5' }); return out; }
     ackAt(n, i, P, c.rd);
+    if (P.FIX_ARM_FIRST || P.FIX_ALARM_MARKER) {
+      // wake fixes: the watcher part as built (no marker for a watcher); the alarm part reads the slots (FX-W2) or alarm.json,
+      // tri-state under FX-W1 (exit 1 on any dead source, exit 2 only when none is dead and some is unknown; a corrupt
+      // alarm.json is an anomaly, not 67). Without FX-W1: as built (no list and any record -> exit 2, S:652-654)
+      if (n.cj && !P.FIX_ALARM_MARKER) { c.pc = null; out.push({ lab: L && `${who} status --endturn: acked_seq written, then alarm.json unreadable -> exit 67, no wake reasons; turn ends`, n, viol: sv, d6: 'p5' }); return out; }
+      const wv = n.pl ? (n.W.some((w) => w.par === i && w.ph === 1) ? 1 : 0) : (n.W.some((w) => w.lk) || n.ws ? 2 : 0);
+      const NS = P.FIX_ARM_FIRST ? P.ALARM_SLOTS : 1;
+      const av = []; for (let k2 = 0; k2 < NS; k2++) av.push(slotVerdict(n, k2, P));
+      const vs = [wv, ...av];
+      const anyDead = vs.includes(0); const anyUnk = vs.includes(2);
+      const hide = P.FIX_ALARM_MARKER ? (!anyDead && anyUnk) : (!n.pl && (wv === 2 || av.includes(2)));
+      if (hide && !P.AB_EXIT2_START) { c.pc = null; out.push({ lab: L && `${who} status --endturn: ${P.FIX_ALARM_MARKER ? 'no source dead, one unknown' : 'no process list and a record present'} -> exit 2 proc-unavailable; the coordinator starts nothing (branch B2); turn ends`, n, viol: sv, d6: 'p3b' }); return out; }
+      const rest = [];
+      if (hide || wv === 0) rest.push([OP.SW, 0, 0, 0]);
+      for (let k2 = 0; k2 < NS; k2++) if (hide || av[k2] === 0) rest.push([P.FIX_ARM_FIRST ? OP.EN : OP.SA, 0, 0, 0]);
+      c.pc = rest.length ? rest : null;
+      out.push({ lab: L && `${who} status --endturn: acked; watcher ${['dead', 'alive', 'unknown'][wv]}, alarm slot(s) ${av.map((v) => ['dead', 'alive', 'unknown'][v]).join('/')}${hide ? ' -> exit 2; branch B1: starts both anyway' : rest.length ? ' -> exit 1' : ' -> exit 0'}${rest.length ? '' : '; turn ends'}`, n, viol: sv });
+      return out;
+    }
     if (n.cj) { c.pc = null; out.push({ lab: L && `${who} status --endturn: acked_seq written, then alarm.json unreadable -> exit 67 (S:644-646), no wake reasons; turn ends`, n, viol: sv, d6: 'p5' }); return out; }
     let wRec, aRec, why;
     if (n.pl) { wRec = n.W.some((w) => w.par === i && w.ph === 1); aRec = n.A.includes(i); }
@@ -899,11 +982,46 @@ function runOp(st, i, P, L) {
     out.push({ lab: L && `${who} status --endturn: acked_seq=${P.ACK_READ ? 'seq read at turn start' : 'ledger head'};${why || (rest.length ? `${wRec ? '' : ' watcher-missing'}${aRec ? '' : ' alarm-missing'} (exit 1)` : ' both sources alive (exit 0)')}${rest.length ? '' : '; turn ends'}`, n, viol: sv });
     return out;
   }
+  if (k === OP.EN) { // FX-W2 steps 1-4: `watch --alarm --ensure` (background); start, the query outside the lock and hold 1 merged
+    if (P.AB_ARM_SPLIT && n.rl && !n.pl) { next(n); out.push({ lab: L && `${who} watch --alarm --ensure: run.lock held by a holder no list can judge -> exit 75, nothing registered`, n, viol: sv }); return out; }
+    let reg = -1; const NS = P.ALARM_SLOTS;
+    for (let k2 = 0; k2 < NS && reg < 0; k2++) if (slotVerdict(n, k2, P) === 0) reg = k2;
+    if (reg < 0) { next(n); out.push({ lab: L && `${who} watch --alarm --ensure: no free slot (each holds an alarm judged alive or unknown) -> exit 0 present`, n, viol: sv }); return out; }
+    // a process of that slot still running was judged dead wrongly: it exits superseded at its next beat (W:778-788)
+    n.A = n.A.map((a) => (aPar(a) === i && !aSup(a) && aSlot(a) === reg ? a | 8 : a));
+    setBit(n, reg, 1); setBit(n, 2 + reg, 0); n.cj = 0; if (P.AB_ARM_SPLIT || P.AB_ENDTURN_SPLIT) n.ar = 1;
+    if (alarmsOf(n, i) < 4) n.A.push(i | (reg << 4) | 32); // bit 5: registered in the running turn, before its reconcile
+    next(n); out.push({ lab: L && `${who} watch --alarm --ensure: slot ${reg} free -> registers and sleeps as the alarm`, n, viol: sv }); return out;
+  }
+  if (k === OP.RC) { // FX-W2 step 5-7: reconcile r1-r13 + turn.json, the wait, hold 2 (live slots); then the plan
+    let fail = null;
+    if (P.AB_ARM_SPLIT && n.rl && !n.pl) fail = 'exits 75 (run.lock held by a holder no process list can judge): no status.json';
+    else {
+      reconcile(n, P); c.rd = n.seq; if (P.AB_STALE_SNAPSHOT) snapStatus(n);
+      if (P.AB_ARM_SPLIT && n.cj && !P.FIX_ALARM_MARKER) fail = 'exits 67 (alarm.json unreadable): no status.json';
+      else { if (n.pl) n.rl = 0; if (P.AB_ACT_DUE) { for (const t2 of n.T) if (t2.aks === 1) t2.aks = 2; if (n.rk === 1) n.rk = 2; } }
+    }
+    if (fail) { c.pc = P.FIX_ENDTURN_ALWAYS ? [[OP.E, 0, 0, 0]] : null; out.push({ lab: L && `${who} status --reconcile ${fail}; ${P.FIX_ENDTURN_ALWAYS ? 'goes to endturn (N2)' : 'turn ends'}`, n, viol: sv, d6: 'p5' }); return out; }
+    n.A = n.A.map((a) => (aPar(a) === i ? a & ~32 : a)); // seconds after the ensure: from here on it may fire (untimed)
+    let live = 0; for (let k2 = 0; k2 < P.ALARM_SLOTS; k2++) if (slotVerdict(n, k2, P) > 0) live++;
+    const conf = live >= P.ALARM_SLOTS;
+    const head = `${who} status --reconcile: ${live} live slot(s) -> ${conf ? 'arm confirmed' : 'exit 1 arm-unconfirmed'}`;
+    for (const ops of plans(n, i, P)) {
+      const vars = [{ ops, o: false }];
+      if (P.AB_ACT_DUE && has(n, 'o') && ops.length > 1 && ops[ops.length - 1][0] === OP.E) vars.push({ ops: [ops[ops.length - 1]], o: true });
+      for (const v of vars) {
+        const m = clone(n); if (v.o) spend(m, 'o');
+        m.C[i].pc = v.ops.length ? v.ops.map((o) => o.slice()) : null;
+        out.push({ lab: L && `${head}; plan: ${v.ops.length ? v.ops.map(opName).join(' > ') : '(nothing)'}${v.o ? ' -- FAULT o: it goes to endturn without taking the planned acts' : ''}`, n: m, fault: v.o, viol: sv });
+      }
+    }
+    return out;
+  }
   if (k === OP.SW) { // the coordinator's background tool call `node tcb/watch.mjs` (W:707-748)
     const holder = n.W.some((w) => w.ph === 1 && w.lk);
     let lab;
     if (holder || (n.ws && !n.pl) || (n.rl && !n.pl)) { n.W.push({ par: i, ph: 0, lk: 0, gap: 0 }); lab = `${who} starts watch.mjs: ${holder ? 'watcher.lock is held by a live watcher' : 'a stale lock cannot be judged with no process list'}; it will exit 75 after ~30 s (L:1327,1377)`; }
-    else { if (n.ws) n.ws = 0; n.W.push({ par: i, ph: 1, lk: 1, gap: 0 }); lab = `${who} starts watch.mjs (it takes watcher.lock)`; }
+    else { if (n.ws) n.ws = 0; n.W.push({ par: i, ph: 1, lk: 1, gap: 0 }); if (P.AB_GP_RESTART) n.gp = 0; lab = `${who} starts watch.mjs (it takes watcher.lock)`; }
     next(n); out.push({ lab: L && lab + (n.C[i].pc ? '' : '; turn ends'), n, viol: sv }); return out;
   }
   if (k === OP.SA || k === OP.AR) { // the coordinator's background tool call `node tcb/watch.mjs --alarm` (W:752-804)
@@ -926,7 +1044,7 @@ function runOp(st, i, P, L) {
     }
     // the alarm
     c.pc = null; // the kills below happen during the last tool call: their exits start a new turn
-    if (P.ALARM) {
+    if (P.ALARM && !P.FIX_ARM_FIRST) {
       if (P.FIX_ARM_BY_WRITE && n.A.includes(i)) lab = L && lab + ' re-arms the live alarm by writing its token,';
       else if (P.AB_ALARM_SUPERSEDE) lab = L && lab + startAlarm(n, i, P);
       else { const killed = killAlarmsOf(n, i, P); n.A.push(i); lab = L && lab + (killed ? ` kills the alarm${P.KILL_WAKES ? ' (its exit is a wake to coord' + i + ')' : ''} and starts a new one,` : ' starts the alarm,'); }
@@ -950,19 +1068,20 @@ function macro(st0, i, P, L, labs0, fromPlan) {
     if (!c.pc) { res.push({ lab: L && labs.join(' | '), n: s, fault, viol, d6 }); return; }
     const o = c.pc[0];
     // AB_START_UNFENCED: the session-tool start is its own tool call; one yield point before it (SEM-fence 3.5)
-    if (ranAny && (o[0] === OP.F || o[0] === OP.E || prevF || (P.AB_START_UNFENCED && o[0] === OP.T) || (P.FX_CLAIM && o[0] === OP.B))) { res.push({ lab: L && labs.join(' | '), n: s, fault, viol, d6 }); return; }
+    if (ranAny && (o[0] === OP.F || o[0] === OP.E || prevF || (P.AB_START_UNFENCED && o[0] === OP.T) || (P.FX_CLAIM && o[0] === OP.B) || (P.FIX_ARM_FIRST && o[0] === OP.RC))) { res.push({ lab: L && labs.join(' | '), n: s, fault, viol, d6 }); return; }
     if (has(s, 'x')) {
       // D6 path tags: p1 a first turn (no alarm of this ce ever registered) dies before its arm, p2 dies between
       // reconcile's alarm-missing and the alarm start, p3 dies between endturn and the watcher/alarm starts, p4 dies
       // elsewhere mid-turn (e.g. after its alarm exited into the turn), p6 the crash also kills its background commands
-      const tag = o[0] === OP.AR ? (s.ar ? 'p2' : 'p1') : (o[0] === OP.SW || o[0] === OP.SA) ? 'p3' : 'p4';
+      const call1 = o[0] === OP.EN && c.pc.length === (P.ALARM_SLOTS === 2 ? 3 : 2) && c.pc[c.pc.length - 1][0] === OP.RC; // FX-W2: before the turn's first tool call
+      const tag = call1 ? 'p0' : o[0] === OP.AR ? (s.ar ? 'p2' : 'p1') : (o[0] === OP.SW || o[0] === OP.SA || o[0] === OP.EN) ? 'p3' : 'p4';
       const kinds = P.AB_X_KILLS_BG ? [0, 1] : [0];
       for (const kb of kinds) {
         const n = clone(s); spend(n, 'x'); n.C[i].pc = null;
         // AB_TRANSCRIPT_LAG: the session id of a session this turn started but did not bind dies with the turn
         if (P.AB_TRANSCRIPT_LAG) for (const y of n.S) { const ty = n.T[y.f]; if (y.par === i && y.bd && ty.st === ST.A && ty.step === STEP.ADMITTED && y.ep === ty.ep) y.bd = 0; }
         if (kb) { n.W = n.W.filter((w) => w.par !== i); n.A = n.A.filter((a) => aPar(a) !== i); }
-        res.push({ lab: L && [...labs, kb ? `FAULT coord${i}'s claude.exe crashes before ${opName(o)}; its background watcher and alarms die with it, no exit reaches it` : `FAULT coord${i}'s turn dies before ${opName(o)}`].join(' | '), n, fault: true, viol, d6: kb ? 'p6' : tag });
+        res.push({ lab: L && [...labs, kb ? `FAULT coord${i}'s claude.exe crashes before ${opName(o)}; its background watcher and alarms die with it, no exit reaches it` : `FAULT coord${i}'s turn dies before ${opName(o)}`].join(' | '), n, fault: true, viol, d6: kb && tag !== 'p0' ? 'p6' : tag }); // FX-W2: a crash before call 1 is p0 either way
       }
     }
     for (const r of runOp(s, i, P, L)) go(r.n, [...labs, r.lab], fault || !!r.fault, [...viol, ...r.viol], true, o[0] === OP.F, r.d6 || d6);
@@ -1022,14 +1141,18 @@ function tick(st, j, P, L) {
     if (fresh) { t.wep = t.ep; t.cs = 0; t.hs = 0; t.rep = 0; }
     // M5 as built: the discount reads the wall gap since the last evaluation (gp), which only a long pause leaves
     const disc = P.FIX_PAUSE_DISCOUNT && (P.AB_PAUSE_GAP ? gp0 : s.pu);
-    if (P.AB_HANG_CALLS && fresh) { if (!disc) t.hs = Math.min(P.H_HANG, t.hs + 1); } // W:375: a fresh state forces newCalls = 0
+    if (P.FIX_OP_DEADLINE && fresh) { /* FX-W6 step 1: the first tick of an epoch counts nothing */ }
+    else if (P.AB_HANG_CALLS && fresh) { if (!disc) t.hs = Math.min(P.H_HANG, t.hs + 1); } // W:375: a fresh state forces newCalls = 0
     else if (s.mv) { t.cs = 0; t.hs = 0; }
     else if (s.nc > 0) { if (P.PROGRESS) t.cs = Math.min(P.C_STALL, t.cs + s.nc); t.hs = 0; }
-    else if (!disc) t.hs = Math.min(P.H_HANG, t.hs + 1);
+    // FX-W6 B1: a healthy in-call child ends its call within its kind's deadline (the stated bound): its count stays below it
+    else if (!disc) t.hs = Math.min(P.FIX_OP_DEADLINE && s.m === MODE.SLOW ? P.H_HANG - 1 : P.H_HANG, t.hs + 1);
     let cls = 0;
     if (s.sig >= P.LOOP && !P.D7_NO_LOOP_RULE) cls = RSN.LOOP; else if (P.PROGRESS && t.cs >= P.C_STALL) cls = RSN.STALL; else if (t.hs >= P.H_HANG) cls = RSN.HANG;
     if (L && !cls && (t.hs || t.cs)) notes.push(`f${f}: hang=${t.hs} stall=${t.cs}`);
     if (cls && !t.rep) { t.rep = 1; evs.push({ f, ep: t.ep, cls }); if (s.m === MODE.OK || s.m === MODE.SLOW) viol.push('NoFalseSuspicion'); }
+    // FX-W5: an acknowledged suspicion whose condition still holds is raised again (at-least-once; interval untimed)
+    else if (cls && P.FIX_ACT_RERAISE && !n.E.some((e) => e.f === f && e.ep === t.ep && e.seq > n.ack)) evs.push({ f, ep: t.ep, cls });
     if (P.D7_LOOPS && s.m === MODE.LOOPS && s.sig >= P.LOOP && !t.rep) viol.push('LoopReported');
   }
   // AB_STOP_HELD: watcher.json's tick counter advances; a stop-requested row whose sample is now stop_verify_deltas old
@@ -1057,7 +1180,7 @@ function tick(st, j, P, L) {
     let anyAct = false;
     n.T.forEach((t, f) => {
       const a = rowAct(n, f, slotFree, blocked, P);
-      if (a) { anyAct = true; if (t.ad !== a) { t.ad = a; t.aks = 1; raised.push(`f${f}:${ACTNAME[a]}`); } }
+      if (a) { anyAct = true; if (t.ad !== a) { t.ad = a; t.aks = 1; raised.push(`f${f}:${ACTNAME[a]}`); } else if (P.FIX_ACT_RERAISE && t.aks === 0) { t.aks = 1; raised.push(`f${f}:${ACTNAME[a]} (again: acknowledged, still due)`); } }
       else t.ad = 0;
     });
     const H = cc && cc.dr && used === 0 ? 1 : 0;
@@ -1178,6 +1301,26 @@ export function successors(st, P, L) {
       push(L && `owner starts the session of f${f}e${t.ep} by hand (Q5b, planner act owner; no start.json)`, n, { proc: PROC.O });
     }
   });
+  // FX-W4: status --deadman (Windows task, every 5 min, wake-to-run; proc 3, an id no coordinator uses at d = 1). One run =
+  // one step: list, counters, alert once per onset; the alert reaches the owner, who wakes the current coordinator
+  if (P.FIX_DEADMAN) {
+    const n = clone(st);
+    let dn = (n.x >> 4) & 3, dl = (n.x >> 6) & 3, dal = n.y & 1;
+    // timing premise: a delivered wake starts a turn whose call 1 (the ensure) runs within seconds, far below two 5-minute
+    // runs; so an alarm-less state with a wake pending is not counted (the untimed model would otherwise alert before it)
+    const pend = n.C[n.ce] && n.C[n.ce].wk > 0 && n.C[n.ce].pc === null;
+    if (n.pl) { dn = n.A.some((a) => aPar(a) === n.ce) ? 0 : pend ? dn : Math.min(2, dn + 1); dl = Math.max(0, dl - 1); } else dl = Math.min(3, dl + 1);
+    const cause = dn >= 2 || dl >= 3; let alert = false;
+    // CAND_REALERT (the modeller's candidate, NOT in FIX-wake rev 4): while the same cause still holds, count runs since the
+    // alert (y bits 1-2) and alert again after two of them (the owner's wake produced no alarm)
+    let ra = (n.y >> 1) & 3;
+    if (cause && dal && P.CAND_REALERT) { ra = Math.min(2, ra + 1); if (ra >= 2) { dal = 0; ra = 0; } }
+    if (!cause) ra = 0;
+    n.y = (n.y & ~6) | (ra << 1);
+    if (cause && !dal) { dal = 1; alert = true; wake(n, n.ce); } else if (!cause) dal = 0;
+    n.x = (n.x & 15) | (dn << 4) | (dl << 6); n.y = (n.y & ~1) | dal;
+    if (n.x !== st.x || n.y !== st.y || alert) push(L && `status --deadman run: runs_no_alarm=${dn}, list failures=${dl}${alert ? ' -> ALERT (owner wakes coord' + n.ce + ')' : ''}`, n, { proc: 3 });
+  }
   if (st.C.length <= st.ce) { const n = clone(st); n.C.push({ ce: n.ce, wk: 1, boot: 1, dr: 0, rd: 0, pc: null, ch: 0 }); push(L && `owner starts the fresh coordinator coord${n.ce}`, n, { proc: PROC.O }); }
   {
     const i = st.ce; const c = st.C[i];
@@ -1195,7 +1338,15 @@ export function successors(st, P, L) {
     const par = aPar(a); const sup = aSup(a);
     if (j > 0 && st.A[j - 1] === a) return; // identical alarm processes: one representative step
     if (!sup && !P.AB_ALARM_MIDTURN && st.C[par].pc !== null) return;
+    // timing premise (stated in ABLATION-wake): a turn is shorter than the alarm period, so at most one current alarm of a
+    // coordinator fires inside one of its turns (C.ch marks it; under FX-W2 the supersede chain counter is unused)
+    if (P.FIX_ARM_FIRST && !sup && st.C[par].pc !== null && st.C[par].ch) return;
+    if (!sup && (a & 32)) return; // FX-W2: an alarm (period 1 h) cannot fire between the ensure and the reconcile of the same turn
     const n = clone(st); n.A.splice(j, 1); wake(n, par);
+    // FX-W1 step 2: the marker is created just before the exit (merged: the exit follows within ms); only a slot naming this
+    // process is marked (a superseded alarm's pid is named by no slot)
+    if (P.FIX_ARM_FIRST && !sup && st.C[par].pc !== null) n.C[par].ch = 1;
+    if (P.FIX_ALARM_MARKER && !sup && par === st.ce) setBit(n, 2 + (P.FIX_ARM_FIRST ? aSlot(a) : 0), 1);
     const proc = P.AB_FAIR_IDS ? (sup ? 27 : 23) + Math.min(par, 3) : PROC.A;
     push(L && (sup ? `superseded alarm(coord${par}) ends its sleep, finds alarm.json naming another alarm: exits 0, which wakes coord${par}${st.C[par].pc !== null ? ' (consumed by the running turn)' : ''}` : `alarm(coord${par}) fires after a long silence, which wakes coord${par}${st.C[par].pc !== null ? ' (mid-turn: consumed by the running turn)' : ''}`), n, { proc });
   });
@@ -1205,15 +1356,24 @@ export function successors(st, P, L) {
       if (!c.wk) return;
       const n0 = clone(st); const cc = n0.C[i]; cc.wk = 0; cc.boot = 0;
       const current = cc.ce >= n0.ce;
+      if (P.FIX_ARM_FIRST && current) {
+        // FX-W2: call 1 (background) the ensure (S2: a second one), call 2 reconcile; the plan comes from reconcile (op RC)
+        const ops = P.ALARM_SLOTS === 2 ? [[OP.EN, 0, 0, 0], [OP.EN, 0, 0, 0], [OP.RC, 0, 0, 0]] : [[OP.EN, 0, 0, 0], [OP.RC, 0, 0, 0]];
+        n0.C[i].pc = ops;
+        for (const r of macro(n0, i, P, L, [L && `coord${i} wakes; calls: ${ops.map(opName).join(' > ')}`], true)) push(r.lab, r.n, { proc: i, u: true, fault: r.fault, viol: r.viol, d6: r.d6 });
+        if (!c.boot && has(st, 'l')) { const n = clone(st); spend(n, 'l'); n.C[i].wk--; push(L && `FAULT a wake to coord${i} is lost`, n, { fault: true, proc: i, d6: 'lost' }); }
+        return;
+      }
       let arm = false; let head = 'status --reconcile'; let fail = null;
       if (current || !P.FENCE_CE) {
         if (P.AB_ARM_SPLIT && n0.rl && !n0.pl) fail = 'p5';  // r8: a stale run.lock cannot be judged with no process list: 75
         else {
           reconcile(n0, P); cc.rd = n0.seq; if (P.AB_STALE_SNAPSHOT && current) snapStatus(n0); // reconcile writes status.json
-          if (P.AB_ARM_SPLIT && n0.cj) fail = 'p5';           // r11 reads alarm.json: unreadable -> 67 under the lock
+          if (P.AB_ARM_SPLIT && n0.cj && !P.FIX_ALARM_MARKER) fail = 'p5'; // r11 reads alarm.json: unreadable -> 67 under the lock (FX-W1: an anomaly)
           else if (P.AB_ARM_SPLIT) {
             if (n0.pl) n0.rl = 0;                             // the run lock was broken (its holder judged dead)
-            arm = P.ALARM && (!n0.A.includes(i) || !n0.pl);   // r14: alive only when the list shows the alarm.json pid
+            // r14: alive only when the list shows the alarm.json pid; FX-W1: tri-state, alarm-missing only on `dead`
+            arm = P.ALARM && (P.FIX_ALARM_MARKER ? (n0.cj || slotVerdict(n0, 0, P) === 0) : (!n0.A.includes(i) || !n0.pl));
             if (!arm) cc.ch = 0;
           } else if (P.FIX_ARM_AT_START && P.ALARM && !n0.A.includes(i)) n0.A.push(i);
           if (P.AB_ACT_DUE && current) { for (const t of n0.T) if (t.aks === 1) t.aks = 2; if (n0.rk === 1) n0.rk = 2; } // the turn reads status.json
@@ -1272,7 +1432,7 @@ export function successors(st, P, L) {
   for (const e of out) {
     const n = e.s; const add = [];
     if (P.WAKE_PROPS) {
-      if (!silent(st) && silent(n)) { if (e.d6 !== 'p7' && !ownerLegit(n, P)) add.push('WakeSourceAlive'); add.push('D6:' + (e.d6 || 'other')); }
+      if (!silent(st) && silent(n)) { if (e.d6 !== 'p7' && !ownerLegit(n, P)) add.push('WakeSourceAlive'); add.push('D6:' + (e.d6 || 'other')); if (P.WFX_PROPS && e.d6 !== 'p7' && e.d6 !== 'p0' && !ownerLegit(n, P)) add.push('NoSilenceAfterFirstCall'); }
       for (let i = 0; i < n.C.length; i++) if (n.C[i].ch >= 3 && (!st.C[i] || st.C[i].ch < 3)) add.push('WakeChainBounded');
     }
     if (P.D7_STALE) {
@@ -1297,7 +1457,7 @@ export function invariants(n, P) {
   if (n.W.filter((w) => w.ph === 1).length > 1) v.push('SingleWatcher');
   n.T.forEach((t, f) => { if (t.st === ST.F && n.S.some((s) => s.f === f && s.al && s.p < 2 && !s.z)) v.push('FailedTaskStopped'); });
   // wake group: at most two alarm processes of one coordinator (the current one and one superseded by a registration race)
-  if (P.WAKE_PROPS && n.C.some((c, i) => alarmsOf(n, i) > 2)) v.push('AlarmsBounded');
+  if (P.WAKE_PROPS && n.C.some((c, i) => alarmsOf(n, i) > (P.FIX_ARM_FIRST ? P.ALARM_SLOTS + 1 : 2))) v.push('AlarmsBounded'); // FX-W1: alarm_slots + 1
   // FX_PROPS: OneWriterPerAttempt - two sessions of one attempt have both passed a tool call that writes (true state)
   if (P.FX_PROPS) { const w = new Set(); for (const s of n.S) if (s.wr) { const key = s.f * 256 + s.ep; if (w.has(key)) { v.push('OneWriterPerAttempt'); break; } w.add(key); } }
   if (P.D7_SLOTS) {
