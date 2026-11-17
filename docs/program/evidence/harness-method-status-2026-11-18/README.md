@@ -82,12 +82,59 @@ it); a script the session is told to call (holds only if a hook requires it).
 - The record states few cases where a check changed a decision.
 - A check's peak memory was never measured, so the number of check slots cannot be sized yet.
 
-## 7. What one small test each would settle
+## 7. The two tests the owner ordered (run on 2026-11-18)
 
-1. Do hooks refuse here? One probe: refuse a helper call that carries a model override; refuse an edit
-   outside a path. Seen so far: the app's own session-start and post-tool hooks do fire in these sessions.
-2. The suite's peak memory and run time, to size check slots on 12 cores and 31 GB.
-3. One root instruction file against several: nobody in the record measured it.
+**The suite, measured** (`probe-suite-memory.md`, one run):
+
+- 9 min 56 s. 1,018 tests: 965 pass, 0 fail, 53 skipped (they need the app).
+- It runs with `--test-concurrency=1`: one test file at a time.
+- Peak memory of the whole run: 494 MB. Peak processes: 12.
+- Processor use of the whole PC during the run: 12.8 % on average, about 3 of 24 threads.
+- By memory alone, about 30 such runs fit in what was free (15 GB).
+- So a check uses a small part of this PC, and the check is serial by its own setting. Whether the test
+  files are safe to run side by side is not tested.
+
+**Do hooks refuse here: not answered** (`probe-hooks.md`):
+
+- The stand-alone Claude Code program on this PC has no login. The login lives in the desktop app. Two
+  headless runs ended with "Not logged in". No model call, no hook fired.
+- Measured all the same: one hook call costs about 37 ms on this PC (20 starts of the script).
+- A probe folder is prepared so that a normal app session started in it runs the same test. It needs the
+  owner's start.
+
+Still untested: one root instruction file against several.
+
+## 7a. Several writers on one file
+
+The owner rejected "one writer per file" as the coarsest lock there is. Two extractions:
+
+**Our own collision points** (`write-collision-points.md`, from the change list, which names places, not diffs):
+
+- Locked by file: 3 fixes can be built at once.
+- Locked by function or block: 7 at once. With the shared primitive 0b built first: 8.
+- 20 points are touched by two or more fixes. 9 of them are separate entries, keys or parts and would merge
+  cleanly. 11 are real: 7 ordered sequences (the hook's order, the fence hold, `evaluate`, `rowAct`,
+  `computeStatus`, `runAlarm`) and 4 places where the same statements change.
+- The record's own material on several writers is about sessions writing run files, not about builders
+  editing source. Its unit of collision is the file.
+
+**The literature** (`concurrency-literature.md`; nearly all figures read from summaries, not full papers):
+
+- Agents changing one repository at the same time conflict textually in 20 to 42 % of pairs.
+- A merge that is clean and still breaks: rare in real pairs (1 of 834), common in constructed ones.
+  Telling an agent what the other is changing recovered 82 % of runs.
+- Parallel agents: up to 21 % faster on some tasks, up to 39 % slower on others. Splitting work by file
+  dependencies: up to 2.1 times faster and 35 % cheaper.
+- Merging by syntax and not by line cuts conflicts by 34 to 62 %.
+- A serial step such as merging or testing caps the gain (Amdahl; the Universal Scalability Law puts the
+  best number of workers at the square root of (1 - a) / b).
+- Not found: the conflict rate at which optimistic control stops beating locks; a study of speed-up
+  against the number of agents with the merge cost counted.
+
+Reading, as a hypothesis and not a result: a file lock is too coarse here. Finer control would be: 0b
+first; each fix owns its functions; each writer on its own copy, merged afterwards; the 11 real collision
+points either given one owner or split beforehand into separate entries. The suite is the serial step
+that would then cap the gain. None of this has been tried.
 
 ## 8. Claims of the coordinating session that this record corrects
 

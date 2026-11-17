@@ -30,7 +30,7 @@ Rules 1 to 7 of `CLAUDE.md` apply. These are the ones that were broken, in his w
 ## How the work is run
 
 - The tiers, the effort levels and what each tier is never used for are in section 3 of `docs/ORCHESTRATION-DESIGN-2026-10.md`. What of that method was run and what is only designed is in `docs/program/evidence/harness-method-status-2026-11-18/README.md`. The skill and agent types written on 2026-11-18 were discarded on the owner's order.
-- Independent pieces start in one message. One writer per file.
+- Independent pieces start in one message. One writer per file was this session's rule; the owner rejected it on 2026-11-18 as the coarsest lock there is. See `docs/program/evidence/harness-method-status-2026-11-18/README.md`, section 7a.
 - How many lanes run is computed by the plan check from four limits (collisions, the check, the
   review, the token window), in `research-tree/BUILD-PLAN.md`.
 - Read the plan's usage before a fan-out and name a cap.
