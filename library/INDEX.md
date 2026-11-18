@@ -125,7 +125,7 @@ Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. This board list
 - o2-0400 to o2-0407 [reasoned] One rule per scarce resource: processor, memory, memory bandwidth, the check, tokens, two at once, a moving bottleneck, a cheaper model.
 - b1-0401 to b1-0423 [reasoned] 23 design choices for building the rule in: one `widths()` function, its gates (lane, tier hook, admit, watcher), signals through files, safe defaults, build order B1 to B14. 7 were changed by the refuter.
 ## Open, in the order of work (a line is blocked by what it names)
-1. NEXT r57-0512 [open] Research the owner asked for: several writers of one file as database engines solve it; a serial check shared by many workers; which tree variant fits nodes that are sessions. Waits for his go on the stated plan.
+1. IN WORK r57-0512 [open] Research the owner asked for, in three child sessions since 2026-11-18 (r57-0137): w1 several writers as database engines solve it; c1 a serial check shared by many workers; t1 which kind of B-tree fits nodes that are sessions. Standards and lane files: `docs/program/evidence/round3-2026-11-18/ROUND.md`.
 2. r57-0513 [open] The measurements that set the decision rule's numbers: eight need a run and the owner's word, tokens per unit is a count. After r57-0512; planned for projects of different size (r57-0028).
 3. r57-0505 [open] Parallelism inside the tree, node by node. Blocked by: nothing.
 4. r57-0506 [open] The small tests. Blocked by: the owner's word for each.
@@ -156,7 +156,7 @@ How the content of each `x` file is known, before you open the place a record ci
 
 | File | Records | Written from | Search it for |
 |---|---|---|---|
-| `r57.jsonl`, `r57b.jsonl` | 90, 43 | The top session | Everything listed above |
+| `r57.jsonl`, `r57b.jsonl` | 90, 44 | The top session | Everything listed above |
 | `o1.jsonl` | 29 | `bottleneck-2026-11-18/o1-report.md` | Finding the bottleneck, load and feedback control, switching method |
 | `o2.jsonl` | 43 | `bottleneck-2026-11-18/o2-report.md` | Scheduling under scarce memory, processor, check, tokens; cheaper models |
 | `b1.jsonl` | 56 | `bottleneck-2026-11-18/BUILD-IN.md` | How the lane, the tier hook and the tree's scripts work today; the design choices for building the rule in |
