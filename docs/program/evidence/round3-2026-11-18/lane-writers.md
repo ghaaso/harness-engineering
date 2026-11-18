@@ -46,6 +46,16 @@ and not by lines.
    detection of semantic conflicts (verified or by generated tests), and the studies of several AI agents in one
    repository (r57-0308 holds them as summaries only: read them in full).
 
+6. **Units that last minutes: long and cooperative transactions** (added by the top session on 2026-11-19, after
+   the engines collector found no paper in its set measuring a transaction longer than seconds). `long`: the
+   problem has its own name and literature. Start from the survey of concurrency control in advanced database
+   applications (Barghouti and Kaiser 1991), which covers software development environments and cooperating
+   designers; then sagas (Garcia-Molina and Salem 1987), long-duration design transactions and check-out /
+   check-in (Korth, Kim, Bancilhon 1988), split transactions (Pu, Kaiser, Hutchinson 1988), and what was
+   measured on parallel changes by many developers in one large system (Perry, Siy, Votta 2001). These names
+   are from the top session's memory: confirm each exists before citing it. What replaces "abort and retry" when
+   a unit is too costly to redo, and what was measured.
+
 Search words for the library: `snapshot isolation`, `Kung`, `Silo`, `Hekaton`, `Calvin`, `deterministic`,
 `granularity`, `intention`, `escrow`, `commutativ`, `CRDT`, `confluence`, `Bw-tree`, `structured merge`,
 `semistructured`, `write skew`, `ARIES`.
