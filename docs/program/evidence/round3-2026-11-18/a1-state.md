@@ -51,6 +51,8 @@ Lane file: `lane-budget.md`. Standards and limits: `ROUND.md`.
 ## Step 3, gate and refute (started 2026-11-19)
 - One gate (all 82). The refuter is split in two fresh Opus contexts for size: A01-A41 writes `a1-refute-1.md`,
   A42-A82 writes `a1-refute-2.md`. The fold reads both in place of `a1-refute.md`.
+- Done. Gate: 125 STANDS, 1 ALTERED (A10), 14 NO QUOTE (A69-A82, all hypothesis). Refute: 48 CONFIRMED,
+  33 PARTIALLY, 1 REFUTED (A76, finishing a unit-length before the reset), 0 UNVERIFIABLE.
 
 ## Notes
 - The allocation retry read a PDF's streams with a script of its own (no downloaded file was run).
