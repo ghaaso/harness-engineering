@@ -16,8 +16,8 @@ the orchestration lines named in ROUND.md, then this file; then go on from "Next
 | 2 | analyse: opus | `w1-brief-analyse.md` | `w1-report.md` (draft), `w1-claims.md` | done over seven collect files (first launch stopped unwritten, to wait for `production`): 98 claims (84 proven, of which 6 self-reported, 10 preprint, 5 simulation; 7 measured here; 7 hypothesis); 357,280 tokens; week 55 % after |
 | 3 | run: sonnet + refute: opus | `w1-brief-gate.md`, `w1-brief-refute.md` | `w1-gate.md`, `w1-refute.md` | done: gate 91 stand, 7 no quote (hypotheses), 0 moved or absent (104,308 tokens); refute 57 confirmed, 39 hold in part, 1 refuted (W92), 1 cannot be checked (W96) (284,954 tokens) |
 | 4 | analyse: opus (fold) | `w1-brief-fold.md` | `w1-report.md` final, `library/journal/2026-11-19/w1.jsonl` | done (313,915 tokens): report final; 99 records (75 result, 8 hypothesis, 1 fact, 1 status, 13 open, 1 pointer), check failed none at the end; corrections proposed w1-0509 to w1-0512; deciding measurement M9 |
-| 5 | extract: haiku x7, then run: sonnet | `w1-brief-extract.md`, `w1-brief-check.md` | `x25` to `x29.jsonl`, `x40.jsonl`, `x41.jsonl` (production), `w1-check.md` | waiting |
-| 6 | orchestrator | | commit and push | waiting |
+| 5 | extract: haiku x7, then run: sonnet | `w1-brief-extract.md`, `w1-brief-check.md` | `x25` to `x29.jsonl`, `x40.jsonl`, `x41.jsonl` (production), `w1-check.md` | extracts done, 0 removed by each: x25 18, x26 14, x27 43, x28 45, x29 41, x40 32, x41 21 (214 records; tokens 104,880 + 121,904 + 140,855 + 145,976 + 155,576 + 124,967 + 113,723); check done (109,521): 313 records checked (214 extracts + 99 in w1.jsonl), 0 failed, 0 removed |
+| 6 | orchestrator | | commit and push | done: report has 10 sections; 313 records parse, 0 bad; week 56 % all models, 44 % Fable; successor context 131,769 at the end (past the 130,000 ceiling by 1,769) |
 
 ## Next
 
