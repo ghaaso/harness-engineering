@@ -56,6 +56,12 @@ Real engines combine these. The lane says which combination fits, by what measur
    against flat teams and chains (find the source of the figures 4.4 against 17.2 and -5.51 against -23.72
    quoted at `research-tree/ATTACK-AND-COST-RECORD.md` line 37 and read it in full).
 
+6. **Trees in engines people run** (added 2026-11-19). `production`: the engine's own account of how its tree
+   behaves under real load: PostgreSQL's B-tree notes (a Lehman and Yao tree in production), the storage engines
+   behind MongoDB and MySQL, LMDB, and the log-structured engines (the RocksDB team's accounts of what they
+   changed over the years and why; a move from one store to another forced by write load, for example
+   Discord's). What each team measured and what made them change design. Names from memory: confirm each.
+
 Search words for the library: `B+ tree`, `B-link`, `Lehman`, `Bw-tree`, `bulk`, `fill factor`, `split`,
 `hand-over law`, `fan-out`, `hierarchy`, `LSM`, `copy-on-write`.
 

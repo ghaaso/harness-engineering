@@ -7,6 +7,7 @@ Opus orchestrator session each. The top session keeps the board and decides corr
 |---|---|---|---|---|
 | writers | `w1` | `lane-writers.md` | `x25` to `x29` | How database engines let several writers change one object fast and without mistakes, and what of it carries to sessions editing one file |
 | check | `c1` | `lane-check.md` | `x30` to `x34` | How many workers one shared serial check can feed, and what makes the check itself carry more |
+| budget | `a1` | `lane-budget.md` | `x44` to `x48` | How a refilling token allowance is paced, and how a few long units are scheduled (added 2026-11-19) |
 | tree | `t1` | `lane-tree.md` | `x35` to `x39` | Which kind of B-tree fits a tree whose nodes are sessions, for small and for very large work |
 
 All paths below are from the repository root. `R:` stands for `docs/program/evidence/round3-2026-11-18/`.
@@ -31,6 +32,11 @@ All paths below are from the repository root. `R:` stands for `docs/program/evid
    gain (say the gain, the baseline, the workload, the scale). Then engines in real use (how PostgreSQL, SQL
    Server, FoundationDB, LMDB, RocksDB and the like do it, from their own papers or documentation). Skip a
    variant that changes no answer.
+1b. **Real systems count, and are marked.** A company's own account of a real system that hit a limit and changed
+   its design (an engineering write-up, an industry-track paper, a post-mortem) is a first-class source: say
+   what broke, at what scale, what they changed to and what they measured before and after. Its figures are
+   self-reported and uncontrolled: write "self-reported" in the block and in any record. Each lane has one
+   collector for these (topic `production`; extractor files `x41` writers, `x42` tree, `x43` check).
 2. **How.** Read the paper itself: `curl -s -L --ssl-no-revoke`, check the file starts with `%PDF-`, `pdftotext`,
    then search and read the text (r57-0110). A fetched summary is not a reading; mark anything read only as a
    summary as `summary`. A blocked page: find the open copy (author's page, arXiv, a university copy). No pirate
@@ -87,6 +93,21 @@ You are a child session. Prefix and extractor numbers are in the table at the to
 exactly. Write a design decision as a `hypothesis`, a published finding as a `result`, a thing true of our code as
 a `fact`, and anything that contradicts an existing record as your own record plus an `open` record "proposed
 correction of <id>". Do not edit `library/INDEX.md`. Do not supersede another writer's record.
+
+## Keeping the library clean (added 2026-11-19; ruling r57-0031)
+
+A wrong record is worse than a missing one: later sessions will build on it.
+
+- A `result` record states only what stands at the place it cites. Nothing from a helper's memory. A source read
+  as a summary or not opened gives no `quoted` record.
+- A claim the refuter narrowed is recorded in its narrowed form. A refuted claim is not recorded as a result: the
+  lane's `<p>.jsonl` carries one `status` record with the counts by verdict and each refuted claim with the reason,
+  so it is not proposed again.
+- A figure carries its unit, baseline, workload and scale; a company's own figure carries "self-reported".
+- The check after extraction covers every record, not a sample: it parses, keeps the field order, and each number
+  and name stands at the cited line. A record that fails is removed before the commit; report how many.
+- The top session lists a lane on the board only after a fresh reader has checked a sample of its records
+  against the paper texts, and after a recall test on the new records.
 
 ## Limits
 

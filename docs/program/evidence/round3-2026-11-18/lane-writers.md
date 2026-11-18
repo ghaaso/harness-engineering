@@ -56,6 +56,13 @@ and not by lines.
    are from the top session's memory: confirm each exists before citing it. What replaces "abort and retry" when
    a unit is too costly to redo, and what was measured.
 
+7. **Real systems that let many people or programs change one thing** (added 2026-11-19). `production`: the
+   company's own accounts, with what broke and what was measured: how a collaborative editor resolves
+   simultaneous edits and at what grain (Figma's multiplayer write-up; Google's document editing), how very
+   large code bases land thousands of changes a day onto one mainline (Google's single repository, Meta's
+   server-side rebase on push, Microsoft's Git at scale), and a storage migration forced by write contention
+   (for example Discord's message store). Names from the top session's memory: confirm each.
+
 Search words for the library: `snapshot isolation`, `Kung`, `Silo`, `Hekaton`, `Calvin`, `deterministic`,
 `granularity`, `intention`, `escrow`, `commutativ`, `CRDT`, `confluence`, `Bw-tree`, `structured merge`,
 `semistructured`, `write skew`, `ARIES`.

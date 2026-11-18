@@ -43,6 +43,12 @@ with large gains.
    bottleneck method (Adams, Balas, Zawack 1988), drum-buffer-rope as a model, the scalability law (held:
    r57-0307) and what limits it.
 
+6. **Queues that large projects run** (added 2026-11-19, after the analysis; it enters the report as an addendum
+   that the refuter has not seen). `production`: the project's or company's own account, with numbers where it
+   gives them: Kubernetes' batch merging, GitHub's account of moving its own code to a merge queue, Shopify's
+   queue, Chromium's commit queue, Rust's roll-ups. The Zuul and GitHub documentation pages are already read
+   (they give no numbers). Names from memory: confirm each.
+
 Search words for the library: `SubmitQueue`, `merge queue`, `speculat`, `test selection`, `Scalability Law`,
 `Amdahl`, `group commit`, `batch`, `queue`, `Suleman`, `Graham`.
 
