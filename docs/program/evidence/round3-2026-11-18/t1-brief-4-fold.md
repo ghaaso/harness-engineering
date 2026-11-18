@@ -30,6 +30,9 @@ field order of `library/README.md`, `"by":"t1"`, `"date":"2026-11-19"`:
   writer's record; never edit `library/INDEX.md` or another journal file.
 - Each record understood alone; numbers with unit and condition; `evidence` names sources only (`R:` written
   out as the full path, with `#line N`); `see` names records; `handles` gives search words.
+Two known candidates for "proposed correction": record x03-0335 (Bw-tree split figure) and any record that says
+the owner rejected the removal of the split (search `split`, `owner`, `removal`); the lane file's sentence is not
+a record and needs none.
 Check each line parses: `node -e "require('fs').readFileSync(process.argv[1],'utf8').trim().split('\n').forEach((l,i)=>{try{JSON.parse(l)}catch(e){console.log(i+1,e.message)}})" <file>`.
 
 Return at most ten lines: the paths, the counts by verdict, the record counts by kind, the answer in three lines.

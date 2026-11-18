@@ -43,4 +43,13 @@ Prefer laws in ratios (depth = log of work over leaf capacity, write against rea
 thresholds. "Not found in the papers read" is never "no paper": say what was searched. Say plainly where you
 are not sure.
 
+Carry these as claims (added 2026-11-19 after step 1):
+- From `t1-collect-ours.md`: no file read says the owner rejected the removal of the split; the record shows
+  the coordinator withdrew it (protocol v1 line 276) and version 2 brought it back as "later". The sentence in
+  `R:lane-tree.md` was the top session's reading, marked "verify". Carry it as an observed fact with path and
+  line; the fold step checks whether a library record says otherwise.
+- From `t1-collect-concurrent.md`: the Bw-tree Table I figure for splits differs from record x03-0335 (0.25 %,
+  not 1.25 %). Carry the paper's figure as a claim so the gate and the refuter check it.
+- Read each collect file's section `## Second attempt (2026-11-19)` too, if present.
+
 Return at most ten lines: the two paths, the number of claims by mark, the answer in three lines.
