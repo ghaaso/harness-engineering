@@ -10,7 +10,7 @@ the orchestration lines named in ROUND.md, then this file; then go on from "Next
 | Step | Kind: model | Brief | Output | State |
 |---|---|---|---|---|
 | 0 | orchestrator | all `w1-brief-*.md`, this file | | done, commit 7c6d216f |
-| 1 | collect: sonnet x6 | `w1-brief-collect.md` | `w1-collect-{isolation,grain,engines,order,merge,long}.md` | five done; `long` running at handover |
+| 1 | collect: sonnet x6 | `w1-brief-collect.md` | `w1-collect-{isolation,grain,engines,order,merge,long}.md` | six done (`long` after the handover) |
 | 1b | collect: sonnet (second attempts) | `w1-brief-second.md` | section "Second attempt" in the collect file | done for isolation, merge, order, grain; engines needed none |
 | 2 | analyse: opus | `w1-brief-analyse.md` | `w1-report.md` (draft), `w1-claims.md` | waiting for `long` |
 | 3 | run: sonnet + refute: opus | `w1-brief-gate.md`, `w1-brief-refute.md` | `w1-gate.md`, `w1-refute.md` | waiting |
@@ -20,11 +20,12 @@ the orchestration lines named in ROUND.md, then this file; then go on from "Next
 
 ## Next
 
-1. `long` (item 6 of `R:lane-writers.md`, added by the top session; extractor file `x40`): if
-   `R:w1-collect-long.md` is missing or does not end with its "Not found" and "Not opened" sections, start it again
-   (`collect: w1 long`, sonnet, "Read and follow exactly the brief in R:w1-brief-collect.md. Your topic: `long`").
-   Then grep its "Not opened" list: a paper "not tried" or opened by a wrong URL gets one retry with
-   `R:w1-brief-second.md`; a sign-in or a bot check stays on the owner's list below.
+1. `long` finished after the handover (160,782 tokens; file committed with this state): 4 `quoted` (Barghouti and
+   Kaiser 1991; Pu, Kaiser, Hutchinson 1988; Bancilhon, Kim, Korth 1985; Perry, Siy, Votta 2001), 2 `summary`. No
+   mechanism in the topic has a measured gain (the survey says so). One retry with `R:w1-brief-second.md` is due
+   before step 2: Korth, Kim, Bancilhon 1988 (the collector did not try the publisher page or another copy), and
+   a text copy of sagas (Garcia-Molina and Salem 1987; the copy in `R:papers/w1/sagas/` is an image scan, and OCR
+   would be an install, so it needs the owner's word).
 2. Then steps 2 to 6 as in the table. Launch each with "Read and follow exactly the brief in <path>". A helper's
    `description` begins with its kind and a colon; pass an explicit `model`; never Fable.
 
