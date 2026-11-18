@@ -2,7 +2,7 @@
 
 Read first: `R:w1-brief-common.md`; `library/README.md` section "A record" (the field order).
 
-Files: `library/journal/2026-11-19/x25.jsonl` to `x29.jsonl` and `library/journal/2026-11-19/w1.jsonl`.
+Files: `library/journal/2026-11-19/x25.jsonl` to `x29.jsonl`, `x40.jsonl` and `library/journal/2026-11-19/w1.jsonl`.
 
 For every record:
 1. The line parses as JSON.

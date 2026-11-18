@@ -65,6 +65,12 @@ mechanism's assumptions hold when a writer is a model session (see "Our case" in
   tests, da Silva and others 2022 or later). Then the studies of several AI agents in one repository: look up
   `x07` records and `r57-0308` (held as summaries only) and read those papers in full; give their conflict rates
   and speed figures quoted.
+- `long` (added 2026-11-19 by the top session; item 6 of `R:lane-writers.md`): long and cooperative transactions.
+  The survey by Barghouti and Kaiser 1991 first; then sagas (Garcia-Molina and Salem 1987); long-duration design
+  transactions and check-out / check-in (Korth, Kim, Bancilhon 1988); split transactions (Pu, Kaiser, Hutchinson
+  1988); the study of parallel changes in one large system (Perry, Siy, Votta 2001). The names were given from
+  memory: confirm each paper exists before citing it. Answer: what these designs do instead of "abort and redo"
+  when one unit is too costly to redo; what was measured; which of it carries to model sessions.
 
 ## Done returns (at most ten lines)
 

@@ -5,13 +5,18 @@ records"; all of `R:lane-writers.md`.
 
 ## Inputs (read these; follow a citation one hop into `R:papers/w1/*/paper.txt` when a claim depends on it)
 
-- The five collect files `R:w1-collect-isolation.md`, `-grain.md`, `-engines.md`, `-order.md`, `-merge.md`.
+- The six collect files `R:w1-collect-isolation.md`, `-grain.md`, `-engines.md`, `-order.md`, `-merge.md`,
+  `-long.md`, each with its section "Second attempt" if it has one.
 - Our rule: `docs/program/evidence/bottleneck-2026-11-18/DECISION-RULE.md`, the parts on several writers.
 - What the harness can enforce today: `docs/program/evidence/bottleneck-2026-11-18/BUILD-IN.md` section 1 (the
   several-writers step) and records b1-0101 to b1-0126 (`bash library/lookup.sh -f b1-0101` and so on, or
   `grep -h '"id":"b1-01' library/journal/2026-11-18/b1.jsonl`). Do not assume how the Edit tool, a hook or a
   worktree behaves beyond what those records show.
 - Records r57-0406, r57-0128, r57-0301 to r57-0306, r57-0308, r57-0401 (look them up).
+- Caveat: in `R:w1-collect-grain.md`, the block on Mohan 1990 (ARIES/KVL) was read from a copy in
+  `R:papers/w1/mohan90/` whose origin no session recorded, after one fetch that worked round a 403 (that copy
+  was deleted unread). Rest no claim on Mohan alone: cite it only where Graefe 2010, Graefe 2007 or the InnoDB
+  page says the same, and cite those.
 
 ## Write
 

@@ -12,6 +12,7 @@ Your launch names one collect file and one output file:
 | `R:w1-collect-engines.md` | `library/journal/2026-11-19/x27.jsonl` | `x27` |
 | `R:w1-collect-order.md` | `library/journal/2026-11-19/x28.jsonl` | `x28` |
 | `R:w1-collect-merge.md` | `library/journal/2026-11-19/x29.jsonl` | `x29` |
+| `R:w1-collect-long.md` | `library/journal/2026-11-19/x40.jsonl` | `x40` |
 
 `mkdir -p library/journal/2026-11-19`. Write only your output file.
 
