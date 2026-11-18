@@ -12,10 +12,11 @@ the orchestration lines named in ROUND.md, then this file; then go on from "Next
 | 0 | orchestrator | all `w1-brief-*.md`, this file | | done, commit 7c6d216f |
 | 1 | collect: sonnet x6 | `w1-brief-collect.md` | `w1-collect-{isolation,grain,engines,order,merge,long}.md` | six done (`long` after the handover) |
 | 1b | collect: sonnet (second attempts) | `w1-brief-second.md` | section "Second attempt" in the collect file | done for isolation, merge, order, grain, long (2026-11-19, successor); engines needed none |
-| 2 | analyse: opus | `w1-brief-analyse.md` | `w1-report.md` (draft), `w1-claims.md` | running |
+| 1c | collect: sonnet (topic `production`, sub-topic 7 of `lane-writers.md`) | `w1-brief-collect.md` | `w1-collect-production.md` | done (added by the top session on the owner's word, 2026-11-19): 8 quoted, 1 summary (Meta server-side rebase, third-party notes only), 0 not opened, no sign-in needed; 7 library records reused; 142,836 tokens |
+| 2 | analyse: opus | `w1-brief-analyse.md` | `w1-report.md` (draft), `w1-claims.md` | over seven collect files; first launch stopped before it wrote anything, to wait for `production` |
 | 3 | run: sonnet + refute: opus | `w1-brief-gate.md`, `w1-brief-refute.md` | `w1-gate.md`, `w1-refute.md` | waiting |
 | 4 | analyse: opus (fold) | `w1-brief-fold.md` | `w1-report.md` final, `library/journal/2026-11-19/w1.jsonl` | waiting |
-| 5 | extract: haiku x6, then run: sonnet | `w1-brief-extract.md`, `w1-brief-check.md` | `x25` to `x29.jsonl`, `x40.jsonl`, `w1-check.md` | waiting |
+| 5 | extract: haiku x7, then run: sonnet | `w1-brief-extract.md`, `w1-brief-check.md` | `x25` to `x29.jsonl`, `x40.jsonl`, `x41.jsonl` (production), `w1-check.md` | waiting |
 | 6 | orchestrator | | commit and push | waiting |
 
 ## Next
@@ -35,6 +36,12 @@ the orchestration lines named in ROUND.md, then this file; then go on from "Next
    would be an install, so it needs the owner's word).
 2. Then steps 2 to 6 as in the table. Launch each with "Read and follow exactly the brief in <path>". A helper's
    `description` begins with its kind and a colon; pass an explicit `model`; never Fable.
+
+**Top session, 2026-11-19 (owner's word).** Pass this, word for word, to the fold, the extract and the check
+launches: "Follow the section 'Keeping the library clean' in docs/program/evidence/round3-2026-11-18/ROUND.md. A
+result record states only what stands at the place it cites; a narrowed claim is recorded as narrowed; a refuted
+claim is not recorded as a result but named with its reason in one status record of the lane; a company's own
+figure carries 'self-reported'; the check covers every record, removes any that fails, and reports how many."
 
 ## Step 1 results (from the helpers' returns; not read by the orchestrator)
 
