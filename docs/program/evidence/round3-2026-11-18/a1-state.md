@@ -54,5 +54,14 @@ Lane file: `lane-budget.md`. Standards and limits: `ROUND.md`.
 - Done. Gate: 125 STANDS, 1 ALTERED (A10), 14 NO QUOTE (A69-A82, all hypothesis). Refute: 48 CONFIRMED,
   33 PARTIALLY, 1 REFUTED (A76, finishing a unit-length before the reset), 0 UNVERIFIABLE.
 
+## Step 4, fold (running) and step 5, extract and check (done 2026-11-19)
+- The fold and the extractors ran side by side (different inputs, different files). Week 56 % before.
+- Extract: x44 41, x45 34, x46 54, x47 42, x48 30 = 201 `result` records (196 quoted, 5 summary).
+- Check, split in two for size (`a1-check-1.md`: x44, x46; `a1-check-2.md`: x45, x47, x48), every record:
+  0 parse, order or id faults; 0 removed; 10 corrected (x44-0331 attribution; x47 0317-0319, 0321, 0328; x48
+  0306, 0321-0323); 28 narrowed to the refuters' corrected form (x44 7, x46 4, x45 6, x47 2, x48 9). The one
+  refuted claim (A76) is a hypothesis with no record.
+- Orchestrator re-validation by command: 201 records parse, field order kept, ids unique and in 0300-0399.
+
 ## Notes
 - The allocation retry read a PDF's streams with a script of its own (no downloaded file was run).
