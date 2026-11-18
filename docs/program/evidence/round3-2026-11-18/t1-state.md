@@ -11,8 +11,8 @@ A successor resumes from this file: read `ROUND.md`, `lane-tree.md`, this file, 
 | 2 | `t1-brief-2-analyse.md` | analyse: opus | `t1-report.md` (draft), `t1-claims.md` | done 2026-11-19: 115 claims (22 from production): 65 proven, 19 observed, 28 hypothesis, 3 summary, 0 measured. C04 and C25 carry the two corrections. Five cited lines moved since collection, listed for the gate. Helper tokens 295k (analyst, continued once for the sixth file) + 154k (production collector) |
 | 3 | `t1-brief-3-gate.md`, `t1-brief-3-refute.md` | run: sonnet; refute: opus | `t1-gate.md`, `t1-refute.md` | done 2026-11-19: gate 85 located, 30 not checkable (no quote), 0 failed; refute 67 confirmed, 42 partly, 5 refuted (C51, C59, C90, C108, C114), 1 unverifiable (C65). The refuter opened `t1-collect-ours.md` lines 110-145 against its brief while checking C13, C14; it says both verdicts rest on the primary files. Helper tokens 147k + 301k |
 | 4 | `t1-brief-4-fold.md` | analyse: opus | `t1-report.md` final, `library/journal/2026-11-19/t1.jsonl` | done 2026-11-19: 65 confirmed, 42 hold in part, 5 refuted, 3 cannot be checked (C64, C65, C93). 105 records: 21 facts, 1 status, 62 results, 10 hypotheses, 11 open (8 measurements, 3 proposed corrections: x03-0335, x21-0318, x21-0470). C04 as fact t1-0103. Split-or-hand-over conflict stays open (C90 refuted). Helper tokens 324k |
-| 5 | `t1-brief-5-extract.md`, `t1-brief-5-check.md` | extract: haiku x5; run: sonnet | `x35`..`x39.jsonl`, `x42.jsonl`, `t1-check.md` | running |
-| 6 | - | coordinator, by command | commit of lane files only, one push | pending |
+| 5 | `t1-brief-5-extract.md`, `t1-brief-5-check.md` | extract: haiku x5; run: sonnet | `x35`..`x39.jsonl`, `x42.jsonl`, `t1-check.md` | done 2026-11-19: x35 25, x36 36, x37 39, x38 51, x39 96, x42 41 = 288 records; check: 288 pass, 1 line cite fixed (x35-0117), 0 removed; x42 self-reported on all 25 records with a company figure; status t1-0200 names the 5 refuted claims. Helper tokens 937k (six extractors) + 103k (check) |
+| 6 | - | coordinator, by command | commit of lane files only, one push | done 2026-11-19: 11 report sections; 393 lane records (t1 105 + 288) all parse |
 
 ## Usage and context readings
 - 2026-11-18, before the PC restart: week 51 % (all models), 42 % Fable. Coordinator window 114,000 tokens
@@ -31,6 +31,7 @@ A successor resumes from this file: read `ROUND.md`, `lane-tree.md`, this file, 
 - 2026-11-19 after step 2: week 54 % (all models), 44 % Fable; window 102,300 tokens. Step 3 launched.
 - 2026-11-19 after step 3: week 55 % (all models), 44 % Fable; window 108,800 tokens. Step 4 launched.
 - 2026-11-19 after step 4: week 56 % (all models), 44 % Fable; window 113,200 tokens. Step 5 launched (six extractors).
+- 2026-11-19 after step 5: week 56 % (all models), 44 % Fable; window 127,400 tokens. Lane finished.
 
 ## Hand-over (2026-11-19)
 The first coordinator stopped at 158,600 tokens. A successor (Opus, kind orchestrate) starts here: read
