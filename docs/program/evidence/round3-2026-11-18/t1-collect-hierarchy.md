@@ -153,3 +153,62 @@ None.
 ## Not searched (for the next pass; each would need its own search by title)
 - Studies of agent depth and recursion under other names (hierarchical planner-executor, map-reduce agents, tree of agents), and token-counted comparisons of one session against a tree at depth 2 or more; the eight sources here are all depth 1.
 - Supervision of workers with a cost per restart in database engines or job schedulers (for example Borg, the cluster manager, on restarts and eviction rates); would answer "what a parent does when a child fails" with measured rates.
+
+## Second attempt (2026-11-19)
+
+`H:` = `papers/tree/` folders named `h2-<name>/`. Line numbers are lines of `paper.txt` there (pdftotext -layout; two-column papers interleave columns, so a line number is
+approximate to a few lines where marked "near"). Result: the gap is partly closed. Depth 2 or more of model sessions HAS been measured, in two papers (P11, P13); they
+concern trained or simulated agents on sequential or long tasks, not a research tree, and there is still no study of depth against fan-out at equal work with tokens by level.
+
+Queries used (topics only, no project word): "hierarchical multi-agent LLM depth of hierarchy fan-out token cost controlled study"; "LLM agents organizational structure
+span of control hierarchy depth experiment"; "recursive agent delegation tree of agents multi-level orchestration benchmark depth"; "span of control hierarchy depth delay and
+error organization theory Williamson Beckmann optimal span of control model". Search results are snippets (`summary`); the papers below were then downloaded and read.
+
+### P11. Gandhi, Chakraborty, Wang, Kumar, Neubig (CMU, Amazon AGI), "Recursive Agent Optimization (RAO)", arXiv 2605.06639v2, 2026. Read from: https://arxiv.org/pdf/2605.06639. Folder: H:h2-rao/. Pages read: abstract, sections 1-5 results, appendix A.6 token tables; not the training-method detail.
+- Problem: agents that delegate to fresh copies of themselves recursively; does depth help, cost tokens, save time.
+- Mechanism: a root agent spawns subagents (each its own window) down to a depth limit (6 in training, 12 in evaluation on TextCraft; 2 on Oolong); trained by reinforcement learning on a 30B model.
+- Measured gain, depth: "up to 10 levels deep" (h2-rao:123-126); "the maximum depth on tasks solved by both the single agent and recursive agent is 2.9, while the depth on tasks uniquely solved by the recursive agent is 4" (:676-678); Oolong "nearly all successful rollouts have maximum depth 1", "chunking the context once and delegating each chunk to a single layer of children" (near :668-672). Quality: TextCraft hard tasks 88% against 20% success (near :560-562); DeepDive 0.40 against 0.24 success (Table 3). Time: "the recursive agent is 1.8x and 2.5x faster on medium and hard tasks, respectively, despite taking 1.8x and 2.8x more steps" (near :612-614); but "18x slower" on DeepDive, where "only 1.6% of DeepDive delegations were concurrent" against 83.9% on TextCraft (near :622-632). Tokens (Tables 9-11, :1226-1262, flattened): tasks both solve, TextCraft all difficulties single 1,029K total against recursive 196K (about 5 times fewer; hard 8,619K against 1,225K); Oolong 15.1K against 324.8K (about 21 times more); DeepDive 19.9K against 561.4K (about 28 times more). Its reason: "single agent token usage scales quadratically with the number of steps in the trajectory, since each step needs to re-encode previous history tokens ... the recursive agent splits the trajectory into many shorter sub-trajectories" (:1216-1220).
+- Operations: depth is chosen by the agent per task; caps on depth and on steps are imposed (:181-184). No fan-out sweep; no split or merge of a live tree.
+- Assumes: a trained model; tasks that split into independent parts (TextCraft) or do not (DeepDive); one run per task.
+- With sessions as nodes (reasoned): the strongest evidence found that depth 2 to 4 is used and pays when the work horizon is long and the window small, and that it costs 20 to 28 times the tokens when the task does not split. Ratios: recursion saves tokens when single-agent cost grows with steps squared (history re-read each step), which matches the long-coordinator-window finding of our own token record; time gain tracks the share of delegations that run concurrently (83.9% gave 1.8 to 2.5 times faster, 1.6% gave 18 times slower). These are trained agents with steps of seconds, not sessions of minutes: direction, not size.
+- Status: quoted (token tables read as flattened text; row pairing checked by the totals).
+
+### P12. Zhu and others, "ReDel: A Toolkit for LLM-Powered Recursive Multi-Agent Systems", EMNLP 2024 demo, arXiv 2408.02248. Read from: https://arxiv.org/pdf/2408.02248. Folder: H:h2-redel/. Pages read: sections 4-5, tables 2-3 (about 400 of 653 lines).
+- Problem: recursive delegation by prompted (untrained) models; where it fails.
+- Measured gain: the text says the recursive system "significantly outperforms its corresponding single-agent baseline" and "the gap ... gets larger as the capabilities of the underlying model improves" (near h2-redel:301-310). Table 2 scores are flattened and I could not pair them reliably (summary-grade). No depth sweep; no token total in the text read.
+- Failure modes (quoted, near :333-346): "Overcommitment: The agent attempts to complete an overly-complex task itself" (a root with one child that fills its window); "Undercommitment: The agent performs no work and re-delegates the task it was given", until "a configured depth limit or timed out". Rates are in Table 3 (flattened; not paired).
+- With sessions as nodes (reasoned): the two failures are the hand-over risks of a tree of sessions: a child that never splits and overflows, and a child that only passes work down. A depth limit is the stop.
+- Status: quoted for the failure modes; score pairs unread.
+
+### P13. "Drop the Hierarchy and Roles: How Self-Organizing LLM Agents Outperform Designed Structures", arXiv 2603.28990v1, 2026 (authors not extracted). Read from: https://arxiv.org/pdf/2603.28990. Folder: H:h2-selforg/. Pages read: abstract, sections 5-6 (about half).
+- Problem: do designed hierarchies beat self-organised groups, from 4 to 256 agents.
+- Measured: 25,000+ task runs, 8 models, 4 to 256 agents, 8 protocols (h2-selforg:14-16). Fixed order with free roles ("Sequential") beats centralised coordination by 14% (p < 0.001) and fully autonomous by 44% (:17-20); quality at 64 against 256 agents not different, "H = 1.84, p = 0.61" (near :296-299); "hierarchy depth increased from 1.0 to 2.0" from 4 to 64 agents (near :302-303) and "the system organizes into at most two management layers" (near :368-370); depth rises with task complexity, 1.22 (L1) to 1.56 (L4) (near :371-375); at 256 agents about 45% were idle by their own choice. Below a capability threshold the order reverses: rigid structure beats autonomy (:21-24).
+- Assumes: simulated one-shot tasks scored for quality, not code or research sessions of minutes; token columns not read in full.
+- With sessions as nodes (reasoned): the only large source on fan-out (4 to 256); it finds the useful depth is about 2 and wide otherwise, which supports "few levels, many leaves" and a capability rule (weak models need a conductor). Weak for our case.
+- Status: quoted (abstract and results).
+
+### P14. OrgAgent (company-style hierarchy of governance, execution and compliance layers against a flat team), arXiv 2604.01020, 2026 (authors not extracted). Read from: https://arxiv.org/pdf/2604.01020. Folder: H:h2-orgagent/. Pages read: sections 1-5 (about 540 of 912 lines).
+- Problem: three layers against a flat team of the same roles and models.
+- Measured gain: average tokens per example, hierarchical against flat, GPT-5mini: MuSiQue 11,408 against 28,479 (-59.94%); SQuAD 3,245 against 15,683; MuSR 7,195 against 13,419 (Table 1, h2-orgagent:332-358, flattened; reductions "from 46.38% to 79.31%" near :400-404). F1 up on MuSiQue (+37.11% for GPT-5mini) and SQuAD (up to +120.47%), mixed on MuSR, down for one model (-13.77%, -9.12%). A policy that caps how many workers run: STRICT 3,795 against FLAT 48,198 tokens (LLaMA-3.1-8B, MuSiQue; Table 2 near :437-444) with some quality loss.
+- Operations: a gate decides which worker roles run (a cap on fan-out), a layer reviews the answer; depth is fixed at 3 layers; short question answering.
+- With sessions as nodes (reasoned): evidence on tokens, not on depth: the saving comes from limiting who talks, since a flat team has all talk to all. The right baseline for a tree of sessions is independent leaves, which it does not test. Short tasks, small samples.
+- Status: quoted (tables as flattened; pairing checked on three rows).
+
+### P15. "Context, Reasoning, and Hierarchy: A Cost-Performance Study of Compound LLM Agent Design in an Adversarial POMDP", arXiv 2605.16205v1, 2026. Read from: https://arxiv.org/html/2605.16205v1 (the PDF came back truncated twice; text from the HTML with tags stripped by me). Folder: H:h2-cage2/. Pages read: abstract, method, section headings and finding statements; not the appendices.
+- Measured: 72 experiments, 3,475 episodes, 283.9M tokens (h2-cage2:313); hierarchy is a fixed three-agent layer (Planner, Analyst, ActionChooser); headings "Hierarchy without deliberation wins" (:129) and "Deliberation destructively interferes with hierarchy" (:127); programmatic state abstraction gave the largest gain per token (:122).
+- With sessions as nodes (reasoned): depth 1 only, a game task; a second token-counted result that a checking layer helps unless every member also deliberates at length. No depth or fan-out variation; not counted among the strong ones.
+- Status: quoted for headings and abstract claims; per-configuration numbers not read.
+
+## What the second attempt changes
+- F4 above (no study of depth 2 or more) is wrong as written: RAO (P11) measured depths up to 10 with tokens and wall-clock; P13 measured self-formed depth 1 to 2 from 4 to 256 agents. Neither is a controlled depth-by-fan-out sweep at equal work for coding or research sessions of minutes; that narrower statement stands, as `reasoned` from a search whose tool gave snippets, not a full index.
+- Ratio-form laws added: (a) tokens favour recursion when a single agent's cost grows with steps squared, and recursion costs 20 to 28 times more when the task does not split (P11); (b) the time gain follows the concurrent share of delegations (P11); (c) useful self-formed depth about 2 up to 64 agents, quality flat from 64 to 256 (P13).
+
+## Could not open (second attempt)
+| Title | Routes tried | Why |
+|---|---|---|
+| "Organizational Principles Enable Collective Intelligence in Embodied AI", arXiv 2609.11737 | curl arXiv PDF twice (v1 and unversioned) | PDF truncated both times (damaged xref); HTML not tried; embodied agents, a weak match |
+| "Do More Agents Help? Evaluating Accuracy and Cost in LLM Multi-Agent Workflows", arXiv 2606.05670; and the loop-back authority study, arXiv 2609.14767 (five agents, flat against hierarchical) | search snippet only | not downloaded; not opened (`summary` from the snippet); candidates for a third pass |
+| Beckmann 1960; Williamson 1967; Keren and Levhari 1979, "The optimum span of control in a pure hierarchy", Management Science 25(11) | one web search | snippets only: the model trades wage cost against decision delay, spans widen down the hierarchy, urgency flattens the optimum; originals not opened (publisher paywall or not found), no number read; `summary` |
+| Hierarchical task networks (depth and error) | no search made | not tried; remains for a further pass |
+
+Second attempt finished.

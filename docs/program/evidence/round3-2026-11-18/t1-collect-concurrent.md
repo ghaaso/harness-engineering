@@ -142,3 +142,30 @@ None. No paper was reached through a sign-in or bot check. One transfer returned
 - On this PC the university hosts throttled downloads (about 10 to 30 KB per second); a 2 MB paper takes 2 to 8 minutes. A download cut at `--max-time` yields a damaged PDF, so a size check that looks plausible is not enough: `pdftotext` must read it.
 - The lane's question "which kind fits small, growing and very large" is answered by these papers only for in-memory or disk trees with microsecond to millisecond operations. None of the eight measured a number of writers between 3 and 16, or minute-long units. The finding that stands across scales: pessimistic locking of the root caps throughput (P7 line 471); everything that takes the lock off the upper levels (link pointers, version checks) wins once there are several writers and loses nothing with one (P5 line 308 "very similar performance" at one thread).
 - No paper read states a law in ratios for the number of structure changes per insert; Lehman-Yao state "splits are exceptional" and "collision probability small for large node capacity" (P1 lines 164, 486) without a figure.
+
+
+## Second attempt (2026-11-19)
+
+Routes used: Unpaywall and OpenAlex records (by title), publisher pages, NYU author-page variants, the Internet Archive, the VLDB open archive, web search. Folders: `R:papers/tree/s2-*/`.
+
+### P9. Mohan, "ARIES/KVL: A Key-Value Locking Method for Concurrency Control of Multiaction Transactions Operating on B-Tree Indexes", VLDB 1990. Read from: https://vldb.org/conf/1990/P392.PDF (VLDB open archive; `%PDF-`, 1343 text lines). Folder: R:papers/tree/s2-mohan-kvl/. Pages read: the latch, structure-change and search passages; the lock tables and the end not read line by line.
+- Problem: raise the concurrency of System R index locking while keeping serialisable transactions over B-tree indexes.
+- Mechanism (two lines): a lock on each key value, a short latch on each page, and one "tree latch" that serialises structure changes; an unfinished structure change is flagged on the page (the SM-Bit).
+- Measured gain: none in this paper (a method paper with no benchmark). The abstract only claims "very high concurrency during tree traversals, structure modifications" (paper.txt lines 6-8, quoted; a design claim, not a measurement).
+- Operations: "Page splits and deletions are propagated up the tree from the leaves toward the root (i.e., bottom-up)" and "SMOs are serialized by acquiring a tree latch in the X mode. Typically, no I/Os will be done while the tree latch is held and hence this serialization should not cause any significant reduction in concurrency" (paper.txt lines 207-214, quoted). A traverser that meets an unfinished change "requests the tree latch in the S mode, after releasing the page latches ... Search restarts its tree traversal" (lines 470-474, quoted); it is "forced to wait for any incomplete SMO to complete and for a point of structural consistency" (lines 241-246, quoted). Traversal is latch coupling, "called lock-coupling in [BaSc77]" (lines 457-459, quoted).
+- Assumes: latches held for microseconds, no I/O under the tree latch, a write-ahead log.
+- With sessions as nodes (reasoned): it answers the lane's question: structure changes are serialised, one at a time per tree, and everyone else waits for a half-finished change instead of finishing it. That works because the change takes microseconds. With a session as the node, a change that lasts minutes would stall every reader, so the rule transfers only if handing a range to a new session is a short act separate from the work itself. No law in ratios.
+- Status: quoted.
+
+### Still closed (second attempt)
+- Bayer and Schkolnick 1977 | Unpaywall (closed, no OA copy); Springer page (a "Buy article" page, HTML not PDF); IBM Research publication page (abstract and references, no PDF); search for report RJ1791 (no copy; the number is unverified) | paywall. Known here only as Comer's account (see `t1-collect-versions.md`, second attempt, P8).
+- Lanin and Shasha 1986 | NYU `~shasha/papers/btree.pdf` and `cs/faculty/shasha/papers/btree.pdf` (an XML error page, as before); Internet Archive copy (refused as "suspected abusive bot traffic"); Unpaywall (no OA); search (course slides and student reports only) | forbidden at the origin, bot block at the archive.
+- Sagiv 1986 (JCSS 33) | Unpaywall and OpenAlex name a ScienceDirect PDF as open; ScienceDirect answered HTTP 403 with a Cloudflare bot-check cookie; HUJI portal (title and abstract only); the 1985 PODS version is on ACM, behind the same kind of check | bot check at the publisher.
+- Johnson and Shasha 1990 (PODS) | Unpaywall names `dl.acm.org/doi/pdf/10.1145/298514.298580` as open; the reply was the Cloudflare "Just a moment..." page (5.5 KB); no NYU report copy found by search | bot check at the publisher.
+
+### Needs the owner's sign-in (added)
+- Sagiv 1986: https://www.sciencedirect.com/science/article/pii/0022000086900218/pdf (Cloudflare bot check; Unpaywall lists it open).
+- Johnson and Shasha 1990: https://dl.acm.org/doi/pdf/10.1145/298514.298580 (Cloudflare bot check; Unpaywall lists it open).
+- Lanin and Shasha 1986: https://web.archive.org/web/2015/http://cs.nyu.edu/shasha/papers/btree.pdf (Internet Archive bot block).
+
+Second attempt finished.

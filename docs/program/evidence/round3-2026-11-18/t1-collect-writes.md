@@ -159,3 +159,31 @@ None.
 - Bender and others 2007 / Buchsbaum 2000 (buffered repository trees): not opened; P3 describes epsilon = 0 as this (line 120).
 - A direct measurement comparing LSM and B-epsilon trees on one workload (the Bender article only compares by argument and by the BetrFS numbers).
 - Group commit in database engines (DeWitt 1984, `x05-0501`): not opened; the library's preprint was not re-read.
+
+
+## Second attempt (2026-11-19)
+
+Routes used: web search, the authors' page, a Berkeley course copy. Folders: `R:papers/tree/s2-*/`.
+
+### P9. Rosenblum and Ousterhout, "The Design and Implementation of a Log-Structured File System", ACM TOCS 1992 (SOSP 1991 text). Read from: https://people.eecs.berkeley.edu/~brewer/cs262/LFS.pdf (248 KB, `%PDF-`, 1013 text lines). Folder: R:papers/tree/s2-rosenblum/. Pages read: abstract, the sections on segments and write cost, the cleaning-policy simulation; the benchmark section by grep only.
+- Problem: small writes waste disk bandwidth on seeks.
+- Mechanism (two lines): buffer all changes in memory and write them in one long sequential segment; a cleaner later copies the live data out of old segments.
+- Measured gain: "it outperforms current Unix file systems by an order of magnitude for small-file writes while matching or exceeding Unix performance for reads and large writes. Even when the overhead for cleaning is included, Sprite LFS can use 70% of the disk bandwidth for writing, whereas Unix file systems typically can use only 5-10%" (paper.txt lines 25-32, quoted; baseline Unix FFS, small-file writes, one disk).
+- Operations: a flush writes a whole segment ("sizes of either 512 kilobytes or one megabyte", line 229, quoted; chosen so "the transfer time to read or write a whole segment is much greater than the cost of a seek", lines 222-224). Cleaning law: "write cost = (read segs + write live + write new) / new data written = (N + N*u + N*(1-u)) / (N*(1-u)) = 2/(1-u)", u the live fraction of the segments cleaned (lines 340-362, quoted). "Figure 3 suggests that the segments cleaned must have a utilization of less than .8 in order for a log-structured file system to outperform the current Unix FFS; the utilization must be less than .5 to outperform an improved Unix FFS" (lines 316-323, quoted). With locality, "at 75% overall disk capacity utilization, the segments cleaned have an average utilization of only 55%" (lines 416-420, quoted).
+- Assumes: a sequential write is much cheaper than a seek; reads served from cache; a cleaner that keeps clean segments available.
+- With sessions as nodes (reasoned): a ratio law that matters: rewriting live data costs 2/(1-u). It is the same trade as a buffer flush: the larger and colder the batch, the less live data gets copied. For a tree of sessions, a "segment" is a record file a node appends to; cleaning it is cheap only while most of it is superseded. The formula holds at any scale in u, but its break-even (u under 0.8 against a 25 percent baseline) comes from disk seek times, not from model sessions.
+- Status: quoted.
+
+### P10. Buchsbaum, Goldwasser, Venkatasubramanian, Westbrook, "On External Memory Graph Traversal", SODA 2000 (two-page extended abstract). Read from: https://cs.slu.edu/~goldwasser/publications/SODA2000.pdf (author page; `%PDF-`, 159 text lines; the maths symbols are damaged in the text layer). Folder: R:papers/tree/s2-buchsbaum/. Pages read: all (two pages).
+- Problem: external-memory graph search needs a structure that takes inserts and reports all items of a key cheaply.
+- Mechanism (two lines): the buffered repository tree: a tree whose internal nodes each hold a buffer; inserts go to the root buffer and move down when a buffer overflows.
+- Measured gain: none (theory). Lemma 2.1 gives an amortised insert cost of the order of (1/B) log(N/B) I/Os and an extract cost of log(N/B) plus S/B; the formula glyphs are damaged in the text, so the exact form is `summary` grade; the proof sketch says "each item is thus charged ... I/Os per level" (paper.txt, Lemma 2.1 and its proof sketch).
+- Operations: "We implement T as an augmented (a,b)-tree. Each leaf holds up to B items. Each internal node has the standard search key(s), plus a buffer holding up to B items ... To insert item x, we add x to the root's buffer. If the buffer overflows, we distribute [items] to the node's children appropriately, recursively distributing overflowing buffers down the tree. To perform extract(k), we search to the leaves ... We extract all items with key k from the delimited contiguous range of leaves, plus all such items from buffers in ancestors of these leaves" (paper.txt section 2, quoted with glyph loss). A message is an item; a read checks the buffers on its path.
+- Assumes: the root lives in memory; each buffer holds one block of items.
+- With sessions as nodes (reasoned): the closest match so far to a coordinator that holds a buffer of new questions and pushes a batch down to its children when full. The per-item cost falls with the buffer size relative to the node, as a ratio. This is a two-page abstract, so little beyond the mechanism.
+- Status: quoted for the mechanism, summary for the exact bound.
+
+### Not collected, now closed
+- Rosenblum and Ousterhout: P9 above. Buchsbaum and others: P10 above (their 2000 abstract; a longer treatment of the buffered repository tree was not looked for).
+
+Second attempt finished.

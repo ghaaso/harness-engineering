@@ -82,3 +82,41 @@ Paths: `R:` = `docs/program/evidence/round3-2026-11-18/`. Texts are in `R:papers
 
 ## Needs the owner's sign-in
 - None met a sign-in or bot check. The VLDB Journal address first returned 403 and then served the PDF when sent with a browser User-Agent string; no check was bypassed.
+
+
+## Second attempt (2026-11-19)
+
+Routes used: Unpaywall and OpenAlex records (by title), publisher pages, the Utah course copy again, the LMDB site, web search. Folders: `R:papers/tree/s2-*/`.
+
+### P7. Comer, "The Ubiquitous B-Tree", ACM Computing Surveys 11(2), 1979. Read from: https://users.cs.utah.edu/~pandey/courses/cs6530/fall24/papers/trees/p121-comer.pdf (1.37 MB, `%PDF-`, 1034 text lines). Folder: R:papers/tree/s2-comer-utah/. Pages read: B*-trees, the concurrency section and the survey of variants.
+- Correction to the first pass: "scanned PDF with no text layer" was a damaged download; a fresh download has a text layer and `pdftotext` reads it. (pdftotext interleaves the two columns, so line numbers below are approximate.)
+- Problem: survey of B-tree forms, their occupancy and their use in a multi-user database.
+- Mechanism (two lines): B-tree (nodes at least half full); B*-tree (a local redistribution to a neighbour before splitting); B+-tree (data in the leaves, linked sequence set).
+- Measured gain: no benchmark; analytic guarantees. "Knuth defines a B*-tree to be a B-tree in which each node is at least 2/3 full ... B*-tree insertion employs a local redistribution scheme to delay splitting until 2 sibling nodes are full. Then the 2 nodes are divided into 3, each 2/3 full. This scheme guarantees that storage utilization is at least 66%" (paper.txt lines 484-495, quoted); B+-trees give "guaranteed storage utilization of 50%" (line 781, quoted); "increasing storage utilization has the side effect of speeding up the search since the height of the resulting tree is smaller" (lines 497-501, quoted).
+- Operations: a split key is "promoted to the parent node where it serves as a separator", and "splitting propagates all the way" to the root in the worst case (lines 297-311, quoted); underflow is handled by redistribution among two neighbours (lines 353-354, quoted); "instead of splitting a node as soon as it fills up, keys could merely be distributed into a neighboring node, splitting only when two neighbors fill" (lines 484-490, quoted).
+- Assumes: nodes are disk blocks; fixed-size nodes.
+- With sessions as nodes (reasoned): redistribution before a split touches a neighbour as well (two units read and written instead of one new unit started); a running session cannot take work moved into it, so the B* step is likely unusable and a plain split is the form that fits. Ratios: occupancy 1/2 (B), 2/3 (B*), ln 2 = 0.69 (random insertion, P8).
+- Status: quoted.
+
+### P8. Yao 1978 and Bayer and Schkolnick 1977, as reported in P7 (second-hand)
+- Yao: "Yao [YAO78] reports the results of analyzing 2-3 trees built from a uniformly distributed set of n keys ... Extending the analysis to B-trees of higher order, Yao has shown that the expected storage utilization is ln 2 = 69%" (P7 paper.txt lines 731-741, quoted from Comer, not from Yao).
+- Bayer and Schkolnick: "readers lock at most two nodes at any time" (lines 739-741); updaters reserve nodes and convert them to "absolute locks, top-down" (line 765); "Bayer and Schkolnick, therefore, propose a generalized locking protocol which represents a tradeoff between the two extremes ... a parameterized model ... enough concurrency to utilize present technology while wasting very little time on restarting reservations" (lines 765-785, quoted from Comer). Also, "using the top-down splitting suggested in [GUIB78] ... only one pair of nodes will ever be locked at a given time", at "the price ... a slight decrease in storage utilization" (lines 786-800, quoted from Comer).
+- Status: summary (Comer's account; the original papers remain closed).
+
+### P9. LMDB reference documentation (Chu, Symas), main page. Read from: http://www.lmdb.tech/doc/ (HTML saved as paper.txt, 155 lines). Folder: R:papers/tree/s2-lmdb-doc/.
+- Problem / mechanism: B-tree database with copy-on-write pages and a single writer.
+- Measured gain: none on this page.
+- Operations: "Data pages use a copy-on-write strategy so no active data pages are ever overwritten, which also provides resistance to corruption and eliminates the need of any special recovery procedures after a system crash. Writes are fully serialized; only one write transaction may be active at a time, which guarantees that writers can never deadlock. The database structure is multi-versioned so readers run with no locks; writers cannot block readers, and readers don't block writers" (paper.txt line 74, quoted). "LMDB tracks free pages within the database and re-uses them for new write operations" (line 75, quoted). "Avoid long-lived transactions. Read transactions prevent reuse of pages freed by newer write transactions, thus the database can grow quickly. Write transactions prevent other write transactions, since writes are serialized" (line 119, quoted).
+- With sessions as nodes (reasoned): one writer with readers that never block is the shape "one coordinator writes the record, leaves read it". The line-119 warning is the cost: a long reader (a session working for minutes) pins old versions, so space grows with reader duration. No ratio given.
+- Status: quoted (documentation, not a paper).
+
+### Still closed (second attempt)
+- Yao 1978 | Unpaywall (not open); Springer preview; search gave the abstract only ("storage utilization is essentially ln 2 about 69% for B-tree of high orders"; 0.70 N < n < 0.79 N for 2-3 trees; search summary) | paywall.
+- Baeza-Yates 1989 | Unpaywall (no PDF); search gave the record and abstract (fringe analysis; expected height and splits per insertion) | paywall.
+- Graefe 2011 | publisher page sells the PDF; no author or HP Labs copy found by search; a guessed HP Labs report address returned nothing | sold by the publisher.
+- Johnson and Shasha 1993 (JCSS) | Unpaywall says open but gives no link; ScienceDirect is behind the Cloudflare bot check; no NYU report copy found | bot check; abstract only through search (utilisation 39 percent when inserts equal deletes; merge-at-half restructures much more; summary).
+
+### Needs the owner's sign-in (added)
+- Johnson and Shasha 1993: https://www.sciencedirect.com/science/article/pii/002200009390020W (Cloudflare bot check; Unpaywall lists it open).
+
+Second attempt finished.
