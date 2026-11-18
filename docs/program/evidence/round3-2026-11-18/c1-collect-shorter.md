@@ -115,3 +115,17 @@ Marks: quoted = from the paper text read here; reasoned = ours, not a finding.
 
 ## Needs the owner's sign-in
 - None met. The Luo paper came from a third-party course-site copy of the open ACM paper (DOI 10.1145/2635868.2635920); the ACM page itself was not tried.
+
+## Second attempt
+
+`R:` = `docs/program/evidence/round3-2026-11-18/`. Line numbers are lines of the saved `paper.txt`.
+
+### Memon and others, "Taming Google-Scale Continuous Testing", ICSE-SEIP 2017
+The "Could not open" entry above is out of date. The file `R:papers/check/google-ct-2017/paper.txt` (1,048 lines) is this paper: its first lines are the title "Taming Google-Scale Continuous Testing", the authors Memon, Gao, Nguyen, Dhanda, Nickell, Siemborski, Micco, and the ICSE abstract (txt l.1-26). It is the copy already read in `R:c1-collect-mergeq.md` P8 (vanderbilt course-site copy); the damaged downloads named above were other attempts. Status: opened and read in part (introduction, results on test outcomes and distance, l.1-82, 168-182, 385-414, 636-652). No further route needed; the Google Research page was not tried because the full text is in hand.
+- Result (cost of testing each change): "the compute resources were growing quadratically with two multiplicative linear factors: (1) the code submission rate ... and (2) the size of the test pool" (txt l.46-50). Scale: "more than 13K code projects, requiring 800K builds and 150 Million test runs" in an average day (l.38-41); "a code commit every second on the average" (l.43-44).
+- Result (the remedy and its lag): a milestone "is typically cut every 45 minutes during peak development time" (l.59-60); milestones "as large as 4.2 million tests" (l.65); "unacceptably large delays of up to 9 hours" (l.68-69).
+- Result (how few tests fail): "of the 5.5 Million affected tests ... only 63K ever failed" (l.75-76); "only a tiny fraction (1.23%) actually found a test breakage (or a code fix)" (l.171-175); "the ratio of PASSED vs. FAILED test targets per code change is 99:1" (l.179-180). Per change list, Table I (l.385-400): PASSED 48.4964%, AFFECTED (not executed) 43.0578%, SKIPPED 7.4905%, FAILED 0.4186%. Per target, Table II: "91.3% PASSED at least once and never FAILED", "2.07% PASSED and FAILED", 1.23% left after removing flaky targets (l.408-412).
+- Result (running fewer tests by distance, MinDist): executing only targets within MinDist 10 or 6 runs "61% and 50% of test targets" and saves "42% and 55% resources", "we did not miss a single breakage or fix" (l.641-647), on a simulation over the studied dataset (Feb 11 to Mar 11, 2016 window, l.351).
+- Culprit note useful for a shared check: with milestones, "Any of the N changelists between the P and F may have caused the breakage" (l.615-617), so a batch failure leaves a culprit search.
+- Measured gain: not one headline number; the justifications are the product law (change rate x suite size), 99:1 pass to fail, and the 42%/55% saving from distance-limited runs with no missed breakage in the simulation. Baseline: running every affected target at every affecting change.
+- Mark: quoted. Library records x06-0319, x06-0320, x06-0324 (1.23 percent; MinDist 61 and 50 percent; saves 42 and 55 percent) are now confirmed at the lines above.
