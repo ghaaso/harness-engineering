@@ -28,7 +28,7 @@ Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. This board list
 | Carry on past a large context | r57-0008 | Hand over to a fresh child session through files |
 ## The owner's rulings
 - r57-0001 [owner] No design questions to the owner; derive from research, compute from measurements, measure what is missing.
-- r57-0002 [owner] A parameter is an optimisation result against the objective, never his preference.
+- r57-0002 [owner] A parameter is an optimisation result against the objective, never his preference. Also r57-0027 [owner]: a rule is shown to him by how each conclusion was reached, never as knobs to tweak.
 - r57-0003 [owner] Objective: quality first, then least time, memory, tokens; seven measures; report tokens, not money.
 - r57-0004 [owner] A test, review or run only if its result can change what is done next; full suite once per change.
 - r57-0005 [owner] Smallest model that gives the same output; routes in r57-0150, never-for in r57-0206.

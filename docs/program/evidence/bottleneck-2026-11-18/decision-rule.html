@@ -82,17 +82,34 @@ code{font-family:var(--font-num);font-size:.86em;background:var(--sunk);padding:
   <div class="headrow"><span class="chip bind">Hypothesis: nothing was run on this PC</span><span class="chip">18 November 2026</span></div>
   <h1>From the current bottleneck to the method</h1>
   <p class="lead">One calculation, repeated every time a piece of work starts or finishes. For each resource, work out how many units it can carry right now. Run at the smallest number. The resource that gives the smallest number is the bottleneck at that moment.</p>
-  <p class="muted">A unit is one piece of work that starts at one moment: an agent's piece, a run of the test suite, a model run, a build. Move the workload below and watch the bottleneck change.</p>
+  <p class="muted">A unit is one piece of work that starts at one moment: an agent's piece, a run of the test suite, a model run, a build. First on this page: how each conclusion was reached and what is still a guess. After that, a demonstration you can move.</p>
 </header>
 
+<section aria-labelledby="why">
+  <h2 id="why">How each conclusion was reached</h2>
+  <p class="muted">Nothing on this page is yours to set. The shape of the rule comes from the papers below. Its numbers are to be computed from measurements on this PC, and none is set yet. So this is not a claim that the rule is the best possible: the last column says where each part could still be wrong.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Conclusion</th><th>Where it comes from</th><th>What a fresh reader left of it</th><th>Still a guess here</th></tr></thead>
+    <tbody>
+      <tr><td>The rule must follow the bottleneck; no one method fits all our work</td><td>Our own 25 jobs: the queue at the check limited 9, blocked program starts 7, memory 4, tokens 4, the processor 3, nothing 1</td><td>A count of our own record. Five jobs name two limits</td><td>That the next jobs look like the last ones</td></tr>
+      <tr><td>Run as many units as the scarcest resource can carry, and recompute at every start and finish</td><td>Suleman, Qureshi and Patt 2008: one number per limit, run at the smaller; on 4 programs limited by a shared section it came within 1 % of the best fixed count. DRFQ 2012: treating only "whatever is the bottleneck now" gave 75 Mbps against 160</td><td>Holds in part: a 32-core simulator, one program at a time, a section inside one program; no program tested had two limits at once. The 75 against 160 is one run</td><td>That it carries to units that last minutes, with 3 to 16 workers</td></tr>
+      <tr><td>Hold new work back; stop running work only when memory is at its floor</td><td>Borg 2015: out of memory kills from the lowest priority up; out of processor throttles and kills nothing. Denning 1968: one program too many is a collapse, not a slowdown. Johnson 2010: holding excess threads kept 85 % of peak at twice the load</td><td>Borg: confirmed. Denning: a model, not a measurement. Johnson: holds for spin locks on one server</td><td>The size of the memory reserve. It is computed from our units' measured peaks, not taken from a paper</td></tr>
+      <tr><td>How many workers one check can feed</td><td>Suleman's formula: the square root of (time outside the check / time inside it). For one check per change: a textbook queueing bound</td><td>The formula holds in part, as above. The queueing bound is reasoning</td><td>A check shared by separate programs is in no paper. Time outside the check is not logged here. One suite run took 596 s, measured once</td></tr>
+      <tr><td>Several writers on one file: own copies or one owner, chosen per file by what is scarce</td><td>Agrawal, Carey and Livny 1987: locking wins when resources are scarce, optimistic control when they are plentiful. Mönkeberg and Weikum 1992, MOCC, Lim, CormCC: switch on a count of conflicts, with a margin</td><td>Holds in part: their thresholds were tuned on work that lasts microseconds; only the shape carries</td><td>The threshold: the chance of a conflict times the cost of redoing, against the cost of waiting. My reasoning; no paper on agents</td></tr>
+      <tr><td>Tokens are a budget, not a rate</td><td>No paper. Quota-per-period and token-bucket work exists, but nothing for a window of hours or days</td><td>Reasoning only</td><td>All of it. How the 5-hour window refills is not known</td></tr>
+      <tr><td>A cheaper model where its quality gap is small</td><td>Hybrid LLM, RouteLLM, FrugalGPT</td><td>Confirmed for chat, instructions and multiple choice</td><td>Never tested on code</td></tr>
+    </tbody></table></div>
+  <p class="note">How it was checked: two Opus readers in fresh contexts saw only the claims and the papers' text. Of 16 claims, 4 were confirmed, 12 hold only within their papers' conditions, and none was refuted. About 79 papers were read; 32 more could not be opened. Not one line of this was tested on this PC.</p>
+</section>
+
 <section aria-labelledby="try">
-  <h2 id="try">Move the workload</h2>
+  <h2 id="try">See the rule react (a demonstration, not settings)</h2>
   <div class="tool">
     <div class="panel">
       <div class="group">
         <h3>Start from a job like ours</h3>
         <div class="presets" id="presets"></div>
-        <p class="note">Measured here: one suite run takes 596 s and peaks at 494 MB with about 3 busy threads; the PC has 24 threads and about 15 GB free; the lane has 2 slots. Every other value is an input for you to move, not a measurement.</p>
+        <p class="note">Measured here: one suite run takes 596 s and peaks at 494 MB with about 3 busy threads; the PC has 24 threads and about 15 GB free; the lane has 2 slots. Every other value below describes an example job, so you can watch the rule react. They are not settings and not measurements: moving them changes nothing in the harness.</p>
       </div>
       <div class="group" id="g-unit"><h3>One unit of this work</h3></div>
       <div class="group" id="g-check"><h3>The check</h3>
