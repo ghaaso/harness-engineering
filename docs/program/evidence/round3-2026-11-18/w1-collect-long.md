@@ -261,3 +261,38 @@ to rest on a number, the harness would have to measure it (reasoned).
 - Pradel and others 1986 (snapshot validation), Katz and Weiss 1984, Kaiser and Perry 1987 (NSE-era workspaces),
   Adams and others 1989 (NSE): known only through the survey; skipped because the survey's account answers the
   question and no measured figure was expected.
+
+## Second attempt (2026-11-19)
+
+### Korth, Kim, Bancilhon 1988 (Information Sciences 46:73-107): still closed (no open copy)
+
+URLs tried, all public:
+- `https://www.sciencedirect.com/science/article/pii/0020025588900138` (publisher page): HTTP 403 bot-check page. Not worked round.
+- `https://doi.org/10.1016/0020-0255(88)90013-8`: HTML redirect to the same ScienceDirect page (Elsevier; tdm-reservation set). Same block.
+- Semantic Scholar by DOI: record found for a different title; openAccessPdf empty, status CLOSED. Search endpoint: HTTP 429, not retried.
+- Author page `https://www.cse.lehigh.edu/~korth/`: returned a page with no link to the paper; `pubs.html` 404. CiteSeerX search: 404.
+- Two web searches (title in quotes with "pdf", and with journal and pages): only dblp record and the 1985 VLDB and 1988 VLDB papers; no copy of the journal article.
+
+Status: **needs the owner's sign-in** (publisher page is behind a bot check; no open copy found). Block 3 above stays as is (1985 paper quoted; 1988 article `summary` by dblp only).
+
+### Garcia-Molina and Salem 1987, Sagas: opened, a text copy
+
+- Source: `https://www.cs.cornell.edu/andru/cs711/2002fa/reading/sagas.pdf` (course page, 1,235,147 bytes, `%PDF-`, HTTP 200). Saved as `R:papers/w1/sagas/cornell-text.pdf`, text as `R:papers/w1/sagas/cornell-text.txt` (pdftotext -layout, 62,460 bytes). The existing `paper.pdf` was not touched.
+- Other URLs: ACM `https://dl.acm.org/doi/pdf/10.1145/38713.38742` HTTP 403 (closed, not worked round). A modb.pro copy was seen in search results; not used (unverified provenance, OCR badly garbled).
+- Caveat: this copy has a text layer, but it is a poor OCR of the scan ("Garcaa-Molrna", "compensatmg"); two columns interleave. Quotes below are cut where the columns mix and carry the OCR errors corrected only where the reading is certain; line numbers are of `cornell-text.txt` under `R:papers/w1/sagas/`.
+
+**Citation.** H. Garcia-Molina, K. Salem, "Sagas", SIGMOD 1987, pp. 249-259 (page marker "250" at line 91 confirms the SIGMOD pagination). Status: **quoted**.
+
+**Problem.** `R:papers/w1/sagas/cornell-text.txt:10-16` — long lived transactions "hold on to database resources for relatively long periods of time, significantly delaying the termination of shorter and more common transactions". Lines 70-73: whatever the mechanism, "a transaction that needs to access the objects that were accessed by a LLT cannot commit until the LLT commits"; examples (lines 12-20 right column): monthly account statements, insurance claims, statistics over a whole database.
+
+**Mechanism.** Lines 134-141: "the term saga to refer to a LLT that can be broken up into a collection of sub-transactions that can be interleaved in any way with other transactions". Lines 79-86: each T_i has a compensating transaction C_i that "undoes, from a semantic point of view, any of the actions performed by T_i, but does not necessarily return the database to the state that existed when the execution of T_i began". On failure, the system runs C for the committed steps in reverse order (lines 107, 556). Lines 177-180: "(a) A saga only permits two levels of nesting ... (b) At the outer level full atomicity is not provided. That is, sagas may view the partial results of other sagas". Recovery section (lines 296-425): backward recovery (compensate), forward recovery (resume from a save-point), and "backward/forward recovery" combined; saga state and the compensation parameters are logged, because "if a failure destroys the code of a running transaction" the system must finish or compensate it (lines 256-262).
+
+**Measured gain.** None. The abstract (line 25) says the idea has "the potential to improve performance significantly" but searching the text for `simulat|experiment|measure|analytic|results show|throughput` finds no hit: the paper is a design with implementation discussion, no figure. Not a result.
+
+**Assumes.** The unit splits into steps that "does not have to observe the same consistent database state" (line 134 left column); every step has a compensation written by the application programmer (line 248 onward: "the identification of the compensating transaction"); the compensation cannot just restore a saved value, because other transactions may have changed the data in between (lines 99-105: it "cannot simply store ... the number of seats that existed when T_i ran because other transactions could have run between"); partial results are visible to others (line 180).
+
+**For model-session writers (reasoned).** Confirms block 2 from the paper itself, with one sharper point for us: the paper itself says a saga's compensation is semantic, not a restore of the earlier state (line 85-86 and 99-105). A file revert as compensation is therefore valid only when nobody built on the step in between, as block 2 reasoned. Forward recovery (resume from a save-point) matches a session continuing from its checkpoint rather than redoing: the paper names it as an option when the steps are logged.
+
+**Frame.** Same as block 2: adds "split the long unit into committed steps with compensation"; and adds forward recovery (resume, not redo) as a named alternative to compensation.
+
+Update to the header counts and "Not opened": Sagas is now **quoted** (block 2 above is superseded by this block for its status; text unchanged); Korth 1988 stays closed.

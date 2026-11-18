@@ -11,14 +11,21 @@ the orchestration lines named in ROUND.md, then this file; then go on from "Next
 |---|---|---|---|---|
 | 0 | orchestrator | all `w1-brief-*.md`, this file | | done, commit 7c6d216f |
 | 1 | collect: sonnet x6 | `w1-brief-collect.md` | `w1-collect-{isolation,grain,engines,order,merge,long}.md` | six done (`long` after the handover) |
-| 1b | collect: sonnet (second attempts) | `w1-brief-second.md` | section "Second attempt" in the collect file | done for isolation, merge, order, grain; engines needed none |
-| 2 | analyse: opus | `w1-brief-analyse.md` | `w1-report.md` (draft), `w1-claims.md` | waiting for `long` |
+| 1b | collect: sonnet (second attempts) | `w1-brief-second.md` | section "Second attempt" in the collect file | done for isolation, merge, order, grain, long (2026-11-19, successor); engines needed none |
+| 2 | analyse: opus | `w1-brief-analyse.md` | `w1-report.md` (draft), `w1-claims.md` | running |
 | 3 | run: sonnet + refute: opus | `w1-brief-gate.md`, `w1-brief-refute.md` | `w1-gate.md`, `w1-refute.md` | waiting |
 | 4 | analyse: opus (fold) | `w1-brief-fold.md` | `w1-report.md` final, `library/journal/2026-11-19/w1.jsonl` | waiting |
 | 5 | extract: haiku x6, then run: sonnet | `w1-brief-extract.md`, `w1-brief-check.md` | `x25` to `x29.jsonl`, `x40.jsonl`, `w1-check.md` | waiting |
 | 6 | orchestrator | | commit and push | waiting |
 
 ## Next
+
+**Successor (2026-11-19, launch-only, Opus child session).** Read only this file and ROUND.md "Method", "Limits",
+"Final message", as the top session asked. The `long` retry is done (below); step 2 is next.
+
+- `long` second attempt (sonnet, 91,515 tokens): Sagas 1987 opened and quoted from a public text copy (Cornell
+  course page, poor OCR; saved as `papers/w1/sagas/cornell-text.{pdf,txt}`, the scan untouched); the paper reports
+  no measurement. Korth, Kim, Bancilhon 1988 still closed: ScienceDirect 403 bot check, no open copy found.
 
 1. `long` finished after the handover (160,782 tokens; file committed with this state): 4 `quoted` (Barghouti and
    Kaiser 1991; Pu, Kaiser, Hutchinson 1988; Bancilhon, Kim, Korth 1985; Perry, Siy, Votta 2001), 2 `summary`. No
@@ -45,6 +52,8 @@ the orchestration lines named in ROUND.md, then this file; then go on from "Next
 - Cahill, Röhm, Fekete 2008 / TODS 2009 / Cahill's thesis: ACM, Sydney, CORE and Washington gave 403, a bot check or a sign-in.
 - Fekete and others, TODS 2005: ACM 403; the Minnesota copy fails this machine's certificate check (verification was not turned off).
 - Shen and others, IntelliMerge, OOPSLA 2019: the ACM open copy returns a bot check.
+- Korth, Kim, Bancilhon 1988 (Information Sciences): ScienceDirect and its DOI give a 403 bot check; Semantic
+  Scholar has no open PDF; CiteSeerX 404.
 
 ## Deviations to report
 
@@ -58,6 +67,8 @@ the orchestration lines named in ROUND.md, then this file; then go on from "Next
 - After step 1 and the retries: week 53 % all models, 43 % Fable. Helper tokens so far: collectors 150,969 +
   196,032 + 175,624 + 196,036 + 173,843; retries 102,542 + 94,815 + 108,565 + 140,734; total 1,339,160 (the `long`
   collector not counted). The first orchestrator's own context: 163,000 at handover.
+- Successor start (2026-11-19): week 53 % all models, 43 % Fable; own context 91,202. `long` 160,782; its retry
+  91,515.
 
 ## Notes
 
