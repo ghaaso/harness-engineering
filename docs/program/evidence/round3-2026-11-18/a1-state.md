@@ -54,7 +54,23 @@ Lane file: `lane-budget.md`. Standards and limits: `ROUND.md`.
 - Done. Gate: 125 STANDS, 1 ALTERED (A10), 14 NO QUOTE (A69-A82, all hypothesis). Refute: 48 CONFIRMED,
   33 PARTIALLY, 1 REFUTED (A76, finishing a unit-length before the reset), 0 UNVERIFIABLE.
 
-## Step 4, fold (running) and step 5, extract and check (done 2026-11-19)
+## Step 4, fold (done 2026-11-19)
+- `a1-report.md` final. Verdicts: 48 confirmed, 33 hold in part, 1 refuted (A76), 0 cannot be checked; the gate's
+  A10 fault fixed to the true text. Four collect-file errors listed in the report's section 5; the extract
+  records carry the corrected forms (checked by grep: x45-0300, x48-0302, x48-0303, x48-0312).
+- `library/journal/2026-11-19/a1.jsonl`: 80 records (1 status, 49 result, 11 hypothesis, 19 open: measurements
+  M1-M11 and 8 proposed corrections of o2-0501, o2-0404, o2-0317, r57-0408, r57-0409, o2-0321, o2-0320,
+  x19-0701). Re-validated by command: parse, unique ids, ranges by kind, 0 faults.
+- The fold read a few paper lines beyond its brief to place figures the refuter added; it kept only figures found
+  at their lines.
+
+## Step 6 (done 2026-11-19)
+- Week 56 % (Fable 44 %) at the end; orchestrator context 188,531 tokens.
+- Lane committed and pushed. Closed sources on the sign-in list: Balseiro and Gur 2019; Balseiro, Kim, Mahdian,
+  Mirrokni; Wang and others (POMACS 2017). Mu'alem and Feitelson 2001 saved but needs OCR (an install: owner's
+  word). Kolisch 1996: no open copy.
+
+## Step 5, extract and check (done 2026-11-19)
 - The fold and the extractors ran side by side (different inputs, different files). Week 56 % before.
 - Extract: x44 41, x45 34, x46 54, x47 42, x48 30 = 201 `result` records (196 quoted, 5 summary).
 - Check, split in two for size (`a1-check-1.md`: x44, x46; `a1-check-2.md`: x45, x47, x48), every record:
