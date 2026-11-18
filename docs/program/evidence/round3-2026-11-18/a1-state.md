@@ -28,6 +28,19 @@ Lane file: `lane-budget.md`. Standards and limits: `ROUND.md`.
 - llmbudget: 8 sources; none closed; no source paces against a refilling window.
 - pacing: 5 sources; closed: Balseiro and Gur 2019 (SSRN gives HTML), Balseiro, Kim, Mahdian, Mirrokni,
   Agarwal and others (LinkedIn, KDD 2014).
-- longjobs: running.
+- longjobs: 6 sources (Tsafrir thesis stands in for TPDS 2007, Kolisch and Hartmann 2006, MapReduce, LATE,
+  Mantri, Dolly); Graham from the library.
+
+## Step 1b, second and third attempts (done 2026-11-19)
+- pacing: LinkedIn (KDD 2014) now read in full. Balseiro and Gur 2019, and Balseiro, Kim, Mahdian, Mirrokni stay
+  closed (403, bot checks; a third attempt asked by the top session found neither on arXiv): sign-in list.
+- allocation: Zhou, Chakrabarty, Lukose read to section 5 (Internet Archive copy of the tech report); Talluri
+  and van Ryzin clean with `pdftotext -raw`. None closed.
+- quotas: GCRA (ATM Forum TM 4.0), Stripe post, SRE chapter 22 now read. Wang and others (POMACS 2017) stays
+  closed (ACM 403): sign-in list, https://dl.acm.org/doi/10.1145/3084448.
+- longjobs: Lifka 1995 read (rule only, no figures). Mu'alem and Feitelson 2001: the PDF is saved but its text
+  layer is unreadable; reading it needs OCR, an install that needs the owner's word. Kolisch 1996: no open copy.
+- Step 1 is closed. Next: step 2, analyse.
 
 ## Notes
+- The allocation retry read a PDF's streams with a script of its own (no downloaded file was run).

@@ -129,3 +129,39 @@ Not stated on the pages read; nothing is inferred.
 
 ## Needs the owner's sign-in
 none.
+
+## Second attempt
+Fetched 2026-11-19. Papers in `R:papers/budget/gcra2/`, `stripe2/`, `burstable2/`; the Google chapter is the earlier `sre-cascading/page.txt`.
+
+### P12. ATM Forum, "Traffic Management Specification Version 4.0" (af-tm-0056.000, April 1996), section 4.4.2 and Annexes C.1, C.4. Read from: Internet Archive copy of https://www.broadband-forum.org/ftp/pub/approved-specs/af-tm-0056.000.pdf (web.archive.org/web/2016/...). Saved: R:papers/budget/gcra2/tm40.txt (5,903 lines; the first attempt got HTML). Read: 4.4.2 (txt 1326-1420), C.1 (3586-3604), C.4 (3750-3792). Primary source; replaces Wikipedia (P3) for the definition.
+- Problem: say, for each arrival, whether it conforms to a rate contract with a burst allowance.
+- Mechanism: two equivalent forms of one rule: virtual scheduling (a theoretical arrival time TAT, advanced by I per conforming arrival) and a continuous-state leaky bucket (a counter that drains at 1 unit per time unit and gains I per conforming arrival).
+- Result: "The GCRA is defined with two parameters: the Increment (I) and the Limit (L)." (txt 1341). "The two algorithms in Figure 4-1 are equivalent in the sense that for any sequence of cell arrival times ... the two algorithms determine the same cells to be conforming and thus the same cells to be non-conforming." (txt 1350-1353). "the continuous-state leaky bucket algorithm can be viewed as a finite-capacity bucket whose real-valued content drains out at a continuous rate of 1 unit of content per time-unit and whose content is increased by the increment I for each conforming cell." (txt 3600-3603). With several instances: "A cell is then conforming only if it conforms to all instances of the GCRA" (txt 1405-1407); a non-conforming cell leaves the state unchanged ("the TAT is unchanged", txt 3599). Burst size: s = (MBS - 1)(Ts - T) (txt 3789): the limit follows from the wanted maximum burst size and the two rates.
+- Measured gain: none; a definition, not an experiment.
+- Assumes: a stream of events of one size (I may be any real number, txt 1347); a known contract (I, L).
+- With model sessions (reasoned): a refilling allowance is this bucket with the sign reversed (time drains it, spend fills it); I and L give a sustained rate and a burst bound, and "conforms to all instances" is the rule for two windows at once (a unit passes only if it passes both). A unit is not one cell: its cost is known only roughly, so I is an estimate. Nothing here says what to start.
+- Needs to know before use: the cost I of each unit and the two rates.
+- Status: quoted.
+
+### P13. Stripe engineering blog, "Scaling your API with rate limiters" (2017). Read from: https://stripe.com/blog/rate-limiters. Saved: R:papers/budget/stripe2/page.txt (67 lines of article text; page.html is the whole page). All figures **self-reported**.
+- Problem: one user's low-priority traffic hurting critical requests.
+- Mechanism: four limiters (request rate, concurrent requests, fleet usage load shedder, worker utilisation load shedder), token buckets or counters in Redis.
+- Result: "We use the token bucket algorithm to do rate limiting. This algorithm has a centralized bucket host where you take tokens on each request, and slowly drip more tokens into the bucket. If the bucket is empty, reject the request." (txt 53). "These retries add more demand to the already overloaded resource, slowing things down even more. The concurrent rate limiter helps address this nicely." (txt 29). "We always reserve a fraction of our infrastructure for critical requests. If our reservation number is 20%, then any non-critical request over their 80% allocation would be rejected with status code 503." (txt 36). "Dark launch each rate limiter to watch the traffic they would block." (txt 59).
+- Measured gain: self-reported counts only: the concurrent limiter triggered "12,000 requests this month" (txt 30); the worker-utilisation shedder "Only 100 requests were rejected this month" (txt 49). No before and after rates, no baseline: no measured gain.
+- Assumes: many users sharing a fleet; a request costs about one token.
+- With model sessions (reasoned): the reserved fraction for critical work is a ready rule for holding back part of a window for units that must not stall; the concurrency cap fits 3 to 16 workers. No rule for pacing against a refill.
+- Needs to know before use: which work is critical; the cap.
+- Status: quoted (self-reported).
+
+### P14. Beyer, Jones, Petoff, Murphy (eds.), "Site Reliability Engineering", chapter 22 "Addressing Cascading Failures" (O'Reilly 2016). Read from: https://sre.google/sre-book/addressing-cascading-failures/. Saved: R:papers/budget/sre-cascading/page.txt. Read: txt 61-207 (overload, load shedding, retries). Self-reported (Google's own practice; no measured gain).
+- Result: "Always use randomized exponential backoff when scheduling retries." (txt 202). "Limit retries per request. Don't retry a given request indefinitely." (txt 203). "Consider having a server-wide retry budget. For example, only allow 60 retries per minute in a process, and if the retry budget is exceeded, don't retry; just fail the request." (txt 204). "a single request at the highest layer may produce a number of attempts as large as the product of the number of attempts at each layer ... then a single user action may create 64 attempts (4^3)" (txt 205). "Load shedding drops some proportion of load by dropping traffic as the server approaches overload conditions." (txt 147). "if a service was healthy at 10,000 QPS, but started a cascading failure due to crashes at 11,000 QPS, dropping the load to 9,000 QPS will almost certainly not stop the crashes." (txt 122). "Complex load shedding and graceful degradation can cause problems themselves" (txt 160).
+- Measured gain: none stated; qualitative.
+- Assumes: a server fleet whose load can exceed capacity; retries of cheap requests.
+- With model sessions (reasoned): the retry budget (a cap on retries per period) and the product of attempts across levels apply directly: a rerun of a minutes-long unit costs its tokens again, and a rerun is not the same run. The chapter has no "quota" text (grep found none) and no client-side adaptive throttling formula; that is in "Handling Overload" (`sre-overload/`, not part of this attempt).
+- Needs to know before use: the retry cap per period; which errors are retriable.
+- Status: quoted (self-reported).
+
+### P11 again. Wang, Urgaonkar, Nasiriani, Kesidis, "Using burstable instances in the public cloud: why, when and how?", POMACS 1(1) 2017 (SIGMETRICS 2017).
+Using burstable instances in the public cloud: why, when and how? | ACM https://dl.acm.org/doi/pdf/10.1145/3084448, .../3078505.3078591 and .../epdf/10.1145/3084448 (all HTTP 403, a bot check; not worked round); OpenAlex W2623919293 and W4244961776 (closed, no repository copy); Semantic Scholar API (openAccessPdf CLOSED); Unpaywall (closed, no locations); arXiv search (no match); scholar.archive.org (no copy); the author's site https://www.cse.psu.edu/~buu1/ and /papers/ (no link); Penn State Pure page (abstract only); dblp (no open link). The first attempt's DOI 10.1145/3064176.3064220 was a different paper (EuroSys 2017) | closed behind ACM's bot check and no open copy found. Listed for the owner: https://dl.acm.org/doi/10.1145/3084448
+
+### P15. ITU-T I.371. Not opened separately | https://www.itu.int/rec/T-REC-I.371/en returned only the catalogue page (download is by sign-in or purchase) | the ATM Forum text (P12) says Figure 4-1 is "a generic version of Figure 1 in Annex 1 of I.371-draft" (txt 1349-1350).
