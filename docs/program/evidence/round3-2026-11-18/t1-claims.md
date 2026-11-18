@@ -771,3 +771,129 @@ with a flag (labels uncertain); C25 is counted under proven, its correction goes
 - Production texts, by line or grep only: pg-nbtree/readme.txt, innodb-doc, rocksdb-cidr2017, myrocks,
   rocksdb-evolution, fdb-sigmod, discord-scylla, uber-pg-mysql, lmdb-engine/mdb.c, pebble-doc.
 - Paper texts, by line or grep only: lehmanyao, bwtree2013, wang2018, olc2019, ariesim, srinivasan-carey, graefe2010, writes-arge-buffertree, writes-bender-login, writes-betrfs, writes-oneil-lsm, writes-luo-carey, writes-dostoevsky, s2-rosenblum, versions-rodeh, versions-becker, versions-grayGraefe, s2-comer-utah, s2-lmdb-doc, kim-scaling, huang-faulty, dremel, astrolabe, tag, anthropic-research, otp, h2-rao, h2-selforg, h2-redel.
+
+## Claim verdicts
+
+Added 2026-11-19 by the fold (step 4) from `R:t1-gate.md` and `R:t1-refute.md`. Rule, in this order: refuter REFUTED
+gives refuted; refuter PARTIALLY gives holds in part (use the refuter's corrected claim in `R:t1-refute.md`); refuter
+UNVERIFIABLE, or gate NOT_CHECKABLE with refuter CONFIRMED, gives cannot be checked; gate LOCATED with refuter CONFIRMED
+gives confirmed. Counts: confirmed 65, holds in part 42, refuted 5, cannot be checked 3. A claim not confirmed is never
+called supported. Lines are those of the cited file; "re-opened" means the fold read the place itself.
+
+| id | verdict | reason |
+|---|---|---|
+| C01 | confirmed | v1:15 and DESIGN-RECORD:162 as quoted; the seven leaves are an expectation |
+| C02 | confirmed | v2:440-441 and thresholds.json:43 as quoted; no plan-tree.mjs, no script reads fill_factor |
+| C03 | confirmed | DESIGN-RECORD:18; v2:461-463 |
+| C04 | confirmed | v1:276, v2:461-463, DESIGN-RECORD:69 as quoted; no owner ruling on the split in RULINGS.md or the library; result.json 1034-1035 (re-opened) rejects a split leaf in the pilot, by the design step's ruling, not the owner |
+| C05 | confirmed | v2:172-173, 465-466 |
+| C06 | confirmed | SELECTIONS-MAP:30 |
+| C07 | confirmed | commit.mjs:761 gives 165,000; the record gives 180.0k; four of the five inputs are guesses |
+| C08 | holds in part | 79,000 is the median first call of main sessions in other repositories; child P 60,000 is a guess from about 60k per agent; S0 is a guess; the 767,000 tokens in four minutes is one trial (re-opened) |
+| C09 | confirmed | TOKEN-BOTTLENECK:12, 14, 18 |
+| C10 | confirmed | v2:473; thresholds.json:23, computed from estimated inputs |
+| C11 | holds in part | R49 is later, only under option (b) of the research child's window; R47's plan-time split is a separate rule (re-opened) |
+| C12 | confirmed | FAULTS-AND-FIXES:37-40; SELECTIONS-MAP:154, 162 |
+| C13 | confirmed | admit.mjs `decide` reads no parent, level or tree-plan field (grep re-run by the fold on the primary file) |
+| C14 | confirmed | BUILD-SIZE:44-52 and FAULTS-AND-FIXES:49 as quoted (re-opened) |
+| C15 | confirmed | START-HERE:17 |
+| C16 | confirmed | v1:20, 23; b1-0121 |
+| C17 | confirmed | v2:498-500 |
+| C18 | holds in part | a note serves only as a wake (R30); at a wake the coordinator acts on every ledger event since its last acknowledged seq (R6); "per commit" is not in the source (re-opened) |
+| C19 | confirmed | lehmanyao 162-164 |
+| C20 | confirmed | lehmanyao 233, 359 |
+| C21 | confirmed | lehmanyao 478, 482 |
+| C22 | confirmed | lehmanyao 466, 487; no measured figure |
+| C23 | confirmed | graefe2010 110, 115 |
+| C24 | confirmed | bwtree2013 70, 246-247 |
+| C25 | holds in part | add Table I's failed consolidates 1.19 %, 0.22 %, 7.35 %; x03-0335 gives the text's 1.25 % as Table I's figure (re-opened) |
+| C26 | confirmed | bwtree2013 357; the designers' own benchmark, 8 worker threads |
+| C27 | holds in part | help-along is how the Bw-tree eases starvation from failed CaS, not its defect; the 1.5-4.5× is against a B+ tree and ART with OLC and Masstree (re-opened) |
+| C28 | confirmed | olc2019 308, 346, 347 |
+| C29 | confirmed | olc2019 29 |
+| C30 | confirmed | olc2019 244 |
+| C31 | confirmed | ariesim 267, 603, 612 |
+| C32 | confirmed | ariesim 493, 513 |
+| C33 | confirmed | s2-mohan-kvl 470-476 |
+| C34 | holds in part | "barely differ with one CPU and one disk" fails under extreme contention: 1 CPU, 1 disk, tree in memory, heavy appends, where a pessimistic algorithm won (srinivasan-carey 843, re-opened) |
+| C35 | holds in part | the B-link form fits because its first step is local and the post may wait; "a session is a slower node" is not the reason |
+| C36 | holds in part | the ground is cost only; "no progress guarantee" misreads wang2018; "no model call" holds only if a script or the watcher's tick posts |
+| C37 | confirmed | arge 304-306, 492-494; for batched (off-line) problems |
+| C38 | confirmed | arge 439-441 |
+| C39 | confirmed | bender-login 64-75 |
+| C40 | confirmed | bender-login 81 |
+| C41 | confirmed | bender-login 55 |
+| C42 | holds in part | the gain is items per flush over the depth (2 × 100/14 = 14.3), not over twice the depth (re-opened) |
+| C43 | confirmed | betrfs 306 |
+| C44 | holds in part | "nearly two orders of magnitude" only where the index is as hot as a B-tree; equal ratios are Theorem 3.1's approximation |
+| C45 | holds in part | tiering costs range queries and space more than point lookups (Bloom filters) |
+| C46 | holds in part | lazy leveling keeps only a competitive bound on short range lookups (re-opened) |
+| C47 | confirmed | brodal-fagerberg 126-140 |
+| C48 | confirmed | rosenblum 316-323, 340-362 |
+| C49 | confirmed | buchsbaum 31-39, for the mechanism; the cost bound stays a summary |
+| C50 | holds in part | batching divides only the fixed part of a wake and only where the wake can wait; the trigger weighs wake cost against the cost of delay |
+| C51 | refuted | every parent call re-reads its window, so reads dominate, the end of Dostoevsky's curve where leveling is best; a session tree of three levels has neither lazy leveling's levels nor its Bloom filters (re-opened) |
+| C52 | confirmed | rodeh 330-332, worst case |
+| C53 | holds in part | the 50 % is Rodeh's top-down tree with middle splits; engines that split at the arrival point keep sequential pages near full (re-opened) |
+| C54 | confirmed | rodeh 538-543 |
+| C55 | confirmed | rodeh 584-588; Table 8 |
+| C56 | holds in part | O(1) amortised holds for structures whose updates change O(1) nodes amortised (red-black trees with lazy recoloring) |
+| C57 | confirmed | becker 162-182, 371-372 |
+| C58 | confirmed | grayGraefe 280, 288, 324, 361 |
+| C59 | refuted | start/(ln b − 1) is the work per visit at the optimum of log-utility over cost, where the start is (ln b − 1)/ln b of the cost (84 % at 16 KB pages), not an overhead floor; neither premise holds for sessions (re-opened) |
+| C60 | confirmed | s2-lmdb-doc 74, 119 |
+| C61 | confirmed | versions-lmdb 344-352, read with labels shifted; the engine author's own test; not used to decide |
+| C62 | confirmed | comer-utah 484-495 |
+| C63 | confirmed | btreaps 72-75, comer-utah 735-738; second-hand, not used to decide |
+| C64 | cannot be checked | a second-hand account with no quote; the refuter found Comer's account at comer-utah 739-750 |
+| C65 | cannot be checked | the paper is behind a bot check; settle by Johnson and Shasha 1993's utilisation by delete share |
+| C66 | holds in part | the new leaf's load sits in a band (MVBT); a hand-over carries the reloaded state S, not only unstarted keys |
+| C67 | confirmed | kim 974-980, 1153-1162 (re-opened) |
+| C68 | confirmed | kim 1162, 1175-1177, 1187; at about 4,800 reasoning tokens per trial |
+| C69 | confirmed | huang 293-303 (re-opened) |
+| C70 | holds in part | the fourth level halved Q3, a many-group aggregation; Q2 gained little (re-opened) |
+| C71 | confirmed | astrolabe 1536-1550, 1588-1589 |
+| C72 | confirmed | tag 622-625, 631-635 |
+| C73 | confirmed | macnet 291-293, 357-366 |
+| C74 | holds in part | self-reported: a company's account with no method or public baseline |
+| C75 | confirmed | otp 139-141, 153-155 |
+| C76 | holds in part | the token tables cover tasks both methods solved; Oolong's 21× buys a different, more accurate strategy; KV caching eases the single agent's cost (re-opened) |
+| C77 | confirmed | h2-selforg 298-303, 366-370; simulated tasks |
+| C78 | confirmed | h2-redel 340-347 |
+| C79 | holds in part | MacNet and Huang also compare deeper and wider topologies; the direction stands as a hypothesis |
+| C80 | holds in part | files a parent reads directly are TAG's flat single-hop case; an inner check may pay in quality, untested |
+| C81 | holds in part | the saving is in cache reads; Oolong is not the re-read case |
+| C82 | holds in part | depth is ⌈log_b L⌉ with L the packer's leaves; L > b means an inner level or more coordinator epochs, priced in tokens (re-opened) |
+| C83 | holds in part | W* − P − S = g·k* is the parent's own growth per epoch, so b ≤ (g·k* − own growth)/s_summary; cost.mjs counts the room twice (re-opened) |
+| C84 | holds in part | f = 1/q_{1−p}(R), R taken over the leaf because keys share context; one f per capacity |
+| C85 | holds in part | the arithmetic holds; 1/2 to 2/3 is Facebook's fragmentation under updates, not random arrival; the overhead falls on the new leaf |
+| C86 | holds in part | a separator routes only where the unstarted keys form one range; otherwise the moved set is a list of ids |
+| C87 | holds in part | an under-full leaf also costs two wakes of the parent, a slot and a memory peak |
+| C88 | holds in part | moving keys into a running session costs a message and a wake: a cost, not an impossibility |
+| C89 | holds in part | the schemes are alike when one resource binds, not "with few writers"; "buffering adds nothing" does not follow |
+| C90 | refuted | the rules still disagree after the B-link reading (D3-12 against D3-01 and D2-02); the B-link form gives a split's mechanism, not the choice between split and hand-over; the conflict stays open (re-opened) |
+| C91 | confirmed | DECISION-RULE 30-31, 125-127, 150-151, 175 |
+| C92 | holds in part | the overflow comes from the budget cut, which stops running work; the decision rule allows that for memory only (re-opened) |
+| C93 | cannot be checked | a scope statement with no quote; consistent with r57-0505 and r57-0512 |
+| C94 | confirmed | pg-nbtree 17-22 |
+| C95 | holds in part | PostgreSQL normally finishes a split at once, holding the child's lock; only after a failure does a later writer finish it (re-opened) |
+| C96 | confirmed | pg-nbtree 235-240, 365-367 |
+| C97 | confirmed | pg-nbtree 112-123 |
+| C98 | confirmed | innodb-doc 286-299, 305-309 |
+| C99 | holds in part | LMDB also biases a middle split so the new page is emptier when the new item goes on the last spot (re-opened) |
+| C100 | confirmed | rocksdb-cidr2017 182-186, 341-350; self-reported |
+| C101 | confirmed | myrocks 28-29, 174-180; self-reported |
+| C102 | confirmed | rocksdb-evolution 264-272, 330-333, 772; self-reported |
+| C103 | holds in part | "many can be divided", not "usually"; self-reported (re-opened) |
+| C104 | confirmed | discord-scylla 101-136; self-reported, uncontrolled |
+| C105 | holds in part | "when a tuple location changes" is the condition; Uber's rebalancing statement does not match PostgreSQL's B-tree |
+| C106 | holds in part | flushes are paced by the bytes still to flush, compactions by compaction debt; no measurement (re-opened) |
+| C107 | confirmed | wiredtiger-doc 16, 21; not used to decide |
+| C108 | refuted | PostgreSQL posts the downlink at once while holding the child; after a failure the next writer that meets the flag finishes it; there is no named job (re-opened) |
+| C109 | holds in part | a session split has no later arrivals, so the new leaf stays as empty as the remainder is small; the full-page analogue is a sibling with room or the next wave |
+| C110 | holds in part | Facebook found defragmentation less effective on one workload; no stream of new questions exists during a run today |
+| C111 | holds in part | each range already has one session; a hot leaf is one woken by many messages; none observed |
+| C112 | holds in part | records name the question id and find the leaf through one map; a leaf id is a location |
+| C113 | holds in part | count the backlog in tokens; a wake has a fixed cost that Pebble's rate control does not model |
+| C114 | refuted | the record's rule at the window is a hand-over (R50), a split only under R49; FoundationDB's window is a reason to keep units short, not evidence for split over hand-over (re-opened) |
+| C115 | holds in part | choose each part against measured tokens with memory as the hard limit; C09 shows where tokens go, not that they bind ahead of memory |
