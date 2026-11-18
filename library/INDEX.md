@@ -40,8 +40,8 @@ Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. This board list
 - r57-0011 [owner] Hooks or scripts: whichever works best, or both.
 - r57-0012 [owner] "One writer per file" is rejected as the coarsest lock.
 - r57-0013 [owner] Use the core concurrency literature, not only agent papers.
-- r57-0014 [owner] Strong literature, read in full; blocked page: find the open copy; quote figures from the paper.
-- r57-0015 [owner] The bottleneck depends on the workload; a decision rule routes to the method that fits.
+- r57-0014 [owner] Strong literature, read in full; blocked page: find the open copy; quote figures from the paper. Also r57-0029 [owner]: "not in the papers read" is never "no paper"; search the other names and database engines; papers with large gains.
+- r57-0015 [owner] The bottleneck depends on the workload; a decision rule routes to the method that fits. Also r57-0028 [owner]: nothing tuned to one repository; it must hold for small and large projects.
 - r57-0016 [owner] Store knowledge as structured records, not prose.
 - r57-0017 [owner] Reports: short, what is and is not, plainly not sure.
 - r57-0018 [owner] On a new instruction say what you understand and intend, then act on his go.
@@ -123,12 +123,12 @@ Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. This board list
 - o2-0400 to o2-0407 [reasoned] One rule per scarce resource: processor, memory, memory bandwidth, the check, tokens, two at once, a moving bottleneck, a cheaper model.
 ## Open, in the order of work (a line is blocked by what it names)
 1. IN WORK r57-0504 [open] How the chosen algorithms are built into the harness and the tree's scripts. With child session b1 since 2026-11-18, design only (r57-0133); result: `BUILD-IN.md` beside the rule (r57-0705).
-2. r57-0511 [open] The measurements that set the decision rule's numbers. Blocked by: the owner's word for each.
-3. r57-0505 [open] Parallelism inside the tree, node by node. Blocked by: nothing.
-4. r57-0506 [open] The small tests. Blocked by: the owner's word for each.
-5. r57-0507 [open] The build: 13 fixes and 0b, the R57 model check, the pilot. Blocked by: 1, and the owner having seen the decision rule.
-6. o2-0501 [open] No paper covers an allowance that refills over hours or days; whether our 5-hour window is fixed or rolling is unknown.
-7. o2-0502 [open] Memory-bandwidth contention on this PC is unmeasured.
+2. NEXT r57-0512 [open] Research the owner asked for: several writers of one file as database engines solve it; a serial check shared by many workers; which tree variant fits nodes that are sessions. Waits for his go on the stated plan.
+3. r57-0511 [open] The measurements that set the decision rule's numbers. Blocked by: the owner's word for each. After r57-0512; planned for projects of different size (r57-0028).
+4. r57-0505 [open] Parallelism inside the tree, node by node. Blocked by: nothing.
+5. r57-0506 [open] The small tests. Blocked by: the owner's word for each.
+6. r57-0507 [open] The build: 13 fixes and 0b, the R57 model check, the pilot. Blocked by: 1, and the owner having seen the decision rule.
+7. o2-0501 [open] No paper covers an allowance that refills over hours or days; whether our 5-hour window is fixed or rolling is unknown. Also o2-0502 [open] Memory-bandwidth contention on this PC is unmeasured.
 ## Corrections decided by the top session
 - r57-0801 [measured] o1-0501 is right: the lane has 2 slots; r57-0104 replaced by r57-0127.
 - r57-0802 [measured] fill-0500 is right: 8 units at once only at statement level; r57-0111 replaced by r57-0128.
@@ -142,7 +142,7 @@ Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. This board list
 - r57-0606 [observed] Figures reported from fetch summaries (about 38 wrong; that count is in no file).
 - r57-0607 [observed] One page for everything; rules as a prose skill.
 - r57-0608 [observed] A count given without saying what it counts ("0 built").
-- r57-0609 [observed] Four wrong claims stated to the owner.
+- r57-0609 [observed] Four wrong claims stated to the owner. Also r57-0610 [observed]: wrote "in no paper" after a narrow search; the library already held such a paper.
 ## Where things are
 - r57-0701 [measured] The evidence folder of 2026-11-18 (`E:`).
 - r57-0702 [measured] The research tree's files.
