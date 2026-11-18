@@ -9,8 +9,13 @@
 - `own-data.md`: which resource limited which of 25 past jobs of ours.
 - The earlier reading on several writers of one file: library records r57-0301 to r57-0306.
 
-Library records for this page: r57-0406 to r57-0408 (the rule), r57-0511 (the measurements it needs),
+Library records for this page: r57-0406, r57-0408, r57-0409 (the rule), r57-0513 (the measurements it needs),
 r57-0705 (where it is). Objective, as ruled (r57-0003): quality first, then the least time, memory and tokens.
+
+**Corrected on 2026-11-18 (evening)** after the build-in design (`BUILD-IN.md`, r57-0707) and the owner's reading:
+the column "Logged today", the order in Step 4, measurements 6 and 7, and the lines on "no paper" (r57-0804 to
+r57-0809, r57-0610). The owner asked for wider research on several writers and on the shared check before any
+measurement (r57-0512), so the several-writers section and the check's width will be revised after it.
 
 Two words used below. A **unit** is one piece of work that is started at one moment: an agent's piece, a
 run of the test suite, a model run, a build. The **width** of a resource is how many units it can carry at
@@ -34,7 +39,8 @@ once, right now.
    scarce: own copies.
 7. **Every number is computed here.** The papers' thresholds were tuned on work that lasts microseconds and
    comes in thousands. Only the shape of each rule carries over (r57-0002).
-8. **Three parts have no paper behind them** and are reasoning only: the token allowance (weekly and
+8. **Three parts have no paper among those read** (which is not "no paper exists": r57-0610) and are
+   reasoning only: the token allowance (weekly and
    5-hour), a check shared by separate programs, and units that last minutes with a handful of workers.
 
 ## What limited us so far (25 episodes of our own work, r57-0129)
@@ -63,19 +69,20 @@ measurement before it predicts.)
 
 | Resource | Read on this PC | Width | Source, and what the refuter left of it | Logged today |
 |---|---|---|---|---|
-| Memory capacity | Free memory; each class's peak private memory | The units whose peaks fit in free memory above a reserve. A hard cap | Denning 1968: collapse, a reserve (analytic; narrowed). Borg: kill for memory (confirmed). Autopilot: caps from measured use | Free memory yes, every 2 s. Per-unit peak no |
-| Processor | Busy threads per class; work ready to run above 24 threads | The units whose expected busy threads sum to at most 24 | Johnson 2010: kept 85 % of peak at twice the load (narrowed: spin locks, one server). Borg: throttle, never kill (confirmed) | Whole-PC share yes. Ready-queue length no |
-| The check | Time of one check (596 s, one run); time a unit spends outside it; the lane's slots (2 today); the wait | Case A, one task split into pieces that each pass one check: the square root of (time outside / time inside). Case B, one check per change: slots x (time outside + time inside) / time inside; past that, workers only queue | Suleman 2008: within 1 % of the best count (narrowed: a simulator, a section inside one program). Case B: a textbook queueing bound, reasoned | Wait yes. Time outside the check no |
+| Memory capacity | Free memory; each class's peak private memory | The units whose peaks fit in free memory above a reserve. A hard cap | Denning 1968: collapse, a reserve (analytic; narrowed). Borg: kill for memory (confirmed). Autopilot: caps from measured use | Free memory only while the hand-started recorder runs (last line 21:51 on 17 Nov). Per-unit peak no |
+| Processor | Busy threads per class; work ready to run above 24 threads | The units whose expected busy threads sum to at most 24 | Johnson 2010: kept 85 % of peak at twice the load (narrowed: spin locks, one server). Borg: throttle, never kill (confirmed) | Whole-PC share only while the recorder runs. Ready-queue length no |
+| The check | Time of one check (596 s, one run); time a unit spends outside it; the lane's slots (2 today); the wait | Case A, one task split into pieces that each pass one check: the square root of (time outside / time inside). Case B, one check per change: slots x (time outside + time inside) / time inside; past that, workers only queue | Suleman 2008: within 1 % of the best count (narrowed: a simulator, a section inside one program). Case B: a textbook queueing bound, reasoned | Wait only for commands run through the lane. Time outside the check no |
 | Memory bandwidth | A bus or cache-miss counter | 100 / the bus share of one worker; pair heavy with light | Suleman; Merkel: 2.7 to 3.9 times slower (confirmed, chips of 2010) | No. No sign our commands are bound by it |
 | Shared files | Conflicts per file or function; claims held | See "Several writers" below | MOCC, Moenkeberg-Weikum (both narrowed) | No |
-| Token allowance | Share of the week and of the 5-hour window used; tokens per unit by class | The units the window can still pay for, above a reserve. A budget, not a rate: see the note under this table | Quota per period (narrowed), token bucket (quoted). The mapping to our windows is reasoning: no paper | Week share yes. Tokens per unit no |
-| Ready work | Units ready to start | Their number | | Yes |
+| Token allowance | Share of the week and of the 5-hour window used; tokens per unit by class | The units the window can still pay for, above a reserve. A budget, not a rate: see the note under this table | Quota per period (narrowed), token bucket (quoted). The mapping to our windows is reasoning: no paper | Week share read by hand, not logged. Tokens per unit not logged, but countable from transcripts on disk |
+| Ready work | Units ready to start | Their number | | No |
 
 **Tokens are a budget, not a rate (reasoned, not measured).** Units that run side by side cost the same
 tokens in total as the same units one after another. So the allowance does not limit how many run at once
 until a window is nearly spent; our four token episodes were such moments. What it decides is how many
 units can be done before the reset, and on which model. Side-by-side work costs extra tokens in two ways
-only: work that is redone after a conflict, and a waiting session that re-reads its context. It saves some:
+only: work that is redone after a conflict, and a waiting session that re-reads its context. It pays at each wake, not
+while it is blocked, and at the cache-write weight once its cache has lapsed (b1-0125, reasoned). It saves some:
 a coordinator that gets several helpers back in one turn pays for fewer turns.
 
 **Step 2. Width = the smallest of these.** Two resources within one unit of each other count as two at once.
@@ -86,8 +93,9 @@ Suleman for two limits; no program he tested had both.
 except the least important one when memory reaches its floor. An agent's unit is minutes of work; the
 papers shed waiters that cost nothing to stop.
 
-**Step 4. Choose the next unit.** The one whose needs best match what is free on all resources (dot
-product; dominant share when fairness matters). Short check jobs first. A unit queued for the check holds
+**Step 4. Choose the next unit.** Among the units that fit what is free on every resource, the one with
+the shortest expected check time, then the oldest, with a cap on age so that none starves. Fit is a filter,
+not the order (r57-0409). Dominant share when fairness matters. A unit queued for the check holds
 nothing else. The cheaper model does a unit only where its quality gap on that kind of work was measured
 small (confirmed for chat, instructions and multiple choice; never tested on code).
 
@@ -132,6 +140,7 @@ At agent speed that is hours, so it can only confirm the rule, not drive it.
 ## Numbers to compute here, and the measurement each one needs
 
 Each is small. Each is an experiment, so each needs the owner's word (rule 3 of this repository).
+They wait for the research of r57-0512 and are planned so that no number is tuned to one repository (r57-0028).
 
 1. Per class of unit: peak private memory and busy threads over time.
 2. Time a unit spends outside the check, per piece and per change.
@@ -139,9 +148,9 @@ Each is small. Each is an experiment, so each needs the owner's word (rule 3 of 
 4. The suite with its test files side by side (r57-0403).
 5. Conflict counts: a merge of dummy edits on our own neighbouring lines (r57-0506).
 6. Tokens per unit by class and by model; whether the 5-hour window is fixed or rolling; how cached reads
-   count.
-7. The lane's wait with one slot against two. The log already holds both periods, so this is a count, not
-   a run.
+   count. The first part is a count over transcripts on disk and needs no run (b1-0111).
+7. The lane's wait with one slot against two. This needs a run: the log carries no slot count, and one
+   slot held for under 40 minutes under other work (b1-0122).
 8. A memory-bandwidth counter: only if 1 to 3 show slowdowns that memory and threads do not explain.
 
 ## Where the sources differed, and what was decided
@@ -160,7 +169,9 @@ Each is small. Each is an experiment, so each needs the owner's word (rule 3 of 
 ## Not covered
 
 - Tokens beside processor and memory, and any allowance that refills over hours or days.
-- A serial step shared by separate programs: every paper's serial section lives inside one program.
+- A serial step shared by separate programs: not in the papers of these two rounds. That was a narrow search
+  (r57-0610): the library already holds a merge-queue paper, and the classical model of workers sharing one
+  server was not searched. Open task r57-0512.
 - Units that last minutes with 3 to 16 workers: one worker is 6 to 33 % of the level, so steps are coarse.
 - Program starts blocked by the PC.
 - 14 papers on scheduling and 18 on detection were not opened (scans without text, no public copy, one

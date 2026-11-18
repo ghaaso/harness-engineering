@@ -1,5 +1,5 @@
 # Library board: what is true now (version 1.1)
-Rebuilt by hand on 2026-11-18 after fill 1 from `journal/*/*.jsonl`. Line = `id [how it is known] claim, with its number`. Full record: `bash library/lookup.sh -f <id>`.
+Rebuilt by hand on 2026-11-18 after fill 1 and again after the build-in design (b1) from `journal/*/*.jsonl`. Line = `id [how it is known] claim, with its number`. Full record: `bash library/lookup.sh -f <id>`.
 Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. This board lists the current records of the top session (`r57`) and what the two orchestrators concluded. The 2,524 extractor records (`x01` to `x24`) are not listed one by one: find them by word (`bash library/lookup.sh <word>`) or through "Journal files" below. Nothing found = "not recorded"; see "Known gaps".
 ## Before you do this, look this up (one record answers it first)
 | You are about to | Look up | In short |
@@ -8,10 +8,10 @@ Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. This board list
 | Set a limit, a timeout, a threshold or a budget | r57-0002 | Computed against the objective, not his preference |
 | Start a helper or a child session | r57-0150 | Routes from kind of job to model; the hook refuses the rest |
 | Choose or check the model of a helper | r57-0150, r57-0120, r57-0108 | The routes, the hook, what an agent definition does not fix |
-| Decide how many helpers, sessions or heavy commands run at once | r57-0408, r57-0705, o2-0401, o2-0403 | A number per resource, run at the smallest; untested |
+| Decide how many helpers, sessions or heavy commands run at once | r57-0408, r57-0705, r57-0707 (how it is built in), o2-0401, o2-0403 | A number per resource, run at the smallest; untested |
 | Let two writers change one file | r57-0406, r57-0128 | Per file, by cost in what is scarce; untested |
 | Decide what to do when a job is slow | r57-0408, r57-0129, o2-0401 (memory), o2-0403 (the check) | Find which resource gives the smallest number |
-| Ask whether more work side by side uses more tokens | r57-0408, r57-0115, o2-0501 | A budget, not a rate; reasoned, one trial, no paper |
+| Ask whether more work side by side uses more tokens | r57-0408, b1-0125, r57-0115, o2-0501 | A budget, not a rate; a waiting session pays at each wake; reasoned, one trial, no paper read |
 | Cite a figure on merges that are clean but wrong | r57-0305, x06-0356, x06-0360 | Human teams; shares of all merges, of clean merges, or of correct builds: say which |
 | Stop a helper writing outside its files | r57-0105, r57-0402 | Seen working once |
 | Start a session in a new folder | r57-0026, r57-0122 | Check the tier hook first |
@@ -84,7 +84,9 @@ Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. This board list
 - r57-0132 [measured] Recall test 3, on the filled library: of 10 questions 4 sure, 5 partly, 1 rightly "not recorded"; its fixes are in.
 - r57-0150 [quoted] Tier routes: haiku locates and extracts; sonnet reads, collects, runs, builds; opus builds invariants, analyses, refutes, orchestrates.
 - o1-0101 [observed] The lane's capacity file holds 2 (default 1, at most 4).
-- o1-0102 [observed] Logged today: free memory and whole-PC processor share every 2 s, each heavy command's queue wait. Not logged: the ready queue, per-process memory, conflicts.
+- r57-0134 [observed] Logged only while the hand-started recorder runs (last line 21:51 on 17 Nov): free memory, whole-PC processor share. Lane wait: lane commands only. Not logged: week and 5-hour share, tokens per unit, ready work, processor queue, conflicts.
+- r57-0135 [quoted] "At most three child sessions" is a rule in CLAUDE.md, not a measurement; the number is to be computed.
+- r57-0136 [observed] Build-in design delivered (task r57-0504), design only: 172 of 195 claims and choices confirmed, 22 hold in part, none refuted, 1 unchecked. Its facts of the code: b1-0101 to b1-0126 (lane, hook, tree scripts). Search by word.
 ## How far the method documents were tested
 - r57-0201 [measured] Orchestration design run once: 14 worked, 9 failed or changed, 25 never run; overhead 60,000 tokens, not 7,500.
 - r57-0202 [designed-only] Harness v2 design: nothing built or run; lane counts rest on guesses.
@@ -114,25 +116,24 @@ Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. This board list
 ## Hypotheses (all untested)
 - r57-0408 [reasoned] The decision rule: a number per resource at every start and finish, run at the smallest, act only at the gate; tokens are a budget, not a rate.
 - r57-0406 [reasoned] Several writers on one file: per file, own copies or one owner, by the cost of redoing against waiting, counted in what is scarce.
-- r57-0407 [reasoned] The next unit is the one that fits all free resources; short check jobs first; cheaper model where the gap is measured small.
+- r57-0409 [reasoned] The next unit: among those that fit all free resources, the shortest expected check first, then the oldest; cheaper model where the gap is measured small.
 - r57-0401 [reasoned] Skeleton change, then several fixes on own copies, one script merges: the case of r57-0406 in which tokens are scarce.
 - r57-0402 [reasoned] Enforcement as a mix of script, hook, check and audit.
 - r57-0403 [reasoned] Suite files side by side, 596 s down to about 270 s.
 - r57-0404 [designed-only] Hand over at about 133,000 tokens (coordinator), 115,000 to 155,000 (child).
 - o1-0401 to o1-0405 [reasoned] The detection side of the rule: the numbers per resource, the check's two cases, gate only, slow controllers only as an outer check, the papers' numbers do not carry over.
 - o2-0400 to o2-0407 [reasoned] One rule per scarce resource: processor, memory, memory bandwidth, the check, tokens, two at once, a moving bottleneck, a cheaper model.
+- b1-0401 to b1-0423 [reasoned] 23 design choices for building the rule in: one `widths()` function, its gates (lane, tier hook, admit, watcher), signals through files, safe defaults, build order B1 to B14. 7 were changed by the refuter.
 ## Open, in the order of work (a line is blocked by what it names)
-1. IN WORK r57-0504 [open] How the chosen algorithms are built into the harness and the tree's scripts. With child session b1 since 2026-11-18, design only (r57-0133); result: `BUILD-IN.md` beside the rule (r57-0705).
-2. NEXT r57-0512 [open] Research the owner asked for: several writers of one file as database engines solve it; a serial check shared by many workers; which tree variant fits nodes that are sessions. Waits for his go on the stated plan.
-3. r57-0511 [open] The measurements that set the decision rule's numbers. Blocked by: the owner's word for each. After r57-0512; planned for projects of different size (r57-0028).
-4. r57-0505 [open] Parallelism inside the tree, node by node. Blocked by: nothing.
-5. r57-0506 [open] The small tests. Blocked by: the owner's word for each.
-6. r57-0507 [open] The build: 13 fixes and 0b, the R57 model check, the pilot. Blocked by: 1, and the owner having seen the decision rule.
-7. o2-0501 [open] No paper covers an allowance that refills over hours or days; whether our 5-hour window is fixed or rolling is unknown. Also o2-0502 [open] Memory-bandwidth contention on this PC is unmeasured.
+1. NEXT r57-0512 [open] Research the owner asked for: several writers of one file as database engines solve it; a serial check shared by many workers; which tree variant fits nodes that are sessions. Waits for his go on the stated plan.
+2. r57-0513 [open] The measurements that set the decision rule's numbers: eight need a run and the owner's word, tokens per unit is a count. After r57-0512; planned for projects of different size (r57-0028).
+3. r57-0505 [open] Parallelism inside the tree, node by node. Blocked by: nothing.
+4. r57-0506 [open] The small tests. Blocked by: the owner's word for each.
+5. r57-0507 [open] The build: 13 fixes and 0b, the R57 model check, the pilot; then the rule's pieces in the order of r57-0707. Blocked by: the revised rule (r57-0512) and the owner's word.
+6. o2-0501 [open] No paper covers an allowance that refills over hours or days; whether our 5-hour window is fixed or rolling is unknown. Also o2-0502 [open] Memory-bandwidth contention on this PC is unmeasured.
 ## Corrections decided by the top session
-- r57-0801 [measured] o1-0501 is right: the lane has 2 slots; r57-0104 replaced by r57-0127.
-- r57-0802 [measured] fill-0500 is right: 8 units at once only at statement level; r57-0111 replaced by r57-0128.
-- r57-0803 [reasoned] o2-0500 is right on the wording of Graham's 4/3 bound; x05-0317 replaced by r57-0309.
+- r57-0801 [measured] o1-0501 right: the lane has 2 slots (r57-0127). r57-0802 [measured] fill-0500 right: 8 at once only at statement level (r57-0128). r57-0803 [reasoned] o2-0500 right on Graham's bound (r57-0309).
+- r57-0804 to r57-0809 All six of b1's proposals hold: the rule's "logged today" column corrected (0804); o1-0102 replaced by r57-0134 (0805); r57-0511 by r57-0513 (0806); x21-0120 by r57-0135 (0807); r57-0408 kept, the cost of waiting made exact in b1-0125 (0808); r57-0407 by r57-0409 (0809).
 ## Mistakes, each with the situation it happens in
 - r57-0601 [observed] 29 design questions put to the owner.
 - r57-0602 [observed] A derived skill taken for the orchestration document; the sources not opened.
@@ -144,11 +145,9 @@ Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. This board list
 - r57-0608 [observed] A count given without saying what it counts ("0 built").
 - r57-0609 [observed] Four wrong claims stated to the owner. Also r57-0610 [observed]: wrote "in no paper" after a narrow search; the library already held such a paper.
 ## Where things are
-- r57-0701 [measured] The evidence folder of 2026-11-18 (`E:`).
-- r57-0702 [measured] The research tree's files.
-- r57-0703 [measured] The method documents.
+- r57-0701 to r57-0703 [measured] The evidence folder of 2026-11-18 (`E:`); the research tree's files; the method documents.
 - r57-0704 [owner] The decision sheet that must not be used.
-- r57-0705 [observed] The decision rule: `docs/program/evidence/bottleneck-2026-11-18/DECISION-RULE.md`, with the two literature reports beside it.
+- r57-0705 [observed] The decision rule: `docs/program/evidence/bottleneck-2026-11-18/DECISION-RULE.md`, with the two literature reports beside it. r57-0707, b1-0701 [observed]: how it is built in, `BUILD-IN.md` in the same folder.
 - r57-0706 [observed] The owner's page for the decision rule (a private Artifact) and its source `decision-rule.html`.
 ## Journal files (all in `journal/2026-11-18/`)
 How the content of each `x` file is known, before you open the place a record cites: papers read in full
@@ -157,9 +156,10 @@ How the content of each `x` file is known, before you open the place a record ci
 
 | File | Records | Written from | Search it for |
 |---|---|---|---|
-| `r57.jsonl`, `r57b.jsonl` | 90, 24 | The top session | Everything listed above |
+| `r57.jsonl`, `r57b.jsonl` | 90, 43 | The top session | Everything listed above |
 | `o1.jsonl` | 29 | `bottleneck-2026-11-18/o1-report.md` | Finding the bottleneck, load and feedback control, switching method |
 | `o2.jsonl` | 43 | `bottleneck-2026-11-18/o2-report.md` | Scheduling under scarce memory, processor, check, tokens; cheaper models |
+| `b1.jsonl` | 56 | `bottleneck-2026-11-18/BUILD-IN.md` | How the lane, the tier hook and the tree's scripts work today; the design choices for building the rule in |
 | `fill.jsonl` | 1 | The fill's checker | A proposed correction, decided (r57-0802) |
 | `x01.jsonl` | 53 | `E:app-enforcement-mechanisms.md` | Hooks, permission rules, settings, workflow scripts as documented |
 | `x02.jsonl` | 131 | `E:concurrency-lit-1-databases.md` | Locking, optimistic control, snapshot isolation |
@@ -195,6 +195,6 @@ How the content of each `x` file is known, before you open the place a record ci
 - Memory or tokens of any run but one suite run; the processor share of one job: not measured (r57-0129).
 - Time and tokens of the attack rounds of the R57 round: no record.
 - Whether the tier hook fires in sessions started in other folders: not tested (r57-0120, r57-0122).
-- Any number of the decision rule (a reserve, a threshold, a count of quiet units): none is set; the measurements are r57-0511.
-- A paper on an allowance that refills over hours or days, on a check shared by separate programs, or on work lasting minutes with few workers: none was found (r57-0705).
+- Any number of the decision rule (a reserve, a threshold, a count of quiet units): none is set; the measurements are r57-0513.
+- A paper on an allowance that refills over hours or days, on a check shared by separate programs, or on work lasting minutes with few workers: none among the papers read, after a narrow search (r57-0610); open task r57-0512.
 - By-hand reading of 1,791 of the 2,524 extractor records: not done (r57-0130).
