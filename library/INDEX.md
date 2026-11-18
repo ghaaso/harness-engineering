@@ -122,7 +122,7 @@ Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. This board list
 - o1-0401 to o1-0405 [reasoned] The detection side of the rule: the numbers per resource, the check's two cases, gate only, slow controllers only as an outer check, the papers' numbers do not carry over.
 - o2-0400 to o2-0407 [reasoned] One rule per scarce resource: processor, memory, memory bandwidth, the check, tokens, two at once, a moving bottleneck, a cheaper model.
 ## Open, in the order of work (a line is blocked by what it names)
-1. NEXT r57-0504 [open] How the chosen algorithms are built into the harness and the tree's scripts. Blocked by: nothing; start from r57-0705.
+1. IN WORK r57-0504 [open] How the chosen algorithms are built into the harness and the tree's scripts. With child session b1 since 2026-11-18, design only (r57-0133); result: `BUILD-IN.md` beside the rule (r57-0705).
 2. r57-0511 [open] The measurements that set the decision rule's numbers. Blocked by: the owner's word for each.
 3. r57-0505 [open] Parallelism inside the tree, node by node. Blocked by: nothing.
 4. r57-0506 [open] The small tests. Blocked by: the owner's word for each.
