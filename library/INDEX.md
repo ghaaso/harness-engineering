@@ -40,9 +40,9 @@ Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. This board list
 - r57-0011 [owner] Hooks or scripts: whichever works best, or both.
 - r57-0012 [owner] "One writer per file" is rejected as the coarsest lock.
 - r57-0013 [owner] Use the core concurrency literature, not only agent papers.
-- r57-0014 [owner] Strong literature, read in full; blocked page: find the open copy; quote figures from the paper. Also r57-0029 [owner]: "not in the papers read" is never "no paper"; search the other names and database engines; papers with large gains.
+- r57-0014 [owner] Strong literature, read in full; blocked page: find the open copy; quote figures from the paper. Also r57-0029 [owner]: "not in the papers read" is never "no paper"; search the other names and database engines; papers with large gains. r57-0030 [owner]: work that mattered, and accounts from systems in real use; a company's own figures are marked self-reported.
 - r57-0015 [owner] The bottleneck depends on the workload; a decision rule routes to the method that fits. Also r57-0028 [owner]: nothing tuned to one repository; it must hold for small and large projects.
-- r57-0016 [owner] Store knowledge as structured records, not prose.
+- r57-0016 [owner] Store knowledge as structured records, not prose. Also r57-0031 [owner]: fill it so it can be reused, and keep wrong records out; a lane reaches the board only after a check.
 - r57-0017 [owner] Reports: short, what is and is not, plainly not sure.
 - r57-0018 [owner] On a new instruction say what you understand and intend, then act on his go.
 - r57-0019 [owner] Skills only at source quality; the derived tree skill was discarded.
@@ -120,12 +120,12 @@ Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. This board list
 - r57-0401 [reasoned] Skeleton change, then several fixes on own copies, one script merges: the case of r57-0406 in which tokens are scarce.
 - r57-0402 [reasoned] Enforcement as a mix of script, hook, check and audit.
 - r57-0403 [reasoned] Suite files side by side, 596 s down to about 270 s.
-- r57-0404 [designed-only] Hand over at about 133,000 tokens (coordinator), 115,000 to 155,000 (child).
+- r57-0404 [designed-only] Hand over at about 133,000 tokens (coordinator), 115,000 to 155,000 (child). Against it, r57-0139 [measured]: an orchestrator stood at about 114,000 tokens before its first helper; one lane took two sessions.
 - o1-0401 to o1-0405 [reasoned] The detection side of the rule: the numbers per resource, the check's two cases, gate only, slow controllers only as an outer check, the papers' numbers do not carry over.
 - o2-0400 to o2-0407 [reasoned] One rule per scarce resource: processor, memory, memory bandwidth, the check, tokens, two at once, a moving bottleneck, a cheaper model.
 - b1-0401 to b1-0423 [reasoned] 23 design choices for building the rule in: one `widths()` function, its gates (lane, tier hook, admit, watcher), signals through files, safe defaults, build order B1 to B14. 7 were changed by the refuter.
 ## Open, in the order of work (a line is blocked by what it names)
-1. IN WORK r57-0512 [open] Research the owner asked for, in three child sessions since 2026-11-18 (r57-0137): w1 several writers as database engines solve it; c1 a serial check shared by many workers; t1 which kind of B-tree fits nodes that are sessions. Standards and lane files: `docs/program/evidence/round3-2026-11-18/ROUND.md`.
+1. IN WORK r57-0512 [open] Research the owner asked for, four lanes (r57-0137, r57-0138): w1 several writers as database engines solve it; c1 a serial check shared by many workers; t1 which kind of B-tree fits nodes that are sessions; a1 a refilling token allowance and a few long units. State files and standards: `docs/program/evidence/round3-2026-11-18/`.
 2. r57-0513 [open] The measurements that set the decision rule's numbers: eight need a run and the owner's word, tokens per unit is a count. After r57-0512; planned for projects of different size (r57-0028).
 3. r57-0505 [open] Parallelism inside the tree, node by node. Blocked by: nothing.
 4. r57-0506 [open] The small tests. Blocked by: the owner's word for each.
@@ -149,14 +149,14 @@ Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. This board list
 - r57-0704 [owner] The decision sheet that must not be used.
 - r57-0705 [observed] The decision rule: `docs/program/evidence/bottleneck-2026-11-18/DECISION-RULE.md`, with the two literature reports beside it. r57-0707, b1-0701 [observed]: how it is built in, `BUILD-IN.md` in the same folder.
 - r57-0706 [observed] The owner's page for the decision rule (a private Artifact) and its source `decision-rule.html`.
-## Journal files (all in `journal/2026-11-18/`)
+## Journal files (in `journal/2026-11-18/` unless a date is given)
 How the content of each `x` file is known, before you open the place a record cites: papers read in full
 (x02 to x06); summaries only (x07); documentation, not observed here (x01); seen or measured on this PC
 (x13, x14, x18); our own documents and records, restated (all others).
 
 | File | Records | Written from | Search it for |
 |---|---|---|---|
-| `r57.jsonl`, `r57b.jsonl` | 90, 44 | The top session | Everything listed above |
+| `r57.jsonl`, `r57b.jsonl` | 90, 44 | The top session; from 2026-11-19 in `journal/2026-11-19/r57.jsonl` (4) | Everything listed above |
 | `o1.jsonl` | 29 | `bottleneck-2026-11-18/o1-report.md` | Finding the bottleneck, load and feedback control, switching method |
 | `o2.jsonl` | 43 | `bottleneck-2026-11-18/o2-report.md` | Scheduling under scarce memory, processor, check, tokens; cheaper models |
 | `b1.jsonl` | 56 | `bottleneck-2026-11-18/BUILD-IN.md` | How the lane, the tier hook and the tree's scripts work today; the design choices for building the rule in |
