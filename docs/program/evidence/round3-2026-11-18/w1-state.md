@@ -15,7 +15,7 @@ the orchestration lines named in ROUND.md, then this file; then go on from "Next
 | 1c | collect: sonnet (topic `production`, sub-topic 7 of `lane-writers.md`) | `w1-brief-collect.md` | `w1-collect-production.md` | done (added by the top session on the owner's word, 2026-11-19): 8 quoted, 1 summary (Meta server-side rebase, third-party notes only), 0 not opened, no sign-in needed; 7 library records reused; 142,836 tokens |
 | 2 | analyse: opus | `w1-brief-analyse.md` | `w1-report.md` (draft), `w1-claims.md` | done over seven collect files (first launch stopped unwritten, to wait for `production`): 98 claims (84 proven, of which 6 self-reported, 10 preprint, 5 simulation; 7 measured here; 7 hypothesis); 357,280 tokens; week 55 % after |
 | 3 | run: sonnet + refute: opus | `w1-brief-gate.md`, `w1-brief-refute.md` | `w1-gate.md`, `w1-refute.md` | done: gate 91 stand, 7 no quote (hypotheses), 0 moved or absent (104,308 tokens); refute 57 confirmed, 39 hold in part, 1 refuted (W92), 1 cannot be checked (W96) (284,954 tokens) |
-| 4 | analyse: opus (fold) | `w1-brief-fold.md` | `w1-report.md` final, `library/journal/2026-11-19/w1.jsonl` | waiting |
+| 4 | analyse: opus (fold) | `w1-brief-fold.md` | `w1-report.md` final, `library/journal/2026-11-19/w1.jsonl` | done (313,915 tokens): report final; 99 records (75 result, 8 hypothesis, 1 fact, 1 status, 13 open, 1 pointer), check failed none at the end; corrections proposed w1-0509 to w1-0512; deciding measurement M9 |
 | 5 | extract: haiku x7, then run: sonnet | `w1-brief-extract.md`, `w1-brief-check.md` | `x25` to `x29.jsonl`, `x40.jsonl`, `x41.jsonl` (production), `w1-check.md` | waiting |
 | 6 | orchestrator | | commit and push | waiting |
 
