@@ -42,5 +42,15 @@ Lane file: `lane-budget.md`. Standards and limits: `ROUND.md`.
   layer is unreadable; reading it needs OCR, an install that needs the owner's word. Kolisch 1996: no open copy.
 - Step 1 is closed. Next: step 2, analyse.
 
+## Step 2, analyse (done 2026-11-19)
+- `a1-claims.md`: 82 claims; 68 proven (13 self-reported, 10 provider documentation), 14 hypothesis.
+  `a1-report.md` draft. Week 55 % before the step.
+- Proposed corrections: o2-0501, o2-0404, r57-0408, r57-0409, o2-0321, x19-0701; DECISION-RULE lines 42-44,
+  77, 117, 150, 171, 175; the J60/J120 label in `a1-collect-longjobs.md` lines 10 and 47 (corrected in A63).
+
+## Step 3, gate and refute (started 2026-11-19)
+- One gate (all 82). The refuter is split in two fresh Opus contexts for size: A01-A41 writes `a1-refute-1.md`,
+  A42-A82 writes `a1-refute-2.md`. The fold reads both in place of `a1-refute.md`.
+
 ## Notes
 - The allocation retry read a PDF's streams with a script of its own (no downloaded file was run).
