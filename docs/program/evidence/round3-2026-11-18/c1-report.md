@@ -265,3 +265,123 @@ changes failing together (C65), not from a session's nondeterminism; the claim's
 - Moved: the claim's "2 to 4" for model sessions is dropped (no source; Ericsson's 4 under flaky tests stands). The
   measurement stays but now measures our tests' flakiness, not session behaviour; session nondeterminism enters only as
   the token cost of redoing a returned change, a second reason for small batches whose size is unmeasured.
+
+## Addendum: queues in real use (added after the refutation; checked by the gate only)
+
+These findings came after the analysis and the refutation, were not refuted, and are checked only for their quotes
+(ranks are those of section 3 (e); `R/` is the folder `R:`; brackets give the saved text's line, as the collect file
+states it).
+
+- **A1.** GitHub's queue builds groups from what waits: "dynamically forms groups of pull requests that are candidates
+  for deployment, kicks off builds and tests". Source:
+  https://github.blog/engineering/engineering-principles/how-github-uses-merge-queue-to-ship-hundreds-of-changes-every-day/
+  . Quote at R/c1-collect-production.md#line 24 [gh.txt l.173].
+  - Rank 2 (batch what waits): agrees; no group size is given.
+- **A2.** Before the queue, GitHub's hand-run trains: "Trains could also grow large, containing the changes of 15 pull
+  requests. Large trains frequently derailed due to a deployment issue, conflicts, or the need for an engineer to
+  remove their change. On painful occasions, developers could wait 8+ hours after joining a train for it to ship, only
+  for it to be removed due to a conflict". Self-reported: 15 pull requests in a train; waits of 8+ hours. Source: as
+  A1. Quote at R/c1-collect-production.md#line 25 [gh.txt l.158].
+  - Rank 2: agrees that a group needs a cap; no failure rate is given, so it says nothing on the cap's size.
+- **A3.** GitHub's stated rule: "Those causing conflicts or build failures should not impact all other pull requests
+  waiting to merge. The throughput of the overall system should be favored over fairness to an individual pull
+  request." Source: as A1. Quote at R/c1-collect-production.md#line 26 [gh.txt l.164].
+  - Rank 2: agrees that a failing change is taken out so the rest go on. Rank 5 (visible and fair): narrows its
+    fairness; the rule puts the whole queue's throughput before fairness to one change.
+- **A4.** GitHub's result: "shipping 30,000+ pull requests with their associated 4.5 million CI runs" (before general
+  availability) and "Every month, over 500 engineers merge 2,500 pull requests into our large monorepo with merge
+  queue, more than double the volume from a few years ago. The average wait time to ship a change has also been reduced
+  by 33%." Self-reported: 30,000+ pull requests and 4.5 million CI runs (runs across all checks, not one serial check);
+  500 engineers and 2,500 pull requests a month; average wait to ship 33 % lower than before the queue, the absolute
+  wait not given. Source: as A1. Quotes at R/c1-collect-production.md#line 27 [gh.txt l.172, l.176].
+  - Says nothing on any rank: no batch size, failure rate or absolute wait is given, so the drop ties to no measure.
+- **A5.** Shopify's batch size: "Shopify changes 40 times a day ... merge around 400 commits to master daily" and
+  "Larger batches result in higher theoretical throughput, but higher risk. In practice, the increased risk of larger
+  batches impedes throughput by causing failures that are harder to isolate, and results in an increased number of
+  rollbacks. In our application, we went with a batch size of 8". Self-reported: 40 times a day; about 400 commits a
+  day; batch size 8, where a batch is the most pull requests allowed in one deploy (line 36). Source:
+  https://shopify.engineering/successfully-merging-work-1000-developers . Quotes at
+  R/c1-collect-production.md#line 37 [shop1000.txt l.93, l.139].
+  - Rank 2: agrees that the cap is set by the risk of failures that are hard to isolate; narrows: this cap is tied to
+    a deploy, and no failure rate is given, where the report's cap comes from a measured p.
+- **A6.** Shopify runs ahead in the queue: "At any given time, we run CI on 3 batches worth of pull requests in the
+  queue." Self-reported: 3 batches. Each pull request is tested on top of those ahead of it (line 40). Source: as A5.
+  Quote at R/c1-collect-production.md#line 37 [shop1000.txt l.140].
+  - Rank 3 (test ahead on the success path): agrees on a bounded window; no gain is given, and no rule for shrinking
+    the window after a failure.
+- **A7.** Shopify's rule for flaky tests: "legitimate failures will propagate to all later CI runs, but flaky tests
+  will not block later CI runs". The collect file also reads their table (values in order, header labels lost in the
+  strip, so not a quote): for an assumed 25 % flake rate, 6.25, 1.5, 0.39 and 0.097 % false removal after 2, 3, 4 and
+  5 failures in a row; tolerance 3 chosen, so a pull request is removed on its 4th failure in a row. Self-reported:
+  all these figures; the 25 % is an example, not their measured rate (line 40). Source: as A5. Quote at
+  R/c1-collect-production.md#line 38 [shop1000.txt l.122, l.126-135].
+  - Rank 2 (its measurement of the flaky share): agrees that a real failure is one that repeats; the removal after
+    several failures in a row is a rule the report does not have.
+- **A8.** Shopify before its second queue: "upwards of 50 pull requests ... could take hours to merge and deploy".
+  Self-reported: 50 or more pull requests; hours. No figure for the same case after (line 39). Source: as A5. Quote at
+  R/c1-collect-production.md#line 39 [shop1000.txt l.105].
+  - Says nothing on any rank: a before figure with no after.
+- **A9.** Rust's serial gate: "at most a single auto build is being executed" and "testing a single PR at a time,
+  combined with our long CI (~2 hours for a full run), means we can't merge a lot of PRs in a single day, and a single
+  failure greatly impacts our throughput. The maximum number of PRs we can merge in a day is around ~10."
+  Self-reported: about 2 hours a full run; about 10 pull requests a day at most. Source:
+  https://raw.githubusercontent.com/rust-lang/rustc-dev-guide/master/src/tests/ci.md . Quotes at
+  R/c1-collect-production.md#line 50 [rustci.txt l.109] and #line 48 [rustci.txt l.307-310, line corrected by the gate, c1-addendum-gate.md].
+  - Rank 6 (the worker cap, c = 1) and rank 1 (shorten the run): agrees; one slot and the run time set the daily
+    ceiling (line 49: the self-reported 2 hours allow at most 12 a day, the collector's arithmetic). No failure rate
+    is given.
+- **A10.** Rust's rollups: "a PR where we merge several pending trivial PRs so they can be tested together ... created
+  manually by a team member ... uses their judgment to decide if a PR is risky or not." Source: as A9. Quote at
+  R/c1-collect-production.md#line 48 [rustci.txt l.325-330].
+  - Rank 2: agrees on testing waiting changes together; narrows: a person picks which changes are safe to group, and
+    no rollup size, failure rate or gain is given (line 49).
+- **A11.** Chromium's flaky tests: "The CQ has roughly ~20,000 unique flaky tests, without retries, pretty much no CL
+  would ever pass the CQ." and "adding retries increases the probability that a flaky test will land on tip of tree
+  sublinearly, but mitigates the impact of the flaky test on unrelated CLs exponentially". Self-reported: about 20,000
+  flaky tests. Source: https://chromium.googlesource.com/chromium/src/+/main/docs/infra/cq.md . Quotes at
+  R/c1-collect-production.md#line 58 [chromcq.txt l.158, l.157].
+  - Rank 2 (its measurement of the flaky share): agrees that flakiness can decide whether anything passes. The report
+    ranks no retry rule, so on retries it says nothing.
+- **A12.** Chromium's limit on run time: "Median cycle time needs to be under 40 minutes for trybots. 90th percentile
+  should be around an hour (preferably shorter)." A builder must "catch enough failures to be worth adding"; one that
+  fails once every couple of weeks is "probably not worth adding". Self-reported: under 40 minutes median, about an
+  hour at the 90th percentile; a requirement for a builder to join, not a measurement. Source: as A11. Quotes at
+  R/c1-collect-production.md#line 58 [chromcq.txt l.140, l.141].
+  - Rank 1: agrees that run time is held down by rule; no gain is given. The failure yield per builder is not among
+    the ranked measures: says nothing there.
+- **A13.** Chromium's two sizes of check: the normal run "optimizes for quick turn-around time while still catching
+  most but not all regressions"; a Mega CQ runs far more tests "regardless of cycle time" for risky changes. Source: as
+  A11. Quotes at R/c1-collect-production.md#line 59 [chromcq.txt l.46].
+  - Rank 1: narrows its rule of the full suite at the gate: here the gate's normal run is a curated set that misses some
+    regressions, with a long run for risky changes; how the set is chosen is not stated.
+- **A14.** Kubernetes Tide batches first: "Automatically runs batch tests and merges multiple PRs together whenever
+  possible." and "Tide prioritizes batches over individual PRs ... will wait for the batch to complete and will merge
+  the individual PR only if the batch fails." Source:
+  https://raw.githubusercontent.com/kubernetes-sigs/prow/main/site/content/en/docs/components/core/tide/_index.md and
+  the maintainer's guide beside it (the collect file gives its path only as `.../maintainers.md`). Quotes at
+  R/c1-collect-production.md#line 67 [tide-index.txt l.23; tidemaint.txt l.19].
+  - Rank 2: agrees; no batch size, gain or failure rate is given (line 68).
+- **A15.** Tide on merges made outside it: "Don't let humans (or other bots) merge especially if tests have a long
+  duration. Every merge invalidates currently running tests for that pool." and "Any merge to a pool kicks all other
+  PRs in the pool back into `Queued for retest`." Source: the maintainer's guide, as A14. Quotes at
+  R/c1-collect-production.md#line 67 [tidemaint.txt l.10, l.18].
+  - Rank 3: agrees that a run counts only for the base it ran on, so a merge outside the queue voids the runs in
+    flight; no figures.
+- **A16.** Mozilla's autoland: patches land on a shared integration branch "that is continuously tested", and the
+  branch is closed to new pushes while sheriffs back out a failing change (line 74, the collector's words). The checks
+  run after landing, not before. Source: https://firefox-source-docs.mozilla.org/testing/automated-testing/tree-closure.html
+  . Quote at R/c1-collect-production.md#line 74 [moztree.txt l.163-164].
+  - Says nothing on any rank: the check comes after landing, and no closure, backout or batch figures are given.
+
+Not found (the collect file's own gaps):
+
+- None of the six accounts gives a controlled before and after for batching at a known failure rate (line 98).
+- GitHub: no wait time before the self-reported 33 % drop, no batch size, no failure rate (lines 27, 81).
+- Shopify: no before and after figures for the second queue (line 39); a later move to a vendor's queue was seen only
+  as a search snippet on a vendor page that returned 404, and is not cited (lines 79, 87).
+- Rust: no failure rate, rollup size or rollup gain (line 49); its blog post on the GHA migration returned 404 (line 88).
+- Chromium: no measured gain (line 60).
+- Kubernetes: no batch size, gain or failure rate in the pages read, and no project account with batch figures (lines
+  68, 80).
+- Mozilla: no closure, backout or batch figures; an older team page with figures was seen in a search, not opened,
+  and is not cited (lines 75, 89).
