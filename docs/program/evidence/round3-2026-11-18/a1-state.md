@@ -16,5 +16,18 @@ Lane file: `lane-budget.md`. Standards and limits: `ROUND.md`.
 
 ## Usage
 - Before step 1: week (all models) 53 %, week (Fable) 43 %. Stop at 62 %.
+- After four collectors: week 54 %, Fable 44 %. Orchestrator context 133,202 tokens (passed 130,000; state
+  committed, continuing lean: the remaining steps run from files).
+
+## Step 1 so far (collectors' own returns, not checked)
+- allocation: 4 sources read in their main parts (proofs not read), 1 summary; closed: Zhou, Chakrabarty,
+  Lukose (WINE 2008); Talluri body text garbled (abstract quoted only).
+- quotas: 9 sources (4 provider pages on our windows, fetched 2026-11-19); closed or partial: Wang and others
+  SIGMETRICS 2017 (abstract only), GCRA standard (Wikipedia stands in, summary), Stripe rate-limiter post (not
+  read), SRE chapter 22 saved but unread.
+- llmbudget: 8 sources; none closed; no source paces against a refilling window.
+- pacing: 5 sources; closed: Balseiro and Gur 2019 (SSRN gives HTML), Balseiro, Kim, Mahdian, Mirrokni,
+  Agarwal and others (LinkedIn, KDD 2014).
+- longjobs: running.
 
 ## Notes

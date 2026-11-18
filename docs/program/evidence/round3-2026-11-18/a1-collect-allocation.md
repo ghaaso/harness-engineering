@@ -1,0 +1,77 @@
+# a1 collect allocation: a fixed stock sold over a horizon (revenue management, bandits with knapsacks, online resource allocation)
+
+Collected 2026-11-19 by a Sonnet helper. All sources opened as PDF and read with pdftotext (two-column layout, some Greek letters and symbols lost in the text; where a quotation is garbled it says so). Line numbers are of `paper.txt` in the folder named, under `docs/program/evidence/round3-2026-11-18/papers/budget/`.
+
+## Gate summary
+- P1 Gallego and van Ryzin 1994: fixed price J_FP/J* >= 1 - 1/(2 sqrt(min{n, lambda* t})); 97.5 % at 400 items, 95 % at 100, 90 % at 25. Mark: proven in the literature (bound), quoted. gvr/paper.txt 547-575.
+- P2 Talluri and van Ryzin 1998: additive bid prices (a sum over the resources a product uses) are not optimal in general, but asymptotically optimal at large volume with the right prices, which are constant over time. Mark: proven, quoted (abstract; the body text is garbled). talluri/paper.txt 12-23.
+- P3 Badanidiyuru, Kleinberg, Slivkins: regret about O(sqrt(m OPT) + OPT sqrt(m/B)) against the optimal dynamic policy, matching lower bound; time is one resource; B = smallest budget; i.i.d. outcomes. Mark: proven, quoted. bwk/paper.txt 152-160, 267-276.
+- P4 Devanur, Jain, Sivan, Wilkens: 1 - epsilon of the offline optimum when no request is more than a share gamma of any budget (gamma about epsilon^2 / log); knows only the number of requests, not the distribution; many budgets at once. Mark: proven, quoted. devanur2/paper.txt 11-15, 412, 455-460.
+- P5 Agrawal and Devanur 2014: concave objectives; says the earlier algorithm is "used in practice". Mark: summary-level (introduction only). devanur/paper.txt 13-24.
+- Not opened: Zhou, Chakrabarty, Lukose (online knapsack threshold rules); see "Could not open".
+
+## From the library
+Look-ups on `knapsack`, `bid-price`, `revenue`, `bandits`: not recorded. `allowance`, `budget`, `threshold`: only our own records. o2-0501 ("no paper read schedules under a token allowance that refills") and o2-0404 (charge tokens to the task, spend before the reset) are the hypotheses this file bears on; r57-0408 and r57-0409 are the decision-rule hypotheses (tokens as one more width). Nothing `quoted` from these papers exists, so all five are collected here.
+
+## Papers
+
+### P1. Gallego and van Ryzin, "Optimal Dynamic Pricing of Inventories with Stochastic Demand over Finite Horizons", Management Science 40(8) 1994. Read from: https://business.columbia.edu/sites/default/files-efs/pubfiles/3943/vanryzin_optimal_dynamic_pricing.pdf (author's school copy). Saved: papers/budget/gvr/paper.txt. Read: abstract, introduction, section 3 (upper bound, fixed-price heuristic, Theorem 3, numerical example); proofs of the other sections not read.
+- Problem: sell n units by a deadline, demand a Poisson stream whose rate falls with price; choose the price over time to maximise expected revenue.
+- Mechanism: solve the deterministic (fluid) version, which gives an upper bound; its solution is one price held for the whole horizon (the run-out price p0 if stock is scarce, otherwise the revenue-maximising price p*). The optimal state-dependent price moves about that fixed price.
+- Result: "simple, fixed price policies are asymptotically optimal as the volume of expected sales tends to infinity" (txt line 22). "if demand as a function of price is known and prices are unconstrained, then a single fixed-price policy is very nearly optimal" (txt lines 76-79, two columns interleaved). Theorem 3 (txt lines 547-552): J_OFP/J* >= J_FP/J* >= 1 - 1/(2 sqrt(min{n, lambda* t})), symbols as printed. "using a fixed price for the entire horizon is quite convenient since there is no effort involved in monitoring time and inventory levels" (txt lines 528-531). The authors also say the fixed-price result holds only when the firm "knows the demand function in advance" (txt lines 92-93); with a shifting demand function a set of prices must be synthesised (txt lines 93-97).
+- Measured gain: a bound, not a measurement. "a firm that has 400 items ... Theorem 3 then guarantees that the expected revenue collected by simply offering a fixed price of p0 is at least 97.5% of what could be obtained by using an optimal state-dependent strategy. For 100 items, the guarantee drops to 95%, while for 25 items, it is only 90%" (txt lines 566-575). The authors add that these guarantees "are in fact quite pessimistic" and the heuristic is good down to about 10 items (txt lines 575-578). Baseline: the optimal state-dependent price. Workload: analytic.
+- Assumes: demand intensity a known, decreasing function of price; Poisson demand (compound Poisson in an extension); one product; a known deadline; stock n known; large expected sales; a single resource.
+- With model sessions (reasoned): units per window are tens to hundreds, which sits in the 25 to 400 band, where the bound is 90 to 97.5 % and improves as the square root of the count. The known-demand and Poisson assumptions do not hold (units arrive as the coordinator decides; token cost per unit only roughly known). Our "price" would be an admission threshold on value per token; a fixed threshold needs no monitoring but is right only when the value distribution is known in advance, which the paper itself says. A single resource: no answer for two windows.
+- Needs to know before use: tokens left, time left, the distribution of value per token over the queue, tokens per unit by kind and model.
+- Status: quoted.
+
+### P2. Talluri and van Ryzin, "An Analysis of Bid-Price Controls for Network Revenue Management", Management Science 44(11) 1998. Read from: https://business.columbia.edu/sites/default/files-efs/pubfiles/3933/network_revenue_management.pdf. Saved: papers/budget/talluri/paper.txt. Read: abstract, introduction, the statement of the asymptotic result and the re-solving remark; formulas in the body come out garbled in the text, so proofs were not checked.
+- Problem: several resources (flight legs, nights) consumed together by one product; accept or refuse each request.
+- Mechanism: one threshold ("bid") price per resource; a request is accepted only if its fare exceeds the sum of the prices of all the resources it uses. The prices come from the dual of a deterministic linear programme.
+- Result: "bid-price control is not optimal in general and analyze why bid-price schemes can fail to produce correct accept/deny decisions. However, we prove that when leg capacities and sales volumes are large, bid-price controls are asymptotically optimal, provided the right bid prices are used" (txt lines 17-20). "they are constant over time, even when demand is nonstationary, and ... may not be unique" (txt lines 21-23). "a product ... is sold only if the offered fare exceeds the sum of the threshold prices of all the resources needed" (txt lines 12-14). In practice the approximation "is usually resolved frequently to allow the vector of bid prices to adjust to changes in remaining capacity x and remaining time k" (txt lines 905-907).
+- Measured gain: none in the parts read (analytic).
+- Assumes: demand known as a distribution per period; large capacities and sales volumes (a scaling in which both grow); independent requests in each period.
+- With model sessions (reasoned): this is the source for the several-budgets question: one price per budget, and a unit that draws on several budgets pays the sum of their prices, not the dearest alone. For two windows that count the same tokens, the unit would be admitted when value per token exceeds the 5-hour price plus the weekly price. Whether the sum or the dearer alone is right when both windows are charged the same tokens is not settled by the parts read; the result is for large volume and the paper says the sum rule is not optimal in general. Hypothesis, not proven for our case.
+- Needs to know before use: demand distribution per class of request, capacity on each resource, periods left.
+- Status: quoted (abstract and statements); proofs not checked.
+
+### P3. Badanidiyuru, Kleinberg, Slivkins, "Bandits with Knapsacks", FOCS 2013 (arXiv 1305.2545v8, 2017). Read from: https://arxiv.org/pdf/1305.2545. Saved: papers/budget/bwk/paper.txt. Read: abstract, introduction (model, main results); algorithm proofs not read.
+- Problem: a learner picks an arm each step; each pull gives a reward and consumes several resources; the process stops when any one resource is used up; reward and consumption distributions are unknown and must be learned while the budgets are spent.
+- Mechanism: PrimalDualBwK keeps a multiplicative-weights price for each resource and plays the arm with the best reward per priced resource use; time is one of the resources.
+- Result: "The process stops at the first time when the total consumption of some resource exceeds its budget" (txt lines 152-153). "There is a known, finite time horizon T. We model it as one of the resources" (txt lines 159-160). Regret "O(sqrt(m OPT) + OPT sqrt(m/B))" with logarithmic factors hidden (txt lines 273-276, symbols lost in the text, form as printed in the paper), m the number of arms and B the smallest budget (txt lines 267-269, 273). "we prove that the regret bound (1) is optimal up to polylogarithmic factors" (txt line 298-299). Per-round time O(md) (txt line 285).
+- Measured gain: none (no experiment); a regret bound against the optimal dynamic policy, which "may significantly outperform the policy that plays the optimal fixed arm" (txt lines 18-20).
+- Assumes: "observations for a fixed arm ... are independent samples from a fixed joint distribution" (txt lines 155-157); known horizon; per-step consumption in [0,1]; budgets large against the number of arms.
+- With model sessions (reasoned): several budgets at once with "any one empty stops everything" matches our windows exactly (each window a resource). Assumptions that fail: i.i.d. outcomes (a rerun is not the same run) and B large against m (a budget of tens to hundreds of units against arms = model and kind-of-work pairs; the term OPT sqrt(m/B) is not small). The bound says learning the prices costs about a square root of the budget in units; it gives no number at our scale.
+- Needs to know before use: per arm (model, kind of work) the value and token use, learned on the way.
+- Status: quoted.
+
+### P4. Devanur, Jain, Sivan, Wilkens, "Near Optimal Online Algorithms and Fast Approximation Algorithms for Resource Allocation Problems" (EC 2011; arXiv 1903.03944). Read from: https://arxiv.org/pdf/1903.03944. Saved: papers/budget/devanur2/paper.txt. Read: abstract, introduction, section 2.2 (model, statements of Theorems 2.2 and 2.3); proofs not read.
+- Problem: requests arrive one at a time, each independently from an unknown distribution; accept or refuse, and choose how to serve, under several budgets at once (Adwords is a special case).
+- Mechanism: at each step take the option that minimises a potential over all budget constraints, in effect a price per budget updated from what has been consumed; the benchmark is the offline optimum that knows the whole sequence (txt lines 262-285).
+- Result: "for every possible underlying distribution, obtains a 1-epsilon fraction of the profit obtained by an algorithm that knows the entire request sequence ahead of time. The factor epsilon approaches 0 when no single request consumes/contributes a significant fraction of the global consumption/contribution by all requests together" (txt lines 11-15, epsilon symbol lost). Theorem 2.2 (txt lines 458-460): value W_E(1 - O(epsilon)) with probability 1 - delta, assuming gamma = O(epsilon^2 / log(n/delta)) (the printed formula is garbled), gamma = the largest share of one request in any budget (txt lines 455-456); "Algorithm 2 does not require any knowledge of the distribution at all" (txt line 460); "The algorithm knows m, the total number of requests" (txt line 412). Theorem 2.3: a nearly matching lower bound (txt lines 461-462; abstract lines 15-17).
+- Measured gain: a guarantee, not a measurement: the ratio to the offline optimum is 1 - O(epsilon), with epsilon of the order sqrt(gamma log n) from the printed condition (constants not in the text read).
+- Assumes: i.i.d. requests from one unknown distribution; the number of requests m known; every request small against every budget; an oracle choosing the best option for a request given the prices.
+- With model sessions (reasoned): the law is a ratio (share of one request in a budget), as the lane wants. Units that are 6 to 33 % of the worker level but a few percent of a 5-hour window or a fraction of a percent of a week give gamma about 0.01 to 0.03 for the 5-hour window and much smaller for the week (illustration only; constants unknown, so not a result). The assumption fails if one unit is a large share of a window; it holds better for the weekly window. m is only roughly known. A rerun is not the same run, so i.i.d. is doubtful.
+- Needs to know before use: m (units per window), the share gamma of one unit in each budget, the value of each unit.
+- Status: quoted.
+
+### P5. Agrawal and Devanur, "Fast Algorithms for Online Stochastic Convex Programming" (SODA 2015; arXiv 1410.7596). Read from: https://arxiv.org/pdf/1410.7596. Saved: papers/budget/devanur/paper.txt (the folder `devanur` holds this paper; the DJSW paper is in `devanur2`). Read: abstract and introduction only.
+- Problem and mechanism: online stochastic packing with concave objectives; online convex optimisation with the dual as price.
+- Result: "While the algorithm in Devanur et al. [18] (DJSW algorithm) is used in practice, the actual problem has some aspects that are not captured" (txt lines 20-24, two columns interleaved). The new algorithms "achieve near-optimal regret guarantees for both the i.i.d. and the random permutation models" (txt lines 11-15).
+- Measured gain: none; regret bounds.
+- Assumes: i.i.d. or random-permutation inputs; very small time per step.
+- With model sessions: the random-permutation model (set of units arbitrary, order random) is a weaker assumption than i.i.d. and fits "a rerun is not the same run" better (reasoned).
+- Status: summary-level (introduction only); not to be recorded as a full result.
+
+## Unknown
+Topic 3 only; not applicable. For this topic: no source read gives a rule for two nested windows that refill on separate clocks and count the same tokens, nor for a stock that expires at a reset beside a stock that expires later.
+
+## Could not open
+| Title | Routes tried | Why |
+|---|---|---|
+| Zhou, Chakrabarty, Lukose, "Budget Constrained Bidding in Keyword Auctions and Online Knapsack Problems", WINE 2008 | https://link.springer.com/chapter/10.1007/978-3-540-92185-1_63 (publisher; not fetched, paywall per search result); web search for an open copy gave mail.www2007.cpsc.ucalgary.ca/workshops/paper_81.pdf (curl: no response, code 000), https://archives.iw3c2.org/www2008/papers/pp283.html (an HTML page of another WWW 2008 entry, not the paper), https://www.microsoft.com/en-us/research/?p=324383 (links only to the publisher) | no open PDF reachable; a third-party Springer proxy in the search results was not used (not verified as legitimate). Online-knapsack threshold rules are therefore not collected here. |
+
+## Needs the owner's sign-in
+| Title | URL |
+|---|---|
+| Zhou, Chakrabarty, Lukose (WINE 2008) | https://link.springer.com/chapter/10.1007/978-3-540-92185-1_63 |

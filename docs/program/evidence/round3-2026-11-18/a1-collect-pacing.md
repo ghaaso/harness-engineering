@@ -1,0 +1,123 @@
+# a1 collect pacing: budget pacing in repeated auctions
+
+Fetch date of every paper below: 2026-11-19. Text files: `papers/budget/<short>/paper.txt` under
+`docs/program/evidence/round3-2026-11-18/`. Line numbers are lines of that file. `dmd` was extracted with
+`pdftotext -layout` (two columns; a quoted sentence may be split across interleaved lines, the quote is the column
+read in order). `smart-pacing`, `mpe`, `budget-pacing-regret`, `dyn-throttling` were extracted without `-layout`
+(one paragraph per line; the layout version of `smart-pacing` interleaved its two columns and was replaced).
+Equation symbols (mu, rho, epsilon) are lost in the text extraction; the quotes give them in words where it matters.
+
+## Gate summary
+1. dmd (Balseiro, Lu, Mirrokni, ICML 2020): the rule "price of the budget = a multiplier raised when spend per step is above budget/horizon, lowered when below"; regret order sqrt(T) when horizon and budget scale together, optimal; never runs out early. quoted (txt 99-105, 271-302, 370-380, 426-432).
+2. gaitonde (Gaitonde, Li, Light, Lucier, Slivkins, 2022/2025): same rule as a bid multiplier, target rate = budget/T; regret O(T^(3/4)) with an unknown shift in the environment; simulations on Bing data: regret rate below T^(3/5); liquid welfare at least half the optimum. quoted (txt 102, 243-258, 37).
+3. dyn-throttling (Chen et al., 2022/2023, Tencent co-authors): throttling (skip a share of units) against pacing (shade the bid): "pacing is generally superior to throttling" for i.i.d. values; throttling regret lower bound order sqrt(T); with adversarial values no throttling can beat budget/max value. quoted (txt 18, 33, 238-250).
+4. mpe (Conitzer, Kroer, Sodomka, Stier-Moses, 2018/2021): multiplicative pacing against probabilistic throttling; an equilibrium always exists but can be several; "multiplicative pacing allows a buyer to participate in more auctions and win at lower prices". quoted (txt 27-29).
+5. smart-pacing (Xu et al., Yahoo, KDD 2015): self-reported real system: re-plan "remaining budget over remaining slots" every slot; eCPC down 72, 67, 79 percent against a one-rate baseline on 3 campaigns; spend deviation under 13.9 percent. quoted, self-reported (txt 196-200, 446-447).
+6. Balseiro and Gur 2019, Balseiro, Kim, Mahdian, Mirrokni 2017/2021, Agarwal and others (LinkedIn) 2014: could not open; their content reached only through papers 1 to 5 (secondary, marked below).
+
+## From the library
+Look-ups run: `bash library/lookup.sh budget pacing`, with `allowance`, `quota`, `window` in the lane file. Result: not recorded for pacing, auctions, bid multipliers or dual prices. Records found that touch budgets without covering them: r57-0408 (hypothesis, the untested decision rule: tokens as "the units the current window can still pay for above a reserve"; this file gives the literature for that term), o2-0501 as cited by the lane file (reasoning only), x19-0407 (summary, escrow and Little's law for admission under a token budget). No `quoted` record on this sub-topic, so nothing was skipped.
+
+## Papers
+
+### P1. Balseiro, Lu, Mirrokni, "Dual Mirror Descent for Online Allocation Problems", ICML 2020 (PMLR 119). Read from: http://proceedings.mlr.press/v119/balseiro20a/balseiro20a.pdf (arXiv 2002.10421; the arxiv.org pdf route returned a 404 page, the PMLR copy is the same paper). Saved: papers/budget/dmd/paper.txt. Read: all of sections 1 to 3, the statement of Theorem 1 and Proposition 2, section 5.1; proofs (appendix) not read.
+- Problem: requests arrive one by one over T steps; each uses resources and earns revenue; the distribution is unknown; maximise revenue under a total resource limit. Budgeted bidding is the special case.
+- Mechanism: keep one price (dual multiplier) per resource. A request is taken when its revenue exceeds price times its resource use. After each request, move the price up if the request used more than the allowed share per step (budget divided by horizon) and down if less.
+- Result:
+  - Rule: "Obtain a stochastic sub-gradient ... g~t = -bt x~t + rho" (rho = initial resources per step) "Update the dual variable by mirror descent" (txt 271-302). With the squared reference function this is "online sub-gradient descent", with the entropy function "the online exponential weights algorithm" (txt 306-326).
+  - Bidding form: "x~t = 1{vt >= (1 + mu_t) bt} ... This decision can be implemented by bidding wt = vt/(1 + mu_t)" (txt 505-516): bid the value shrunk by one plus the price.
+  - Bound: "attain regret of order O(sqrt T) when the length of the horizon T and initial number of resources are scaled proportionally" (txt 24-34, 76-80). Lower bound: "no algorithm can attain regret lower than Omega(sqrt T) under our minimal assumption (Lemma 1)" (txt 76-80, 355-368), so the order is optimal.
+  - Not early: "By design, they target to consume a constant number of resources per period so as to deplete resources exactly at the end of the horizon. When a request consumes more (less) resources than the target, the corresponding dual variable is increased (decreased)" (txt 99-106). "our algorithms never deplete resources too early (Proposition 2)"; Proposition 2 gives with probability 1 that the stopping time is within a constant (about the multiplier cap over the step size) of T (txt 106-109, 426-432). The authors call this result new in the allocation literature.
+  - Regret constant: the bound in Theorem 1 has the form (constant x sqrt T) with the constant depending on the bound on revenue per step, the bound on resource use per step, and the number of resources m (txt 370-380); dependence on m is "sub-optimal" (txt 380-390).
+- Measured gain: none for budget bidding (theory). Numerical experiment is on proportional matching only; "verifies the results in Theorem 1" (txt 576-584). Not applicable to our baseline.
+- Assumes: horizon T known; requests i.i.d. from an unknown distribution with finite support (Assumption 2, txt ~334-352); revenue per step bounded by f-bar and resource use per step bounded by b-bar; resources cannot be replenished once consumed ("we cannot replenish resources once they are consumed", txt ~346); budget grows in proportion to T; step size about 1/sqrt T; the void action is always allowed. No assumption of independent value and price, none of smoothness of the dual (they contrast this with Balseiro and Gur 2019, txt 72-78, summary of that paper only).
+- With model sessions (reasoned): horizon known and fixed per window: holds for each window (5 hours; one week), refill at a known clock. Resources not replenished within a window: holds. The budget is spent in units that are tens to hundreds per window, not thousands to millions: the sqrt(T) bound is asymptotic and, at T of tens, a constant factor of order 1/sqrt(T) (about 10 to 30 percent of the optimum) is of the size of the whole signal, so the bound gives no useful guarantee, only the shape of the rule. Spend per unit small against budget: false when one unit is 1 percent or more of a window, and when 3 to 16 run at once (6 to 33 percent of a unit of parallelism); the early-depletion proof needs the largest step spend small. i.i.d. values: not true (work arrives in phases). A rerun is a second spend of a unit not planned for: it breaks "each request is spent once" and enters as extra b_t. Token cost known only roughly: the rule uses the realised spend after each unit, so a rough forecast is enough for the admission test but not for the bound.
+- Needs to know before use: value per unit in a common measure (v_t); tokens per unit by kind and model (b_t, may be learned after the unit); window length and refill time; budget in tokens.
+- Status: quoted.
+
+### P2. Gaitonde, Li, Light, Lucier, Slivkins, "Budget Pacing in Repeated Auctions: Regret and Efficiency without Convergence" (ITCS 2023; this is the Dec 2025 arXiv v6). Read from: https://arxiv.org/pdf/2205.08674v6.pdf. Saved: papers/budget/budget-pacing-regret/paper.txt. Read: abstract, section 1, Algorithm 1 and Lemma 2.2, Theorems 3.1 and 4.8 statements; proofs and section 6 details not read.
+- Problem: many bidding agents each pace their own budget by the same rule; what does the market get, and what does one agent lose against its best fixed multiplier.
+- Mechanism: the same rule as P1, stated for the bid: "Initialize mu = 0 ... target spend rate rho_k = B_k/T ... submit bid b = min(v/(1+mu), B remaining) ... mu_{t+1} = P[0, mu-bar] (mu_t - eps (rho - z_t))" where z_t is the spend in round t (txt 245-256). "if rho is above (resp., below) the current expenditure z, the agent decreases (resp., increases) her multiplier, by the amount proportional to the current deviation" (txt 243).
+- Result:
+  - "A convenient property of Algorithm 1 is that it does not run out of budget too early" (txt 256), proved in Lemma 2.2 of Balseiro and Gur (txt 258) for any, "possibly adaptive, randomized, adversarially generated" values.
+  - Individual regret: "We obtain regret O(T^(3/4)) relative to this benchmark" (txt 37) in the i.i.d.-opponents case with a step size not needing to know the drift; "Algorithm 1 is known to achieve sqrt T regret rate in this setting [13, 17]" (txt 1230).
+  - Aggregate: "at least half of the optimal expected liquid welfare" without convergence (txt 27, 7).
+  - Adversarial environments: "BwK problems in adversarial environments do not admit regret bounds: instead, one is doomed to approximation ratios ... the spend-or-save dilemma, whereby the algorithm does not know whether to spend the budget now or save it for the future" (txt 115).
+- Measured gain: semi-synthetic simulation on Bing Advertising data: "regret rate less than T^(3/5)"; against Adam, MU (multiplicative update) and optimistic gradient descent: "Adam has an improved regret rate at the expense of lower aggregate liquid welfare, MU is dominated by Algorithm 1 ..., and OGD has comparable performance" (txt 102-103). Baseline: best fixed multiplier in hindsight. A gain in percent is not given in the text read.
+- Assumes: T rounds known; opposing bids i.i.d. for the sqrt(T)-type bound, arbitrary for the T^(3/4) dynamic bound; step size set from T; value per round bounded.
+- With model sessions (reasoned): same as P1. Useful extra: the rule's property of not stopping early holds for adaptive and adversarial values, so it survives non-i.i.d. work; what is lost is the regret bound, not the safety. The "spend-or-save dilemma" is exactly our case of whether to start a large unit now or hold allowance for later.
+- Needs to know: as P1.
+- Status: quoted.
+
+### P3. Chen, Wang, Wang, Pan, Shi, Cai, Ren, Zhu, Deng, "Dynamic Budget Throttling in Repeated Second-Price Auctions" (2022; v7 Dec 2023; Tencent co-authors). Read from: https://arxiv.org/pdf/2207.04690v7.pdf. Saved: papers/budget/dyn-throttling/paper.txt. Read: abstract, section 1, statements of Theorems 3.1, 3.2 and the results table; proofs not read.
+- Problem: throttling means taking part in only a share of the auctions and bidding the unchanged value; how well can it do, and how does it compare with pacing (shading the bid).
+- Mechanism: a throttling probability is raised or lowered from the remaining budget by online gradient descent on a price variable, with an estimate of the distribution of the highest competing bid ("OGD-CB", txt 33-71).
+- Result:
+  - "In the stochastic case, we demonstrate that pacing is generally superior to throttling for the advertiser, supporting the well-known result that pacing is asymptotically optimal in this scenario. However, in the adversarial case ... throttling is also an asymptotically optimal dynamic bidding strategy" (txt 18).
+  - Lower bound: "Omega(sqrt T) lower bound on the expected regret" for any throttling strategy with stochastic values (txt 33, 238); upper bound "O(sqrt(T) log T)" for OGD-CB (txt 71, 266).
+  - Adversarial values: "any throttling strategy's asymptotic competitive ratio cannot exceed the advertiser's regularized average budget (Theorem 3.2), i.e., the average budget divided by the maximum value" (txt 33, 247); OGD-CB reaches that ratio (txt 266). If the competing price is adversarial "any throttling strategy can behave arbitrarily badly" (Theorem 3.3, txt 33).
+  - Throttling is used by Facebook, Google, LinkedIn and Yahoo (txt 22, secondary; the LinkedIn and Yahoo accounts are P5 and the unopened LinkedIn paper).
+- Measured gain: theory only; no experiment in the part read. Not applicable.
+- Assumes: T known; competing price i.i.d. from an unknown distribution; values stochastic or adversarial bounded by v-bar; average budget per step is a constant fraction of v-bar.
+- With model sessions (reasoned): throttling is the operation we have (start a unit or do not; the "bid" of a unit, its model, is a separate choice). Pacing by shading corresponds to choosing a cheaper model or fewer tokens for the same unit. Both act through a single scalar. The ratio bound (budget share divided by maximum value) is stated in a ratio, as the owner prefers: when the budget share per step is small against the largest value, throttling cannot be good in the worst case; it is the regime of few and large units.
+- Needs to know: the distribution of unit values or at least their maximum; whether a unit can be shrunk (cheaper model) as well as skipped.
+- Status: quoted.
+
+### P4. Conitzer, Kroer, Sodomka, Stier-Moses, "Multiplicative Pacing Equilibria in Auction Markets", Operations Research (forthcoming); arXiv 1706.07151v5. Read from: https://arxiv.org/pdf/1706.07151v5.pdf. Saved: papers/budget/mpe/paper.txt. Read: abstract, introduction, conclusion; the equilibrium proofs and the computation sections not read.
+- Problem: with several buyers who each scale all bids by one multiplier in [0,1] so that the budget lasts to the end, is there a consistent set of multipliers, and how bad can they be.
+- Mechanism: one multiplier per buyer, "applies a factor between 0 and 1 that uniformly scales the bids across all auctions" (txt 9, abstract); the best multiplier "will make the budget run out exactly at the end of the period, unless the buyer would not run out of budget even with the multiplier of 1" (txt 28).
+- Result:
+  - Probabilistic throttling: "tossing an appropriately weighted coin for each auction ... the buyer's budget will run out just around the end of the bidding period" but "missed opportunities may be the ones where the buyer could have won at lower cost" (txt 27).
+  - "multiplicative pacing allows a buyer to participate in more auctions and win at lower prices, compared to probabilistic throttling. Furthermore, Balseiro et al. (2021) conclude that multiplicative pacing is buyer-optimal out of various options they study" (txt 29). This second sentence is the only access to Balseiro, Kim, Mahdian, Mirrokni here: secondary, not their text.
+  - An equilibrium always exists; "a market can have multiple pacing equilibria with large variations in several natural objectives" (abstract); in practice "equilibrium multiplicity is rarely an issue" (txt ~34).
+  - Worked example: bidding the value gives 6 wins and utility $20 on a $10 budget; shading to a bid of $2 gives 7 wins and utility $25 (txt 25, figure 1 note): a 25 percent gain in utility from shading, an illustration and not a measurement.
+- Measured gain: example only; no production number. The paper notes the mechanism is used by several internet companies (txt 29, self-description).
+- Assumes: one-shot static game of many auctions with known values and budgets (a deterministic model of the whole horizon); second-price auctions; no learning.
+- With model sessions (reasoned): the static model assumes all work is known and priced in advance; useful only as the statement of what the multiplier is: the one number that makes the budget last exactly. Multiple equilibria matter only when several spenders compete for the same allowance with shared prices; our sessions draw on one allowance but do not change each other's prices, except through the shared window, which is the budget-exhaustion effect the paper names.
+- Needs to know: values, budgets, and the horizon in advance (static).
+- Status: quoted (for what is cited above).
+
+### P5. Xu, Lee, Li, Qi, Lu (Yahoo), "Smart Pacing for Effective Online Ad Campaign Optimization", KDD 2015. Read from: https://arxiv.org/pdf/1506.05851v1.pdf. Saved: papers/budget/smart-pacing/paper.txt (raw extraction). Read: sections 1 to 6 in full, the figures' captions; the offline simulation section 6.3 in part. Self-reported (a Yahoo demand-side platform; its own experiments).
+- Problem: spend a campaign's budget smoothly over 24 hours while buying the best impressions.
+- Mechanism: time is cut in slots (15 minutes); at the end of each slot the remaining budget is re-spread over the remaining slots by minimising deviation from the planned spend (the "plan" is even spend or traffic-shaped); then the share of requests bid on (the pacing rate, probabilistic throttling) is raised layer by layer, best predicted responders first, until the next slot's spend equals that target.
+- Result:
+  - "after running for m time slots, the remaining budget becomes B_m. We need to decide the desired spending in each of the remaining time slots ... so that the total budget can be spent out and the penalty is minimized" (txt 196, constraint: the sum of the remaining slot spends equals B_m, txt 197-207).
+  - Choice of throttling: "Probabilistic throttling directly influences budget spending while bid modification changes the win-rate to control spending, which is not preferred in the RTB environment ... the bid win-rate curve is usually not smooth so modifying bid can cause significant changes in budget spending" (txt 133), and "throttling with a pacing rate decouples pacing control from bid calculation" (txt 133). This contradicts the theoretical ranking of P3 and P4 in practice: real-system finding, self-reported.
+  - A single global threshold was tried and rejected: "ad requests are usually not smoothly distributed over response rate, and therefore it is difficult to realize smooth control with a single threshold" (txt 440).
+- Measured gain (self-reported): "Compared to the baseline, the eCPC reductions are -72%, -67%, and -79% for the three campaigns" (txt 446), baseline "our approach with only one layer (i.e. using a global pacing rate)" (txt 443), 3 real campaigns, 24 h, 15-minute slots, 8 layers; spend smoothness: "AvgErr ... 6.4% : 6.8%, 9.1% : 9.2%, and 10.2% : 9.8%" for baseline against the method (txt 446), i.e. no change in smoothness; over-time test, 4 campaigns, first week baseline, second week method: eCPC cut up to "almost -50%", spend within "13.9% deviation from the spending plan" (txt 447). Against another published controller the paper reports AvgErr 96 percent against 18 percent (txt 672, a comparison on their simulation, self-reported). The gain comes from choosing better impressions (value per spend), not from the pacing loop: smoothness is equal to the one-rate baseline.
+- Assumes: very many requests per slot (tens of billions a day for the platform, txt 61); a response-rate model estimates each request's value; supply much larger than demand; the slot interval short against the day.
+- With model sessions (reasoned): the re-plan rule "remaining over remaining" is the ratio rule asked for: target spend in a slot = remaining budget share over remaining time share. It needs the slot to be long enough to contain many units: with units of minutes and 5-hour windows the slot is 15 to 30 minutes, which holds only a few units, so the control is coarse. The gain from ranking by value (layers) transfers as "start the units with the best value per token first"; the paper's own result shows this carries the gain, not the loop.
+- Needs to know: value per unit (the response-rate estimate), unit cost, the plan shape (even or follow load).
+- Status: quoted, self-reported.
+
+### P6 (not opened) Balseiro and Gur, "Learning in repeated auctions with budgets: regret minimization and equilibrium", Management Science 2019. Saved: nothing.
+- Second-hand only: P2 txt 25 gives its algorithm as the gradient pacing rule of P2 "first introduced by Balseiro and Gur [13] in the context of utility maximization in second-price auctions"; P2 txt 107 says it gives "sqrt T regret rates for the stochastic environment and approximation guarantee for the adversarial environment, under various convexity assumptions"; P1 txt 72-78 says they assume values and competing bids are independent and the dual objective is thrice differentiable and strongly convex. All three are summary-level statements about this paper, not quotes of it.
+- Status: not opened.
+
+### P7 (not opened) Balseiro, Kim, Mahdian, Mirrokni, "Budget management strategies in repeated auctions" (WWW 2017; Operations Research 2021). Saved: nothing.
+- Second-hand only: P4 txt 29 (above). A search result snippet (WebSearch, summary) says the paper compares six methods (probabilistic throttling, thresholding, bid shading, reserve pricing, two forms of multiplicative boosting) on sponsored-search data. Summary, not quoted.
+- Status: not opened.
+
+### P8 (not opened) Agarwal, Ghosh, Wei, You (LinkedIn), "Budget pacing for targeted online advertisements at LinkedIn", KDD 2014.
+- Second-hand only: P3 txt 22 lists LinkedIn as a user of probabilistic throttling; P5 txt 133 cites it for throttling and for the point that "SSPs usually set reserve prices so pacing control may fail if the bid need to be modified to be below the reserve price" (txt 133). Nothing of its own figures was read.
+- Status: not opened.
+
+## Unknown
+(Topic 3 only; none here.)
+
+## Could not open
+| Title | Routes tried | Why |
+|---|---|---|
+| Balseiro and Gur, Learning in repeated auctions with budgets (Management Science 2019) | arXiv title search (not on arXiv); OpenAlex lists only the doi.org Management Science page and SSRN 2921446; SSRN Delivery.cfm link (https://papers.ssrn.com/sol3/Delivery.cfm/SSRN_ID2921446_code1.pdf) returned an HTML page, not a PDF; author-page guess on columbia.edu returned 404; Semantic Scholar API rate-limited (429); web search found no open copy | no open full text reachable by command; SSRN blocks automated download |
+| Balseiro, Kim, Mahdian, Mirrokni, Budget management strategies in repeated auctions (WWW 2017 / Operations Research 2021) | OpenAlex (doi.org/10.1145/3038912.3052682, doi.org/10.1287/opre.2020.2073, SSRN 2858261); Google storage pdf guess https://storage.googleapis.com/pub-tools-public-publication-data/pdf/46034.pdf returned an XML error; SSRN Delivery.cfm returned HTML; research.google/pubs/pub46034 is a landing page only | no open PDF reachable; SSRN blocks automated download |
+| Agarwal, Ghosh, Wei, You, Budget pacing for targeted online advertisements at LinkedIn (KDD 2014) | OpenAlex marks it "closed"; unpaywall lookup needs a contact email (not supplied, privacy); web search gave the ACM landing page (doi 10.1145/2623330.2623366) and a slide deck on videolectures.net, no open PDF | publisher access only; not worked round |
+
+## Needs the owner's sign-in
+Balseiro and Gur 2019 | https://doi.org/10.1287/mnsc.2018.3174 (Management Science) or SSRN 2921446
+Balseiro, Kim, Mahdian, Mirrokni | https://doi.org/10.1287/opre.2020.2073 or https://doi.org/10.1145/3038912.3052682
+Agarwal and others, LinkedIn | https://doi.org/10.1145/2623330.2623366
+
+## What the five read papers say together (for the analyst; reasoned from the quotes above, not a finding)
+- One rule appears in P1, P2 and, in a different form, P5: the target spend per step is the budget left divided by the steps left; a scalar (price or multiplier) goes up when spend runs above that target and down when below. P1 and P2 prove it never runs out early and has regret of order sqrt(T) to T^(3/4); P5 uses the remaining-over-remaining form and measures it.
+- Every bound is asymptotic in T with spend per step small against the budget. None is stated for tens of units, none for units that are 6 to 33 percent of the level. For that regime the only proof in these papers is the opposite one: P3 Theorem 3.2 says that when the average budget per step is small against the largest value, no throttling can beat budget share divided by maximum value in the worst case.
+- Throttling against price adjustment: theory (P3, P4, and P7 through P4) favours shading the bid for i.i.d. values; the one real system read (P5) chose throttling for reasons of control stability and reserve prices. No paper read measures the two against each other on a common workload with a number: not found.
