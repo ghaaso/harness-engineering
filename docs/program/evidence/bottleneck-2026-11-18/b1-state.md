@@ -32,7 +32,9 @@ skills, memory). A successor starts here and reads nothing else of b1's session.
 
 ## Next (each launch: "Read and follow exactly the brief in <path>", model as named, description "<kind>: ...")
 1. analyse (Opus): done, 94,000 tokens, 25 minutes: BUILD-IN.md (draft, not yet gated or refuted), b1-claims.md (174 claims C, 21 choices D). Successor starts at step 2.
-2. Together, once b1-claims.md ends with the done line: gate (Sonnet, kind run) b1-brief-gate.md -> b1-gate.md,
+2. DONE by the successor: gate 174 PASS of 174 (80,000 tokens, quote placement only); refute 168 confirmed,
+   22 hold in part, 0 refuted, 5 cannot be checked (218,000 tokens, 13 minutes). Week still 50 %. Was:
+   together, once b1-claims.md ends with the done line: gate (Sonnet, kind run) b1-brief-gate.md -> b1-gate.md,
    and refute (Opus, kind refute, fresh) b1-brief-refute.md -> b1-refute.md.
 3. fold (Opus, kind analyse): b1-brief-fold.md -> BUILD-IN.md final, library/journal/2026-11-18/b1.jsonl.
 4. Check by command: BUILD-IN.md has sections 0 to 6 and "Verdicts"; b1.jsonl parses; read usage.
