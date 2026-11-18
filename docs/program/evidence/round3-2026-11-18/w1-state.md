@@ -13,7 +13,7 @@ the orchestration lines named in ROUND.md, then this file; then go on from "Next
 | 1 | collect: sonnet x6 | `w1-brief-collect.md` | `w1-collect-{isolation,grain,engines,order,merge,long}.md` | six done (`long` after the handover) |
 | 1b | collect: sonnet (second attempts) | `w1-brief-second.md` | section "Second attempt" in the collect file | done for isolation, merge, order, grain, long (2026-11-19, successor); engines needed none |
 | 1c | collect: sonnet (topic `production`, sub-topic 7 of `lane-writers.md`) | `w1-brief-collect.md` | `w1-collect-production.md` | done (added by the top session on the owner's word, 2026-11-19): 8 quoted, 1 summary (Meta server-side rebase, third-party notes only), 0 not opened, no sign-in needed; 7 library records reused; 142,836 tokens |
-| 2 | analyse: opus | `w1-brief-analyse.md` | `w1-report.md` (draft), `w1-claims.md` | over seven collect files; first launch stopped before it wrote anything, to wait for `production` |
+| 2 | analyse: opus | `w1-brief-analyse.md` | `w1-report.md` (draft), `w1-claims.md` | done over seven collect files (first launch stopped unwritten, to wait for `production`): 98 claims (84 proven, of which 6 self-reported, 10 preprint, 5 simulation; 7 measured here; 7 hypothesis); 357,280 tokens; week 55 % after |
 | 3 | run: sonnet + refute: opus | `w1-brief-gate.md`, `w1-brief-refute.md` | `w1-gate.md`, `w1-refute.md` | waiting |
 | 4 | analyse: opus (fold) | `w1-brief-fold.md` | `w1-report.md` final, `library/journal/2026-11-19/w1.jsonl` | waiting |
 | 5 | extract: haiku x7, then run: sonnet | `w1-brief-extract.md`, `w1-brief-check.md` | `x25` to `x29.jsonl`, `x40.jsonl`, `x41.jsonl` (production), `w1-check.md` | waiting |
