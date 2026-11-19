@@ -220,4 +220,4 @@ only through `hookCreate` (strict create, 0b), after every read-only check of th
 
 ## FX-CLAIM (round 3)
 
-`stepClaim` (step 4, after the epoch gate, no lock): a malformed `session_id` → `bad-input`; no claim → strict create of the session claim; another session → `attempt-claimed`; a tombstone → `attempt-cancelled`; bytes that do not parse → `claim-invalid`. Tests: T10b; T13 makes its session's claims before counting.
+`stepClaim` (step 4, after the epoch gate, no lock): a `session_id` not of FX-CGATE's `SESSION_ID_RE` (a lowercase UUID) → `bad-input`; no claim → strict create of the session claim; another session → `attempt-claimed`; a tombstone → `attempt-cancelled`; bytes that do not parse → `claim-invalid`. Tests: T10b; T13 makes its session's claims before counting.

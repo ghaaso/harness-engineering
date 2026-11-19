@@ -262,13 +262,23 @@ function redoLine(env, handle, kind, T, E, match, data) {
 }
 const confirmedStop = (l) => !!l.data && l.data.confirmed === true;
 
+/** The target attempt's claim (FX-CLAIM step 6), read by the request and by its repeat's redo. */
+function targetClaim(root, T, k, att) {
+  return lib.readClaim(att.folder ? path.resolve(root, att.folder) : path.join(root, 'wt', `${T}-e${k}`));
+}
+
 /** The line of the stop that a death left missing, from the row (the after-image); false when none is due. */
 function stopRedo(env, handle, row, T, E, pre) {
   const k = targetEpoch(row);
   const att = safe(() => lib.attemptOf(row, k), null);
   if (row.step === 'stop-requested') {
-    const session = (att && att.session) ?? (pre && pre.k === k ? pre.tt.folderSessions[0] : null) ?? null;
-    return redoLine(env, handle, 'stop-request', T, E, () => true, { session });
+    // FX-CLAIM step 6 on the merge: the line names what the request named. The claim holder first; a
+    // tombstone's request (made only with a folder session visible) names every folder session.
+    const folder = (pre && pre.k === k ? pre.tt.folderSessions : null) ?? [];
+    const claim = att ? targetClaim(env.root, T, k, att) : { kind: 'none', session_id: null };
+    const session = (claim.kind === 'session' ? claim.session_id : null) ?? (att && att.session) ?? folder[0] ?? null;
+    const named = claim.kind === 'tombstone' && folder.length ? { sessions: folder } : {};
+    return redoLine(env, handle, 'stop-request', T, E, () => true, { session, ...named });
   }
   if (row.step !== 'stopped' || !att || att.stop !== 'confirmed') return false;
   const data = { session: att.session ?? null, confirmed: true, grew: [], survivors: [], zombie_tokens: row.state === 'committed' ? 0 : null };
@@ -332,7 +342,7 @@ async function modeRequest(env, T, E) {
       // a tool call, and none can) confirms at once only when no folder session is visible; with one
       // visible, the stop is requested for every folder session and goes through verify. Otherwise the
       // request names the claim holder (today's sources after it).
-      const claim = lib.readClaim(att.folder ? path.resolve(root, att.folder) : path.join(root, 'wt', `${T}-e${k}`));
+      const claim = targetClaim(root, T, k, att);
       const tomb = claim.kind === 'tombstone';
       const session = (claim.kind === 'session' ? claim.session_id : null) ?? att.session ?? pre.tt.folderSessions[0] ?? null;
       // Review U1-F5 (R9, R10): an admitted attempt (it has a manifest) may have a session the

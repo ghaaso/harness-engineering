@@ -140,3 +140,7 @@ The row is written before its line, so a death between the two leaves the row mo
 
 - `request` at stop-requested: the `stop-request` line (the target attempt's session, else the folder session). At stopped (both modes): the confirmed `stop` line of the target attempt (`stop` confirmed), `zombie_tokens` null (0 for a committed row). `verify` at stopped takes the run lock only when that line looks missing, and reads the row again under it.
 - Test: `tcb/test/redo.test.mjs`.
+
+## FX-CLAIM with FX-REDO (CLAIM fix round, the merge)
+
+`request` repeated at stop-requested rebuilds the `stop-request` line as the request wrote it: the session is the target attempt's claim holder first (`targetClaim`), then the attempt's session, then the first folder session; after a tombstone, `sessions` lists every folder session visible. Test: redo.test.mjs, the stop request subtest.

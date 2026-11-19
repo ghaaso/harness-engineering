@@ -612,9 +612,9 @@ function checkAccess(pass) {
 // fence cancelled the attempt) -> deny attempt-cancelled. A malformed session_id -> deny bad-input.
 function stepClaim(pass) {
   const { io, attempt, task, epoch } = pass;
-  const sid = pass.hook.session_id;
-  // the session id's form (a UUID; FX-CGATE's SID_RE is the same form)
-  if (typeof sid !== 'string' || !/^[0-9a-f-]{36}$/.test(sid)) throw new Deny('bad-input', 'session_id missing or malformed');
+  // the session id's form: FX-CGATE's SESSION_ID_RE, a lowercase UUID (callerSession)
+  const sid = callerSession(pass);
+  if (!sid) throw new Deny('bad-input', 'session_id missing or not a UUID');
   const file = W.join(attempt, 'claim.json');
   const held = () => {
     let v;
@@ -647,7 +647,7 @@ function stepReadySlot(pass) { // eslint-disable-line no-unused-vars
 // A caller is named by the hook input's `session_id`, the CLI's id: a lowercase UUID (F-P1b). The app's
 // session tools name a session by the app's own id, `local_<uuid>` (CGATE M1): a close record is named
 // by that id only, so `self`, a CLI id or any other text is never a stop target (a CLI id given to the
-// archive tool answers "not found" while the session lives). Not `SID_RE`: FX-CLAIM may declare it.
+// archive tool answers "not found" while the session lives). FX-CLAIM's stepClaim checks the same form.
 const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const APP_SESSION_ID_RE = /^local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const NONCE_RE = /^[0-9a-f]{32}$/;

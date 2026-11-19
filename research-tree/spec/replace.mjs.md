@@ -238,3 +238,7 @@ The row is written before its line, so a death between the two leaves the row mo
 - `start`: post-state admitted at E with a manifest; the `admit` line (`reservation`, `live`, `free_mb` null).
 - `bind`: post-state bound with the same session; the `bind` line (`boot` from the attempt).
 - Test: `tcb/test/redo.test.mjs` (the death made through the fs seam).
+
+## FX-CLAIM with FX-REDO (CLAIM fix round, the merge)
+
+`fence` repeated at its post-state rebuilds a no-start fence's line as `lib.fence` wrote it: a failure reason with no `fails` entry of epoch E was a no-start fence under `H_nostart` (FX-CLAIM N7), so `host`, `restart_charged` and `limit` are false. Test: redo.test.mjs, the no-start subtest.

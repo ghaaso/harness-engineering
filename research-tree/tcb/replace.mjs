@@ -600,9 +600,12 @@ function fenceRedo(env, handle, row, T, E, reason) {
   if (!(row.epoch === E + 1 && row.step === 'fenced' && row.reason === reason && att && att.cut && typeof att.cut === 'object')) return null;
   const failure = FAILURE.has(reason);
   const fail = failure ? (row.fails ?? []).find((x) => x && x.epoch === E && x.class === reason) ?? null : null;
+  // FX-CLAIM N7 on the merge: lib.fence pushes no `fails` entry for a no-start fence under H_nostart (a
+  // tombstone) and charges nothing, so a failure reason with no fail of epoch E was that fence.
+  const free = failure && !fail;
   const host = !!(fail && fail.host === true);
-  const limit = row.limit === true;
-  const restartCharged = failure && !limit && !host;
+  const limit = !free && row.limit === true;
+  const restartCharged = failure && !free && !limit && !host;
   const cutFiles = att.cut.files && typeof att.cut.files === 'object' ? Object.keys(att.cut.files).length : 0;
   const data = { reason, from: E, to: E + 1, host, restart_charged: restartCharged, limit, cut_files: cutFiles };
   const redo = redoLine(env, handle, 'fence', T, E + 1, (l) => !!l.data && l.data.from === E, data);
