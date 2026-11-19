@@ -155,16 +155,15 @@ function rowAct(root, tr, row, facts) {
   const planned = rowActPlanned(root, tr, row, facts);
   if (ownerOrNone(planned)) return null;
   const { slotFree, blocked, tick, svd } = facts;
-  const { state, step } = row;
   const e = row.epoch;
-  if (state === 'failed' || row.limit === true) return null; // the owner's
-  if (state === 'planned' && step === 'none') return !blocked && slotFree ? 'replace-fence' : null;
-  if ((state === 'active' || state === 'parked') && step === 'stopped') return !blocked && slotFree ? 'replace-start' : null;
-  if (step === 'fenced' || (state === 'committed' && step === 'bound')) return 'stop-request';
-  if (step === 'stop-requested') {
-    const k = state === 'committed' ? e : e - 1;
+  // 3. The "can take now" filters (FIX-JOIN point 11): the work-creating first fence and restart wait
+  // for a free slot and for neither halted nor draining; audit and commit are class 11's (READY); a
+  // verify waits until its sample is stop_verify_deltas ticks old. Every other act is due as planned.
+  if (planned === 'replace-fence' || planned === 'replace-start') return !blocked && slotFree ? planned : null;
+  if (planned === 'audit' || planned === 'commit') return null;
+  if (planned === 'stop-verify') {
+    const k = row.state === 'committed' ? e : e - 1;
     const target = attemptOfSafe(row, k);
-    const stop = target && target.stop ? target.stop : 'none';
     let sample = null;
     try {
       sample = lib.readJson(path.join(root, 'run', 'stop-sample', `${row.task}-e${k}.json`));
@@ -172,27 +171,18 @@ function rowAct(root, tr, row, facts) {
       sample = null;
     }
     if (sample && Number.isInteger(sample.tick)) return tick >= sample.tick + svd ? `stop-verify@${sample.tick}` : null;
-    if (stop === 'unconfirmed') return 'stop-verify@-';
-    if (stop === 'none' || stop === 'requested') return 'stop-session';
-    return null;
+    return target && target.stop === 'unconfirmed' ? 'stop-verify@-' : null;
   }
-  if (step === 'admitted') {
-    let found = [];
-    try {
-      found = lib.transcriptsForFolder(tr, attemptDir(root, row, e)) ?? [];
-    } catch {
-      found = [];
-    }
-    return found.length ? 'bind' : 'start-session';
-  }
-  if (step === 'started') return 'bind';
-  return null;
+  return planned;
 }
 
-// FX-PLAN, rowAct step 1: planAct(row, facts) with the row's facts (claim, start.json, lease,
-// zombieOver, ...). Undefined until FX-PLAN, so today's body decides alone.
+// FX-PLAN, rowAct step 1: lib.planAct over lib.planFacts, the planner status's nextOf calls, with the
+// watcher's facts (`facts.plan`: tick, wall time, lease, an empty process list as slotCount has it,
+// the step-7 sessions and the rows over Z). The transcript-visible branch is gone: the claim decides.
 function rowActPlanned(root, tr, row, facts) { // eslint-disable-line no-unused-vars
-  return undefined;
+  const p = facts.plan ?? {};
+  const zombieOver = p.zombieRows instanceof Set && p.zombieRows.has(row.task);
+  return lib.planAct(row, lib.planFacts(root, row, { ...p, blocked: facts.blocked === true, zombieOver, audited: false }));
 }
 
 // FX-W5 step 1 (FX-PLAN step 2): an `owner` or `none` act raises no act due, so it is never raised
@@ -571,6 +561,7 @@ async function evaluate(env, state, facts, counted) {
 
   // c. Zombie writes and zombie spend: attempts k < e, and fenced attempts not confirmed stopped.
   const zFrac = th.get('Z_frac');
+  const zombieRows = new Set(); // FX-PLAN: rows whose zombie spend is over Z (class 25), owner rows for the planner
   for (const row of table.tasks ?? []) {
     const e = row.epoch;
     let zombieTokens = 0;
@@ -593,6 +584,7 @@ async function evaluate(env, state, facts, counted) {
     const eTask = num(row.e_task);
     if (zombieTokens > 0 && zombieTokens > zFrac * eTask) {
       conds.push({ cls: 25, task: row.task, epoch: e, detail: { zombie_tokens: zombieTokens, z: zFrac * eTask } });
+      zombieRows.add(row.task);
     }
   }
 
@@ -681,8 +673,9 @@ async function evaluate(env, state, facts, counted) {
   // stay silent while work waits. Keyed and acknowledged like every class (step 5).
   const rows = table.tasks ?? [];
   let used = Infinity;
+  const sessions7 = []; // FX-PLAN: the step-7 sessions, for the planner
   try {
-    const sc = await lib.slotCount(rows, [], tr, { root }); // empty process list: no PowerShell per tick
+    const sc = await lib.slotCount(rows, [], tr, { root, counted: sessions7 }); // empty process list: no PowerShell per tick
     used = num(sc && sc.live) + num(sc && sc.unknown) + num(sc && sc.unconfirmed);
   } catch (x) {
     if (x && x.exit === 3) throw x;
@@ -691,9 +684,13 @@ async function evaluate(env, state, facts, counted) {
   const slotFree = used < num(th.get('N_max'), 0);
   const blocked = runFlags.halted === true || runFlags.draining === true;
   const svd = num(th.get('stop_verify_deltas'), 0);
+  const opt = (k) => (th.has(k) ? th.get(k) : undefined);
+  // FX-PLAN: the planner's facts as status has them, with the watcher's empty process list and tick.
+  const plan = { ticksTotal: tick, nowMs, lease: { start_lease_ticks: opt('start_lease_ticks'), start_lease_ms: opt('start_lease_ms') },
+    procList: [], counted: sessions7, Hmax: opt('H_max'), zombieRows };
   let rowActs = 0;
   for (const row of rows) {
-    const act = rowAct(root, tr, row, { slotFree, blocked, tick, svd });
+    const act = rowAct(root, tr, row, { slotFree, blocked, tick, svd, plan });
     if (!act) continue;
     rowActs += 1;
     conds.push({ cls: 17, task: row.task, epoch: row.epoch, act, detail: { act } });

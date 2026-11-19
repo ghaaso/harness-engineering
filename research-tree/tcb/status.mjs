@@ -420,7 +420,8 @@ async function computeStatus(root, th, ce, pre, facts, table, anomalies) {
 
   if (torn && (torn.length === undefined || torn.length > 0)) anomalies.push({ code: 'ledger-torn', detail: { bytes: torn.length ?? null } });
 
-  const slots = await lib.slotCount(table.tasks, pre.procList, tr, { root });
+  const counted = []; // FX-PLAN: the step-7 sessions, for the planner
+  const slots = await lib.slotCount(table.tasks, pre.procList, tr, { root, counted });
   const res = await lib.reservation(table.tasks, spentOf);
   const flags = lib.runFlags(lines, ce);
   const blocked = flags.halted === true || flags.draining === true;
@@ -429,6 +430,7 @@ async function computeStatus(root, th, ce, pre, facts, table, anomalies) {
   const hardFrac = th.get('hard_frac');
   const zFrac = th.get('Z_frac');
 
+  const plan = planContext(th, watcher, facts.now, pre.procList, counted);
   const tasks = [];
   for (const row of table.tasks ?? []) {
     const e = row.epoch;
@@ -477,7 +479,7 @@ async function computeStatus(root, th, ce, pre, facts, table, anomalies) {
       soft: Math.floor(softFrac * eTask),
       hard: Math.floor(hardFrac * eTask),
       window: e >= 1 ? windowOf(row.task, e) : null,
-      next: nextOf(root, row, { blocked, zombieOver, readyPending, lines }),
+      next: nextOf(root, row, { blocked, zombieOver, lines, plan }),
     });
   }
 
@@ -579,38 +581,29 @@ async function computeStatus(root, th, ce, pre, facts, table, anomalies) {
   };
 }
 
-// The row's next action (spec Steps, "first match").
-function nextOf(root, row, { blocked, zombieOver, readyPending, lines }) {
-  const { state, step } = row;
+// The row's next action (spec Steps, "first match"): FX-PLAN's lib.planAct over lib.planFacts, the
+// one planner the watcher's rowAct also calls. `plan`: {ticksTotal, nowMs, lease, procList, counted,
+// Hmax}, made once per build. `audited`: an `audit` line of this task and epoch newer than its last
+// `intake` line (commit, else audit).
+function nextOf(root, row, { blocked, zombieOver, lines, plan }) {
   const e = row.epoch;
-  if (state === 'failed' || row.limit === true || zombieOver) return 'owner';
-  if (state === 'planned' && step === 'none') return blocked ? 'none' : 'replace-fence';
-  if ((state === 'active' || state === 'parked') && step === 'stopped') return blocked ? 'none' : 'replace-start';
-  if (step === 'fenced' || (state === 'committed' && step === 'bound')) return 'stop-request';
-  if (step === 'stop-requested') {
-    const target = state === 'committed' ? e : e - 1;
-    let stop = 'none';
-    try {
-      stop = lib.attemptOf(row, target).stop ?? 'none';
-    } catch {
-      stop = 'none';
-    }
-    // stop.mjs names the sample by the target attempt (wt/<task>-e<k>), not by the row's epoch.
-    const sample = exists(path.join(fileOf(root, 'stopSample'), `${row.task}-e${target}.json`));
-    // A sample means `stop verify` has started: verify again before anything else.
-    if (stop === 'unconfirmed' || sample) return 'stop-verify';
-    if (stop === 'none' || stop === 'requested') return 'stop-session';
-    return 'stop-verify';
-  }
-  if (step === 'admitted') return 'start-session';
-  if (step === 'started') return 'bind';
-  if (step === 'bound' && readyPending) {
-    const intake = lib.lastLine(lines, 'intake', (l) => l.task === row.task && l.epoch === e);
-    const audit = lib.lastLine(lines, 'audit', (l) => l.task === row.task && l.epoch === e);
-    const intakeSeq = intake ? intake.seq : 0;
-    return audit && audit.seq > intakeSeq ? 'commit' : 'audit';
-  }
-  return 'none';
+  const intake = lib.lastLine(lines, 'intake', (l) => l.task === row.task && l.epoch === e);
+  const audit = lib.lastLine(lines, 'audit', (l) => l.task === row.task && l.epoch === e);
+  const audited = !!audit && audit.seq > (intake ? intake.seq : 0);
+  return lib.planAct(row, lib.planFacts(root, row, { ...plan, blocked, zombieOver, audited }));
+}
+
+// FX-PLAN: the planner's run-wide facts for one build (the start lease's ticks and wall time, H_max).
+function planContext(th, watcher, now, procList, counted) {
+  const opt = (k) => (th.has(k) ? th.get(k) : undefined);
+  return {
+    ticksTotal: watcher && Number.isInteger(watcher.ticks_total) ? watcher.ticks_total : null,
+    nowMs: Date.parse(isoOf(now)),
+    lease: { start_lease_ticks: opt('start_lease_ticks'), start_lease_ms: opt('start_lease_ms') },
+    procList,
+    counted,
+    Hmax: opt('H_max'),
+  };
 }
 
 // ---------------------------------------------------------------- build and reconcile

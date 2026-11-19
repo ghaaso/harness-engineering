@@ -100,7 +100,7 @@ node <root>/tcb/<name>.mjs [<mode>] --root <dir> [--ce <n>] [--task <id> --epoch
 | 5 | `ready-wins` | `replace.mjs fence` with any reason but `first` and `tainted` (a planned hand-over, a park, a cut and a drop included; decision 40, M6) found a READY of the current epoch: commit first (R7) |
 | 6 | `deferred` | Refused for now; retry on a later turn with the same call (admission refused, not quiescent, intake already running). The row stays at its step, no new fence, no count (R3) |
 | 10 | `reopened` | A dismissal was reopened (tms, R38); also a watcher wake class |
-| 11-17 | watcher, non-urgent | 11 `ready`, 12 `repair`, 13 `soft-limit`, 14 `checker-batch`, 15 `window-limit`, 16 `drain`, 17 `act-due` (the planner's own predicate holds: a row the coordinator can act on, a free slot for a waiting row, a drain ready to hand over, a run with every row terminal, or an `event` line above `acked_seq` whose condition has cleared; decision 40, M3) |
+| 11-17 | watcher, non-urgent | 11 `ready`, 12 `repair`, 13 `soft-limit`, 14 `checker-batch`, 15 `window-limit`, 16 `drain`, 17 `act-due` (the planner's own predicate holds, `lib.planAct`, one function for status and the watcher, first match (FX-PLAN): a row the coordinator can act on, a free slot for a waiting row, a drain ready to hand over, a run with every row terminal, or an `event` line above `acked_seq` whose condition has cleared; decision 40, M3) |
 | 20-27 | watcher, urgent | 20 `stall`, 21 `hang`, 22 `loop`, 23 `hard-limit`, 24 `memory`, 25 `stop-unconfirmed` (zombie spend past Z), 26 `common-cause`, 27 `tamper-seen` |
 | 30 | `alarm` | `watch.mjs --alarm`: the long silence elapsed |
 | 64 | `stale-ce` | `--ce` differs from `run/coord.json` (also: a watcher or alarm superseded by a newer ce) |
@@ -405,7 +405,8 @@ Fixed `check` subjects (check: subject): witness: `witness`; tms: `labels`; rend
 lines after acked_seq), slots: {live, unknown, unconfirmed, max}, memory: {free_mb, reserve_mb,
 peak_mb}, budget: {B, reservation, r, spent_total}, halted: bool, draining: bool,
 tasks: [{task, state, step, epoch, V, spent, e_task, soft, hard, window, next:
-none|replace-fence|replace-start|stop-request|stop-session|stop-verify|start-session|bind|audit|commit|owner}],
+none|replace-fence|replace-start|stop-request|stop-session|stop-verify|start-session|bind|audit|commit|owner, or (FX-PLAN) `replace-fence --reason <r>`, `replace-fence --reason crash --if-unclaimed`,
+`close-session <sid>`}],
 watcher: {alive, ce, last_tick_at, ticks_total}, alarm: {alive, ce}, open_intents: key[],
 not_run: [{check, subject}], anomalies: [{code, detail}]}`. A pure function of files; any writer
 gives the same view for the same inputs (except `generated_at`). `V` is `lib.variant` (null where it
@@ -461,7 +462,8 @@ exits for a key only while that line's seq > `acked_seq`; a condition that clear
 returns gets a new onset and raises again. For class 17 `act-due` the second part names the act
 too: `17|<task or ->:<act>|<epoch or ->|<onset_tick>` (acts: `replace-fence`, `replace-start`,
 `stop-request`, `stop-session`, `stop-verify@<sample tick or ->`, `start-session`, `bind`,
-`handover`, `run-terminal`, `events`), so a row whose next act changes raises again.
+`handover`, `run-terminal`, `events`, and FX-PLAN's `replace-fence --reason <r>`, `replace-fence --reason crash
+--if-unclaimed`, `close-session <sid>`), so a row whose next act changes raises again.
 `parse-state` = `{end_byte, last_call: {id, usage}?, calls, input, cache_read, cache_write, output,
 last_context, peak_context, loop: {sig, run}}`: each tick parses only from `end_byte`
 (`parseTranscript(..., {fromByte, lastCall})`); a file shorter than `end_byte` is re-parsed from 0.
@@ -1280,7 +1282,8 @@ Settled here where the sources leave it open or disagree (D = the design, L = a 
     EventuallyResolves): the watcher raises class 17 `act-due` on the planner's own predicate (the
     `next` of status §3.8 for each row, `owner` excluded; `replace-fence`/`replace-start` only with
     a free slot and neither halted nor draining; `stop-verify` once its sample is
-    `stop_verify_deltas` ticks old; an admitted row whose folder has a transcript is `bind`; a drain
+    `stop_verify_deltas` ticks old; FX-PLAN: an admitted row is `bind` once it holds a session claim, quiet
+    while its start lease runs, then `replace-fence --reason crash --if-unclaimed`; a drain
     of this ce with no slot used; every row terminal; an `event` line above `acked_seq` whose key
     is no longer active). It is keyed and acknowledged like every class (§3.10), so a condition
     the coordinator has acknowledged and cannot act on stays quiet. The slot count here uses
@@ -1303,3 +1306,17 @@ Settled here where the sources leave it open or disagree (D = the design, L = a 
     and records the turn as armed only if enough are." It replaces M2's `alarm-missing` (decision 40):
     reconcile exits 1 `arm-unconfirmed` when the turn is not armed, and a second reconcile of an armed
     turn keeps it armed in its main hold while hold 2 re-checks the slots ([turn], §3.9).
+
+### FX-PLAN (round 3): the planner's acts, first match (class 17; status `next`)
+`lib.planAct(row, lib.planFacts(root, row, ctx))`, called by status's `nextOf` and the watcher's `rowAct`
+(FIX-fence section 6, rev 4 P1/P2, rev 5 points 1-2; Q5a acts only). 0 `owner`: failed, `limit`, zombie spend over
+Z, a tampered outcome log, or `verify_rounds` >= 3 while the stop's target attempt has a needed close not counted.
+1 attempt E's log fenced, the row still at E: `replace-fence --reason <the log's reason>`, or `owner` where that
+retry would be refused (wrong-step, hmax). 2 planned/none `replace-fence`; active|parked/stopped `replace-start`
+(both `none` while halted or draining). 3 active|parked/fenced, committed at started or bound: `stop-request`.
+4 stop-requested as before (`stop-session`, `stop-verify`). 5-6 active at admitted, or started: a session claim
+`bind`; `start.json` `none` while the lease runs, then `replace-fence --reason crash --if-unclaimed` (exit 5
+`claimed-late` leaves nothing written; the next act is `bind`); no `start.json`: `start-session` (admitted) or
+`owner` (started). 7 bound with a ready slot: `audit`, then `commit`. A step-7 folder session that no stop is
+closing gets `close-session <sid>` in place of `none`, `replace-start` or `start-session` (`owner` when its
+done record does not count, H3). A pair no script moves is `owner`.

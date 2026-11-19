@@ -3127,7 +3127,7 @@ test('S0.5 round-3 skeleton: threshold keys marked guesses, stub signatures, not
     assert.ok(Number.isInteger(p.value), `${k} has an integer value`);
     assert.match(p.unit, /guess/, `${k}'s unit says it is a guess`);
   }
-  const stubs = { readClaim: 1, claimRecord: 1, tombstoneRecord: 2, planAct: 2 };
+  const stubs = { readClaim: 1, claimRecord: 1, tombstoneRecord: 2 }; // FX-PLAN built planAct (its tests: FX-PLAN T1-T3)
   // FX-CLAIM built readClaim, claimRecord, tombstoneRecord (their tests: T96z): the arity stays, not-built goes
   for (const [name, n] of [['readClaim', 1], ['claimRecord', 1], ['tombstoneRecord', 2]]) { assert.equal(lib[name].length, n, name); delete stubs[name]; }
   for (const [name, n] of Object.entries(stubs)) {
@@ -3253,4 +3253,112 @@ test('T96x FX-CLAIM slotCount step 7: a folder session that is not its attempt\'
   // this coordinator's own start: the record counts whatever the process list says
   fs.writeFileSync(path.join(folder, 'start.json'), JSON.stringify({ kind: 'start', session: CL(8), tool_use_id: null, tick: 1, at: '2026-11-20T10:00:00.000Z' }));
   assert.equal(lib.slotCount(rows, proc, tr, { root }).unconfirmed, 0);
+});
+
+// ------------------------------------------------------------------ FX-PLAN: the planner (FIX-fence section 6)
+// T1, the total table (FIX-JOIN point 13): every (state, step) of the tasks schema x claim {none, session,
+// tombstone} x start record x lease, Q5a only (branches row 1), gives exactly one act of the planner's set;
+// each script act is accepted by its script's guard (a dry run in a run root: no wrong-step, stale-epoch,
+// usage or not-claimed). committed at started -> stop-request waits for FX-CLOSE step 3 (a todo test).
+const PLAN_ACT_RE = /^(none|owner|replace-fence|replace-start|stop-request|stop-session|stop-verify|start-session|bind|audit|commit|replace-fence --reason crash --if-unclaimed|close-session [0-9a-f-]{36})$/;
+const PLAN_STATES = ['planned', 'active', 'parked', 'committed', 'cut', 'failed', 'dropped'];
+const PLAN_STEPS = ['none', 'fenced', 'stop-requested', 'stopped', 'admitted', 'started', 'bound'];
+const planRow = (state, step, o = {}) => {
+  const epoch = state === 'planned' ? 0 : step === 'fenced' || step === 'stop-requested' || step === 'stopped' ? 2 : 1;
+  const attempts = Array.from({ length: epoch }, (_, i) => ({ ...att('f1-research', i + 1, { stop: i + 1 < epoch ? 'requested' : 'none' }), folder: `wt/f1-research-e${i + 1}` }));
+  return mkRow({ state, step, epoch, reason: epoch ? 'first' : null, attempts, ...(state === 'committed' ? { commits: { pack: Z64 } } : {}), ...o });
+};
+test('FX-PLAN T1 total table: one act per (state, step, claim, start, lease); planAct takes 2 arguments', () => {
+  assert.equal(lib.planAct.length, 2);
+  for (const state of PLAN_STATES) for (const step of PLAN_STEPS) for (const claim of ['none', 'session', 'tombstone']) {
+    for (const start of [false, true]) for (const leaseExpired of [false, true]) {
+      const a = lib.planAct(planRow(state, step), { claim, start, leaseExpired, fenced: null, sessions: [] });
+      assert.match(a, PLAN_ACT_RE, `${state}/${step}/${claim}/${start}/${leaseExpired}: ${a}`);
+      if (state === 'failed') assert.equal(a, 'owner');
+      if (state === 'active' && (step === 'admitted' || step === 'started')) {
+        const want = claim === 'session' ? 'bind' : claim === 'tombstone' ? 'owner'
+          : start ? (leaseExpired ? 'replace-fence --reason crash --if-unclaimed' : 'none') : step === 'admitted' ? 'start-session' : 'owner';
+        assert.equal(a, want, `${step}/${claim}/${start}/${leaseExpired}`);
+      }
+    }
+  }
+});
+const planScriptCase = async (state, step, claim, act) => {
+  const row = planRow(state, step, step === 'started' || step === 'bound' ? { session: SID } : {});
+  const h = await helpers.makeRoot({ tasks: [row] });
+  try {
+    const dir = P(h.root, 'wt', `f1-research-e${row.epoch}`);
+    fs.mkdirSync(dir, { recursive: true });
+    if (claim === 'session') wj(P(dir, 'claim.json'), lib.claimRecord(SID));
+    const base = ['--ce', '1', '--task', 'f1-research', '--epoch', String(row.epoch), '--dry-run'];
+    const args = act === 'bind' ? ['replace', ['bind', ...base, '--session', SID, '--boot', 'BOOT-A']]
+      : act === 'stop-request' ? ['stop', ['request', ...base]]
+        : act === 'replace-fence' ? ['replace', ['fence', ...base, '--reason', 'first']]
+          : ['replace', ['fence', ...base, '--tick', '5', ...act.split(' ').slice(1)]];
+    const r = helpers.runScript(args[0], args[1], { root: h.root });
+    assert.ok(![64, 65, 66].includes(r.exit) && !(act === 'bind' && [1, 6].includes(r.exit)), `${act} on ${state}/${step}/${claim}: exit ${r.exit} ${r.stderr}`);
+  } finally {
+    await h.cleanup();
+  }
+};
+test('FX-PLAN T1 total table: the script guard accepts each script act', async () => {
+  const seen = new Set();
+  for (const state of PLAN_STATES) for (const step of PLAN_STEPS) for (const claim of ['none', 'session']) for (const leaseExpired of [false, true]) {
+    if (state === 'committed' && step === 'started') continue; // the todo test below
+    const act = lib.planAct(planRow(state, step), { claim, start: true, leaseExpired, fenced: null, sessions: [] });
+    if (!['bind', 'stop-request', 'replace-fence', 'replace-fence --reason crash --if-unclaimed'].includes(act)) continue;
+    const key = `${act}|${state}|${step}|${claim}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    await planScriptCase(state, step, claim, act);
+  }
+  assert.ok(seen.size >= 6, `script cases: ${[...seen].join(', ')}`);
+});
+test('FX-PLAN T1 total table: committed at started -> stop-request, accepted once FX-CLOSE step 3 lands', { todo: 'FX-CLOSE step 3 (B1-3)' }, async () => {
+  assert.equal(lib.planAct(planRow('committed', 'started'), { claim: 'session', sessions: [] }), 'stop-request');
+  await planScriptCase('committed', 'started', 'session', 'stop-request');
+});
+
+// T2: first-match rules beyond the table: a torn fence (step 1), verify_rounds (step 0, rev 4 P1), halted.
+test('FX-PLAN T2 a torn fence is retried with its reason or is the owner\'s; verify_rounds asks the owner only while a close is missing', () => {
+  const bound = planRow('active', 'bound', { session: SID });
+  assert.equal(lib.planAct(bound, { claim: 'session', fenced: 'stall', sessions: [] }), 'replace-fence --reason stall');
+  assert.equal(lib.planAct({ ...bound, handovers: 1, parks: 1 }, { claim: 'session', fenced: 'handover', Hmax: 2, sessions: [] }), 'owner', 'hmax would refuse the retry');
+  assert.equal(lib.planAct({ ...bound, handovers: 1 }, { claim: 'session', fenced: 'handover', Hmax: 2, sessions: [] }), 'replace-fence --reason handover');
+  assert.equal(lib.planAct(bound, { claim: 'session', tamper: true }), 'owner');
+  const sr = planRow('active', 'stop-requested', { verify_rounds: 3 });
+  assert.equal(lib.planAct(sr, { closesMissing: true, sessions: [] }), 'owner');
+  assert.equal(lib.planAct(sr, { closesMissing: false, sessions: [] }), 'stop-session', 'every needed close recorded: the rule ends');
+  assert.equal(lib.planAct({ ...sr, verify_rounds: 2 }, { closesMissing: true, sessions: [] }), 'stop-session');
+  assert.equal(lib.planAct(planRow('active', 'stopped'), { blocked: true, sessions: [] }), 'none');
+});
+
+// T3 (rev 5 point 1): close-session for a counted folder session no stop is closing, through slotCount's
+// counted list and planFacts; owner once its done record does not count (H3); none once it counts; never
+// for the session of an attempt still waiting for its claim.
+rt('FX-PLAN T3 close-session for a late session after a confirmed stop; owner when its close does not count', async (root) => {
+  const S2 = '22222222-2222-4222-8222-222222222222';
+  const row = mkRow({ state: 'committed', step: 'stopped', epoch: 1, reason: 'first', commits: { pack: Z64 }, attempts: [{ ...att('f1-research', 1, { stop: 'confirmed', session: SID }), folder: 'wt/f1-research-e1' }] });
+  const dir = P(root, 'wt', 'f1-research-e1');
+  fs.mkdirSync(dir, { recursive: true });
+  wj(P(dir, 'claim.json'), lib.claimRecord(SID));
+  const tr = P(root, 'transcripts');
+  for (const s of [SID, S2]) await helpers.fakeTranscript(P(tr, lib.projectDirName(dir), `${s}.jsonl`), { sessionId: s, cwd: dir, calls: [] });
+  const plan = async (procList) => {
+    const counted = [];
+    await lib.slotCount([row], procList, tr, { root, counted });
+    return lib.planAct(row, lib.planFacts(root, row, { counted, procList }));
+  };
+  assert.equal(await plan(null), `close-session ${S2}`, 'the holder is not counted; the late session is');
+  wj(P(root, 'run', 'close', 'done', `${S2}.json`), { kind: 'close-done', session: S2, outcome: 'no-such-session', by: SID });
+  assert.equal(await plan(null), 'owner', 'no-such-session, no start of ours, no process list: owner');
+  wj(P(root, 'run', 'close', 'done', `${S2}.json`), { kind: 'close-done', session: S2, outcome: 'owner', by: null });
+  assert.equal(await plan(null), 'none', 'the owner\'s closed counts');
+  const adm = mkRow({ state: 'active', step: 'admitted', epoch: 1, reason: 'first', attempts: [{ ...att('f1-research', 1), folder: 'wt/f1-research-e1' }] });
+  fs.rmSync(P(dir, 'claim.json'));
+  fs.rmSync(P(root, 'run', 'close', 'done', `${S2}.json`));
+  const counted = [];
+  await lib.slotCount([adm], [], tr, { root, counted });
+  assert.ok(counted.length >= 1, 'both sessions counted: no claim yet');
+  assert.equal(lib.planAct(adm, lib.planFacts(root, adm, { counted })), 'start-session', 'a waiting attempt\'s sessions are not closed');
 });
