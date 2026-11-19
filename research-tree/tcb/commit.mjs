@@ -671,27 +671,14 @@ async function recordPass(env, handle, step) {
   const steps = row.steps || [];
   const attemptDir = L.attempt(task, epoch);
 
-  // Step 4: READY.json (untrusted).
-  const readyPath = path.join(attemptDir, 'staging', 'READY.json');
-  let ready;
-  try {
-    const st = fs.lstatSync(readyPath);
-    if (st.isSymbolicLink() || !st.isFile() || st.nlink > 1) throw tcbError('untrusted-path', 3, { path: 'staging/READY.json' });
-  } catch (e) {
-    if (e && e.exit === 3) throw e;
-    return no(2, 'no-ready');
-  }
-  try {
-    ready = await lib.readJson(readyPath);
-  } catch (e) {
-    if (e && (e.code === 'missing' || e.code === 'unparseable')) return no(2, 'no-ready');
-    throw e;
-  }
+  // Step 4: the outcome log (FX-OUT, CONTRACT §3.23); READY.json is a copy that no decision reads.
+  // A fenced log refuses (R-a: the fence won, its CAS may not have run yet); a bad log is tamper (3).
+  const log = lib.outcomeState(attemptDir, row);
+  if (log.fenced !== null) return no(1, 'attempt-fenced', { reason: log.fenced });
   const si = steps.indexOf(step);
-  const ri = isObj(ready) ? steps.indexOf(ready.step) : -1;
-  if (!isObj(ready) || ready.kind !== 'ready' || ready.task !== task || ready.epoch !== epoch || !(ready.step === step || ri > si)) {
-    return no(1, 'ready-mismatch', { ready: isObj(ready) ? { kind: ready.kind, task: ready.task, epoch: ready.epoch, step: ready.step } : null });
-  }
+  const readySteps = log.slots.filter((s) => s.kind === 'ready').map((s) => s.step);
+  if (!readySteps.length) return no(2, 'no-ready');
+  if (!readySteps.some((s) => s === step || steps.indexOf(s) > si)) return no(1, 'ready-mismatch', { ready: readySteps });
 
   // Step 5: step order.
   const recPath = (s) => path.join(L.commits, `${task}.${s}.json`);

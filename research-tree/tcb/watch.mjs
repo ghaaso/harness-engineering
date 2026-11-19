@@ -115,7 +115,18 @@ function attemptDir(root, row, e) {
   return path.join(root, 'wt', `${row.task}-e${e}`);
 }
 
-// READY.json of attempt e: the parsed value, or null when absent or unparseable (status reports that).
+// The outcome log of attempt e (lib.outcomeState), or null when it does not read (status and fsck
+// report a bad log).
+function readLog(root, row, e) {
+  try {
+    return lib.outcomeState(attemptDir(root, row, e), row);
+  } catch {
+    return null;
+  }
+}
+
+// READY.json of attempt e, a copy (FX-OUT): read for the repair marker and the zombie-write telemetry
+// only. The parsed value, or null when absent or unparseable.
 function readReady(root, row, e) {
   try {
     const v = lib.readJson(path.join(attemptDir(root, row, e), 'staging', 'READY.json'));
@@ -414,18 +425,17 @@ async function evaluate(env, state, facts, counted) {
     if (newCalls > 0) ts.hang_ticks = 0;
     else if (counted && !paused) ts.hang_ticks = num(ts.hang_ticks) + 1;
 
+    // The READY of this epoch is an uncommitted ready slot in the outcome log (FX-OUT, FIX-JOIN 2c);
+    // READY.json is read only for a repair marker, which takes no slot.
     const ready = readReady(root, row, e);
+    const log = readLog(root, row, e);
     let readyCls = null;
     let readyStep = null;
-    if (ready && ready.epoch === e) {
-      if (ready.kind === 'ready') {
-        readyStep = typeof ready.step === 'string'
-          ? ((row.steps ?? []).includes(ready.step) ? ready.step : null)
-          : (row.steps ?? []).find((s) => !commitExists(root, row.task, s)) ?? null;
-        if (readyStep && !commitExists(root, row.task, readyStep)) readyCls = 11;
-      } else if (ready.kind === 'repair') {
-        readyCls = 12;
-      }
+    if (log && log.fenced === null && log.ready.length) {
+      readyStep = log.ready[log.ready.length - 1];
+      readyCls = 11;
+    } else if (ready && ready.epoch === e && ready.kind === 'repair') {
+      readyCls = 12;
     }
     const base = { task: row.task, epoch: e };
     if (readyCls === 11) conds.push({ ...base, cls: 11, detail: { step: readyStep } });

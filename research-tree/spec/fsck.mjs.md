@@ -71,7 +71,10 @@ Nothing else.
 
 ## Steps
 1. Parse args; `coord.json` missing → exit 2 `no-coordinator`; `readTasks` corrupt → 67.
-2. Phase 1, without the lock (git runs only here, CONTRACT §2.1): note ledger head H1; run checks 1-9.
+2. Phase 1, without the lock (git runs only here, CONTRACT §2.1): note ledger head H1; run checks 1-10.
+   Check 10 (FX-OUT, CONTRACT §3.23), `outcome`: each attempt's `outcome/` read by `lib.outcomeState`; a bad
+   log fails as `outcome-<why>` (gap, after-fenced, slot-unparseable, slot-shape, slot-owner, slot-name,
+   slot-not-file, not-a-folder), id `<task>-e<e>`; an attempt with no `outcome/` is not counted.
 3. Phase 2, `withRunLock` + `checkCe` (64): read `card_status.jsonl` and `witness.jsonl` again; if the
    head moved past H1 or either status file changed, verify the chain from H1 and run checks 1, 2, 4
    and the status coverage check 5 again over the current ledger and status files (so a passing line
@@ -83,7 +86,7 @@ Nothing else.
 
 ## Exit codes
 0 pass; 2 not_run (`no-git`, `no-coordinator`); 3 any failing item (also when another check was not
-run); 64, 66, 67, 70, 75. Result: {checks: {objects: {n, failing}, commits, ledger, fk, status, tcb,
+run); 64, 66, 67, 70, 75. Result: {checks: {objects: {n, failing}, commits, ledger, fk, status, tcb, outcome,
 claude, frozen}, failing, anomalies: [{code, id}], head_checked: {seq, hash}}.
 
 ## Behaviours

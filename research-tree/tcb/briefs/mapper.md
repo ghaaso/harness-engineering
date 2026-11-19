@@ -20,6 +20,6 @@ Write `staging/hazards.json`: `schema_version` 1, `kind: "hazards"`, `cut_sha` (
 Merge by cause, not by wording. Do not drop a finding because it looks minor; give it a hazard and a severity. Do not add a hazard that no finding or problem row supports.
 
 ## Finishing
-When `staging/hazards.json` is complete, write `staging/READY.json` last: `{"kind":"ready","task":"{{task}}","epoch":{{epoch}},"step":"hazards"}`. If an input file is missing, write `{"kind":"repair","task":"{{task}}","epoch":{{epoch}},"missing":"other"}` and end your turn.
+When `staging/hazards.json` is complete, write `staging/READY.json` last: `{"kind":"ready","task":"{{task}}","epoch":{{epoch}},"step":"hazards"}`. If an input file is missing, write `{"kind":"repair","task":"{{task}}","epoch":{{epoch}},"missing":"other"}` and end your turn. Write READY with the Write tool only (an Edit of it is denied): the hook records it in the attempt's outcome log, which decides; READY.json is only a copy. If writing READY is denied `attempt-fenced`, your attempt has been ended: write nothing more and end your turn.
 
 Your last line of every turn is exactly `TURN-END {{task}}`, and nothing follows it.

@@ -20,6 +20,6 @@ Write `staging/review.json`: `schema_version` 1, `kind: "review"`, `field`, `tas
 - Use the pack as it is. If a card seems wrong, say so in a `judgment` sentence and cite it; do not edit or replace it.
 
 ## Finishing
-Your only step is `review`. When `staging/review.json` is complete and valid, write `staging/READY.json` last: `{"kind":"ready","task":"{{task}}","epoch":{{epoch}},"step":"review"}`. If a card or snapshot that you need is missing, write `{"kind":"repair","task":"{{task}}","epoch":{{epoch}},"question_ids":[...],"missing":"card"}` (missing: source, snapshot, card, check or other) and end your turn.
+Your only step is `review`. When `staging/review.json` is complete and valid, write `staging/READY.json` last: `{"kind":"ready","task":"{{task}}","epoch":{{epoch}},"step":"review"}`. If a card or snapshot that you need is missing, write `{"kind":"repair","task":"{{task}}","epoch":{{epoch}},"question_ids":[...],"missing":"card"}` (missing: source, snapshot, card, check or other) and end your turn. Write READY with the Write tool only (an Edit of it is denied): the hook records it in the attempt's outcome log, which decides; READY.json is only a copy. If writing READY is denied `attempt-fenced`, your attempt has been ended: write nothing more and end your turn.
 
 Your last line of every turn is exactly `TURN-END {{field}}`, and nothing follows it.

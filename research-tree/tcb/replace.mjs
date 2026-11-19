@@ -179,56 +179,15 @@ function hashFileOrNull(p) {
   }
 }
 
-/** The READY re-check (R7): a parseable, schema-valid {kind: ready, task: T, epoch: E}. */
-function readyValid(root, dir, task, epoch) {
-  const staging = path.join(dir, 'staging');
-  const file = path.join(staging, 'READY.json');
-  if (!exists(file) || !lib.isUnder(file, dir)) return false;
-  try {
-    const st = fs.lstatSync(file);
-    if (!st.isFile() || st.nlink > 1) return false;
-  } catch {
-    return false;
-  }
-  let v;
-  try {
-    v = lib.readJson(file);
-  } catch {
-    return false;
-  }
-  if (!v || typeof v !== 'object' || v.kind !== 'ready' || v.task !== task || v.epoch !== epoch) return false;
-  return readyShapeOk(root, v);
-}
-
 /**
- * Schema check of a READY marker. Sessions write READY without schema_version (the briefs give
- * {kind, task, epoch, step}), so a marker without one is validated against the schema directly,
- * and, should the schema require the field, once more with schema_version 1 added.
+ * The log check (FX-OUT; Q6 b, build/branches.md row 2): an uncommitted ready slot in attempt E's
+ * outcome log that is not fenced. lib.fence calls it back for a failure reason other than tainted; by
+ * then the fence's own slot is in the log (FX-OUT step 5), so it sees that slot as the winner.
+ * READY.json is a copy that no decision reads.
  */
-function readyShapeOk(root, v) {
-  const rethrowInternal = (e) => {
-    if (e && e.exit === 70) throw e;
-  };
-  try {
-    lib.checkFormat(root, 'ready', v);
-    return true;
-  } catch (e) {
-    rethrowInternal(e);
-  }
-  if (Object.prototype.hasOwnProperty.call(v, 'schema_version')) return false;
-  try {
-    const r = lib.validate(lib.loadSchema(root, 'ready'), v, {});
-    if (r && r.ok) return true;
-  } catch (e) {
-    rethrowInternal(e);
-  }
-  try {
-    lib.checkFormat(root, 'ready', { schema_version: 1, ...v });
-    return true;
-  } catch (e) {
-    rethrowInternal(e);
-  }
-  return false;
+function readyInLog(dir, row) {
+  const s = lib.outcomeState(dir, row);
+  return s.fenced === null && s.ready.length > 0;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -469,18 +428,9 @@ async function modeFence(env, flags) {
       guardUnder(dir, root);
       const cut = exists(dir) ? lib.stagingCut(dir) : {};
       const cutFiles = cut && cut.files ? Object.keys(cut.files).length : 0;
-      const readyCheck = () => readyValid(root, dir, T, E);
+      const readyCheck = () => readyInLog(dir, row);
       const hold = { task: T, epoch: E, reason, failure, row, att, dir, cut, readyCheck };
       fenceOutcomeSteps(env, handle, hold);
-
-      // M6 (CONTRACT decision 40): a READY of the current epoch wins over every reason but `first`
-      // and `tainted`, a planned hand-over, a park, a cut and a drop included. lib.fence re-checks
-      // for failure reasons only, so the check for every reason is made here, under the same lock.
-      const running = row.epoch === E
-        && ((row.state === 'active' && ['bound', 'started', 'admitted'].includes(row.step)) || (row.state === 'parked' && row.step === 'stopped'));
-      if (running && reason !== 'first' && reason !== 'tainted' && readyCheck()) {
-        throw tcbError('ready-wins', 5, { task: T, epoch: E, reason });
-      }
       fenceTombstone(env, handle, hold);
 
       let out;
@@ -540,8 +490,31 @@ function armedFor(mode, reason) { // eslint-disable-line no-unused-vars
   return false;
 }
 
-// FX-OUT steps 1-5 in the fence's hold: the refusals, the ready check, the fenced slot.
-function fenceOutcomeSteps(env, handle, hold) { // eslint-disable-line no-unused-vars
+// FX-OUT steps 1-5 in the fence's hold: the refusals, the ready check, the fenced slot (FIX-fence.md
+// section 1, "Steps, fence side"; Q6 b: replace runs them itself before lib.fence). Every refusal
+// comes before the one write, so a refused fence leaves no slot (N1). M6 (decision 40): an uncommitted
+// ready slot wins over every reason but `first` and `tainted` (exit 5), a planned hand-over, a park,
+// a cut and a drop of a running attempt included. A dry run writes nothing.
+function fenceOutcomeSteps(env, handle, hold) {
+  const { task: T, epoch: E, reason, row, att, dir } = hold;
+  // 1: the row (pinned by the hold) and attempt E's log (outcome-tamper 3 on a bad log)
+  const log = lib.outcomeState(dir, row);
+  // 2: the retry path: a fenced log takes only a fence of its own reason
+  if (log.fenced !== null && log.fenced !== reason) throw tcbError('fence-pending', 65, { task: T, epoch: E, reason: log.fenced });
+  // 3: stale-epoch, wrong-step, hmax before any write (the ready check is step 4)
+  const p = predictFence(row, { E, reason, host: false, ready: false, R: env.th.get('R'), Hmax: env.th.get('H_max') });
+  // no slot when the fence revokes nothing: first, a cut or drop with no attempt, an attempt never
+  // admitted (no manifest, rev 4 H1: a parked row's attempt), or a log already fenced (the retry)
+  if (!(p.step === 'fenced' && p.to === E + 1) || !(att && att.manifest) || log.fenced !== null) return;
+  // 4: the ready check (re-run on every read of step 5: a hook's ready slot that takes the name first wins)
+  const readyWins = (s) => {
+    if (reason !== 'tainted' && s.ready.length) throw tcbError('ready-wins', 5, { task: T, epoch: E, reason, steps: s.ready });
+  };
+  readyWins(log);
+  // 5: the fenced slot; no `outcome/` (an attempt started before the fix): no slot (FIX-fence.md section 1, "Unknown cases")
+  if (!handle || !log.present) return;
+  const r = lib.outcomeAppend(dir, { kind: 'fenced', task: T, epoch: E, reason }, { row, check: readyWins });
+  if (r.result === 'fenced' && r.state.fenced !== reason) throw tcbError('fence-pending', 65, { task: T, epoch: E, reason: r.state.fenced });
 }
 
 // FX-CLAIM (FX-OUT step 6): the attempt's tombstone claim, before lib.fence.
@@ -750,6 +723,7 @@ function buildAttempt(env, info) {
   guardUnder(viewTodo, dir);
   lib.writeAtomic(viewTodo, lib.canonicalize(todo));
   fs.mkdirSync(path.join(dir, 'staging'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'outcome'), { recursive: true }); // FX-OUT: the log's folder, made with the manifest (the hook makes none)
 
   // 8 review-in (fresh review only), built once per task (R13)
   let reviewIn = null;

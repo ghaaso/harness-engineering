@@ -398,13 +398,14 @@ async function computeStatus(root, th, ce, pre, facts, table, anomalies) {
     }
 
     // READY of the current epoch.
+    // An uncommitted ready slot in the outcome log, not READY.json (FX-OUT; R-a: a fenced log has none).
     let readyPending = false;
     if (e >= 1) {
-      const r = readReady(root, row, e);
-      if (r.bad) anomalies.push({ code: 'ready-unparseable', detail: { task: row.task, epoch: e } });
-      else if (r.value && r.value.kind === 'ready' && r.value.epoch === e) {
-        const step = readyStep(root, row, r.value);
-        if (step && !commitExists(root, row.task, step)) readyPending = true;
+      try {
+        const log = lib.outcomeState(attemptDir(root, row, e), row);
+        readyPending = log.fenced === null && log.ready.length > 0;
+      } catch (x) {
+        anomalies.push({ code: 'outcome-tamper', detail: { task: row.task, epoch: e, why: x && x.detail ? x.detail.why ?? null : null } });
       }
     }
 

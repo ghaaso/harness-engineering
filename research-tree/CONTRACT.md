@@ -441,7 +441,11 @@ through commit records and re-check every `sha256` first.
 ### 3.12 Ready marker [ready] — `wt/<task>-e<e>/staging/READY.json` (the session)
 `{kind: "ready"|"repair", task, epoch, step?: commit step (ready), question_ids?: key[] (repair),
 missing?: source|snapshot|card|check|other (repair)}`. Untrusted: a READY whose `epoch` differs from
-the table is zombie-write telemetry only.
+the table is zombie-write telemetry only. READY.json is a copy that no decision reads; the decision is
+the outcome log (§3.23): the guard-hook turns a valid Write of READY (`kind: ready`) into a ready slot
+before the harness writes the copy, denies an Edit of READY (`ready-write-only`) and a READY of another
+task, epoch or step (`ready-invalid`), and lets a repair marker through with no slot. READY.json is
+still read for the repair marker (watcher class 12) and the zombie-write telemetry.
 
 ### 3.13 Snapshot metadata [snapshot-meta] — `.snapshots/meta/<raw_sha>.json`
 `{url, final_url, retrieved_at, http_status: int, content_type, bytes: int, raw_sha, text_sha?,
@@ -657,7 +661,27 @@ as written there; the spec is the single place of their fields.
 
 ### 3.23 Outcome log [outcome-slot] — `wt/<task>-e<e>/outcome/<j>.json`
 
-Filled by FX-OUT (`model/as-built/FIX-fence.md`; the slot's bytes are in `lib.RUNTIME_FILES`, S0.5).
+FX-OUT (`model/as-built/FIX-fence.md` section 1). The two outcomes of attempt e, finished (READY) and
+revoked (fenced), race through one log of write-once slots, one per file, j = 0, 1, 2 ...: every party
+proposes by a strict exclusive create (0b, §8.20) of the next slot name, exactly one create of a name
+succeeds, and everyone reads the winner (test-and-set, as in CORFU and the Paxos log).
+- **Layout.** `replace start` makes `outcome/` with the manifest; it lies outside the session's write
+  prefix (`{attempt}/staging/`). Ready slot bytes `{kind:"ready", task, epoch, step}` (written by the
+  guard-hook for the session's READY); fenced slot bytes `{kind:"fenced", task, epoch, reason}` (written
+  by `replace fence`); each the canonical JSON of exactly those fields (`lib.outcomeSlotBytes`). The log
+  has no gaps, and nothing is ever appended after a fenced slot. A repeat READY for a step has identical
+  bytes and takes no new slot, so a log holds at most |steps| ready slots and one fenced slot.
+- **Reading rules** (`lib.outcomeState(attemptDir, row)`, the one reader of commit, the fence, the hook,
+  the planners and fsck):
+  - **R-a.** A log that holds a fenced slot is fenced (reason r): commit refuses (exit 1
+    `attempt-fenced`), the fence takes its retry path, the hook denies (`attempt-fenced`).
+  - **R-b.** A ready slot is uncommitted when its own step is not in `row.commits`.
+  - **R-c.** Only names `<j>.json` are slots, read only when `lstat` shows a regular file; a slot whose
+    bytes do not parse, or are not a slot of this folder's task and epoch, a name with leading zeros, a
+    gap, a slot after the fenced one, or an `outcome` that is not a real folder is tamper:
+    `outcome-tamper` 3 in a script, a deny in the hook, a failing item `outcome-<why>` in fsck. Other
+    names (a create's temp file) are not read. No `outcome/` (an attempt never admitted, or started
+    before the fix) is an empty log: the hook's create fails `no-parent` and the fence writes no slot.
 
 ## 4. The library `tcb/lib.mjs`
 
@@ -787,9 +811,18 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
 - `fence(root, handle, {task, expectEpoch, reason, host, tick, readyCheck, cut, spendAtFence, R,
   Hmax}) → {row, from, to, restartCharged, limit}`: the §3.6 fence rows on `updateRow`. For a failure
   reason other than `tainted` it calls `readyCheck()` under the lock first; true → `ready-wins` 5 with
-  no change. (Decision 40, M6: the rule is every reason but `first` and `tainted` on a row with a
-  running attempt; until the library's check is widened, `replace.mjs fence` makes the same
-  re-check itself under the same lock before it calls `fence`.) `handover`/`memory` at `handovers + parks ≥ Hmax` → `hmax` 1, no change. The limit path
+  no change. The callback reads the outcome log (§3.23): an uncommitted ready slot in a log that is not
+  fenced (FX-OUT, Q6 b: the library's scope stays failure-only). Decision 40, M6, the rule for every
+  reason but `first` and `tainted` on a running attempt, is `replace.mjs fence`'s, in the same lock hold
+  before it calls `fence` (FX-OUT steps 1-5): the log read (a log fenced with another reason → 65
+  `fence-pending` {reason}); every refusal (`stale-epoch`, `wrong-step`, `hmax`) before any write; then,
+  only when the fence moves the row to e+1 and attempt e has a manifest, the ready check (an uncommitted
+  ready slot → `ready-wins` 5, never over `tainted`) and the fenced slot by `outcomeAppend` (a ready slot
+  that takes the name first → `ready-wins` 5; `tainted` appends after it). By the time `fence` runs, its
+  callback sees the fence's own slot as the winner.
+- `outcomeState(attemptDir, row) → {present, fenced, slots, ready, next}` and `outcomeAppend(attemptDir,
+  slot, {row, check, create}) → {result: created|identical|fenced, j, state}` (§3.23; FX-OUT): the log's
+  one reader and its test-and-set; `outcomeSlotBytes(slot)` the canonical bytes of a slot. `handover`/`memory` at `handovers + parks ≥ Hmax` → `hmax` 1, no change. The limit path
   applies the fence and returns `limit:true` (the caller exits 1). `cut`/`drop` on a row at planned/none
   or active/stopped takes the no-attempt row of §3.6 (state `cut`/`dropped`, epoch unchanged).
 - `stagingCut(attemptDir) → {files: {relpath: {len, sha256}}, links: relpath[]}`: every regular file

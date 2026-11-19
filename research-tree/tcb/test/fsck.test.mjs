@@ -667,6 +667,34 @@ test('T12 .claude/ and auto-loaded files of an attempt folder: extra files, edit
   assert.deepEqual(failingOf(go(ctx, 0)), [], 'after cleaning up, the folder passes again');
 });
 
+test('FX-OUT 6: an attempt\'s outcome log is checked (check 10): a gap, a slot after the fenced one, a slot that does not parse or names another epoch fail; a gapless log and a create\'s temp file pass', (t) => {
+  if (!GIT_OK) return t.skip('git is not installed');
+  const ctx = baseline();
+  const out = path.join(ctx.attemptDir, 'outcome');
+  fs.mkdirSync(out);
+  const slot = (j, v) => fs.writeFileSync(path.join(out, `${j}.json`), typeof v === 'string' ? v : canon(v));
+  const ready = { kind: 'ready', task: TASK, epoch: 1, step: 'pack' };
+  const fenced = { kind: 'fenced', task: TASK, epoch: 1, reason: 'hang' };
+  const id = `${TASK}-e1`;
+  slot(0, ready);
+  fs.writeFileSync(path.join(out, '1.json.123.abcd1234.tmp'), 'a create in flight');
+  let j = go(ctx, 0);
+  assert.deepEqual(failingOf(j), [], 'a gapless log passes; a temp file is not a slot');
+  assert.equal(j.result.checks.outcome.n, 1);
+  slot(2, fenced);
+  assertFail(go(ctx, 3), 'outcome', 'outcome-gap', id);
+  slot(1, fenced);
+  assertFail(go(ctx, 3), 'outcome', 'outcome-after-fenced', id);
+  fs.rmSync(path.join(out, '2.json'));
+  assert.deepEqual(failingOf(go(ctx, 0)), [], 'ready then fenced passes');
+  slot(1, '{"kind":"fenced"');
+  assertFail(go(ctx, 3), 'outcome', 'outcome-slot-unparseable', id);
+  slot(1, { ...fenced, epoch: 2 });
+  assertFail(go(ctx, 3), 'outcome', 'outcome-slot-owner', id);
+  fs.rmSync(path.join(out, '1.json'));
+  assert.deepEqual(failingOf(go(ctx, 0)), []);
+});
+
 test('T13 an intake line appended by another writer while fsck runs, naming a corrupted object: exit 3 reports it', async (t) => {
   if (!GIT_OK) return t.skip('git is not installed');
   // The test plays the other writer: it holds run.lock (so fsck waits at phase 2), appends an intake line that names a

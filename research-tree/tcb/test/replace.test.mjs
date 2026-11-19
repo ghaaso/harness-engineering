@@ -271,6 +271,8 @@ const Z64 = '0'.repeat(64);
 const startRow = (o = {}) => row(RES, { state: 'active', step: 'stopped', epoch: 1, reason: 'first', attempts: [att(RES, 1)], ...o });
 const boundRow = (o = {}) =>
   row(RES, { state: 'active', step: 'bound', epoch: 1, reason: 'first', session: SID1, attempts: [att(RES, 1, { session: SID1, bound_at: '2026-11-17T08:00:00.000Z', boot: BOOT_A, manifest: M0, settings_sha: Z64 })], ...o });
+// FX-OUT: the READY of attempt e as the hook records it, a ready slot in its outcome log (READY.json is a copy).
+const readySlot = (root, task, e, step = 'pack', j = 0) => put(root, `wt/${task}-e${e}/outcome/${j}.json`, lib.outcomeSlotBytes({ kind: 'ready', task, epoch: e, step }));
 const folderAbs = (root, task, e) => path.join(root, 'wt', `${task}-e${e}`);
 
 function setThr(root, patch) {
@@ -553,6 +555,7 @@ test('T5 fence with a READY of the current epoch: ready-wins for a failure, neve
     const { root } = w;
     table(root, [boundRow()]);
     put(root, `wt/${RES}-e1/staging/READY.json`, ready(1));
+    readySlot(root, RES, 1);
     const tb = read(root, 'run/tasks.json');
     const j = run(root, 'fence', { task: RES, epoch: 1, reason: 'stall', tick: 4, boot: BOOT_A });
     expectExit(j, 5, 'ready-wins');
@@ -600,8 +603,11 @@ test('T5 fence with a READY of the current epoch: ready-wins for a failure, neve
     const { root } = w;
     table(root, [boundRow()]);
     put(root, `wt/${RES}-e1/staging/READY.json`, ready(1));
+    readySlot(root, RES, 1);
     const j = run(root, 'fence', { task: RES, epoch: 1, reason: 'tainted', tick: 4, boot: BOOT_A });
     expectExit(j, 0);
+    assert.deepEqual(fs.readdirSync(at(root, `wt/${RES}-e1/outcome`)).sort(), ['0.json', '1.json'], 'a tainted fence appends after the ready slot');
+    assert.ok(read(root, `wt/${RES}-e1/outcome/1.json`).equals(Buffer.from(lib.outcomeSlotBytes({ kind: 'fenced', task: RES, epoch: 1, reason: 'tainted' }))));
     const r = getRow(root, RES);
     assert.equal(r.epoch, 2);
     assert.equal(r.step, 'fenced');
@@ -622,6 +628,7 @@ test('T5b (M6) a READY of the current epoch wins over every reason but first and
       table(root, [boundRow()]);
       if (reason === 'drop') owner(root);
       put(root, `wt/${RES}-e1/staging/READY.json`, ready);
+      readySlot(root, RES, 1);
       const tb = read(root, 'run/tasks.json');
       const j = run(root, 'fence', { task: RES, epoch: 1, reason, boot: BOOT_A });
       expectExit(j, 5, 'ready-wins');
@@ -638,6 +645,7 @@ test('T5b (M6) a READY of the current epoch wins over every reason but first and
     const { root } = w;
     table(root, [boundRow()]);
     put(root, `wt/${RES}-e1/staging/READY.json`, ready);
+    readySlot(root, RES, 1);
     const h = treeHash(root);
     const j = run(root, 'fence', { task: RES, epoch: 1, reason: 'handover', boot: BOOT_A, dry: true });
     expectExit(j, 5, 'ready-wins');
@@ -654,6 +662,74 @@ test('T5b (M6) a READY of the current epoch wins over every reason but first and
     assert.equal(r.step, 'fenced');
     assert.equal(r.handovers, 1);
   });
+});
+
+// FX-OUT (FIX-fence.md section 1, fence side): every refusal before the one write (N1), the fenced slot,
+// the retry path, and no slot for an attempt that was never admitted (rev 4 H1, schedule F1).
+const outcomeOf = (root, task, e) => (has(root, `wt/${task}-e${e}/outcome`) ? fs.readdirSync(at(root, `wt/${task}-e${e}/outcome`)).sort() : null);
+const fencedSlot = (task, e, reason) => lib.outcomeSlotBytes({ kind: 'fenced', task, epoch: e, reason });
+
+test('FX-OUT 3: a refused fence (stale-epoch, wrong-step, hmax) writes no slot; a fence writes one fenced slot; a torn fence is retried with its own reason only', async (t) => {
+  const world = (t2, rows) => {
+    const w = mk();
+    t2.after(w.cleanup);
+    table(w.root, rows);
+    setThr(w.root, { H_max: 2 });
+    fs.mkdirSync(at(w.root, `wt/${RES}-e1/outcome`), { recursive: true });
+    return w.root;
+  };
+  const att1 = att(RES, 1, { session: SID1, boot: BOOT_A, manifest: M0, settings_sha: Z64 });
+  await t.test('refusals: exit 65 stale-epoch, 65 wrong-step, 1 hmax; no slot, the row unchanged', async (t2) => {
+    for (const [name, rows, o, exit, code] of [
+      ['stale-epoch', [boundRow({ epoch: 2, step: 'fenced', session: null, attempts: [att1, att(RES, 2)] })], { reason: 'stall', tick: 4 }, 65, 'stale-epoch'],
+      ['wrong-step', [boundRow({ step: 'stopped', session: null })], { reason: 'stall', tick: 4 }, 65, 'wrong-step'],
+      ['hmax', [boundRow({ handovers: 1, parks: 1 })], { reason: 'handover' }, 1, 'hmax'],
+    ]) {
+      const root = world(t2, rows);
+      const tb = read(root, 'run/tasks.json');
+      expectExit(run(root, 'fence', { task: RES, epoch: 1, boot: BOOT_A, ...o }), exit, code);
+      assert.deepEqual(outcomeOf(root, RES, 1), [], `${name}: no slot`);
+      assert.ok(tb.equals(read(root, 'run/tasks.json')), `${name}: the row is unchanged`);
+    }
+  });
+  await t.test('a fence of a running attempt writes one fenced slot, then the CAS', async (t2) => {
+    const root = world(t2, [boundRow()]);
+    expectExit(run(root, 'fence', { task: RES, epoch: 1, reason: 'stall', tick: 4, boot: BOOT_A }), 0);
+    assert.deepEqual(outcomeOf(root, RES, 1), ['0.json']);
+    assert.ok(read(root, `wt/${RES}-e1/outcome/0.json`).equals(Buffer.from(fencedSlot(RES, 1, 'stall'))));
+    assert.equal(getRow(root, RES).epoch, 2);
+    expectExit(run(root, 'fence', { task: RES, epoch: 1, reason: 'stall', tick: 5, boot: BOOT_A }), 65, 'stale-epoch');
+    assert.deepEqual(outcomeOf(root, RES, 1), ['0.json'], 'nothing after the fenced slot');
+  });
+  await t.test('a torn fence (its slot, no CAS): another reason exits 65 fence-pending; its own reason completes it with no second slot', async (t2) => {
+    const root = world(t2, [boundRow()]);
+    put(root, `wt/${RES}-e1/outcome/0.json`, fencedSlot(RES, 1, 'hang'));
+    const tb = read(root, 'run/tasks.json');
+    const j = run(root, 'fence', { task: RES, epoch: 1, reason: 'stall', tick: 4, boot: BOOT_A });
+    expectExit(j, 65, 'fence-pending');
+    assert.equal(j.reasons.find((x) => x.code === 'fence-pending').detail.reason, 'hang');
+    assert.ok(tb.equals(read(root, 'run/tasks.json')));
+    expectExit(run(root, 'fence', { task: RES, epoch: 1, reason: 'hang', tick: 4, boot: BOOT_A }), 0);
+    const r = getRow(root, RES);
+    assert.deepEqual([r.epoch, r.step, r.reason], [2, 'fenced', 'hang']);
+    assert.deepEqual(outcomeOf(root, RES, 1), ['0.json']);
+  });
+});
+
+test('FX-OUT 4 (schedule F1): a fence of a parked row, whose attempt was never admitted, writes no slot and no tombstone and makes no folder', async () => {
+  const w = mk();
+  try {
+    const { root } = w;
+    const a1 = att(RES, 1, { session: SID1, boot: BOOT_A, manifest: M0, settings_sha: Z64, stop: 'confirmed', spend_at_fence: 0 });
+    table(root, [row(RES, { state: 'parked', step: 'stopped', epoch: 2, reason: 'memory', parks: 1, attempts: [a1, att(RES, 2)] })]);
+    const j = run(root, 'fence', { task: RES, epoch: 2, reason: 'cut', boot: BOOT_A });
+    expectExit(j, 0);
+    const r = getRow(root, RES);
+    assert.deepEqual([r.epoch, r.step, r.reason], [3, 'fenced', 'cut']);
+    assert.equal(has(root, `wt/${RES}-e2`), false, 'no folder, no outcome slot, no claim.json for attempt 2');
+  } finally {
+    w.cleanup();
+  }
 });
 
 test('T6 fence crash: host only when the recorded boot differs from the current one', async (t) => {
