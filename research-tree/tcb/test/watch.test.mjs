@@ -1336,20 +1336,44 @@ test('M3 act due: stop-verify only once the sample is stop_verify_deltas ticks o
   });
 });
 
-test('M3 act due: an admitted row is start-session, and bind once its folder has a transcript (a new key)', async () => {
-  await withRoot({ thr: { coalesce_ticks: 0 } }, async (ctx) => {
+// FX-PLAN (FIX-fence section 6 steps 5-6, rev 5 point 2; FIX-JOIN point 11): rowAct is planAct's act. The
+// transcript-visible branch is gone: an admitted row is start-session until the hook's start.json, then
+// quiet while the start lease runs (a transcript without a claim changes nothing), then the lease act
+// `replace-fence --reason crash --if-unclaimed`; a session claim makes it bind (each a new key).
+test('FX-PLAN act due: admitted start-session; start.json waits out the lease, then the --if-unclaimed lease act; a claim is bind', async () => {
+  await withRoot({ thr: { coalesce_ticks: 0, start_lease_ticks: 3, start_lease_ms: 1000 } }, async (ctx) => {
     const task = 'f1-research';
+    const ackAll = () => ackUpTo(ctx, ledgerLines(ctx.root).at(-1).seq);
     setTasks(ctx, [row(task, { step: 'admitted', epoch: 1 })]);
-    const j1 = assertLine(tick(ctx), 17);
-    assert.deepEqual(actsOf(j1), ['start-session']);
-    ackUpTo(ctx, actEvents(ctx, 'start-session')[0].seq);
-    assertLine(tick(ctx), 0);
+    assert.deepEqual(actsOf(assertLine(tick(ctx), 17)), ['start-session']); // tick 1
+    ackAll();
     const folder = path.join(ctx.root, 'wt', `${task}-e1`);
+    w(path.join(folder, 'start.json'), { kind: 'start', session: newSid(), tool_use_id: null, tick: 1, at: '2026-11-17T09:00:00.000Z' });
     const sid = newSid();
     writeTranscript(path.join(ctx.root, 'transcripts', LIB.projectDirName(folder), sid + '.jsonl'), { sessionId: sid, cwd: folder, calls: CALLS(1) });
-    const j2 = assertLine(tick(ctx), 17);
-    assert.deepEqual(actsOf(j2), ['bind']);
-    assert.equal(actEvents(ctx, 'bind').length, 1);
+    assertLine(tick(ctx), 0); // tick 2: the lease runs (2 < 1 + 3); no second start, no bind before the claim
+    assertLine(tick(ctx), 0); // tick 3
+    assert.deepEqual(actsOf(assertLine(tick(ctx), 17)), ['replace-fence --reason crash --if-unclaimed']); // tick 4: expired
+    assert.equal(actEvents(ctx, 'start-session').length, 1, 'never a second start');
+    ackAll();
+    w(path.join(folder, 'claim.json'), LIB.claimRecord(sid));
+    assert.deepEqual(actsOf(assertLine(tick(ctx), 17)).filter((a) => a !== 'events'), ['bind']); // claimed late: bind
+  });
+});
+
+// FX-W5 step 1 through FX-PLAN step 0 (units/W5/result.md): a row whose zombie spend is over Z is the
+// owner's, so its row act (here stop-request) is not raised; class 25 is.
+test('FX-PLAN: a zombie-over row raises no row act, only class 25', async () => {
+  await withRoot({ thr: { coalesce_ticks: 0, Z_frac: 0.001 } }, async (ctx) => {
+    const task = 'f1-research';
+    const s1 = newSid();
+    setTasks(ctx, [row(task, { step: 'fenced', epoch: 2, attempts: [att(task, 1, { session: s1, spend_at_fence: 0 }), att(task, 2)] })]);
+    const f1 = path.join(ctx.root, 'wt', `${task}-e1`);
+    writeTranscript(path.join(ctx.root, 'transcripts', LIB.projectDirName(f1), s1 + '.jsonl'), { sessionId: s1, cwd: f1, calls: CALLS(3, 100) });
+    const j = tick(ctx);
+    assert.equal(eventsOf(ctx.root, 'stop-unconfirmed', 25).length, 1, 'zombie spend over Z: class 25');
+    assert.deepEqual(actsOf(j), [], 'no act-due: the planner gives owner');
+    assert.equal(actEvents(ctx, 'stop-request').length, 0);
   });
 });
 

@@ -667,9 +667,9 @@ async function evaluate(env, state, facts, counted) {
   // stay silent while work waits. Keyed and acknowledged like every class (step 5).
   const rows = table.tasks ?? [];
   let used = Infinity;
-  const counted = []; // FX-PLAN: the step-7 sessions, for the planner
+  const sessions7 = []; // FX-PLAN: the step-7 sessions, for the planner
   try {
-    const sc = await lib.slotCount(rows, [], tr, { root, counted }); // empty process list: no PowerShell per tick
+    const sc = await lib.slotCount(rows, [], tr, { root, counted: sessions7 }); // empty process list: no PowerShell per tick
     used = num(sc && sc.live) + num(sc && sc.unknown) + num(sc && sc.unconfirmed);
   } catch (x) {
     if (x && x.exit === 3) throw x;
@@ -681,7 +681,7 @@ async function evaluate(env, state, facts, counted) {
   const opt = (k) => (th.has(k) ? th.get(k) : undefined);
   // FX-PLAN: the planner's facts as status has them, with the watcher's empty process list and tick.
   const plan = { ticksTotal: tick, nowMs, lease: { start_lease_ticks: opt('start_lease_ticks'), start_lease_ms: opt('start_lease_ms') },
-    procList: [], counted, Hmax: opt('H_max'), zombieRows };
+    procList: [], counted: sessions7, Hmax: opt('H_max'), zombieRows };
   let rowActs = 0;
   for (const row of rows) {
     const act = rowAct(root, tr, row, { slotFree, blocked, tick, svd, plan });

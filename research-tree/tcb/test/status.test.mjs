@@ -358,6 +358,7 @@ test('T2 events_pending lists exactly the event seqs above acked_seq', async () 
 test('T3 next for each step of the machine', async () => {
   await withRoot({}, async (ctx) => {
     const sidA = newSid();
+    const sidS = newSid();
     const q = ['f1-a-01'];
     const stuck = (task, stop, extra = {}) => row(task, {
       epoch: 2, step: 'stop-requested', question_ids: q,
@@ -373,7 +374,9 @@ test('T3 next for each step of the machine', async () => {
       [stuck('f1-stopunc', 'unconfirmed'), 'stop-verify'],
       [stuck('f1-stopsample', 'requested'), 'stop-verify'],
       [row('f1-admitted', { step: 'admitted', question_ids: q }), 'start-session'],
-      [row('f1-started', { step: 'started', session: newSid(), question_ids: q }), 'bind'],
+      [row('f1-started', { step: 'started', session: sidS, question_ids: q }), 'bind'], // FX-PLAN step 6: its claim (written below)
+      [row('f1-startnc', { step: 'started', question_ids: q }), 'owner'], // FX-PLAN rev 4 P2: no claim, no start.json
+      [row('f1-comstart', { state: 'committed', step: 'started', session: newSid(), question_ids: q, commits: { pack: HEX64 } }), 'stop-request'], // FX-PLAN step 3 (b)
       [row('f1-plain', { step: 'bound', session: newSid(), question_ids: q }), 'none'],
       [row('f1-audit', { step: 'bound', session: newSid(), question_ids: q }), 'audit'],
       [row('f1-commit', { step: 'bound', session: newSid(), question_ids: q }), 'commit'],
@@ -386,6 +389,8 @@ test('T3 next for each step of the machine', async () => {
     w(path.join(ctx.root, 'run', 'stop-sample', 'f1-stopsample-e1.json'), { schema_version: 1, task: 'f1-stopsample', epoch: 1, target: 1, tick: 0, sizes: {} });
     readyFile(ctx, 'f1-audit', 1);
     readyFile(ctx, 'f1-commit', 1);
+    fs.mkdirSync(path.join(ctx.root, 'wt', 'f1-started-e1'), { recursive: true });
+    fs.writeFileSync(path.join(ctx.root, 'wt', 'f1-started-e1', 'claim.json'), JSON.stringify({ kind: 'session', session_id: sidS }));
     addLine(ctx.root, { kind: 'intake', task: 'f1-commit', epoch: 1, data: { objects: [], rejected: [], flagged: [] } });
     addLine(ctx.root, { kind: 'audit', task: 'f1-commit', epoch: 1, data: { label: 'clean', undeclared: [], protected_writes: [], first_context: 0, notes_bad: false } });
     assertLine(build(ctx), 0);
