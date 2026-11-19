@@ -29,29 +29,19 @@ Rules 1 to 7 of `CLAUDE.md` apply. These are the ones that were broken, in his w
 
 ## How the work is run
 
-- The tiers, the effort levels and what each tier is never used for are in section 3 of `docs/ORCHESTRATION-DESIGN-2026-10.md`. What of that method was run and what is only designed is in `docs/program/evidence/harness-method-status-2026-11-18/README.md`. The skill and agent types written on 2026-11-18 were discarded on the owner's order.
+- Section 3 of `docs/ORCHESTRATION-DESIGN-2026-10.md` is the FixFlow tier guide; the routes in force are `.claude/hooks/tier-routes.json` as changed by r57-0035, and where they differ the routes and the rulings win. What of that method was run and what is only designed is in `docs/program/evidence/harness-method-status-2026-11-18/README.md`. The skill and agent types written on 2026-11-18 were discarded on the owner's order.
 - Independent pieces start in one message. One writer per file was this session's rule; the owner rejected it on 2026-11-18 as the coarsest lock there is. See `docs/program/evidence/harness-method-status-2026-11-18/README.md`, section 7a.
-- How many lanes run is computed by the plan check from four limits (collisions, the check, the
-  review, the token window), in `research-tree/BUILD-PLAN.md`.
+- How many sessions run at once is computed, not set: the smallest width over memory, processor, bandwidth, ready work, the check, each token window and the parent's context window (r57-0414). The build's widths are in `research-tree/ORCHESTRATION.md`, section 6.
 - Read the plan's usage before a fan-out and name a cap.
-- **The ceiling is a recorded figure, not a feeling.** The design record derives a hand-over window
-  of about 133,000 tokens for a coordinator and 115,000 to 155,000 for a research child
-  (`DESIGN-RECORD.md`, section 7). The R57 coordinator ran to 404,000 and then to 527,000. Hand over
-  at the derived window.
-- Heavy commands, such as a test suite or a model check, go through `research-tree/tools/lane.mjs`,
-  one at a time (the build session's rule of 2026-11-17).
+- **The ceiling is a derived figure, not a feeling.** The build's hand-over point is computed in `research-tree/ORCHESTRATION.md`, section 5 (root about 129 K, Opus helpers checkpoint at about 330 K); r57-0404's 133 K for a coordinator and 115,000 to 155,000 for a research child were a hypothesis, untested. The R57 coordinator ran to 404,000 and then to 527,000. Hand over at the computed point.
+- Heavy commands, such as a test suite or a model check, go through `research-tree/tools/lane.mjs`; its slots are set in `research-tree/lane/capacity.txt` (r57-0127); the build's value and why are in `research-tree/ORCHESTRATION.md`, section 6.
 - A session ends by updating the table "Where it stands" on the board and committing.
 - Measured on 2026-11-18: five Sonnet readers at once, 767,000 tokens together, four minutes, less
   than one point of the week's usage.
 
-## Not enforced yet
+## What is enforced, and what is not
 
-Only the model tier is mechanical: it is in the agent definitions. Everything
-else on the board is text that a session has to follow, and the R57 round shows that text gets
-ignored. Two hooks would enforce the two rules that cost the most: refuse a helper that is not one of
-the four tree types, and stop a coordinator past its window. They are not built. (See the last line
-under "What went wrong": the harness design keeps hooks off and enforces by scripts, so this
-proposal is withdrawn.)
+Four things are enforced by hooks and a check, seen working live (r57-0151, r57-0154; `library/README.md`, "What enforces these rules"): the tier hook (the kind and model of every helper and child), the record guard (archived evidence, journal appends, the form of a question to the owner), the start hook (the board is put into every start) and the commit check. The build adds a plan gate (`.claude/hooks/plan-gate.mjs`, being built). Everything else on the board is text that a session has to follow, and the R57 round shows that text gets ignored. The tree's own agent types in `research-tree/tcb/agents/` are not used by the build.
 
 ## What went wrong in the R57 round
 

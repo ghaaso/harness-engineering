@@ -1,0 +1,23 @@
+$dir = 'C:\Users\User\Documents\projects\harness-engineering\docs\program\evidence\pc-freezes-2026-11-17'
+$res = [ordered]@{}
+foreach ($ln in @('System','Application')) {
+  $byMonth = @{}
+  $first = New-Object System.Collections.ArrayList
+  $i = 0
+  $ev = Get-WinEvent -LogName $ln -Oldest -ErrorAction SilentlyContinue
+  foreach ($e in $ev) {
+    $k = $e.TimeCreated.ToString('yyyy-MM')
+    if ($byMonth.ContainsKey($k)) { $byMonth[$k]++ } else { $byMonth[$k] = 1 }
+    if ($i -lt 8) { [void]$first.Add(($e.TimeCreated.ToString('yyyy-MM-ddTHH:mm:ss.fff') + ' ' + $e.ProviderName + ' ' + $e.Id + ' rec=' + $e.RecordId)) }
+    $i++
+  }
+  $res[$ln] = [ordered]@{ total = $i; byMonth = $byMonth; firstRecordsInFileOrder = @($first) }
+}
+$tc = @()
+try {
+  $t = Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Microsoft-Windows-Kernel-General'; Id=1} -ErrorAction Stop
+  foreach ($e in $t) { $m = ''; try { $m = [string]$e.Message } catch {}; if ($m.Length -gt 300) { $m = $m.Substring(0,300) }; $tc += ($e.TimeCreated.ToString('yyyy-MM-ddTHH:mm:ss.fff') + ' ' + $m) }
+} catch { $tc = @('none or error: ' + $_.Exception.Message) }
+$res['timeChangeEvents'] = $tc
+$enc = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText("$dir\history-reach-detail.json", (ConvertTo-Json -InputObject $res -Depth 4), $enc)

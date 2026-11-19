@@ -20,7 +20,11 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIR = path.join(HERE, '..', 'lane');
 const LOG = path.join(DIR, 'log.jsonl');
-const MAX_HOLD_MS = 20 * 60 * 1000;
+// A hold is stale when its owner process is gone, or when it is older than the longest a command may run
+// (MAX_TIMEOUT_S, the --timeout-s cap) plus a minute for the kill and the release: a live command is never broken
+// below its cap (research-tree/build/check/C-capacity.md row 9; unit P0).
+const MAX_TIMEOUT_S = 1500;
+const MAX_HOLD_MS = (MAX_TIMEOUT_S + 60) * 1000;
 fs.mkdirSync(DIR, { recursive: true });
 
 const argv = process.argv.slice(2);
@@ -30,7 +34,7 @@ const opts = argv.slice(0, sep), cmd = argv.slice(sep + 1);
 const opt = (name, dflt) => { const i = opts.indexOf(name); return i >= 0 && i + 1 < opts.length ? opts[i + 1] : dflt; };
 const label = String(opt('--label', 'unnamed'));
 const heap = Math.min(4096, Math.max(128, parseInt(opt('--heap', '1024'), 10) || 1024));
-const timeoutS = Math.min(1500, Math.max(5, parseInt(opt('--timeout-s', '540'), 10) || 540));
+const timeoutS = Math.min(MAX_TIMEOUT_S, Math.max(5, parseInt(opt('--timeout-s', '540'), 10) || 540));
 const waitS = Math.min(3000, Math.max(1, parseInt(opt('--wait-s', '900'), 10) || 900));
 
 const sab = new Int32Array(new SharedArrayBuffer(4));

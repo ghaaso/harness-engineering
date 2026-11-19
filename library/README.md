@@ -102,6 +102,21 @@ Records whose id begins with `x` come from fill 1: one small-model reader per ev
 checked by a script (its numbers and words stand at the place it cites), 29 % also read by hand. Before a
 decision rests on one, read the place it cites (r57-0130).
 
+## What enforces these rules (since 2026-11-19, r57-0151)
+
+- `.claude/hooks/library-start.mjs` (SessionStart): every start, resume, clear and compaction of a session started at
+  the repository root or in `library/` gets the board's look-up table and its NEXT task, cut from `INDEX.md` at that
+  moment, and is told to read the board.
+- `.claude/hooks/record-guard.mjs` (PreToolUse): refuses a Write or Edit of a journal file that is not a pure append
+  (rule 1), an edit or overwrite of archived evidence, and a question to the owner that does not start "approve:",
+  "cap:" or "fact:" (r57-0001).
+- `tools/check-commit.mjs` (git pre-commit, `git config core.hooksPath tools/git-hooks`, a local setting each clone
+  repeats): refuses a commit that changes or drops a journal line, adds a line that is not a valid record (fields in
+  the order above, kind and status from the lists above, an id not used before and in its writer's own file), or
+  changes archived evidence. It catches what the hook cannot see: writes made through shell commands.
+- `node .claude/hooks/selftest.mjs` runs the hooks' self-tests. Blind spots: a question typed as plain text, a
+  mislabelled question, and `git commit --no-verify`.
+
 ## Not done yet
 
 No script builds the board; `lookup.sh` only reads. Nothing compares a `footprint` with the files. 1,791 of the

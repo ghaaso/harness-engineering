@@ -21,9 +21,13 @@ say what was not tested, and do not rule a family of methods out after one exper
 4. **Privacy.** No project name, path, identifier or code goes into a web search or an outside request.
    The clinic material under `case-studies/clinic` comes from a repository that has no remote.
 5. **Tokens.** Read the plan's usage before any fan-out of agents and between waves; agree a cap and
-   stop at it; never wait silently on a limit. Sonnet reads and extracts, Opus judges and refutes, the
-   coordinating session only coordinates. Keep a coordinator's window small: hand independent parts to
-   fresh child sessions with a brief that points at files.
+   stop at it; never wait silently on a limit. Models go by kind of job, as the tier hook enforces them
+   (`.claude/hooks/tier-routes.json`): Haiku locates and extracts into a fixed schema; Sonnet reads,
+   collects, runs and builds ordinary code; Opus builds invariant-sensitive code, analyses, refutes and
+   orchestrates; a session that orchestrates children with children of their own runs on Fable
+   (r57-0035). The coordinating session only coordinates. Keep a coordinator's window small: hand
+   independent parts to fresh helpers or child sessions with a brief that points at files. A planned
+   multi-session build follows its orchestration document (r57-0034).
 6. **For the owner:** plain words, the answer first, short. Results are shown as a page he can look at;
    markdown is the record behind it.
 7. **Design questions are not put to the owner.** A mechanism comes from the recorded research, a
@@ -46,11 +50,15 @@ say what was not tested, and do not rule a family of methods out after one exper
   were found. Under version 2 a run lives in its own folder outside every repository.
 - `docs/program/lab/` and `case-studies/`: the scripts and testbed code that were measured. They carry
   the paths of the projects they came from; treat them as evidence, not as tools ready to run.
-- `.claude/skills/README.md`: how a skill package and its agent definition are laid out.
+- `.claude/skills/` and `.claude/agents/`: the archived FixFlow material, switched off in this
+  repository's sessions by its settings (r57-0036); not used here.
+- `.claude/hooks/` and `tools/check-commit.mjs`: what enforces the tier routes, the library's rules, rule 1 and rule
+  7 (`library/README.md`, "What enforces these rules"). A new clone runs `git config core.hooksPath tools/git-hooks`.
 
 ## This machine
 
 Windows 11, Ryzen 9 7900X, 31 GB of memory, an RTX 5070 with 12 GB. The shell tool is Git Bash; `node`
 (v24) is on the path and Python is not (run Python tools in a container). The PC goes to sleep after 15
-idle minutes unless a session is working. Check free memory before starting child sessions: three at a
-time at most.
+idle minutes unless a session is working. How many child sessions run at once is computed by the decision
+rule (r57-0414), memory being one of its limits; the old "three at most" was a memory rule and is withdrawn:
+the freezes were blocked program starts, not memory (r57-0032).

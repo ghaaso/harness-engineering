@@ -45,6 +45,18 @@ try { routes = JSON.parse(readFileSync(resolve(here, 'tier-routes.json'), 'utf8'
 const kinds = routes.kinds || {};
 const table = Object.keys(kinds).map((k) => `${k}: ${kinds[k].models.join(' or ')}`).join('; ');
 
+// r57-0026 (added 2026-11-19): a session started in another folder on this PC must find the tier hook there.
+if (isSession && typeof ti.cwd === 'string' && ti.cwd.trim() && !['ssh', 'cloud'].includes(String(ti.target || ''))) {
+  const dir = ti.cwd.trim();
+  const wired = ['settings.json', 'settings.local.json'].some((f) => {
+    try { return readFileSync(resolve(dir, '.claude', f), 'utf8').includes('tier-hook.mjs'); } catch { return false; }
+  });
+  if (!wired) {
+    deny({ ...rec, cwd: dir.slice(0, 80) },
+      `tier hook (r57-0026): the folder ${dir} does not carry the tier hook. Check and install it first: bash tools/ensure-tier-hook.sh "${dir}" (outside this repository only with the owner's word and --force).`);
+  }
+}
+
 // A card shown to the owner, or the start of a card he approved, carries no model to check.
 if (isSession && (ti.initiation === 'offer' || ti.proposal_id)) allow({ ...rec, note: 'a card or an approved proposal, not checked' });
 

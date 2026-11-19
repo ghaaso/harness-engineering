@@ -1,0 +1,312 @@
+<title>Bottleneck Rule v2</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+/* Layout: one reading column for prose, full width for the tables; the same palette and type as version 1's page. */
+:root{
+  --bg:#f3f6f6; --surface:#ffffff; --sunk:#e9eeee; --fg:#152120; --muted:#566664; --line:#d2dbda;
+  --accent:#0a6a66; --accent-soft:#d6ebe9; --bind:#a63a12; --bind-soft:#f6e1d7; --ok:#2f6b2a; --ok-soft:#e1efdc;
+  --font-text:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-head:"Space Grotesk","IBM Plex Sans",system-ui,sans-serif;
+  --font-num:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0f1615; --surface:#172120; --sunk:#1f2b2a; --fg:#e4edeb; --muted:#9db0ad; --line:#2c3b39;
+  --accent:#58c9bf; --accent-soft:#17403d; --bind:#ff9a6b; --bind-soft:#4a2415; --ok:#8fd088; --ok-soft:#1d3a1b; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#0f1615; --surface:#172120; --sunk:#1f2b2a; --fg:#e4edeb; --muted:#9db0ad; --line:#2c3b39;
+  --accent:#58c9bf; --accent-soft:#17403d; --bind:#ff9a6b; --bind-soft:#4a2415; --ok:#8fd088; --ok-soft:#1d3a1b; color-scheme:dark }
+body{background:var(--bg);color:var(--fg);font-family:var(--font-text);font-size:16px;line-height:1.5}
+.wrap{max-width:1480px;margin:0 auto;padding-block:28px 56px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:40px}
+h1{font-family:var(--font-head);font-size:2.1rem;line-height:1.15;margin:0;text-wrap:balance}
+h2{font-family:var(--font-head);font-size:1.35rem;margin:0;text-wrap:balance}
+h3{font-size:.8rem;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin:0;font-weight:600}
+p{margin:0;max-width:75ch}
+.lead{font-size:1.1rem;max-width:80ch}
+.muted{color:var(--muted)}
+.num{font-family:var(--font-num);font-variant-numeric:tabular-nums}
+header,section{display:flex;flex-direction:column;gap:14px}
+.headrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.chip{display:inline-block;font-size:.78rem;font-weight:600;padding:2px 9px;border-radius:999px;border:1px solid var(--line);color:var(--muted);white-space:nowrap;background:var(--surface)}
+.chip.acc{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.chip.bind{background:var(--bind-soft);border-color:var(--bind);color:var(--bind)}
+.chip.ok{background:var(--ok-soft);border-color:var(--ok);color:var(--ok)}
+ul.answer{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:8px;max-width:95ch}
+ul.answer li::marker{color:var(--accent)}
+.decisions{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,430px),1fr));gap:16px}
+.dec{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.dec h4{margin:0;font-family:var(--font-head);font-size:1.08rem;line-height:1.3}
+.dec .tag{font-family:var(--font-num);font-size:.78rem;color:var(--bind);font-weight:500}
+.dec dl{margin:0;display:grid;grid-template-columns:7.5rem minmax(0,1fr);gap:6px 12px;font-size:.93rem}
+.dec dt{color:var(--muted);font-weight:600}
+.dec dd{margin:0}
+.tablewrap{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:10px}
+table{border-collapse:collapse;width:100%;font-size:.9rem;min-width:1100px}
+th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--line)}
+thead th{font-size:.76rem;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);background:var(--sunk);position:sticky;top:0}
+tbody tr:last-child td{border-bottom:0}
+tr.group td{background:var(--sunk);font-family:var(--font-head);font-weight:600;font-size:.95rem;color:var(--fg)}
+tr.mine td:first-child{box-shadow:inset 4px 0 0 var(--bind)}
+td.n{font-family:var(--font-num);color:var(--muted);width:2.6rem}
+td.ch{width:8.5rem}
+.small{font-size:.85rem}
+.note{font-size:.87rem;color:var(--muted);max-width:95ch}
+.kinds{display:flex;flex-wrap:wrap;gap:8px}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr));gap:16px;align-items:start}
+.box{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:flex;flex-direction:column;gap:8px;min-width:0}
+code{font-family:var(--font-num);font-size:.86em;background:var(--sunk);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+</style>
+
+<div class="wrap">
+
+<header>
+  <h1>The decision rule, version 2</h1>
+  <p class="lead">How the harness decides how much work runs at once, what starts next, and how several sessions share files, the check and the token allowance. Decided today from research round 3 and from the corrections made after its draft. It is still a hypothesis: nothing was run, and no number is set. Nothing on this page is yours to set.</p>
+  <div class="headrow">
+    <span class="chip acc">Decided 2026-11-19</span>
+    <span class="chip bind">Hypothesis: not run</span>
+    <span class="chip">0 numbers set</span>
+    <span class="chip">38 conclusions: 8 kept, 9 corrected, 2 replaced, 19 new</span>
+    <span class="chip">145 checked statements: 86 confirmed, 53 in part, 1 refuted, 5 checked by search only</span>
+  </div>
+</header>
+
+<section aria-labelledby="answer">
+  <h2 id="answer">The answer</h2>
+  <ul class="answer">
+    <li><strong>Same frame as version 1.</strong> At every start and finish, work out how many units each resource can carry now and run at the smallest. Act only at the gate where new work starts.</li>
+    <li><strong>Two new kinds of limit.</strong> Each token window (the 5-hour period, the week, and a one-model week on some plans), and the coordinating session's own context window.</li>
+    <li><strong>Tokens are paced only to protect later demand.</strong> While the queued work fits in what a window has left after your own expected use, units start at full speed. Until your use is measured, the draft's pacing stands in for it.</li>
+    <li><strong>What starts next.</strong> Inside a short window, the most value per token first, and the oldest unit held back starts first at the reset. Waiting for memory or the check, a reservation for the oldest unit, with shorter units filling in behind it.</li>
+    <li><strong>The check.</strong> Past c(S + Z)/S workers, more workers only queue. Its four levers (shorten, batch, test ahead, let a waiting worker go on) are not ranked yet; three measurements rank them.</li>
+    <li><strong>Several writers.</strong> The per-file switch of version 1 is replaced by seven parts, reshaping shared places first and version-checked writes second. No file gets one owner by default.</li>
+    <li><strong>The tree.</strong> Its shape follows the size of the job. The largest expected saving is fewer wakes of the parent session.</li>
+    <li><strong>Every number is a measurement.</strong> 37 are named; 7 are counts over files already on disk and need no run.</li>
+  </ul>
+</section>
+
+<section aria-labelledby="mine">
+  <h2 id="mine">Five things I decided beyond the draft</h2>
+  <p class="muted">The draft was written and checked before the last session decided 31 corrections, so it did not carry them. These five come from those corrections and from a conflict between two parts of the draft. Rows they change are marked in the table below.</p>
+  <div class="decisions">
+    <div class="dec">
+      <span class="tag">Decision 1 · rows 4, 5</span>
+      <h4>A token window is paced only to protect later demand</h4>
+      <dl>
+        <dt>The draft</dt><dd>From the moment the share of a window used runs ahead of the share of its time gone (u &gt; s), starts are capped at (1 − u)/(1 − s) of the even rate.</dd>
+        <dt>Against it</dt><dd>Correction r57-0813: pacing's published gain comes from spreading spend over a day. With equal value per token, spending at once finishes the same units sooner. Bid-price control (Talluri and van Ryzin, read in the paper): accept a request only if its value is above the summed prices of what it uses, a price being what later demand would pay.</dd>
+        <dt>Position</dt><dd>Keep the reserve for running units, protect the later demand until the reset, and spend the rest at full speed while the queue fits. Our later demand is your own use of the same windows (every client counts) and work you order later. When the week ran out on 16 November your work stopped for about 12 hours.</dd>
+        <dt>Still a guess</dt><dd>How much later demand there is. A new count (Q37) gives it. Until then the draft's pacing stands in, because under "quality first" a stopped owner is the costlier error.</dd>
+      </dl>
+    </div>
+    <div class="dec">
+      <span class="tag">Decision 2 · row 9</span>
+      <h4>Value order and the reservation no longer compete</h4>
+      <dl>
+        <dt>The conflict</dt><dd>The draft says "most value per token first" while a window limits, and "a reservation for the oldest unit that does not fit" where a unit needs a share of a window. When a window limits, both apply and name different units.</dd>
+        <dt>Position</dt><dd>A reservation is the earliest time the held unit fits. For a window that resets in full, that time is the reset, and nothing spent before it delays a start at the reset. So inside the window, value per token orders the starts; the oldest unit held back starts first at the reset. For memory and the check, which units give back, the reservation stays as drafted.</dd>
+        <dt>Source</dt><dd>EASY backfilling's own definition of a reservation; the provider's pages on full resets (fetched 19 November).</dd>
+        <dt>Still a guess</dt><dd>All of it for sessions; it rests on published forms, not on a run.</dd>
+      </dl>
+    </div>
+    <div class="dec">
+      <span class="tag">Decision 3 · rows 22, 25</span>
+      <h4>Own copies are a safety floor, not a quality claim</h4>
+      <dl>
+        <dt>The draft</dt><dd>Said own worktrees led instruction-only separation by 3 points (CAID) and fell below one agent in STORM's rerun.</dd>
+        <dt>The record</dt><dd>Correction r57-0838: CAID put own worktrees above one agent, 59.1 against 53.1 % on Commit0-Lite, at about 2.3 times the time and 4.3 times the cost. STORM's rerun put them below, 63.8 against 66.4 %. Both are preprints with one run per arm.</dd>
+        <dt>Position</dt><dd>The floor stays: own copies, and every landing through the check in one order, with undo. It keeps one session's half-done edit out of another's check. Whether side-by-side work beats one agent is not settled by these two papers; running work together is your ruling, and what it costs in tokens is counted (Q01, Q02).</dd>
+      </dl>
+    </div>
+    <div class="dec">
+      <span class="tag">Decision 4 · row 37</span>
+      <h4>The five statements nobody had checked</h4>
+      <dl>
+        <dt>What they are</dt><dd>The lanes' lists of what was not found and of papers that need your sign-in (V2-108 to V2-112). The refuter was not shown the sections they rest on.</dd>
+        <dt>What I did</dt><dd>Searched each lane report for 29 of the listed items by name. Every one stands there: 8 of 8 for the check, 7 of 7 for writers, 8 of 8 for the tree, 6 of 6 for the allowance.</dd>
+        <dt>Not checked</dt><dd>The lists' other items, and whether each "not found" says what was searched. No part of the rule rests on these lists.</dd>
+      </dl>
+    </div>
+    <div class="dec">
+      <span class="tag">Decision 5 · row 3</span>
+      <h4>One way to stop a unit at its cap</h4>
+      <dl>
+        <dt>The draft</dt><dd>A unit that reaches its own cap commits what it has and ends; the draft found no source for this form.</dd>
+        <dt>Position</dt><dd>The stop is the rule's own checkpoint (Step 8, part 5) taken at the cap, then the session ends and a successor resumes from it, as the tree's hand-over at the window does. One mechanism then serves the stop at the cap, a refused write and a leaf that outgrows its window.</dd>
+        <dt>Still a guess</dt><dd>Designed in our own record only, never built. What a stop loses (the work since the checkpoint and the successor's reload) is counted in Q02 and Q30.</dd>
+      </dl>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="how">
+  <h2 id="how">How each conclusion was reached</h2>
+  <p class="muted">All 38 conclusions, grouped by part of the rule; the number is the draft's row. "Where it comes from" gives the source and the measured gain with its conditions. "What the check left" is a fresh refuter's verdict on the statement. Marked rows were changed by the five decisions above.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>#</th><th>Conclusion</th><th>Against version 1</th><th>Where it comes from, and what was measured</th><th>What the check left</th><th>Still a guess here</th></tr></thead>
+    <tbody>
+      <tr class="group"><td colspan="6">The frame and the stops</td></tr>
+      <tr><td class="n">1</td><td>Run at the smallest width over all resources; recompute at every start and finish; no switch between methods</td><td class="ch"><span class="chip">Kept</span></td><td>Version 1's own frame. The token windows join it by lane a1's transfer: of the meters read, only ATM's rule refuses unless every bucket allows (RFC 2698 marks a packet and still passes it). No gain measured: the two-bucket rules are specifications</td><td>Holds in part: the frame is not a finding of round 3</td><td>Whether a width can be read in time (Q15)</td></tr>
+      <tr><td class="n">2</td><td>Hold new work back at the gate, and also show the budget in the prompt</td><td class="ch"><span class="chip">Kept</span></td><td>Told its costs, an agent still broke a hard budget in 32.8 % of tasks (GPT 4.1 mini) and 12.4 % (GPT 5 nano), on simulated tool prices. A budget tracker in the prompt raised SWE-bench Verified from 36.8 to 55.4 % at 50 calls</td><td>Holds in part: the draft's "not in the prompt" failed</td><td>One model per figure; simulated tools</td></tr>
+      <tr class="mine"><td class="n">3</td><td>Two stops: running work stops at the memory floor, and a unit that reaches its own cap checkpoints and ends; a successor resumes</td><td class="ch"><span class="chip acc">Corrected</span></td><td>EASY kills a job at its stated length and loses its work; a reservation's start time needs an enforced cap. Decision 5 makes the stop the rule's own checkpoint plus the tree's hand-over (designed only)</td><td>Holds in part: the form has no literature source</td><td>Tokens lost at a stop (Q02); the spend rate that turns a token cap into a time (Q01)</td></tr>
+
+      <tr class="group"><td colspan="6">Token windows and the model</td></tr>
+      <tr class="mine"><td class="n">4</td><td>A window protects later demand first; while the queued work fits beside it, the window's price is zero and units start at full speed; until later demand is measured, pacing from u &gt; s stands in</td><td class="ch"><span class="chip acc">Corrected</span></td><td>Version 1: a window limits only when nearly spent. Lane a1 inferred "from u &gt; s". Correction r57-0813 (decision 1): pacing pays from spreading spend; with equal value, at once is sooner. Bid-price control: accept only above the summed prices. The week ran out on 16 November and stopped your work about 12 hours</td><td>Holds in part: the cap limits only while demand exceeds the rate; a1's inference confirmed as an inference</td><td>Later demand per window (Q37, new); whether our demand exceeds the windows at all (Q09, Q10)</td></tr>
+      <tr class="mine"><td class="n">5</td><td>The stand-in: spend the rest at (1 − u)/(1 − s) of the even rate, keep a reserve for running units, no fixed early finish</td><td class="ch"><span class="chip ok">New</span></td><td>Yahoo re-plans the rest over the rest each slot. LinkedIn steps a rate against a fixed plan (another form): budget life +44 % and +149 %, unique impressions per spend +7.74 % and +10.52 % (self-reported). "Finish one unit before the reset" was refuted</td><td>Four hold in part, one confirmed</td><td>Which form works at tens of units per window (Q33)</td></tr>
+      <tr><td class="n">6</td><td>Several windows: a unit starts only if its expected usage fits every window it draws on; its price is the sum of theirs</td><td class="ch"><span class="chip ok">New</span></td><td>Fit in every bucket is proven for meters that know a cost on arrival (ATM). The summed price is exact only for additive costs, asymptotically best at large volume (Talluri and van Ryzin). "The dearer price binds" is replaced</td><td>Three hold in part</td><td>Which windows a one-model unit draws on (Q11); sizes, and whether windows count alike (Q10)</td></tr>
+      <tr><td class="n">7</td><td>The 5-hour period starts at the first message and resets in full five hours later; the weekly reset is fixed per account; some plans add a one-model week; every client counts</td><td class="ch"><span class="chip acc">Corrected</span></td><td>The provider's pages, fetched 19 November (undated; limits may change). Answers version 1's question "fixed or rolling"</td><td>Confirmed</td><td>Sizes, carry-over, cache weight, model weights (Q10 to Q13)</td></tr>
+      <tr><td class="n">8</td><td>The model: the highest value minus summed price × window usage, a redo counted; the better model until pass rates exist</td><td class="ch"><span class="chip bind">Replaced</span></td><td>Version 1: the cheaper model only where its gap was measured small. FrugalGPT 98.3, 73.3 and 59.2 % lower cost in dollars at the best model's accuracy (read through a note only); RouteLLM saved only below the best quality (95, 92, 87 %); Hybrid LLM lost 10-14 %. None in tokens on code</td><td>Holds in part: no source read applies this to models</td><td>Pass rate, usage and redo by kind of work and model (Q16)</td></tr>
+
+      <tr class="group"><td colspan="6">What starts next</td></tr>
+      <tr class="mine"><td class="n">9</td><td>Fit is a filter. Inside a short window: value per token above the price; the oldest unit held back starts first at the reset. Waiting for memory or the check: a reservation for the oldest, shorter units filling in only if they do not delay it. Units that need only a worker: version 1's order</td><td class="ch"><span class="chip acc">Corrected</span></td><td>EASY++ against EASY: wait −23 %, bounded slowdown −37 %, four real logs replayed, 100 to 1,152 processors, runs of 73-188 min on average (one site only 10 %). Yahoo's value layers: cost per click −72, −67 and −79 % (self-reported, 3 campaigns). Decision 2 composes the two orders</td><td>Three confirmed; the one-worker case holds in part</td><td>Whether it gains at 3 to 16 workers, and the order for one-worker units (Q34); a value per unit (Q17)</td></tr>
+      <tr><td class="n">10</td><td>A unit's length is the mean of the last two units of its class and model; an overrun raises it to the cap; the cap is a limit, never the prediction</td><td class="ch"><span class="chip ok">New</span></td><td>EASY++'s predictor. Predictions left uncorrected: accuracy +49 % but wait +454 % (rows from +38 to +920 %), slowdown +515 %, same logs</td><td>Confirmed</td><td>Keying by class and model instead of by user (Q01, Q18)</td></tr>
+      <tr><td class="n">32</td><td>A speculative copy only when the time saved is worth its tokens at the summed price, and only when the unit is slow from the run, not from more work</td><td class="ch"><span class="chip ok">New</span></td><td>LATE 27 % and Dolly 34-46 % faster (research prototypes); a sort took 44 % longer without copies at MapReduce, Mantri 32 % (both self-reported); four different baselines. At 3 to 16 workers a 5 % cap is no worker</td><td>Holds in part</td><td>Whether slowness comes from the run (Q18)</td></tr>
+      <tr><td class="n">33</td><td>A fixed batch that must all finish: any order is within 2 − 1/m of the best; longest first only with exact lengths and no shared window, and ours share windows</td><td class="ch"><span class="chip ok">New</span></td><td>Graham's bounds, analytic: 1.67 to 1.94 for 3 to 16 workers</td><td>Holds in part</td><td>Lengths known only roughly; shared windows</td></tr>
+      <tr><td class="n">34</td><td>A reserved share for units that must not stall; retries as a budget</td><td class="ch"><span class="chip ok">New</span></td><td>Practice in real systems (self-reported); no gain measured</td><td>Confirmed</td><td>The share of reruns (Q01)</td></tr>
+
+      <tr class="group"><td colspan="6">The shared check</td></tr>
+      <tr><td class="n">11</td><td>The check's worker cap is c(S + Z)/S; the form 1 + cZ/S is c − 1 too low; changes already wait below the cap</td><td class="ch"><span class="chip acc">Corrected</span></td><td>One slot: Denning and Buzen's saturation point, published. c slots: computed on the exact model in 16 cases and derived from two bounds that hold for any distribution. At the cap the check is 79-92 % busy and a change waits 0.16-2.15 check times (exponential times)</td><td>Two confirmed, two hold in part (the waits are the exponential model's)</td><td>Whether two runs at once slow each other (Q20); Z (Q06); the spread of S (Q05, Q35)</td></tr>
+      <tr><td class="n">12</td><td>One task cut into pieces that each pass the check: the square root of (time outside / time inside)</td><td class="ch"><span class="chip">Kept</span></td><td>Suleman: within 1 % of the minimum execution time, four programs, a simulator, a section inside one program</td><td>Holds in part</td><td>Whether session pieces behave like that</td></tr>
+      <tr><td class="n">13</td><td>The cap moves with c, S and Z; more workers never move it</td><td class="ch"><span class="chip">Kept</span></td><td>Memcached's peak moved from 22 to 48 threads after two changes; a simulated MySQL saturated at 16 threads and, with accelerated critical sections, kept rising to 32, the most tried</td><td>One confirmed, one in part</td><td>Nothing beyond S and Z</td></tr>
+      <tr><td class="n">14</td><td>A worker that goes on while its change waits: the check binds when N·S/c reaches Z; lane w1's "T &lt; 10N minutes" is this case with one slot</td><td class="ch"><span class="chip ok">New</span></td><td>Arithmetic on the same two bounds; one suite run takes 596 s, measured here</td><td>Confirmed</td><td>Time per unit (Q01, Q06)</td></tr>
+      <tr><td class="n">15</td><td>Shorten the check: test files side by side; selection in the pre-check; the full suite at the gate until a dependency map exists; no prediction at the gate</td><td class="ch"><span class="chip ok">New</span></td><td>Ekstazi 32 % shorter (54 % on long suites), up to 38 % slower on short ones; Facebook half the cost with 99.9 % of faulty changes caught, relying on later stages we lack; Google 42-55 %, a simulation on one month (both self-reported)</td><td>Two confirmed, one in part; "BMW keeps the full suite at its gate" refuted</td><td>Whether our test files run side by side (Q21); the share of changes that touch the shared library (Q07)</td></tr>
+      <tr><td class="n">16</td><td>Batch what waits: one greedy batch capped by p; a failed batch split in the fewest rounds the free slots allow; no timer</td><td class="ch"><span class="chip ok">New</span></td><td>Dorfman: gain 5.0 at 1 % failing, 1.7 at 10 %, 1.01 at 30 %. Ericsson 72 % fewer runs at 2.8 % culprits, 41 % with flaky tests (simulated). With few concurrent builds, batching lost its lead</td><td>Confirmed</td><td>p of model changes (Q05); independence of failures (Q22)</td></tr>
+      <tr><td class="n">17</td><td>Test ahead on the success path in a free slot; the window halves on each failure; a run whose base passes is the real check</td><td class="ch"><span class="chip ok">New</span></td><td>Uber: median 2.98 times an oracle against 80 for one queue, a maximum under contention in a replay of one monorepo (self-reported). Zuul: window 20, +1 per merge, halved per failure</td><td>One confirmed, one in part</td><td>How often model changes pass (Q05)</td></tr>
+      <tr><td class="n">18</td><td>A waiting worker starts its next unit, with a cap on changes in flight and a way back; it saves clock time and costs the tokens of stacked work redone after a late failure</td><td class="ch"><span class="chip ok">New</span></td><td>No figure carries: Aether's 68 % came from relieving an overloaded scheduler</td><td>Holds in part</td><td>A second unit ready; redo tokens after a late failure (Q02)</td></tr>
+      <tr><td class="n">19</td><td>The lane logs its slots and waiters, orders them, and times out above the longest check</td><td class="ch"><span class="chip ok">New</span></td><td>Measured here: 177 min waited against 365 min run over 780 commands; today a 25-minute timeout would kill an hour-long check</td><td>Confirmed</td><td>Nothing</td></tr>
+      <tr><td class="n">38</td><td>A standing queue at the check is the signal (Step 5); throughput against workers is the slow outer check (Step 6), fitted on at least six points</td><td class="ch"><span class="chip">Kept</span></td><td>The queue model; a curve fit needs half a dozen points and its peak may lie outside what was tried</td><td>One confirmed, one in part</td><td>Nothing</td></tr>
+
+      <tr class="group"><td colspan="6">Several writers on shared files</td></tr>
+      <tr><td class="n">20</td><td>The order of writes is fixed before work only for what a plan declares; places found while working are claimed in resource order, by wait-die, or checked at landing</td><td class="ch"><span class="chip acc">Corrected</span></td><td>A fixed order needs every unit's read and write sets first, which sessions learn while working. Aria 2.4 times Calvin at low contention, 39 % of itself at heavy skew; Co-Coder 56.8 → 68.1 % on DevEval, 1.81 times faster (one preprint, one model)</td><td>Confirmed</td><td>Whether a plan's file list matches what a session touches (Q07)</td></tr>
+      <tr><td class="n">21</td><td>Reshape shared places: one entry per unit applied at landing; a "next free" number chosen at landing</td><td class="ch"><span class="chip ok">New</span></td><td>Doppel 38 times optimistic control on one hot key, 3 times on a larger application, for updates that commute; invariant confluence 25-fold on 200 servers. Our 20 shared places are counted from the plan, not from diffs</td><td>One confirmed, two in part</td><td>Which of our 20 places become entries (Q07)</td></tr>
+      <tr class="mine"><td class="n">22</td><td>Version-checked writes: a write names the version it read; a refusal gets the current text, a diff and a short reservation; one write is redone only when the refusal concerns that file alone</td><td class="ch"><span class="chip ok">New</span></td><td>STORM: 82.5 % against 63.8 % for own worktrees and 66.4 % for one agent, at most 4 writers, one preprint, no repeated runs. Writes through the shell bypass it</td><td>Two confirmed, three in part</td><td>Whether our Edit path can carry a version check (Q26); how often a refusal comes from a changed read (Q02)</td></tr>
+      <tr><td class="n">23</td><td>Claims below the file, at the grain a unit touches, the grain measured; one owner of a hot pair or file only as the last rung</td><td class="ch"><span class="chip bind">Replaced</span></td><td>Replaces version 1's per-file switch. A 1977 simulation: useful work 7,042 → 9,438 from 1 to 10 granules; coarse locks held to the end of 10-step units deadlocked elsewhere; neither number carries. An owned store won 1.54 times with no crossing, lost from about 20 % crossing</td><td>Three confirmed, two in part</td><td>Regions touched per file (Q07); a replay over grain and ownership (Q08)</td></tr>
+      <tr><td class="n">24</td><td>Wait or redo has no published direction; version 1's product is kept, computed per pair</td><td class="ch"><span class="chip acc">Corrected</span></td><td>With locking, waiting beat no-wait as units grew; in Silo, no-wait won. With version checks the redo is one write, or the steps built on a read that changed</td><td>Two confirmed, one in part</td><td>The crossover, in tokens (Q02, Q25)</td></tr>
+      <tr class="mine"><td class="n">25</td><td>The floor: own copies; every landing through the check, in one order, with undo; no check in a copy holding more than the units it judges</td><td class="ch"><span class="chip">Kept</span></td><td>Clean merges can be wrong: kdiff3 3 in 52; human merges 1 % build and 6 % test failures. Own copies against one agent (decision 3): CAID 59.1 against 53.1 % at about 2.3 times the time and 4.3 times the cost; STORM's rerun 63.8 against 66.4 %</td><td>One confirmed, one in part: the added rule rests on the refuter's reasoning only</td><td>The rate for session pairs (Q24)</td></tr>
+      <tr><td class="n">26</td><td>Checkpoints inside a unit; a refusal returns to the last one</td><td class="ch"><span class="chip ok">New</span></td><td>No figure: one survey found no performance metrics, and one empirical study</td><td>Holds in part</td><td>All of it (Q02)</td></tr>
+      <tr><td class="n">27</td><td>Operation transforms among peers are out; a CRDT of a whole file is neither used nor ruled out; structured merge comes last</td><td class="ch"><span class="chip acc">Corrected</span></td><td>All five transform algorithms model-checked fail with three sites. Semistructured merge: about 24 % fewer conflicts, no fewer wrong clean merges. CodeCRDT (one preprint): 13.1 % slower overall with 82-189 % more code, faster per 1,000 characters in 5 of 6 tasks</td><td>Two confirmed, one in part; the draft's drop of the CRDT was refuted: one preprint cannot rule a family out</td><td>A whole-file CRDT on session edits (Q36); renames (Q23)</td></tr>
+      <tr><td class="n">31</td><td>Run-state files are written by a script step, not a session; code files get no owner by default</td><td class="ch"><span class="chip ok">New</span></td><td>Cost: a session would spend minutes and a window re-read on seconds of file work</td><td>Holds in part; run lock or compare-and-set is open</td><td>Splits per hour, seconds per posting (Q31)</td></tr>
+
+      <tr class="group"><td colspan="6">The tree and the parent's window</td></tr>
+      <tr><td class="n">28</td><td>The parent's context window is a resource; a wake waits while nothing urgent waits</td><td class="ch"><span class="chip ok">New</span></td><td>97 % of tokens were re-reads of a window already there, measured on two other repositories (for the tree, which never ran, a transfer). Buffered trees: inserts 16 times faster for about twice the query cost</td><td>Confirmed</td><td>That a wake costs mostly its fixed re-read (Q03)</td></tr>
+      <tr><td class="n">29</td><td>The tree's shape by size: two levels built at once for a small job; split or hand over a leaf that outgrows its window (open); more rounds or an inner level for a very large job</td><td class="ch"><span class="chip ok">New</span></td><td>Dremel: a fourth level halved one many-group query. RAO: 196K against 1,029K tokens, most of the saving in cache reads (trained agents). No new keys arrive during a run</td><td>Six confirmed, three in part; three of lane t1's claims refuted</td><td>Summary size and compression (Q03, Q04); a hand-over's reload against a split's start (Q30)</td></tr>
+      <tr><td class="n">30</td><td>The fill factor is computed from how far leaves overrun their estimates, f = 1/q<sub>1−p</sub>(R)</td><td class="ch"><span class="chip ok">New</span></td><td>Database figures are occupancies, not gains: B+ trees at least 1/2 full (about 69 % expected), B* at least 2/3; InnoDB fills 15/16 in key order (its manual). Today's 0.75 is read by no script</td><td>Holds in part</td><td>The spread of overruns (Q29)</td></tr>
+
+      <tr class="group"><td colspan="6">Constants and sources</td></tr>
+      <tr><td class="n">35</td><td>Memory, processor and bandwidth as in version 1; memory stays the hard limit; each part is chosen against your objective (quality first), not tokens alone</td><td class="ch"><span class="chip">Kept</span></td><td>No lane read them again; lane t1's "chosen against measured tokens" is narrowed to your ruling r57-0003</td><td>Holds in part</td><td>Whether tokens bind before memory does (Q09, Q10, Q19)</td></tr>
+      <tr><td class="n">36</td><td>Every constant is a measurement; only the shape carries over from the papers</td><td class="ch"><span class="chip">Kept</span></td><td>At our size the papers give numbers only for known demand or for the worst case</td><td>One confirmed, one in part</td><td>Every constant</td></tr>
+      <tr class="mine"><td class="n">37</td><td>The allowance and a shared check now have papers; nested windows that count the same tokens still have none read; no real system with 3 to 16 workers and units of minutes was found</td><td class="ch"><span class="chip acc">Corrected</span></td><td>Near cases only: a 1977 simulation of units of minutes, and one CI project with few concurrent builds. Decision 4 searched 29 listed items: all stand in the lane reports</td><td>Holds in part</td><td>That the shapes carry over to sessions</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">How it was checked: round 3's four lanes each had their claims gated and refuted in fresh contexts; the draft's 145 statements were then checked against the lanes' claims and refuted again. Today the top session read the draft in full, folded in the 31 corrections decided after it, and searched the reports for the unchecked lists. Nothing was run on this PC.</p>
+</section>
+
+<section aria-labelledby="open">
+  <h2 id="open">Still open, and what settles each</h2>
+  <p class="muted">Where the record does not decide a point, the rule keeps a safe default and names the measurement that will.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Open point</th><th>Until it is measured, the rule</th><th>Settled by</th></tr></thead>
+    <tbody>
+      <tr><td>How much of each window your own later use needs</td><td>Paces from u &gt; s (the draft's rule)</td><td>Q37, a count over transcripts with meter readings</td></tr>
+      <tr><td>Which of the check's levers comes first</td><td>Runs the suite one file at a time, no batching, no testing ahead</td><td>Q21 (a run), Q05 and Q07 (counts)</td></tr>
+      <tr><td>The order for units that need only a worker</td><td>Shortest expected check first, then oldest, with an age cap (version 1)</td><td>Q34, a simulation</td></tr>
+      <tr><td>Where one owner of a file pays</td><td>No owner; own copies and version checks</td><td>Q07 (a count) and Q08 (a replay)</td></tr>
+      <tr><td>The grain of claims for long units</td><td>Claims at file grain</td><td>Q07 and Q08</td></tr>
+      <tr><td>How big a redo is under version checks</td><td>Gives wait-or-redo no direction</td><td>Q02, a count</td></tr>
+      <tr><td>Split or hand over a leaf that outgrows its window</td><td>Hands over, as the tree's design does</td><td>Q30, in the pilot</td></tr>
+      <tr><td>Run lock or compare-and-set for the task table</td><td>Compare-and-set, as today</td><td>Q31, once splits exist</td></tr>
+      <tr><td>Whether tokens bind before memory</td><td>Memory is the hard limit</td><td>Q09, Q10, Q19</td></tr>
+      <tr><td>A CRDT of a whole file</td><td>Own copies; neither used nor ruled out</td><td>Q36, a run</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section aria-labelledby="meas">
+  <h2 id="meas">What sets the numbers: 37 measurements</h2>
+  <div class="kinds">
+    <span class="chip ok">7 counts over files on disk, no run: Q01, Q02, Q05, Q06, Q07, Q09, Q37</span>
+    <span class="chip">2 counts over other repositories' sessions: Q03, Q04</span>
+    <span class="chip">2 counts where data exist, else runs: Q16, Q18</span>
+    <span class="chip">2 counts once the tree runs: Q31, Q32</span>
+    <span class="chip">6 meter readings: Q10 to Q15</span>
+    <span class="chip bind">13 runs, each needs your word: Q19 to Q30, Q36</span>
+    <span class="chip">4 simulations: Q08, Q33 to Q35</span>
+    <span class="chip">1 no lane says how: Q17</span>
+  </div>
+  <p>The three that set the most: <strong>Q01</strong> (tokens, minutes and start cost per unit, from transcripts), <strong>Q05</strong> (the check's run time and its spread, from the lane log), and <strong>Q10</strong> (window sizes and model weights, from meter readings against Q01). Order of work: counts first, then simulations swept over project sizes, then runs.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Q</th><th>Measurement</th><th>Kind</th><th>Sets</th></tr></thead>
+    <tbody class="small">
+      <tr><td class="num">Q01</td><td>Tokens, minutes and start tokens per unit, by class and model</td><td>count</td><td>Expected usage, the reserve, length predictions, the spend rate</td></tr>
+      <tr><td class="num">Q02</td><td>Tokens of a redo: a whole unit, a refused write, the steps since a checkpoint</td><td>count</td><td>The redo term in wait-or-redo, the model choice, a batch failure</td></tr>
+      <tr><td class="num">Q03</td><td>A parent's tokens per wake; its own growth per round</td><td>count, other repositories</td><td>Children per parent, depth, when to wake</td></tr>
+      <tr><td class="num">Q04</td><td>An inner node's compression; children running at once</td><td>count, else a run</td><td>Whether an inner level pays</td></tr>
+      <tr><td class="num">Q05</td><td>The check's run time and spread; failing and flaky shares once a gate runs</td><td>count</td><td>The check's cap and waits, the batch cap, testing ahead</td></tr>
+      <tr><td class="num">Q06</td><td>A unit's time outside the check; the share of its cycle spent waiting</td><td>count</td><td>The cap; whether letting a worker go on pays</td></tr>
+      <tr><td class="num">Q07</td><td>Regions touched per file and unit; units crossing owners; changes that touch the shared library</td><td>count</td><td>Overlap, grain, what to reshape, owners, selection at the gate</td></tr>
+      <tr><td class="num">Q08</td><td>A replay of recorded units over escalation, claim order, wait-die, grain, one writer</td><td>simulation</td><td>Escalation, claims, grain, owners</td></tr>
+      <tr><td class="num">Q09</td><td>5-hour periods opened per week; units per window</td><td>count</td><td>Which window binds over a week</td></tr>
+      <tr><td class="num">Q10</td><td>Each window's size; each model's and effort level's weight</td><td>readings</td><td>Usage per window, prices, the week test</td></tr>
+      <tr><td class="num">Q11</td><td>Does a unit on the one-model week also move the all-models week</td><td>readings</td><td>Which windows a unit draws on</td></tr>
+      <tr><td class="num">Q12</td><td>How cached input counts against the windows</td><td>readings</td><td>Usage of context re-reads</td></tr>
+      <tr><td class="num">Q13</td><td>Is an unspent part lost at the reset; what opens a period; your weekly reset time in Settings</td><td>readings, one look</td><td>Whether a margin is ever needed</td></tr>
+      <tr><td class="num">Q14</td><td>The error of forecasting the rest of a window</td><td>readings</td><td>A margin, if unspent is lost</td></tr>
+      <tr><td class="num">Q15</td><td>Usage of units in flight; how far the meter lags</td><td>readings</td><td>The reserve</td></tr>
+      <tr><td class="num">Q16</td><td>Pass rate, usage and redo by kind of work and model</td><td>count, else a run</td><td>The model choice</td></tr>
+      <tr><td class="num">Q17</td><td>A value or a ranking per unit</td><td>not said by any lane</td><td>Value per token</td></tr>
+      <tr><td class="num">Q18</td><td>Spread of length and tokens across reruns of one unit</td><td>count, else a run</td><td>Speculative copies; prediction spread</td></tr>
+      <tr><td class="num">Q19</td><td>Peak memory and busy threads per class of unit</td><td>run</td><td>Memory and processor widths; how many child sessions</td></tr>
+      <tr><td class="num">Q20</td><td>Does one suite run slow when a second runs beside it</td><td>run</td><td>Whether two slots run at full speed</td></tr>
+      <tr><td class="num">Q21</td><td>The suite with its test files side by side; are they independent</td><td>run</td><td>The shorter check; the levers' order</td></tr>
+      <tr><td class="num">Q22</td><td>Suite time on a merge of 1, 2 and 4 changes</td><td>run</td><td>The cost of a batch run</td></tr>
+      <tr><td class="num">Q23</td><td>Conflicts of session edits on neighbouring lines; share that are reorders or renames</td><td>run</td><td>Conflict chance per region; structured merge</td></tr>
+      <tr><td class="num">Q24</td><td>Clean merges of two session units that still fail the check</td><td>run</td><td>The semantic-conflict rate</td></tr>
+      <tr><td class="num">Q25</td><td>Clock time a unit waits for an owner</td><td>run</td><td>The wait side of wait-or-redo</td></tr>
+      <tr><td class="num">Q26</td><td>Does a hook's refusal stop the Edit tool; can a hook check a version</td><td>run, one probe</td><td>Whether writer parts 2 and 3 can be enforced</td></tr>
+      <tr><td class="num">Q27</td><td>The lane's wait with one slot against two</td><td>run</td><td>The effect of slots on waits</td></tr>
+      <tr><td class="num">Q28</td><td>A memory-bandwidth counter, only if Q19 and Q20 leave slowdowns unexplained</td><td>run</td><td>The bandwidth width</td></tr>
+      <tr><td class="num">Q29</td><td>How far each leaf overruns its estimate, from the pilot</td><td>run</td><td>The fill factor</td></tr>
+      <tr><td class="num">Q30</td><td>A hand-over's reload against a new leaf's start cost, from the pilot</td><td>run</td><td>Split or hand over</td></tr>
+      <tr><td class="num">Q31</td><td>Splits per hour; seconds per posting</td><td>count, once splits exist</td><td>Run lock or compare-and-set</td></tr>
+      <tr><td class="num">Q32</td><td>Repeated questions per leaf; restarts per hour</td><td>count, once runs exist</td><td>Hot leaves</td></tr>
+      <tr><td class="num">Q33</td><td>Pacing at tens of units per window: re-planning against the price form</td><td>simulation</td><td>Pacing at our scale</td></tr>
+      <tr><td class="num">Q34</td><td>Backfilling at 3 to 16 workers; first come against shortest first</td><td>simulation</td><td>The order for one-worker units</td></tr>
+      <tr><td class="num">Q35</td><td>The queue model swept over slots, workers and Z/S with our spread</td><td>simulation</td><td>Waits below the cap</td></tr>
+      <tr><td class="num">Q36</td><td>A whole-file CRDT against own copies with version checks, 2 to 5 sessions, repeated runs</td><td>run</td><td>Whether a CRDT has a place</td></tr>
+      <tr><td class="num">Q37</td><td>New today: usage that arrived after each window opened, from your own sessions and work ordered later, by time left to the reset</td><td>count, with readings</td><td>The protected part of each window (decision 1)</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section aria-labelledby="enf">
+  <h2 id="enf">Also done today: the rules are now enforced, not only written</h2>
+  <p class="muted">Hooks run on every tool call of a session started in this repository and inside its helpers; a commit check runs on every commit. They take effect from the next session started here: the app reads hooks when a session starts, so they were tested by script, not yet seen live.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Rule</th><th>Enforced by</th><th>Tested</th><th>Cannot see</th></tr></thead>
+    <tbody>
+      <tr><td>Helpers and child sessions name their kind of job and an allowed model</td><td>The tier hook (since 18 November)</td><td>Its earlier 17 self-tests and 6 of 6 live steps; 2 more today</td><td>A job given the wrong kind; effort</td></tr>
+      <tr><td>A session started in another folder finds the tier hook there</td><td>The tier hook's new folder check</td><td>3 self-tests</td><td>Folders on other machines or in the cloud</td></tr>
+      <tr><td>Read the library's board at the start and after every compaction</td><td>A start hook puts the board's look-up table and the next task into the session (about 7,200 characters, roughly 2,000 tokens a start)</td><td>2 self-tests</td><td>Whether the session then reads the rest of the board</td></tr>
+      <tr><td>No design questions to you</td><td>The record guard: every question must start "approve:", "cap:" or "fact:"; anything else is refused with the reason</td><td>4 self-tests</td><td>A question typed as plain text; a design question given another label</td></tr>
+      <tr><td>Archived evidence is never changed</td><td>The record guard on writes and edits, and the commit check (files under <code>recovered/</code> and in the migration manifests)</td><td>3 hook tests, 2 commit tests</td><td>A shell write until it is committed</td></tr>
+      <tr><td>The library's journal is only added to, and every record is well formed</td><td>The record guard, and the commit check (valid JSON, fields in order, ids unique and in the writer's own file)</td><td>4 hook tests, 8 commit tests; all 4,131 existing records pass</td><td>A commit made with <code>--no-verify</code>, which is yours alone</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section aria-labelledby="src">
+  <h2 id="src">The record behind this page</h2>
+  <div class="two">
+    <div class="box">
+      <h3>Files</h3>
+      <p class="small">The decided rule: <code>docs/program/evidence/round3-2026-11-18/DECISION-RULE-v2.md</code>. The draft and its checks: <code>RULE-V2-DRAFT.md</code>, <code>v2-claims.md</code>, <code>v2-gate.md</code>, <code>v2-refute.md</code> in the same folder. Version 1: <code>docs/program/evidence/bottleneck-2026-11-18/DECISION-RULE.md</code>.</p>
+      <p class="small">The hooks: <code>.claude/hooks/</code> (<code>library-start.mjs</code>, <code>record-guard.mjs</code>, <code>tier-hook.mjs</code>, <code>selftest.mjs</code>); the commit check: <code>tools/check-commit.mjs</code>.</p>
+    </div>
+    <div class="box">
+      <h3>Library records</h3>
+      <p class="small">r57-0841 decides version 2. r57-0414, r57-0415 and r57-0416 replace version 1's r57-0408, r57-0406 and r57-0409. r57-0516 is the measurement task. The corrections it folds in: r57-0813, r57-0814, r57-0838. Look up any of them with <code>bash library/lookup.sh &lt;id&gt;</code>.</p>
+    </div>
+  </div>
+</section>
+
+</div>

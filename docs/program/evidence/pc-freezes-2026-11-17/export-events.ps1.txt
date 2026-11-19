@@ -1,0 +1,105 @@
+$ErrorActionPreference = 'Continue'
+$dir = 'C:\Users\User\Documents\projects\harness-engineering\docs\program\evidence\pc-freezes-2026-11-17'
+$since = (Get-Date).AddDays(-75)
+$sinceUtc = $since.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.000Z')
+
+if ($LogName -eq 'System') {
+  $groups = @(
+    @{p=@('Microsoft-Windows-Kernel-Power'); ids=@(41,42,107,109)},
+    @{p=@('EventLog'); ids=@(6005,6006,6008)},
+    @{p=@('Microsoft-Windows-Kernel-General'); ids=@(12,13)},
+    @{p=@('User32'); ids=@(1074)},
+    @{p=@('Service Control Manager'); ids=@(7031,7034)},
+    @{p=@('Microsoft-Windows-Resource-Exhaustion-Detector'); ids=@(2004)},
+    @{p=@('Tcpip'); ids=@(4227,4231)},
+    @{p=@('disk'); ids=@(7,51,153)},
+    @{p=@('stornvme','storahci','nvme'); ids=@(129)},
+    @{p=@('Microsoft-Windows-WHEA-Logger'); ids=@()},
+    @{p=@('BugCheck','Microsoft-Windows-WER-SystemErrorReporting'); ids=@(1001)},
+    @{p=@('volmgr'); ids=@(161)},
+    @{p=@('Ntfs','Microsoft-Windows-Ntfs'); ids=@(55,98,140)}
+  )
+} else {
+  $groups = @(
+    @{p=@('Application Hang'); ids=@(1002)},
+    @{p=@('Application Error'); ids=@(1000)},
+    @{p=@('Windows Error Reporting'); ids=@(1001)}
+  )
+}
+
+$out = New-Object System.Collections.ArrayList
+$errs = New-Object System.Collections.ArrayList
+foreach ($g in $groups) {
+  $pp = ($g.p | ForEach-Object { "Provider[@Name='$_']" }) -join ' or '
+  $q = "*[System[($pp) and TimeCreated[@SystemTime>='$sinceUtc']"
+  if ($g.ids.Count -gt 0) {
+    $ii = ($g.ids | ForEach-Object { "EventID=$_" }) -join ' or '
+    $q += " and ($ii)"
+  }
+  $q += "]]"
+  try {
+    $evs = Get-WinEvent -LogName $LogName -FilterXPath $q -ErrorAction Stop
+  } catch {
+    $evs = @()
+    if ($_.Exception.Message -notmatch 'No events were found') { [void]$errs.Add(($g.p -join ',') + ': ' + $_.Exception.Message) }
+  }
+  foreach ($e in $evs) {
+    $m = ''
+    try { $m = [string]$e.Message } catch { $m = '' }
+    if ($m.Length -gt 300) { $m = $m.Substring(0,300) }
+    $data = $null
+    if (($e.ProviderName -eq 'Microsoft-Windows-Kernel-Power' -and $e.Id -eq 41) -or $e.Id -eq 6008 -or $e.Id -eq 1001 -and $LogName -eq 'System') {
+      try {
+        $x = [xml]$e.ToXml()
+        $data = @{}
+        foreach ($d in $x.Event.EventData.Data) { if ($d.Name) { $data[$d.Name] = [string]$d.'#text' } }
+      } catch {}
+    }
+    [void]$out.Add([pscustomobject]@{
+      time = $e.TimeCreated.ToString('yyyy-MM-ddTHH:mm:ss.fff')
+      log = $LogName
+      provider = $e.ProviderName
+      id = $e.Id
+      level = $e.Level
+      levelName = $e.LevelDisplayName
+      message = $m
+      data = $data
+    })
+  }
+}
+
+$enc = New-Object System.Text.UTF8Encoding($false)
+$json = ConvertTo-Json -InputObject @($out) -Depth 4 -Compress
+[System.IO.File]::WriteAllText("$dir\history-raw-$LogName.json", $json, $enc)
+
+# log reach
+$reach = [ordered]@{ log = $LogName; since = $since.ToString('yyyy-MM-ddTHH:mm:ss'); exported = $out.Count; errors = @($errs) }
+try {
+  $ll = Get-WinEvent -ListLog $LogName
+  $reach.recordCount = $ll.RecordCount
+  $reach.maxSizeBytes = $ll.MaximumSizeInBytes
+  $reach.fileSizeBytes = $ll.FileSize
+  $reach.mode = [string]$ll.LogMode
+} catch { $reach.listLogError = $_.Exception.Message }
+try {
+  $o = Get-WinEvent -LogName $LogName -Oldest -MaxEvents 1
+  $reach.oldestEventTime = $o.TimeCreated.ToString('yyyy-MM-ddTHH:mm:ss.fff')
+  $reach.oldestEventId = $o.Id
+  $reach.oldestEventProvider = $o.ProviderName
+} catch { $reach.oldestError = $_.Exception.Message }
+if ($LogName -eq 'System') {
+  # oldest of the key kinds in the whole log (no time limit)
+  $kinds = @(
+    @{n='KernelPower41'; q="*[System[Provider[@Name='Microsoft-Windows-Kernel-Power'] and EventID=41]]"},
+    @{n='KernelGeneral12'; q="*[System[Provider[@Name='Microsoft-Windows-Kernel-General'] and EventID=12]]"},
+    @{n='SCM7034'; q="*[System[Provider[@Name='Service Control Manager'] and EventID=7034]]"},
+    @{n='Tcpip4231'; q="*[System[Provider[@Name='Tcpip'] and EventID=4231]]"}
+  )
+  foreach ($k in $kinds) {
+    try {
+      $o = Get-WinEvent -LogName $LogName -FilterXPath $k.q -Oldest -MaxEvents 1 -ErrorAction Stop
+      $reach["oldest_" + $k.n] = $o.TimeCreated.ToString('yyyy-MM-ddTHH:mm:ss.fff')
+    } catch { $reach["oldest_" + $k.n] = 'none: ' + $_.Exception.Message }
+  }
+}
+[System.IO.File]::WriteAllText("$dir\history-reach-$LogName.json", (ConvertTo-Json -InputObject $reach -Depth 3), $enc)
