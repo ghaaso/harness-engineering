@@ -184,7 +184,9 @@ FIX-wake.md FX-W5; `build/branches.md` row 6. Fills the skeleton's `ownerOrNone`
   interval, raised at 15, 30, 60 and 60 ticks with a new key and `detail.reraise`; `stuck_raises` 1 puts
   it in `stuck` at the 4th raise, not the 3rd; left unacknowledged it exits 17 and is not raised again);
   **W5 stuck** (an acknowledged hang raised again and exiting 21 at once, six times; in `stuck` only at
-  the 6th, 285 ticks after the onset; a new call clears the hang and empties `stuck` and `reraise`).
+  the 6th, 285 ticks after the onset; a new call clears the hang and empties `stuck` and `reraise`);
+  **W5 stuck stays** (once stuck at the 4th raise, the acknowledged act-due stays in `stuck` at quiet
+  ticks 1 and 59 ticks later, where FX-W4 reads it at its own times; nothing is raised there).
 
 ## Rules implemented
 R1, R4 (reads, decides, exits; watcher.lock; ce first and inside the lock; intake spawned, not
