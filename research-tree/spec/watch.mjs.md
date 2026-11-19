@@ -364,6 +364,12 @@ real transcripts matching the parser (item 7); a real session's window in its tr
 - The alarm: in the registration hold, before alarm.json, `alarmSlotTurnSeq(reg)` (FX-W3), then
   `alarmRegisterSlot(reg)` (FX-W2). Every exit after registration passes `alarmExit(reg, out or exit
   code)`: `alarmUnarmedRecord` (FX-W3, exit 30 only), then `alarmExitMarker` (FX-W1); an error is rethrown.
+  FX-W3 built: `alarmSlotTurnSeq` adds `turn_seq_at_reg` to the slot record (turn.json's turn_seq as
+  `ensureHold1` read it in the same hold; 0 when turn.json is absent or unreadable). `alarmUnarmedRecord`, on
+  exit 30, before the marker and without a lock: when turn.json's turn_seq still equals the slot record's
+  `turn_seq_at_reg` (no reconcile in a whole alarm period), strict-create `run/arm/unarmed-<pt>.json`
+  {ce, turn_seq}; a failure is one stderr line and leaves the exit. Tested in `tcb/test/watch.test.mjs`
+  (FX-W3 unarmed record; T20 alarm).
   FX-W1 built: `alarmExitMarker` (alarm step 6). FX-W2 built: the ensure (alarm steps 1a, 1b, 3, 3a:
   `ensureStarted`, `ensureSlots`, `ensureHold1`, `ensureAbandoned`) and `alarmRegisterSlot`;
   `reg.registered` is set at the slot write (FX-W1 set it after the `alarm.json` write), so a

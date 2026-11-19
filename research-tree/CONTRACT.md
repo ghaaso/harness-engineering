@@ -109,7 +109,7 @@ node <root>/tcb/<name>.mjs [<mode>] --root <dir> [--ce <n>] [--task <id> --epoch
 | 67 | `table-corrupt` | `run/tasks.json` (or another `run/` state file) unparseable or schema-invalid. Every writing script refuses; `tasks.json.prev` is kept; the owner is told. Status reads `watcher.json` and `alarm.json` loosely: a corrupt one is its anomaly `state-corrupt` and a dead wake source, not 67 (FX-W1 step 4) |
 | 70 | `internal` | Uncaught error. Gates count it as not-run; a watcher 70 means "restart the watcher", never a field failure |
 | 75 | `lock-busy` | `run/run.lock` still held after the bounded retry (or lost while held) |
-| 0, 1, 2, 5, 6, 17, 21 | round 3 | Reasons added by the round-3 fixes, each filled by its fix (S0.5 lists them): FX-W1 the endturn's tri-state report of the wake sources (1, 2) and the alarms' exit markers; FX-W2 1 `arm-unconfirmed`, 0 `present` / `nonce-reused` / `abandoned`; FX-W3 6 `not-armed`; FX-W6 21 `hang` by kind, 17 `idle-child` / `age-cap`; FX-CLAIM 5 `claimed-late`, 6 `not-claimed`, 1 `not-claim-holder` |
+| 0, 1, 2, 5, 6, 17, 21 | round 3 | Reasons added by the round-3 fixes, each filled by its fix (S0.5 lists them): FX-W1 the endturn's tri-state report of the wake sources (1, 2) and the alarms' exit markers; FX-W2 1 `arm-unconfirmed`, 0 `present` / `nonce-reused` / `abandoned`; FX-W3 6 `not-armed`, 1 `turn-stale` (endturn); FX-W6 21 `hang` by kind, 17 `idle-child` / `age-cap`; FX-CLAIM 5 `claimed-late`, 6 `not-claimed`, 1 `not-claim-holder` |
 
 Watcher precedence when several classes are present (first wins): 64, 27, 26, 25, 24, 23, 22, 21, 20,
 11, 12, 10, 13, 15, 16, 14, 17. Urgent classes exit at the tick that sees them; non-urgent ones wait up to
@@ -427,12 +427,17 @@ does not apply); `not_run` lists (check, subject) whose last `check` line is not
   marker makes `lib.liveness` judge that alarm `dead`, whatever the process list says. Pruned only by
   `status --reconcile` in its hold 2, and only when neither `alarm.json`, a slot file nor that hold's
   slots name its pid and start time.
-- [arm-slot] `run/arm/slot-<k>.json`: `{ce, pid, start_time, nonce}` (FX-W2; FX-W3 adds `turn_seq_at_reg`),
+- [arm-slot] `run/arm/slot-<k>.json`: `{ce, pid, start_time, nonce, turn_seq_at_reg}` (FX-W2; FX-W3 adds
+  `turn_seq_at_reg`, turn.json's turn_seq as the same hold read it, 0 without turn.json),
   k in 1..`alarm_slots` (branch S1: 1). Written only by the ensure (`watch.mjs --alarm --ensure`) in its
   hold 1, under the run lock, when slot k is free: absent, corrupt, of another ce, named by an exit
   marker, or judged dead by the ensure's one process list (cut at `ensure_query_ms`) with its bytes
   unchanged; `alarm.json` is written in the same hold, so under S1 both name the same alarm. A record
   without an integer pid > 0 and a string start_time is corrupt.
+- [arm-unarmed] `run/arm/unarmed-<pid>-<start>.json`: `{ce, turn_seq}` (FX-W3). Strict-created by an alarm
+  that exits 30, before its exit marker and without a lock, when turn.json's turn_seq still equals its slot
+  record's `turn_seq_at_reg` (no reconcile in a whole alarm period). Never rewritten; the reconcile's prune
+  of exit markers leaves it; FX-W4's dead-man reads it.
 - [arm-nonce] `run/arm/<nonce>.json`, nonce 32 lowercase hex: `{state: 'started'|'registered'|'present'|
   'abandoned', k?, pid?}` (FX-W2). The ensure creates it `{started, pid}` by exclusive create (a name
   already there: exit 0 `nonce-reused`, nothing else written) and in its hold 1 rewrites it `{registered,
@@ -440,7 +445,8 @@ does not apply); `not_run` lists (check, subject) whose last `check` line is not
   corrupt or `started` as `{abandoned}` in its hold 2. A nonce carries no weight of its own: only live
   slots confirm a turn.
 - [turn] `run/turn.json`: `{ce, turn_seq, read_seq, arm: 'unconfirmed'|'confirmed', slots: [{k, pid,
-  start_time}], unarmed_turns}` (FX-W2; FX-W3 adds `spent`, written by the endturn). `status
+  start_time}], unarmed_turns}` (FX-W2; FX-W3 adds `spent`, written by every endturn of this ce, a refused K included; endturn accepts
+  K up to `read_seq` and exits 1 `turn-stale` when turn.json is absent or of another ce). `status
   --reconcile` writes it in its main hold after `status.json` (turn_seq + 1, never reset; read_seq the
   ledger head `status.json` reflects; arm `unconfirmed` and slots [] unless no nonce is given and the
   previous record is of this ce and `confirmed`) and again in its hold 2 (the live slots: `confirmed`
@@ -1306,6 +1312,16 @@ Settled here where the sources leave it open or disagree (D = the design, L = a 
     and records the turn as armed only if enough are." It replaces M2's `alarm-missing` (decision 40):
     reconcile exits 1 `arm-unconfirmed` when the turn is not armed, and a second reconcile of an armed
     turn keeps it armed in its main hold while hold 2 re-checks the slots ([turn], §3.9).
+    FX-W3 (R6-c, FIX-JOIN part 3; A3; N2 with E1): an act that creates work (`replace start`, `replace
+    fence --reason first`, the session-start tool) needs "armed": `run/turn.json` of the caller's ce, arm
+    `confirmed`, slots with no exit marker (`lib.armedState`, files only). The scripts check it in their
+    hold (`withRunLock` `requireArmed`: exit 6 `not-armed`, nothing written; a dry run gives the same 6),
+    the guard hook for the start tool (deny `not-armed`, no start.json). A revocation (every other fence
+    reason, `stop`, the stop tools) is never gated. `status --endturn` takes K from the turn (K at most
+    turn.json's `read_seq`; absent or of another ce: exit 1 `turn-stale`, nothing written), spends the
+    arm in every endturn of this ce, and reports the wake sources after a refusal too; the coordinator
+    ends every turn with it (E1). An alarm that fires with turn_seq unmoved since it registered writes
+    [arm-unarmed] (§3.9).
 
 ### FX-PLAN (round 3): the planner's acts, first match (class 17; status `next`)
 `lib.planAct(row, lib.planFacts(root, row, ctx))`, called by status's `nextOf` and the watcher's `rowAct`

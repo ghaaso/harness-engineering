@@ -120,8 +120,9 @@ old watcher and alarm, left alive, reach their next ce check and exit 64.
 
 ## Round-3 skeleton (S0.5)
 - `briefLine(root, ce, tcbCommit, nonce = null)`: today's line, then `briefNoncePart(nonce, root, ce)` (FX-CGATE
-  step 1) and `briefPathPart(root)` (FX-W3: the path of `tcb/briefs/coordinator.md`), both '' until
-  filled, so the line is unchanged.
+  step 1) and `briefPathPart(root)` (FX-W3, built: ` Then act every turn as <tcb>/briefs/coordinator.md says, in its
+  order.`, the brief beside the script, forward slashes, quoted when the path holds a blank). The nonce part
+  is '' in a dry run. Tested in `tcb/test/handover.test.mjs` T6 and H1.
 
 ## FX-CLAIM (round 3)
 

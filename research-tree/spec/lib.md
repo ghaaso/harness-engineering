@@ -355,8 +355,17 @@ empty step returns its neutral value, so behaviour is unchanged (FIX-JOIN point 
 - `realProc({timeoutMs, exe})`: unchanged; FX-W2 (built) passes `timeoutMs: ensure_query_ms` for the
   ensure's one list; a list cut by the timeout throws `proc-unavailable` {why: `ETIMEDOUT`}, which the
   ensure reads as unknown (tested in `tcb/test/watch.test.mjs`, FX-W2 confirm deadline).
-- `withRunLock(root, {requireArmed})`: `requireArmed: true` runs the empty step `armedCheck(root, handle)`
-  after the ce check: FX-W3 (exit 6 `not-armed`).
+- `withRunLock(root, {ce, requireArmed})`: `requireArmed: true` runs `armedCheck(root, handle, ce)` after the
+  ce check and before fn (FX-W3, built): `checkArmed(root, ce)`, so not armed is exit 6 `not-armed`, thrown
+  before fn: the refused act writes nothing. No ce given counts as not armed.
+- `armedState(root, ce, io = {})` (FX-W3, built, exported): the one file predicate of `requireArmed` and of
+  the guard hook; no process list, no lock. `{armed: true, turn_seq}` when `run/turn.json` is of this ce,
+  its arm is `confirmed` and its slots (at least one, each an integer pid > 0 and a string start_time) have
+  no exit marker `run/arm/exited-<pt>.json`. Every other case is `{armed: false, why, ...}` (fail closed):
+  `no-turn` (absent), `turn-unreadable` (not JSON or not an object), `other-ce` {turn_ce}, `arm` {arm},
+  `no-slots`, `bad-slot`, `slot-exited` {pid}. `io` {readJson, exists}: the hook passes its own.
+  `checkArmed(root, ce)`: armedState, or throw exit 6 `not-armed` {ce, why, ...}. Tested in
+  `tcb/test/lib.test.mjs` (FX-W3 armedState).
 - `acquireLock`: the break of a lock judged stale passes `breakStep(c, doBreak)`. For run.lock it
   returns `doBreak()`. For watcher.lock (FX-W7 step 1, built) it takes run.lock with the caller's
   retries, re-reads watcher.lock and `watcher.json`, and breaks only when both are as they were at the
