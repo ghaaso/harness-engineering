@@ -1082,10 +1082,10 @@ test('G4 the start tool: exactly <root>/wt/<T>-e<E> in a fresh local session wit
   await withWorld({}, async (w) => {
     const table = cgRead(w.P('run', 'tasks.json'));
     table.tasks.push(row('child', { task: 'f1-start', step: 'admitted' }));
-    table.tasks.push(row('child', { task: 'f1-held', step: 'admitted', state: 'held' }));
+    table.tasks.push(row('child', { task: 'f1-parked', step: 'admitted', state: 'parked' }));
     writeTable(w.root, table.tasks, 2);
     const a = mkAttempt(w.root, 'f1-start', 1);
-    mkAttempt(w.root, 'f1-held', 1);
+    mkAttempt(w.root, 'f1-parked', 1);
     fs.writeFileSync(w.P('run', 'watcher.json'), JSON.stringify({ schema_version: 1, ce: 1, ticks_total: 7 }));
     const ok = { cwd: a, use_worktree: false, prompt: 'p', title: 't' };
     const st = (n, input, expect, opt = {}) => cgCall(w, n, T_START, input, expect, opt);
@@ -1101,13 +1101,13 @@ test('G4 the start tool: exactly <root>/wt/<T>-e<E> in a fresh local session wit
       st('cwd outside the root', { ...ok, cwd: path.join(path.dirname(w.root), 'wt', 'f1-start-e1') }, 'bad-target'),
       st('cwd absent', { ...ok, cwd: undefined }, 'bad-target'),
       st('row bound, not admitted', { ...ok, cwd: w.att('f1-research') }, 'wrong-step'),
-      st('row held', { ...ok, cwd: w.att('f1-held') }, 'wrong-step'),
+      st('row parked', { ...ok, cwd: w.att('f1-parked') }, 'wrong-step'),
       st('another epoch', { ...ok, cwd: w.att('f1-start', 2) }, 'wrong-step'),
       st('no row', { ...ok, cwd: w.P('wt', 'zz-none-e1') }, 'wrong-step'),
       st('a stale session', ok, 'stale-coordinator', { session: NEW_SESSION }),
     ];
     assert.deepEqual(await runCases(w, denies), []);
-    for (const t of ['f1-start', 'f1-held', 'f1-research']) assert.equal(fs.existsSync(path.join(w.att(t), 'start.json')), false, `${t}: nothing written on a deny`);
+    for (const t of ['f1-start', 'f1-parked', 'f1-research']) assert.equal(fs.existsSync(path.join(w.att(t), 'start.json')), false, `${t}: nothing written on a deny`);
     assert.deepEqual(await runCases(w, [
       st('the start', { ...ok, context: 'fresh', target: 'local' }, 0, { more: { tool_use_id: 'toolu_1' } }),
       st('the same call again', { ...ok, context: 'fresh', target: 'local' }, 0, { more: { tool_use_id: 'toolu_1' } }),
