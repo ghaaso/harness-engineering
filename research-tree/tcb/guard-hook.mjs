@@ -439,6 +439,8 @@ function decideInner(input, args, io) {
     }
     profile = loadProfile(root, agentType, io);
   }
+  // the one context of the round-3 steps (S0.5): row is set at step 4, access at step 6
+  const pass = { hook, root, role, task, epoch, attempt, toolName, toolInput, cwd, io, profile, row: null, access: null };
 
   // step 4
   if (TASK_ROLES.has(role)) {
@@ -456,14 +458,30 @@ function decideInner(input, args, io) {
     if (row.epoch !== epoch || row.state !== 'active' || !['admitted', 'started', 'bound'].includes(row.step)) {
       throw new Deny('stale-epoch', `${task} row epoch ${row.epoch} state ${row.state} step ${row.step}, hook epoch ${epoch}`);
     }
+    pass.row = row;
+    stepClaim(pass);
   }
 
   // step 5
   if (toolListed(profile.tools_deny, toolName)) throw new Deny('tool-denied', toolName);
   if (!toolListed(profile.tools_allow, toolName)) throw new Deny('tool-not-allowed', toolName);
 
+  checkAccess(pass);
+
+  // step 7 (round 3), after step 6 allowed the call
+  if (TASK_ROLES.has(role)) {
+    if (toolName === 'Write' || toolName === 'Edit') stepReadySlot(pass);
+  } else if (role === 'coordinator') {
+    coordinatorSteps(pass);
+  }
+}
+
+// Step 6, the check by tool kind: a branch that allows returns, to decideInner's step 7.
+function checkAccess(pass) {
+  const { root, attempt, toolName, toolInput, cwd, io, profile } = pass;
   // step 6
   const access = lib.toolAccess(toolName, toolInput) || {};
+  pass.access = access;
   const kind = access.kind;
   const ctx = { root, attempt };
 
@@ -569,6 +587,7 @@ function decideInner(input, args, io) {
     if (profile.bash !== 'tcb-node') throw new Deny('bash-refused', toolName);
     const why = checkTcbNode(access.command, cwd, root, io);
     if (why) throw new Deny('bash-pattern', why);
+    stepAllowList(pass);
     return;
   }
 
@@ -579,6 +598,56 @@ function decideInner(input, args, io) {
   }
 
   // any other kind: allowed by step 5 alone
+}
+
+// ---------------------------------------------------------------------------------------------
+// the round-3 steps (S0.5; FIX-JOIN points 9 and 11, part 2b): each is empty until its fix fills it.
+// A step denies by throwing Deny. A step that writes does so only through hookCreate (a strict
+// create, 0b), after every read-only check of the call (point 9).
+
+// FX-CLAIM step 1: the attempt's claim.json on every task-role call, after the epoch gate (step 4).
+function stepClaim(pass) { // eslint-disable-line no-unused-vars
+}
+
+// FX-W1: the exec allow list, after the tcb-node grammar check (step 6).
+function stepAllowList(pass) { // eslint-disable-line no-unused-vars
+}
+
+// FX-OUT, child side: a task role's Write or Edit of READY becomes a ready slot, outcome/<j>.json.
+function stepReadySlot(pass) { // eslint-disable-line no-unused-vars
+}
+
+// FX-CGATE step 2: the bind call (handover.mjs bind --ce --nonce) strict-creates run/coord-session-<ce>.json.
+function stepBind(pass) { // eslint-disable-line no-unused-vars
+}
+
+// FX-CGATE step 3: a session other than coord-session-<current ce> may only Read under the read prefixes.
+function stepCurrentSession(pass) { // eslint-disable-line no-unused-vars
+}
+
+// FX-W3: an act that creates work (session start, replace start, fence first) needs "armed".
+function stepArmed(pass) { // eslint-disable-line no-unused-vars
+}
+
+// FX-CGATE step 4, its read-only part: the session-start target's row is active/admitted at E.
+function stepRowAtAdmitted(pass) { // eslint-disable-line no-unused-vars
+}
+
+// FX-CGATE step 4: the session-start tool strict-creates wt/<T>-e<E>/start.json.
+function stepStartRecord(pass) { // eslint-disable-line no-unused-vars
+}
+
+// FX-CGATE step 5: the session-stop tool strict-creates run/close/intent/<sid>.json.
+function stepStopIntent(pass) { // eslint-disable-line no-unused-vars
+}
+
+// The coordinator's steps in their order (FIX-JOIN point 9, part 2b): the read-only checks, then the
+// one strict create of the call. A step returns 'allow' to end the steps (the bind call), throws
+// Deny to deny, or returns nothing to go on.
+const COORDINATOR_STEPS = [stepBind, stepCurrentSession, stepArmed, stepRowAtAdmitted, stepStartRecord, stepStopIntent];
+
+function coordinatorSteps(pass) {
+  for (const step of COORDINATOR_STEPS) if (step(pass) === 'allow') return;
 }
 
 /**

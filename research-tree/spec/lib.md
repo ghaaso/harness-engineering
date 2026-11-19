@@ -326,3 +326,24 @@ All tests in this section set `{concurrency: false}` (§4.11).
   is empty); `cleanup` removes the whole root.
 - T98 `fakeTranscript` output parses with `parseTranscript` into exactly the calls, tool uses, results
   and structured items given.
+
+## Round-3 skeleton (S0.5): signatures fixed, bodies filled by the fixes
+Until its fix lands, each API function below throws `not-built` (exit 70, detail `{fn, fix}`) and each
+empty step returns its neutral value, so behaviour is unchanged (FIX-JOIN point 11, build order).
+- `outcomeState(attemptDir, row)` -> `{fenced, slots, ready}`; `outcomeAppend(attemptDir, slot, opts)`: FX-OUT.
+- `readClaim(attemptDir)` -> `{kind: 'none'|'session'|'tombstone', session_id}`; `claimRecord(sessionId)`;
+  `tombstoneRecord(task, epoch)`: FX-CLAIM.
+- `planAct(row, facts)` -> one act name, `none` and `owner` included: FX-PLAN.
+- `liveness(rec, proc, markers)` -> `alive` | `dead` | `unknown`: FX-W1.
+- `realProc({timeoutMs, exe})`: unchanged; FX-W2 passes `timeoutMs: ensure_query_ms`.
+- `withRunLock(root, {requireArmed})`: `requireArmed: true` runs the empty step `armedCheck(root, handle)`
+  after the ce check: FX-W3 (exit 6 `not-armed`).
+- `acquireLock`: the break of a lock judged stale passes `breakStep(name, doBreak)`, which returns
+  `doBreak()`: FX-W7 (watcher.lock). The break of an unreadable lock does not pass there.
+- `parseTranscript`: the result's non-enumerable `kind` is `transcriptKind(res)`, null: FX-W6.
+  `TRANSCRIPT_KINDS` = tool, bg-wait, model, idle; `TRANSCRIPT_RECORD_TYPES` = the 27 record types
+  measured in `build/facts/WH5-Wturn.md`.
+- `slotCount(rows, procList, transcriptsRoot, {root} = {})`: `{root}` is part of the signature; FX-CLAIM's
+  callers pass it.
+- `RUNTIME_FILES`: the 13 runtime files of the round-3 fixes (path, helper of `paths(root)`, fix, writer,
+  fields, rewritten); `markerKey(pid, start_time)` names the arm markers `exited-<pt>`, `unarmed-<pt>`.

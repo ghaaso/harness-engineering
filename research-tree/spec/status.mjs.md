@@ -153,3 +153,16 @@ state), R20 (a view, rebuilt), R40 (`not_run`), R58; decisions 3, 4, 5, 17, 25, 
 ## Cannot be tested without the app
 That a real session's transcript appears in `projectDirName(folder)` with that `cwd` soon after
 start (§7 item 7); that the watcher's and alarm's exits reach the coordinator (item 5).
+
+## Round-3 skeleton (S0.5)
+- Reconcile after its main hold, in both paths before `armAtStart` (FIX-wake FX-W2 steps 6-7; FIX-JOIN
+  point 6, part 2b row 3 and part 2c `turn.json`; collision point B11): `reconcileHold2({root, ce, th,
+  flags, facts, proc, pre, dry}, res)` runs `hold2Wait(hold)` (FX-W2 step 6, the nonces' wait, outside
+  every lock), then hold 2: `hold2Lock(hold, fn)` (FX-W2: one hold of the run lock with the ce re-checked;
+  a dry run without it, as the main hold; until FX-W2 fills it, `fn(null)` without the lock) runs
+  `hold2ArmSlots(hold, handle)` (FX-W2 step 7: the live slots, `turn.json` arm and slots, `hold.slots`)
+  and then `hold2PruneMarkers(hold, handle)` (FX-W1: reads `hold.slots` in the same hold, takes no lock
+  of its own). Hold 2 is file-only: no process list inside it (FX-W1 step 1). Returns `hold.res`.
+- Flags of the default mode: `ARM_FLAGS` (FX-W2, `arm-nonces`) and `DEADMAN_FLAGS` (FX-W4, `deadman`), empty.
+- `deadmanRun(ctx, flags, dry)` (FX-W4) runs right after the dry-run flag is read, before the ce check;
+  null goes on.

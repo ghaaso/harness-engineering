@@ -103,6 +103,7 @@ node <root>/tcb/<name>.mjs [<mode>] --root <dir> [--ce <n>] [--task <id> --epoch
 | 67 | `table-corrupt` | `run/tasks.json` (or another `run/` state file) unparseable or schema-invalid. Every writing script refuses; `tasks.json.prev` is kept; the owner is told |
 | 70 | `internal` | Uncaught error. Gates count it as not-run; a watcher 70 means "restart the watcher", never a field failure |
 | 75 | `lock-busy` | `run/run.lock` still held after the bounded retry (or lost while held) |
+| 0, 1, 2, 5, 6, 17, 21 | round 3 | Reasons added by the round-3 fixes, each filled by its fix (S0.5 lists them): FX-W1 the endturn's tri-state report of the wake sources (1, 2) and the alarms' exit markers; FX-W2 1 `arm-unconfirmed`, 0 `present` / `nonce-reused` / `abandoned`; FX-W3 6 `not-armed`; FX-W6 21 `hang` by kind, 17 `idle-child` / `age-cap`; FX-CLAIM 5 `claimed-late`, 6 `not-claimed`, 1 `not-claim-holder` |
 
 Watcher precedence when several classes are present (first wins): 64, 27, 26, 25, 24, 23, 22, 21, 20,
 11, 12, 10, 13, 15, 16, 14, 17. Urgent classes exit at the tick that sees them; non-urgent ones wait up to
@@ -551,7 +552,7 @@ value `tcb/thresholds.json` ships:
 | loop_k | 3 | mapping D3-06 | W_cc_ticks | 30 | mapping D1-09 |
 | R | 1 | design R8 | H_max | 2 | guess |
 | Z_frac | 0.1 | guess | stop_verify_deltas | 2 (ticks) | guess (R9's 2Δ) |
-| N_max / N_ceiling | 2 / 3 | design R10 | peak_mb / reserve_mb | 1200 / 1024 | guess |
+| N_max / N_ceiling | 2 / 3 | guess; computed by the decision rule (r57-0414), memory one of its limits, measured per session (Q19) | peak_mb / reserve_mb | 1200 / 1024 | guess |
 | soft_frac / hard_frac | 0.8 / 0.9 | D3-05 / guess | alarm_ms | 3600000 | guess |
 | B_tokens, r_tokens | null | owner (F4) | W_quality | 300000 | coordinator |
 | W_star_coord | 133200 | mapping D3-01 (cost.js) | coord_over_factor | 1.5 | mapping D3-01 (R50) |
@@ -653,6 +654,10 @@ as written there; the spec is the single place of their fields.
 - [stop-sample] `run/stop-sample/<task>-e<e>.json` (stop): `{schema_version, task, epoch, target,
   tick, sizes: {<path relative to transcripts_root>: bytes}}`.
 - [unit-costs] `plan/unit-costs.json`: as `spec/cost.mjs.md`.
+
+### 3.23 Outcome log [outcome-slot] — `wt/<task>-e<e>/outcome/<j>.json`
+
+Filled by FX-OUT (`model/as-built/FIX-fence.md`; the slot's bytes are in `lib.RUNTIME_FILES`, S0.5).
 
 ## 4. The library `tcb/lib.mjs`
 
@@ -1166,3 +1171,5 @@ Settled here where the sources leave it open or disagree (D = the design, L = a 
     attempt always counts one slot); only a test was missing. **M5** (NoFalseSuspicion): the
     pause discount of §1.2. **M6** (ReadyNotDiscarded): the READY re-check of `fence` applies to
     every reason but `first` and `tainted` (§1.4 exit 5, §3.6).
+41. The arm first, the armed gate and the dead-man (round 3: FX-W2, FX-W3, FX-W4; FIX-JOIN point 1).
+    Filled by those fixes (S0.5 sets the heading only).

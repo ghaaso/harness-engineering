@@ -217,3 +217,11 @@ F6, A4, A7, E5×E8; second model check M6 (READY re-check for every reason).
 ## Cannot be tested without the app
 The rendered settings and agent files actually bind the session started in the folder (§7 item 3);
 a real session's transcript `cwd` equals the folder named in `bind` (item 7).
+
+## Round-3 skeleton (S0.5): the fence hold and the armed gate
+- `underLock(env, fn, task, epoch, {requireArmed})` passes `requireArmed` to `withRunLock` only when true;
+  `armedFor(mode, reason)` (false until FX-W3: `start`, and `fence` with reason `first`) gives it for
+  `modeStart` and `modeFence`.
+- `modeFence`'s hold, in order (FIX-JOIN point 11): `fenceOutcomeSteps(env, handle, hold)` (FX-OUT steps
+  1-5) before the M6 block; `fenceTombstone(env, handle, hold)` (FX-CLAIM) after it; then `lib.fence`,
+  unchanged. `hold` = {task, epoch, reason, failure, row, att, dir, cut, readyCheck}.
