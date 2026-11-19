@@ -93,6 +93,9 @@ expect file under `<root>/tcb/fixtures/selftest/`.
    require `nlink` 2 on both, the same `dev` and `ino` and the bytes read back, then remove both. Fails closed: a
    missing folder, any error or mismatch is a problem `<folder>/: <code>`; a failed check is a failed static check
    (no case runs, exit 1, `failed` names it), so admission stays shut where every hook write would be refused.
+2c. A full run only (FX-CGATE): check `close-folders`: `run/close/intent` and `run/close/done` are folders (made by
+   `handover init`; the hook's close records are strict creates and it makes no folder); anything else, or a failed
+   stat, is a problem `<folder>/: <code>` and a failed static check.
 4. Cases in sorted order, at most `--jobs` (1 or 2) in flight; a slot takes its next case only after
    its previous case has fully ended (child exited, pipes closed, server closed, any kill finished).
    Per case, just before it runs: make the case root with its data-only `tcb/` (above); write the

@@ -601,6 +601,15 @@ audit flags a checker that read more than one batch). Profiles exist for every r
   \"{root}\" --role <role> --task {task} --epoch {epoch}", timeout: 30}]}` under `PreToolUse`. The
   owner installs `tcb/settings/coordinator.json` (no task, no epoch) and merges `user-deny.json` into
   his user settings. guard-hook and audit enforce the same profile.
+- **Session tools (FX-CGATE).** The coordinator's profile alone has `session_tools: {start: string[], stop:
+  string[]}`: the app's session tools by exact name (no prefix rule), each also in `tools_allow`, start and stop
+  disjoint (shipped: start `mcp__ccd_session__start_session`; stop `mcp__ccd_session_mgmt__archive_session`,
+  `mcp__ccd_session_mgmt__stop_session`). `tcb/settings/coordinator.json` keeps its one `PreToolUse` entry and adds
+  `PostToolUse` and `PostToolUseFailure` entries, matcher = the stop tools joined by `|`, the same command and
+  timeout. Those events carry `tool_use_id` and `tool_response` (Post) or `error` (PostToolUseFailure); the hook
+  writes the close records from them (`spec/guard-hook.mjs.md`, FX-CGATE). A session is named by the CLI id
+  (`session_id` of the hook input, a lowercase UUID) and by the app id (`local_<uuid>`, the session tools' input):
+  `coord-session-<ce>.json` and `start.json` hold CLI ids, the close records are named by app ids.
 - **Agent files.** `tcb/agents/<type>.md` (U3b: front matter `name`, `description`, `tools`; body =
   the verbatim `tcb/briefs/<type>.md`). replace copies the file of every type in the profile's
   `agent_types` into `.claude/agents/`; the manifest lists them (`agents`); fsck accepts exactly those.

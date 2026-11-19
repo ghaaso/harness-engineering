@@ -301,7 +301,7 @@ function watchBounded(args) {
 
 function profileShapeError(v, role) {
   if (!isPlainObject(v)) return 'not an object';
-  for (const k of Object.keys(v)) if (k !== 'schema_version' && !PROFILE_KEYS.includes(k)) return `extra field ${k}`;
+  for (const k of Object.keys(v)) if (k !== 'schema_version' && k !== 'session_tools' && !PROFILE_KEYS.includes(k)) return `extra field ${k}`;
   if ('schema_version' in v && v.schema_version !== 1) return 'schema_version';
   for (const k of PROFILE_KEYS) if (!(k in v)) return `missing ${k}`;
   if (v.role !== role) return `role ${v.role}`;
@@ -314,6 +314,23 @@ function profileShapeError(v, role) {
     if (/[{}]/.test(p.replace(/\{(root|attempt|batch)\}/g, ''))) return `placeholder in ${p}`;
     if (!/^\{(root|attempt)\}/.test(p)) return `prefix ${p} not anchored`;
   }
+  return sessionToolsError(v, role);
+}
+
+// FX-CGATE: the optional `session_tools` {start, stop} (the guard hook's own check): the coordinator's
+// only, exact tool names each in tools_allow, start and stop disjoint.
+function sessionToolsError(v, role) {
+  if (!('session_tools' in v)) return null;
+  if (role !== 'coordinator') return `session_tools on role ${role}`;
+  const st = v.session_tools;
+  if (!isPlainObject(st)) return 'session_tools not an object';
+  for (const k of Object.keys(st)) if (k !== 'start' && k !== 'stop') return `session_tools extra field ${k}`;
+  for (const k of ['start', 'stop']) {
+    const list = st[k];
+    if (!Array.isArray(list) || list.some((s) => typeof s !== 'string' || s === '' || s.endsWith('*'))) return `session_tools.${k} not a list of tool names`;
+    for (const s of list) if (!v.tools_allow.includes(s)) return `session_tools.${k} ${s} not in tools_allow`;
+  }
+  if (st.start.some((s) => st.stop.includes(s))) return 'session_tools start and stop overlap';
   return null;
 }
 
@@ -596,6 +613,20 @@ function linkProblem(dir) {
       }
     }
   }
+}
+
+// FX-CGATE: the guard hook's close records are strict creates (0b: it makes no folder), so
+// run/close/intent and run/close/done must be folders; anything else, or a failed stat, fails the check.
+function closeFoldersCheck(root) {
+  const problems = [];
+  for (const rel of ['run/close/intent', 'run/close/done']) {
+    try {
+      if (!fs.lstatSync(path.join(root, ...rel.split('/'))).isDirectory()) problems.push(`${rel}/: not a folder`);
+    } catch (e) {
+      problems.push(`${rel}/: ${e && e.code ? e.code : 'unreadable'}`);
+    }
+  }
+  return { check: 'close-folders', pass: problems.length === 0, detail: problems };
 }
 
 function hardLinkProblems(root) {
@@ -1018,6 +1049,7 @@ async function runMode(ctx, flags, root, ce) {
     const problems = hardLinkProblems(root);
     checks.push({ check: 'hard-links', pass: problems.length === 0, detail: problems });
   }
+  if (!dryRun && only.length === 0) checks.push(closeFoldersCheck(root)); // FX-CGATE
   const staticOk = checks.every((c) => c.pass);
   const selected = all.filter((c) => (only.length ? only.includes(c.script) : true));
   const failedChecks = checks.filter((c) => !c.pass).map((c) => c.check);

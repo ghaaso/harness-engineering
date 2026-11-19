@@ -800,6 +800,7 @@ async function runIntent(ctx, root, flags, sub, dry) {
 
 async function runOwner(ctx, root, flags, dry) {
   const act = flags.act;
+  if (act === 'closed') return runOwnerClosed(ctx, root, flags, dry); // FX-CGATE
   if (!ACTS.includes(act)) throw usage({ flag: 'act', expect: ACTS });
   if (typeof flags.subject !== 'string' || flags.subject.length === 0) throw usage({ flag: 'subject' });
   if (typeof flags['quote-file'] !== 'string') throw usage({ flag: 'quote-file' });
@@ -817,6 +818,37 @@ async function runOwner(ctx, root, flags, dry) {
       await lib.appendLedger(root, handle, { ctx, ce: flags.ce, kind: 'owner', data: { act, subject: flags.subject, quote }, now: facts.now });
     }
     return { exit: 0, result: { act, subject: flags.subject, quote_chars: n } };
+  });
+}
+
+// FX-CGATE: `owner --act closed --subject SID --quote-file P --root R --ce N`. The owner says a session's
+// process is gone: the close's fallback when no hook record names it (the hook names a close by the
+// app's id, FX-CLOSE's verify reads by the CLI's: departures/CGATE.md). SID is the CLI session id, a
+// lowercase UUID, else 66. In the hold: the owner line, then run/close/done/<SID>.json {kind:
+// 'close-done', session, outcome: 'owner', by: null} by an exclusive create (a record already there is
+// kept: the first record stands). A dry run writes nothing.
+const CLI_SESSION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+async function runOwnerClosed(ctx, root, flags, dry) {
+  const sid = flags.subject;
+  if (typeof sid !== 'string' || !CLI_SESSION.test(sid)) throw usage({ flag: 'subject', expect: 'act closed takes the CLI session id, a lowercase UUID' });
+  if (typeof flags['quote-file'] !== 'string') throw usage({ flag: 'quote-file' });
+  const quote = stripBom(notesFile(root, flags['quote-file']).toString('utf8'));
+  const n = [...quote].length;
+  if (n < 1 || n > 500) throw err('quote-length', 66, { length: n });
+  return withLockOrDry(root, flags, dry, async (handle, facts) => {
+    let done = null;
+    if (handle) {
+      await lib.appendLedger(root, handle, { ctx, ce: flags.ce, kind: 'owner', data: { act: 'closed', subject: sid, quote }, now: facts.now });
+      handle.assertHeld();
+      try {
+        done = lib.createExclusive(lib.paths(root).closeDone(sid), { kind: 'close-done', session: sid, outcome: 'owner', by: null });
+      } catch (e) {
+        if (!(e && e.code === 'exists-different')) throw e;
+        done = 'kept';
+      }
+    }
+    return { exit: 0, result: { act: 'closed', subject: sid, quote_chars: n, done } };
   });
 }
 
