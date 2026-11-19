@@ -1606,14 +1606,15 @@ test('FX-W1 allow list: production forms allowed, test seams refused for every s
       else if (!allow && detail && !r.detail.startsWith(detail)) bad.push(`detail of ${command}: ${r.detail}`);
     };
     for (const c of prod) want(c, true);
-    // every test seam, for every script, in both spellings
+    // every test seam, on every production form of every script (refute W1 M10c), in both spellings
     const first = new Map();
     for (const c of prod) {
       const s = /^node tcb\/([a-z-]+)\.mjs/.exec(c)[1];
       if (!first.has(s)) first.set(s, c);
     }
     assert.equal(first.size, Object.keys(m.EXEC_FORMS).length, 'a production form for every script of the list');
-    for (const [s, c] of first) {
+    for (const c of prod) {
+      const s = /^node tcb\/([a-z-]+)\.mjs/.exec(c)[1];
       for (const f of seams) {
         want(`${c} --${f} 5`, false, `flag not allowed: ${s} --${f}`);
         want(`${c} --${f}=2026-11-20T00:00:00.000Z`, false, `flag not allowed: ${s} --${f}`);
