@@ -47,6 +47,7 @@ function makeRoot(rows, dirs) {
     if (fs.existsSync(path.join(TCB, d))) fs.cpSync(path.join(TCB, d), path.join(root, 'tcb', d), { recursive: true });
   }
   const th = JSON.parse(fs.readFileSync(path.join(TCB, 'thresholds.json'), 'utf8'));
+  th.params.stop_verify_ms = { ...th.params.stop_verify_ms, value: 0 }; // FX-CLOSE: the wall floor is stop.test.mjs's subject
   th.params.transcripts_root = { ...(th.params.transcripts_root ?? { unit: 'test', source: 'guess', gate: false }), value: path.join(root, 'transcripts') };
   fs.writeFileSync(path.join(root, 'tcb', 'thresholds.json'), JSON.stringify(th, null, 2));
   fs.writeFileSync(path.join(root, 'run', 'coord.json'), JSON.stringify({ schema_version: 1, ce: 1, started_at: '2026-11-17T09:00:00.000Z', tcb_commit: '0'.repeat(40) }));
@@ -151,6 +152,9 @@ test('FX-REDO: each repeat call completes a missing ledger line only at the exac
     ticks(10);
     assert.equal(stop('verify').exit, 6, 'the first verify samples');
     ticks(100);
+    // FX-CLOSE (a): the claim holder's close is recorded (the owner's act, by the CLI id)
+    fs.mkdirSync(path.join(A, 'run', 'close', 'done'), { recursive: true });
+    fs.writeFileSync(path.join(A, 'run', 'close', 'done', `${SID1}.json`), JSON.stringify({ kind: 'close-done', session: SID1, outcome: 'owner', by: null }));
     assert.equal(stop('verify', 'stop').exit, 70);
     r = rowOf(A);
     assert.deepEqual([r.step, r.attempts.find((a) => a.epoch === 1).stop], ['stopped', 'confirmed']);
