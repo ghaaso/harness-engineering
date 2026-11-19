@@ -303,7 +303,27 @@ async function bind(a, name) {
   put('claim.json', LIB.claimRecord(a.sid), a.folder); // FX-CLAIM: the hook's claim at the session's first tool call, simulated like the transcript
   return sc('replace', ['bind', '--task', a.task, '--epoch', String(a.e), '--session', a.sid], { boot: true, name: `${name || a.task}: replace bind e${a.e}` });
 }
-const ready = (a, step) => put(path.join('wt', `${a.task}-e${a.e}`, 'staging', 'READY.json'), { kind: 'ready', task: a.task, epoch: a.e, step }, ROOT);
+// FX-OUT (FIX-fence.md section 1, "Steps, child side" 1-4; tcb/briefs/child.md line 41): the child writes READY last,
+// with the Write tool only. The harness runs the attempt's guard hook first (the command its .claude/settings.json
+// names), and the hook's test-and-set puts the ready slot in outcome/<j>.json, the record commit, watch and status
+// decide by. Only on allow does the Write land READY.json, a copy no decision reads. This process stands in for the
+// harness, as it does for the session start: it runs the hook with the settings' role, then writes the copy. The
+// hook's answer is checked but not counted (the counted check of the slot is the commit record that follows): a FAIL
+// line only when the hook answers other than the design says; `deny` names the code the hook must deny with.
+async function ready(a, step, { content, deny = null } = {}) {
+  const file = path.join(a.folder, 'staging', 'READY.json');
+  const bytes = content ?? JSON.stringify({ kind: 'ready', task: a.task, epoch: a.e, step });
+  let role = null;
+  try { role = /--role ([a-z-]+)/.exec(fs.readFileSync(path.join(a.folder, '.claude', 'settings.json'), 'utf8'))?.[1] ?? null; } catch { /* no settings: the row's role */ }
+  const input = JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: file, content: bytes }, cwd: a.folder, session_id: a.sid, transcript_path: a.file });
+  const r = await sc('guard-hook', ['--role', role || rowOf(a.task).role, '--task', a.task, '--epoch', String(a.e)], { ce: false, now: false, input, quiet: true });
+  const code = /\[guard-hook\] deny ([a-z0-9-]+)/.exec(r.stderr || '')?.[1] ?? null;
+  if (!(deny ? r.exit === 2 && code === deny : r.exit === 0)) {
+    rec(false, `${a.task} e${a.e}: the hook's answer to READY ${step}`, 'guard-hook', `exit=${r.exit} deny ${code} want ${deny ? 'deny ' + deny : 'allow (a ready slot)'} | stderr=${(r.stderr || '').trim().slice(0, 300)}`);
+  }
+  if (r.exit === 0) fs.writeFileSync(file, bytes); // allowed: the Write lands the copy
+  return r;
+}
 async function finishStep(a, step, name, { audit = true } = {}) {
   await sc('commit', ['intake', '--task', a.task, '--epoch', String(a.e)], { name: `${name}: commit intake (${step})` });
   if (audit) await sc('audit', ['--task', a.task, '--epoch', String(a.e)], { name: `${name}: audit (${step})`, check: (r) => (r.json.result?.label === 'clean' || r.json.result?.label === undefined ? true : 'label ' + r.json.result.label) });
@@ -449,7 +469,7 @@ async function main() {
     await bind(a, task);
     writeTranscript(a.file, { sessionId: a.sid, cwd: a.folder, calls: [...readsOf(a.folder), { text: `Done.\nTURN-END ${task}` }] });
     put(path.join('wt', `${task}-e1`, 'staging', `${step === 'hazards' ? 'hazards' : step}.json`), obj, ROOT);
-    ready(a, step);
+    await ready(a, step);
     await finishStep(a, step, task);
   };
   // The first run of this e2e wrote p_ids P1..P21 only, as spec/gate.mjs.md and CONTRACT 3.19 say, and gate.mjs
@@ -576,10 +596,12 @@ async function main() {
 
   // ------------------------------------------------------------ I. commit the pack (torn READY first)
   await sc('tms', [], { name: 'tms (labels, repair list) before the pack is committed' });
-  fs.writeFileSync(stg('READY.json'), '{"kind":"ready","task":"f1-res');
+  // fault: a torn READY (the session was cut off mid-write). FX-OUT child side 3: the child's Write meets the hook
+  // first, which refuses bytes that do not parse (ready-invalid): no ready slot, and the Write never lands.
+  await ready(R, 'pack', { content: '{"kind":"ready","task":"f1-res', deny: 'ready-invalid' });
   await sc('commit', ['record', '--task', 'f1-research', '--epoch', '1', '--step', 'pack'], { exit: 2, code: 'no-ready', name: 'FAULT torn READY.json is not read as done (commit record exit 2 no-ready)', check: () => (!exists(P('store', 'commits', 'f1-research.pack.json')) ? true : 'a commit record exists') });
   chk('FAULT torn READY: the row is not committed', rowOf('f1-research').state !== 'committed', '', 'commit.mjs');
-  ready(R, 'pack');
+  await ready(R, 'pack');
   const rec1 = await finishStep(R, 'pack', 'f1-research');
   chk('f1-research committed; commit record names the pack and the 4 cards... and the extra cards in the store only', rowOf('f1-research').state === 'committed' && exists(P('store', 'commits', 'f1-research.pack.json')), `row ${rowOf('f1-research').state}`, 'commit.mjs');
   const researchPack = (() => { try { return rj(P('store', 'commits', 'f1-research.pack.json')).outputs.find((o) => o.kind === 'pack')?.id; } catch { return null; } })();
@@ -598,12 +620,14 @@ async function main() {
   // the replaced attempt writes anyway
   put(path.join('wt', 'f1-control-e1', 'staging', 'cards', 'late.card.json'), { ...CARDS.c1, quote: 'A late write by the replaced attempt that must never be stored here' }, ROOT);
   const lateId = LIB.objectId('c', { ...CARDS.c1, quote: 'A late write by the replaced attempt that must never be stored here' });
-  ready(C1, 'pack');
+  // its READY too, but a READY Write meets the hook (FX-OUT child side 1, the epoch gate): the row is at epoch 2, so
+  // the hook denies it (stale-epoch) and neither a slot nor the copy is made
+  await ready(C1, 'pack', { deny: 'stale-epoch' });
   const zBefore = ofKind('zombie-write').length;
   await sc('commit', ['intake', '--task', 'f1-control', '--epoch', '1'], { exit: 65, name: 'FAULT stale epoch: commit intake of the replaced attempt is refused (65)' });
   await sc('commit', ['record', '--task', 'f1-control', '--epoch', '1', '--step', 'pack'], { exit: 65, name: 'FAULT stale epoch: commit record of the replaced attempt is refused (65)' });
   chk('FAULT replaced attempt: the late write is logged (zombie-write) and not stored', ofKind('zombie-write').length > zBefore && !exists(P('store', 'objects', `${lateId}.json`)) && !exists(P('store', 'commits', 'f1-control.pack.json')), `zombie lines ${ofKind('zombie-write').length - zBefore}`, 'commit.mjs');
-  await sc('watch', ['--once', '--no-intake'], { free: true, exit: [0, 11, 12, 13, 14, 15, 16, 17], name: 'watch --once logs the zombie write of the fenced attempt' });
+  await sc('watch', ['--once', '--no-intake'], { free: true, exit: [0, 11, 12, 13, 14, 15, 16, 17], name: 'watch --once after the replaced attempt\'s late writes (its READY was denied: no copy for the zombie-write telemetry)' });
   await sc('stop', ['request', '--task', 'f1-control', '--epoch', '2'], { name: 'stop request (fence first, then stop)', check: () => (rowOf('f1-control').step === 'stop-requested' ? true : 'step ' + rowOf('f1-control').step) });
   await sc('stop', ['verify', '--task', 'f1-control', '--epoch', '2'], { exit: 6, name: 'stop verify samples the transcript sizes (exit 6)' });
   for (let i = 0; i < 2; i += 1) await sc('watch', ['--once', '--no-intake'], { free: true, exit: [0, 11, 12, 13, 14, 15, 16, 17], name: `watch --once tick (stop_verify_deltas ${i + 1}/2)` });
@@ -615,13 +639,13 @@ async function main() {
   const controlPack = mkPack([sentence('s1', 'cache', 'fact', 'The cache cut median lookup latency from 20 ms to 12.5 ms.', [IDS.c1]), sentence('s2', 'batch', 'fact', 'Batching writes cut median latency from 10 ms to 8 ms.', [IDS.c2])]);
   writeTranscript(C2.file, { sessionId: C2.sid, cwd: C2.folder, calls: [...readsOf(C2.folder, 6), { tools: [{ name: 'Write', input: { file_path: path.join(C2.folder, 'staging', 'pack.json') } }], results: ['ok'] }, { text: 'Done.\nTURN-END f1' }] });
   put(cstg('pack.json'), controlPack, ROOT);
-  ready(C2, 'pack');
+  await ready(C2, 'pack');
   await finishStep(C2, 'pack', 'f1-control');
   const ctlPackId = (() => { try { return rj(P('store', 'commits', 'f1-control.pack.json')).outputs.find((o) => o.kind === 'pack')?.id; } catch { return null; } })();
   const ctlReview = mkReview('f1-control', ctlPackId);
   put(cstg('review.json'), ctlReview, ROOT);
   writeTranscript(C2.file, { sessionId: C2.sid, cwd: C2.folder, calls: [...readsOf(C2.folder, 6), { tools: [{ name: 'Write', input: { file_path: path.join(C2.folder, 'staging', 'pack.json') } }, { name: 'Write', input: { file_path: path.join(C2.folder, 'staging', 'review.json') } }], results: ['ok', 'ok'] }, { text: 'Done.\nTURN-END f1' }] });
-  ready(C2, 'review');
+  await ready(C2, 'review'); // a row of two steps stays active after its first commit, and its child goes on (Rev 5 point 3)
   await finishStep(C2, 'review', 'f1-control (same-window review)');
   chk('f1-control committed after two steps', rowOf('f1-control').state === 'committed', rowOf('f1-control').state, 'commit.mjs');
   if (ONLY_PHASE === 'J') return finish();
@@ -637,7 +661,7 @@ async function main() {
   const reviewObj = mkReview('f1-review', researchPack, findings);
   writeTranscript(V.file, { sessionId: V.sid, cwd: V.folder, calls: [...readsOf(V.folder, 40), { tools: [{ name: 'Write', input: { file_path: path.join(V.folder, 'staging', 'review.json') } }], results: ['ok'] }, { text: 'Done.\nTURN-END f1' }] });
   put(path.join('wt', 'f1-review-e1', 'staging', 'review.json'), reviewObj, ROOT);
-  ready(V, 'review');
+  await ready(V, 'review');
   await finishStep(V, 'review', 'f1-review');
   chk('f1-review committed', rowOf('f1-review').state === 'committed', rowOf('f1-review').state, 'commit.mjs');
   await sc('certify', ['--task', 'f1-review', '--epoch', '1'], { name: 'certify: reads vs manifest, cited cards confirmed, plants found', check: (r) => (r.json.result?.result === 'certified' && r.json.result?.plants?.found === 3 ? true : JSON.stringify(r.json.result).slice(0, 400)) });
