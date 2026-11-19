@@ -170,7 +170,12 @@ function rowAct(root, tr, row, facts) {
     } catch {
       sample = null;
     }
-    if (sample && Number.isInteger(sample.tick)) return tick >= sample.tick + svd ? `stop-verify@${sample.tick}` : null;
+    // FX-CLOSE (c), N3: also stop_verify_ms of wall time since the sample, or the verify could only wait
+    // (a sample with no wall time is taken again by the verify: due).
+    const at = sample && typeof sample.at === 'string' ? Date.parse(sample.at) : NaN;
+    const nowMs = facts.plan ? facts.plan.nowMs : NaN;
+    const wallOk = !Number.isFinite(at) || typeof facts.svm !== 'number' || nowMs >= at + facts.svm;
+    if (sample && Number.isInteger(sample.tick)) return tick >= sample.tick + svd && wallOk ? `stop-verify@${sample.tick}` : null;
     return target && target.stop === 'unconfirmed' ? 'stop-verify@-' : null;
   }
   return planned;
@@ -690,7 +695,7 @@ async function evaluate(env, state, facts, counted) {
     procList: [], counted: sessions7, Hmax: opt('H_max'), zombieRows };
   let rowActs = 0;
   for (const row of rows) {
-    const act = rowAct(root, tr, row, { slotFree, blocked, tick, svd, plan });
+    const act = rowAct(root, tr, row, { slotFree, blocked, tick, svd, svm: opt('stop_verify_ms'), plan }); // svm: FX-CLOSE
     if (!act) continue;
     rowActs += 1;
     conds.push({ cls: 17, task: row.task, epoch: row.epoch, act, detail: { act } });

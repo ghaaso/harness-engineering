@@ -267,6 +267,31 @@ function targetClaim(root, T, k, att) {
   return lib.readClaim(att.folder ? path.resolve(root, att.folder) : path.join(root, 'wt', `${T}-e${k}`));
 }
 
+// ---------------------------------------------------------------------------------------------
+// FX-CLOSE (FIX-fence section 4, rev 4 H3, rev 5 point 1): verify confirms only when (a) the claim is
+// a tombstone or the claim holder's close is recorded, (b) every other folder session's close is
+// recorded, and (c) nothing grew over stop_verify_deltas ticks and at least stop_verify_ms of wall
+// time since the sample. A close is recorded by run/close/done/<CLI id>.json and counts by
+// lib.closeDoneCounts (stopped or owner; a no-such-session only for this coordinator's own start or
+// when the process list matches nothing). The hook names its records by the app's id, so until a map
+// from the app's id to the CLI's exists only the owner's `closed` act records a close found here.
+
+/** The CLI ids whose close verify needs and does not find counted; read under the lock. Claim tamper is 3. */
+function closesMissing(root, T, k, att, folderSessions, list) {
+  const dir = att.folder ? path.resolve(root, att.folder) : path.join(root, 'wt', `${T}-e${k}`);
+  const claim = lib.readClaim(dir);
+  const holder = claim.kind === 'session' ? claim.session_id : claim.kind === 'none' && typeof att.session === 'string' && att.session ? att.session : null;
+  const start = safe(() => lib.readJson(path.join(dir, 'start.json')), null);
+  const need = holder ? [holder] : [];
+  for (const s of folderSessions ?? []) if (typeof s === 'string' && s && !need.includes(s)) need.push(s);
+  return need.filter((sid) => !lib.closeDoneCounts(root, sid, start, list, dir));
+}
+
+/** The sample's wall time in ms (FX-CLOSE (c)), NaN when it has none. */
+function sampleAt(sample) {
+  return sample && typeof sample.at === 'string' ? Date.parse(sample.at) : NaN;
+}
+
 /** The line of the stop that a death left missing, from the row (the after-image); false when none is due. */
 function stopRedo(env, handle, row, T, E, pre) {
   const k = targetEpoch(row);
@@ -333,8 +358,9 @@ async function modeRequest(env, T, E) {
         return { exit: 0, result: { task: T, epoch: E, step: row.step, state: row.state, repeat: true, redo }, reasons: [] };
       }
       const fenced = row.step === 'fenced' && (row.state === 'active' || row.state === 'parked');
-      const committedBound = row.state === 'committed' && row.step === 'bound';
-      if (!fenced && !committedBound) throw tcbError('wrong-step', 65, { state: row.state, step: row.step });
+      // FX-CLOSE step 3: a committed row at started (its claim holder was never bound) is stopped too.
+      const committedOpen = row.state === 'committed' && (row.step === 'bound' || row.step === 'started');
+      if (!fenced && !committedOpen) throw tcbError('wrong-step', 65, { state: row.state, step: row.step });
       const k = targetEpoch(row);
       const att = lib.attemptOf(row, k);
       if (!pre || pre.k !== k) throw tcbError('rev-moved', 65, { task: T });
@@ -430,8 +456,10 @@ async function modeVerify(env, T, E) {
   };
   const sFile = samplePath(root, T, k); // keyed by the target attempt k (wt/<task>-e<k>)
   const sample = readSample(sFile);
+  // FX-CLOSE (c): a sample with no wall time (made before the fix) is taken again.
   const sampleValid =
-    sample && sample.task === T && sample.epoch === k && sample.target === k && typeof sample.tick === 'number' && sample.sizes && typeof sample.sizes === 'object';
+    sample && sample.task === T && sample.epoch === k && sample.target === k && typeof sample.tick === 'number' && sample.sizes && typeof sample.sizes === 'object' &&
+    Number.isFinite(sampleAt(sample));
 
   // 4 no sample (or one for another target): take it and come back later
   if (!sampleValid) {
@@ -439,7 +467,7 @@ async function modeVerify(env, T, E) {
       env,
       (handle) => {
         recheck(findRow(lib.readTasks(root), T));
-        if (handle) lib.writeAtomic(sFile, JSON.stringify({ schema_version: 1, task: T, epoch: k, target: k, tick: ticks, sizes }));
+        if (handle) lib.writeAtomic(sFile, JSON.stringify({ schema_version: 1, task: T, epoch: k, target: k, tick: ticks, at: env.now, sizes }));
         process.stderr.write('[stop] sample-a\n');
         return {
           exit: 6,
@@ -452,12 +480,13 @@ async function modeVerify(env, T, E) {
     );
   }
 
-  // 5 not enough ticks yet
-  if (ticks < sample.tick + env.deltas) {
+  // 5 not enough ticks yet, or (FX-CLOSE (c), N3) not enough wall time: ticks alone can be driven
+  const atDue = sampleAt(sample) + env.verifyMs;
+  if (ticks < sample.tick + env.deltas || !(Date.parse(env.now) >= atDue)) {
     return {
       exit: 6,
       result: { task: T, epoch: E, target: k, session, tick: ticks, sample_tick: sample.tick },
-      reasons: [{ code: 'waiting', detail: { tick: ticks, due: sample.tick + env.deltas } }],
+      reasons: [{ code: 'waiting', detail: { tick: ticks, due: sample.tick + env.deltas, at_due: new Date(atDue).toISOString() } }],
     };
   }
 
@@ -486,12 +515,12 @@ async function modeVerify(env, T, E) {
     for (const p of (m && m.matched) || []) if (p && !byPid.has(p.pid)) byPid.set(p.pid, { pid: p.pid, start_time: p.start_time ?? null, name: p.name ?? null });
   }
   const survivors = [...byPid.values()].sort((a, b) => a.pid - b.pid);
-  const confirmed = grew.length === 0 && survivors.length === 0;
+  const quiet = grew.length === 0 && survivors.length === 0; // FX-CLOSE (a), (b) are read under the lock
 
   // zombie spend: transcript total now minus the spend at the fence (0 for a committed row)
   let zombie = 0;
   if (!committed && typeof att.spend_at_fence === 'number') zombie = Math.max(0, spendTotal(tt.files) - att.spend_at_fence);
-  const allSpend = confirmed && row0.reason === 'cut' && !committed ? allAttemptsSpend(transcriptsRoot, root, row0) : 0;
+  const allSpend = quiet && row0.reason === 'cut' && !committed ? allAttemptsSpend(transcriptsRoot, root, row0) : 0;
 
   // 7 under the lock: re-check, record
   return await underLock(
@@ -499,11 +528,14 @@ async function modeVerify(env, T, E) {
     (handle) => {
       const row = findRow(lib.readTasks(root), T);
       recheck(row);
+      const missing = closesMissing(root, T, k, lib.attemptOf(row, k), tt.folderSessions, list); // FX-CLOSE (a), (b)
+      const confirmed = quiet && missing.length === 0;
       let newRow = null;
       if (handle) {
         const out = lib.updateRow(root, handle, { task: T, epoch: E, steps: ['stop-requested'] }, (copy) => {
           const i = attemptIndex(copy, k);
           copy.attempts[i] = { ...copy.attempts[i], stop: confirmed ? 'confirmed' : 'unconfirmed' };
+          if (!confirmed) copy.verify_rounds = (Number.isInteger(copy.verify_rounds) ? copy.verify_rounds : 0) + 1; // FX-CLOSE step 5
           if (confirmed) {
             copy.step = 'stopped';
             dispose(copy);
@@ -518,9 +550,9 @@ async function modeVerify(env, T, E) {
             process.stderr.write(`[stop] sample not removed: ${e && e.message}\n`);
           }
         } else {
-          lib.writeAtomic(sFile, JSON.stringify({ schema_version: 1, task: T, epoch: k, target: k, tick: ticks, sizes }));
+          lib.writeAtomic(sFile, JSON.stringify({ schema_version: 1, task: T, epoch: k, target: k, tick: ticks, at: env.now, sizes }));
         }
-        append(env, handle, 'stop', T, E, { session, confirmed, grew, survivors, zombie_tokens: zombie });
+        append(env, handle, 'stop', T, E, { session, confirmed, grew, survivors, zombie_tokens: zombie, closes_missing: missing });
       }
       const state = newRow ? newRow.state : confirmed ? predictState(row) : row.state;
       let overflow = null;
@@ -534,17 +566,20 @@ async function modeVerify(env, T, E) {
         grew,
         survivors,
         zombie_tokens: zombie,
+        closes_missing: missing,
         step: confirmed ? 'stopped' : 'stop-requested',
         state,
       };
       if (overflow) result.overflow = overflow;
       if (confirmed) return { exit: 0, result, reasons: [] };
 
+      result.verify_rounds = newRow ? newRow.verify_rounds : (Number.isInteger(row.verify_rounds) ? row.verify_rounds : 0) + 1;
       const reasons = [{ code: 'stop-unconfirmed', detail: { grew } }];
+      if (missing.length) reasons.push({ code: 'close-missing', detail: { sessions: missing } });
       if (survivors.length) reasons.push({ code: 'survivors', detail: survivors });
       const eTask = typeof row.e_task === 'number' ? row.e_task : 0;
       if (zombie > env.zFrac * eTask) reasons.push({ code: 'zombie-over-z', detail: { zombie_tokens: zombie, z: env.zFrac * eTask } });
-      if (handle) incident(env, handle, 'refusal', { code: 'stop-unconfirmed', detail: { grew, survivors: survivors.length, zombie_tokens: zombie } }, T, E);
+      if (handle) incident(env, handle, 'refusal', { code: 'stop-unconfirmed', detail: { grew, survivors: survivors.length, zombie_tokens: zombie, closes_missing: missing } }, T, E);
       for (const s of survivors) process.stderr.write(`[stop] survivor pid ${s.pid} (${s.name ?? '?'}) names the attempt; nothing was killed\n`);
       return { exit: 1, result, reasons };
     },
@@ -587,6 +622,7 @@ async function main(ctx) {
     proc: lib.realProc({ exe: th.get('proc_exe') }),
     transcriptsRoot: th.get('transcripts_root'),
     deltas: th.get('stop_verify_deltas'),
+    verifyMs: th.get('stop_verify_ms'), // FX-CLOSE (c), N3
     zFrac: th.get('Z_frac'),
     f5Given: !!th.get('f5_given', false),
   };

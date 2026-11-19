@@ -144,3 +144,20 @@ The row is written before its line, so a death between the two leaves the row mo
 ## FX-CLAIM with FX-REDO (CLAIM fix round, the merge)
 
 `request` repeated at stop-requested rebuilds the `stop-request` line as the request wrote it: the session is the target attempt's claim holder first (`targetClaim`), then the attempt's session, then the first folder session; after a tombstone, `sessions` lists every folder session visible. Test: redo.test.mjs, the stop request subtest.
+
+## FX-CLOSE (round 3): releasing a finished child's slot (FIX-fence section 4, rev 4 H3, rev 5 point 1)
+
+- `request` also takes a row committed at `started` (step 3; its target is the claim holder, as FX-CLAIM names it).
+- `verify` confirms only when (a) the target attempt's claim is a tombstone or the claim holder's close is recorded
+  (no claim: the attempt's `session`); (b) every other folder session's close is recorded; (c) nothing grew and no
+  process names the attempt over `stop_verify_deltas` ticks and at least `stop_verify_ms` of wall time since the
+  sample. A close is recorded by `run/close/done/<CLI id>.json` and counts by `lib.closeDoneCounts` (H3). (a) and (b)
+  are read under the lock, with the process list of step 6; a claim that does not parse is exit 3.
+- The sample carries `at` (the verify's now). Before both windows have passed: exit 6 `waiting` (detail `due`,
+  `at_due`); a sample without `at` is taken again (exit 6 `sampling`).
+- Not confirmed: `stop` unconfirmed, the row's `verify_rounds` + 1 (`result.verify_rounds`), reason `close-missing`
+  {sessions} when a close is missing; the `stop` line and the result carry `closes_missing`. `lib.fence` resets
+  `verify_rounds` to 0 at every fence that moves the epoch.
+- The id gap (departures/CGATE.md 1): the hook names its records by the app's id, so until a map from the app's id
+  to the CLI id exists, the close counted here is the owner's `closed` act, relayed by the coordinator.
+- Tests: stop.test.mjs "FX-CLOSE"; lib.test.mjs "FX-CLOSE"; status.test.mjs and watch.test.mjs "FX-CLOSE".
