@@ -58,5 +58,7 @@ Shape per CONTRACT §3.20 (`schema_version`, `params`; each param `{value, unit,
 
 ## Round-3 skeleton (S0.5): the coordinator's brief
 `tcb/briefs/coordinator.md` holds the acts (0) to (9) of one coordinator turn (FIX-JOIN part 2b) as
-headings, each naming the fix that fills it, with "(empty until <fix>)". It has no agent file and no
-placeholder: replace renders the briefs of task roles only.
+headings. Each place names the one fix that fills it, with "(empty until <fix>)"; an act that several
+fixes touch has one sub-step per fix: 0a-0c (part 2b row 0) and 5a-5d (the fence hold in the order of
+FIX-JOIN point 11, then the close of a session with the hook's steps of point 9). It has no agent file
+and no placeholder: replace renders the briefs of task roles only.
