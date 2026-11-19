@@ -1024,8 +1024,9 @@ test('T20 alarm: --sleep-ms 100 writes alarm.json and exits 30', async () => {
     assert.equal(a.sleep_ms, 100);
     assert.equal(typeof a.start_time, 'string');
     assert.equal(typeof a.armed_at, 'string');
-    // FX-W2: the ensure registered in slot 1 under its nonce, in the hold that wrote alarm.json
-    assert.deepEqual(J(slotFile(ctx)), { ce: 1, pid: a.pid, start_time: a.start_time, nonce: x });
+    // FX-W2: the ensure registered in slot 1 under its nonce, in the hold that wrote alarm.json; FX-W3: with
+    // turn.json's turn_seq as the hold read it (0: no turn.json)
+    assert.deepEqual(J(slotFile(ctx)), { ce: 1, pid: a.pid, start_time: a.start_time, nonce: x, turn_seq_at_reg: 0 });
     assert.deepEqual(J(nonceFile(ctx, x)), { state: 'registered', k: 1, pid: a.pid });
   });
 });
@@ -1281,6 +1282,8 @@ const actsOf = (j) => (j.reasons ?? []).filter((x) => x.code === 'act-due').map(
 
 test('M1 alarm: an endturn during the sleep re-arms the running alarm by its token; nothing is killed or replaced', async () => {
   await withRoot({}, async (ctx) => {
+    // FX-W3 (A3): the turn's reconcile wrote turn.json (ce 1, read_seq 0) before the ensure; endturn checks K by it.
+    w(path.join(ctx.root, 'run', 'turn.json'), { ce: 1, turn_seq: 1, read_seq: 0, arm: 'unconfirmed', slots: [], unarmed_turns: 0 });
     // 8 s: room for the endturn (node start and one PowerShell call) to land inside the first sleep.
     const a = startScript(ctx.root, 'watch', alarmArgs(ctx, 8000));
     await waitFor(() => fs.existsSync(alarmFile(ctx)));
@@ -1724,7 +1727,7 @@ test('FX-W2 a reused nonce is harmless: X fires and is marked, X again is nonce-
     try {
       await waitFor(() => { try { return J(nonceFile(ctx, y)).state === 'registered'; } catch { return false; } });
       const yr = J(slotFile(ctx));
-      assert.deepEqual(yr, { ce: 1, pid: ys.child.pid, start_time: yr.start_time, nonce: y });
+      assert.deepEqual(yr, { ce: 1, pid: ys.child.pid, start_time: yr.start_time, nonce: y, turn_seq_at_reg: 1 }, 'FX-W3: turn_seq of r1');
       const r2 = assertLine(reconcileW(ctx, ['--arm-nonces', y]), 0, 'status');
       assert.equal(r2.result.arm, 'confirmed');
       assert.deepEqual(r2.result.slots, [{ k: 1, pid: ys.child.pid, start_time: yr.start_time }]);
@@ -1841,5 +1844,37 @@ test('FX-W2 the coordinator\'s order: an ensure that registers after reconcile r
       e.child.kill();
       await e.done;
     }
+  });
+});
+
+// ------------------------------------------------ FX-W3: the alarm's own record
+// FIX-wake FX-W3: the ensure's slot record carries turn_seq_at_reg (turn.json's turn_seq as hold 1 read
+// it); on exit 30, before its marker and without a lock, a turn_seq still at that value means no reconcile
+// ran for a whole alarm period: run/arm/unarmed-<pt>.json {ce, turn_seq} (a strict create; FX-W4's
+// dead-man reads it). A turn_seq that moved during the sleep writes none.
+test('FX-W3 unarmed record: the slot record carries turn_seq_at_reg; an alarm that fires with turn_seq unmoved writes unarmed-<pt>.json {ce, turn_seq} beside its marker; one whose turn_seq moved during the sleep writes none', async () => {
+  await withRoot({}, async (ctx) => {
+    const turnFile = path.join(ctx.root, 'run', 'turn.json');
+    const putTurnSeq = (n) => w(turnFile, { ce: 1, turn_seq: n, read_seq: 0, arm: 'unconfirmed', slots: [], unarmed_turns: 0 });
+    const armFile = (kind, rec) => path.join(ctx.root, 'run', 'arm', `${kind}-${LIB.markerKey(rec.pid, rec.start_time)}.json`);
+    // the turn's reconcile left turn_seq 4, and none runs before the alarm fires
+    putTurnSeq(4);
+    const x = newNonce();
+    assertLine(run(ctx.root, 'watch', alarmArgs(ctx, 100, 1, x)), 30);
+    const xr = J(slotFile(ctx));
+    assert.deepEqual(xr, { ce: 1, pid: xr.pid, start_time: xr.start_time, nonce: x, turn_seq_at_reg: 4 });
+    assert.deepEqual(J(armFile('unarmed', xr)), { ce: 1, turn_seq: 4 });
+    assert.ok(fs.existsSync(armFile('exited', xr)), 'and its exit marker');
+    // the next alarm registers at turn_seq 4; a reconcile moves it to 5 during the sleep
+    const y = newNonce();
+    const ys = startScript(ctx.root, 'watch', alarmArgs(ctx, 3000, 1, y));
+    await waitFor(() => { try { return J(nonceFile(ctx, y)).state === 'registered'; } catch { return false; } });
+    const yr = J(slotFile(ctx));
+    assert.deepEqual([yr.nonce, yr.turn_seq_at_reg], [y, 4]);
+    putTurnSeq(5);
+    assertLine(await ys.done, 30);
+    assert.ok(fs.existsSync(armFile('exited', yr)), 'Y fired and left its marker');
+    assert.equal(fs.existsSync(armFile('unarmed', yr)), false, 'a reconcile ran during the sleep: no unarmed record');
+    assert.ok(fs.existsSync(armFile('unarmed', xr)), 'X\'s record stays');
   });
 });

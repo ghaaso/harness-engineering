@@ -384,6 +384,15 @@ test('T5 raise with a bound attempt that has a transcript and no process exits 6
   });
 });
 
+// FX-W3 (FIX-JOIN 2c): the brief line ends with the path of the coordinator's brief, tcb/briefs/coordinator.md
+// beside the scripts (forward slashes; quoted when it holds a blank): its acts, in order, every turn.
+const BRIEF_PATH = ' Then act every turn as ("[^"]+"|\\S+) says, in its order\\.';
+function assertBriefPath(p) {
+  const f = p.replace(/^"|"$/g, '');
+  assert.ok(f.endsWith('/tcb/briefs/coordinator.md') && !f.includes('\\'), `brief path: ${p}`);
+  assert.ok(fs.existsSync(f), `the coordinator brief exists: ${f}`);
+}
+
 test('T6 raise, quiescent, with a live watcher and a live alarm: ce 2, both still alive and listed, one-line brief', async () => {
   await withRoot({}, async (ctx) => {
     drainLine(ctx.root);
@@ -406,8 +415,9 @@ test('T6 raise, quiescent, with a live watcher and a live alarm: ce 2, both stil
     assert.equal(typeof brief, 'string');
     assert.ok(!brief.includes('\n'), 'the brief is one line');
     assert.ok(brief.includes(path.basename(ctx.root)));
-    const bm = new RegExp(`^Coordinator ce 2 for run .+, tcb ${COMMIT}: run node .+status\\.mjs --root .+ --ce 2 and act on run/status\\.json\\. Before any other call: node \\S+/handover\\.mjs bind --root \\S+ --ce 2 --nonce ([0-9a-f]{32})\\.$`).exec(brief);
+    const bm = new RegExp(`^Coordinator ce 2 for run .+, tcb ${COMMIT}: run node .+status\\.mjs --root .+ --ce 2 and act on run/status\\.json\\. Before any other call: node \\S+/handover\\.mjs bind --root \\S+ --ce 2 --nonce ([0-9a-f]{32})\\.${BRIEF_PATH}$`).exec(brief);
     assert.ok(bm, `brief: ${brief}`);
+    assertBriefPath(bm[2]);
     assert.equal(bm[1], c.successor_nonce, 'the brief carries the nonce of coord.json');
     const stale = j.result.stale_wake_sources;
     assert.ok(stale.length >= 2 && stale.every((x) => ['watcher', 'alarm'].includes(x.which)));
@@ -500,8 +510,9 @@ test('H1 FX-CGATE nonce: init and raise write successor_nonce and the brief carr
     const j = assertLine(init(ctx), 0);
     const c = coord(ctx);
     assert.match(c.successor_nonce, /^[0-9a-f]{32}$/);
-    const m = / Before any other call: node \S+\/handover\.mjs bind --root (\S+) --ce 1 --nonce ([0-9a-f]{32})\.$/.exec(j.result.brief);
+    const m = new RegExp(` Before any other call: node \\S+/handover\\.mjs bind --root (\\S+) --ce 1 --nonce ([0-9a-f]{32})\\.${BRIEF_PATH}$`).exec(j.result.brief);
     assert.ok(m, `brief: ${j.result.brief}`);
+    assertBriefPath(m[3]);
     assert.equal(m[1], ctx.root.replaceAll('\\', '/'));
     assert.equal(m[2], c.successor_nonce);
     for (const d of ['run/close/intent', 'run/close/done']) assert.ok(fs.statSync(path.join(ctx.root, d)).isDirectory(), `init makes ${d}`);
@@ -515,7 +526,7 @@ test('H1 FX-CGATE nonce: init and raise write successor_nonce and the brief carr
     assert.equal(c.ce, 2);
     assert.match(c.successor_nonce, /^[0-9a-f]{32}$/);
     assert.notEqual(c.successor_nonce, 'cd'.repeat(16), 'raise writes a fresh nonce');
-    assert.ok(j.result.brief.endsWith(` --ce 2 --nonce ${c.successor_nonce}.`), j.result.brief);
+    assert.ok(new RegExp(` --ce 2 --nonce ${c.successor_nonce}\\.${BRIEF_PATH}$`).test(j.result.brief), j.result.brief);
     const before = fs.readFileSync(coordPath(ctx));
     const incidents = () => ledgerLines(ctx.root, 'incident').length;
     const sid = newSid();

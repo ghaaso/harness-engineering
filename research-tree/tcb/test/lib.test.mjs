@@ -3362,3 +3362,65 @@ rt('FX-PLAN T3 close-session for a late session after a confirmed stop; owner wh
   assert.ok(counted.length >= 1, 'both sessions counted: no claim yet');
   assert.equal(lib.planAct(adm, lib.planFacts(root, adm, { counted })), 'start-session', 'a waiting attempt\'s sessions are not closed');
 });
+
+// FX-W3 (FIX-wake FX-W3 "Armed"): armedState, the one file predicate of withRunLock's requireArmed and of the
+// guard hook (no process list, no lock): armed only for run/turn.json of the caller's ce with arm confirmed
+// and at least one well-formed slot, none with an exit marker; every other case is not armed (fail closed).
+rt('FX-W3 armedState: each why of not armed; armed with turn_seq; the hook\'s io; checkArmed exit 6 not-armed; withRunLock requireArmed refuses before fn and releases', async (root) => {
+  const P = lib.paths(root);
+  fs.mkdirSync(path.dirname(P.armSlot(1)), { recursive: true });
+  const slot = { k: 1, pid: 4242, start_time: '2026-11-20T00:00:00.0000000Z' };
+  const turn = (o = {}) => ({ ce: 1, turn_seq: 3, read_seq: 5, arm: 'confirmed', slots: [slot], unarmed_turns: 0, ...o });
+  const put = (v) => fs.writeFileSync(P.turn, typeof v === 'string' ? v : JSON.stringify(v));
+  const not = (why, more = {}) => ({ armed: false, why, ...more });
+  assert.deepEqual(lib.armedState(root, 1), not('no-turn'));
+  put('{ not json');
+  assert.deepEqual(lib.armedState(root, 1), not('turn-unreadable'));
+  for (const v of [[], 'null', '7']) {
+    put(v);
+    assert.deepEqual(lib.armedState(root, 1), not('turn-unreadable'), JSON.stringify(v));
+  }
+  put(turn());
+  assert.deepEqual(lib.armedState(root, 2), not('other-ce', { turn_ce: 1 }));
+  assert.deepEqual(lib.armedState(root, undefined), not('other-ce', { turn_ce: 1 }), 'no ce given is not armed');
+  put(turn({ ce: '1' }));
+  assert.deepEqual(lib.armedState(root, 1), not('other-ce', { turn_ce: null }));
+  for (const arm of ['unconfirmed', 'spent']) {
+    put(turn({ arm }));
+    assert.deepEqual(lib.armedState(root, 1), not('arm', { arm }));
+  }
+  put(turn({ arm: undefined }));
+  assert.deepEqual(lib.armedState(root, 1), not('arm', { arm: null }));
+  for (const slots of [[], undefined, {}]) {
+    put(turn({ slots }));
+    assert.deepEqual(lib.armedState(root, 1), not('no-slots'), JSON.stringify(slots));
+  }
+  for (const bad of [null, 7, { k: 1, pid: 0, start_time: slot.start_time }, { k: 1, pid: 1.5, start_time: slot.start_time }, { k: 1, pid: 12 }]) {
+    put(turn({ slots: [slot, bad] }));
+    assert.deepEqual(lib.armedState(root, 1), not('bad-slot'), JSON.stringify(bad));
+  }
+  put(turn());
+  assert.deepEqual(lib.armedState(root, 1), { armed: true, turn_seq: 3 });
+  assert.deepEqual(lib.checkArmed(root, 1), { armed: true, turn_seq: 3 });
+  fs.writeFileSync(P.armExited(slot.pid, slot.start_time), JSON.stringify({ ce: 1, exit: 30, at: NOW }));
+  assert.deepEqual(lib.armedState(root, 1), not('slot-exited', { pid: 4242 }));
+  // the guard hook passes its own io: the predicate reads through it only
+  const seen = [];
+  const io = { readJson: (p) => { seen.push(p); return turn(); }, exists: (p) => { seen.push(p); return false; } };
+  assert.deepEqual(lib.armedState(root, 1, io), { armed: true, turn_seq: 3 });
+  assert.deepEqual(seen, [P.turn, P.armExited(slot.pid, slot.start_time)]);
+  // checkArmed: exit 6 not-armed {ce, why, ...detail}, nothing written
+  const e = await throwsTcb(() => lib.checkArmed(root, 1), 'not-armed', 6);
+  assert.deepEqual(e.detail, { ce: 1, why: 'slot-exited', pid: 4242 });
+  // withRunLock requireArmed: after the ce check, before fn; the lock released
+  let called = 0;
+  const e2 = await throwsTcb(() => lib.withRunLock(root, { script: 'test', ce: 1, proc: fproc(), now: NOW, requireArmed: true }, () => { called++; }), 'not-armed', 6);
+  assert.deepEqual(e2.detail, { ce: 1, why: 'slot-exited', pid: 4242 });
+  await throwsTcb(() => lib.withRunLock(root, { script: 'test', ce: 2, proc: fproc(), now: NOW, requireArmed: true }, () => { called++; }), 'stale-ce', 64);
+  await throwsTcb(() => lib.withRunLock(root, { script: 'test', proc: fproc(), now: NOW, requireArmed: true }, () => { called++; }), 'not-armed', 6);
+  assert.equal(called, 0, 'fn was not called');
+  assert.equal(fs.existsSync(lockFile(root)), false, 'released after the refusal');
+  fs.rmSync(P.armExited(slot.pid, slot.start_time));
+  await lib.withRunLock(root, { script: 'test', ce: 1, proc: fproc(), now: NOW, requireArmed: true }, () => { called++; });
+  assert.equal(called, 1, 'armed: fn runs');
+});
