@@ -37,7 +37,7 @@ re-checked inside the lock before each append (R4). Transcripts are parsed befor
 
 ## Watcher steps (default and `--once`)
 1 `checkCe` (stale → 64 at once). 2 `acquireLock(watcher.lock)`: a live holder → 75 after retries;
-a dead holder is broken by lib. 3 Read `watcher.json` (absent → fresh counters; corrupt → 67);
+a dead holder is broken by lib, under the run lock (FX-W7). 3 Read `watcher.json` (absent → fresh counters; corrupt → quarantined, fresh counters, FX-W7);
 counters of every task continue from any earlier watcher (R5); set ce, pid, start_time.
 4 Default mode: one **start evaluation** with no tick counted (a new watcher re-evaluates everything,
 R6); then loop: sleep Δ, `ticks_total += 1`, evaluate. `--once`: `ticks_total += 1`, evaluate once.
@@ -186,7 +186,7 @@ All with `--once` or `--interval-ms 50` and `--no-intake` unless stated; fake tr
   at most one `watcher.json` write after the raise (review U1-F3).
 - T16 a second watcher while the first holds `watcher.lock` → 75; a lock whose holder is dead is
   broken and the watcher runs.
-- T17 `watcher.json` unparseable → 67; `tasks.json` unparseable → 67.
+- T17 `watcher.json` unparseable → quarantined, exit 0 from fresh counters (FX-W7); `tasks.json` unparseable → 67.
 - T18 intake spawn (without `--no-intake`; test reads `watcher.json.intake.pid`, waits for that
   process to end and asserts it was a `--intake` run): spawned once; a second tick while it is alive
   spawns none.
@@ -231,6 +231,18 @@ real transcripts matching the parser (item 7); a real session's window in its tr
 - `evaluate`: `actDueIdleAgeCap(env, state, conds, {rows, tick})` after the row acts (FX-W6);
   `reraiseStuck(env, state, present, tick)` before the active keys are renewed (FX-W5); `adoptState(env,
   state)` after watcher.json is written (FX-W7).
+- FX-W7 (built). `evaluateCopy(env, flags, counted)` evaluates `structuredClone(env.state)` (`ticks_total
+  += 1` when counted); `holdTick` takes the run lock with about `watcher_lock_try_ms` of retries (100 ms
+  apart) and runs, in that one hold, `assertHeld` of watcher.lock, the appends, the due and pending
+  steps, the `watcher.json` write and `adoptState` (`env.state` = the copy; a non-zero busy count
+  written back to 0). A busy run lock: the copy is dropped except its `intake` record, `assertHeld`
+  outside the hold, `run/watcher-busy.json` `{ce, busy_ticks}` + 1; the loop sleeps Δ and evaluates
+  again (a dropped start evaluation stays uncounted), `--once` exits 75 `lock-busy`. Step 3: an
+  unparseable `watcher.json` is renamed to `watcher.json.<pid>.<nonce8>.corrupt` (`result.quarantined`)
+  and the counters start fresh; T17's first half now expects that. Test W7b: two busy `--once` ticks
+  with class 24 present → 75, busy 1 then 2, no `watcher.json`, no event; a default-mode watcher stays
+  up through busy ticks; after the release it exits 24 with one event line, `ticks_total` 0, busy 0;
+  a following `--once` → 24, no second line, `ticks_total` 1. Reads also `watcher_lock_try_ms`.
 - The alarm: in the registration hold, before alarm.json, `alarmSlotTurnSeq(reg)` (FX-W3), then
   `alarmRegisterSlot(reg)` (FX-W2). Every exit after registration passes `alarmExit(reg, out or exit
   code)`: `alarmUnarmedRecord` (FX-W3, exit 30 only), then `alarmExitMarker` (FX-W1); an error is rethrown.

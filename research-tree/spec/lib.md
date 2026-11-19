@@ -338,8 +338,13 @@ empty step returns its neutral value, so behaviour is unchanged (FIX-JOIN point 
 - `realProc({timeoutMs, exe})`: unchanged; FX-W2 passes `timeoutMs: ensure_query_ms`.
 - `withRunLock(root, {requireArmed})`: `requireArmed: true` runs the empty step `armedCheck(root, handle)`
   after the ce check: FX-W3 (exit 6 `not-armed`).
-- `acquireLock`: the break of a lock judged stale passes `breakStep(name, doBreak)`, which returns
-  `doBreak()`: FX-W7 (watcher.lock). The break of an unreadable lock does not pass there.
+- `acquireLock`: the break of a lock judged stale passes `breakStep(c, doBreak)`. For run.lock it
+  returns `doBreak()`. For watcher.lock (FX-W7 step 1, built) it takes run.lock with the caller's
+  retries, re-reads watcher.lock and `watcher.json`, and breaks only when both are as they were at the
+  judgement (`watcher.json` is read before the judgement); `progress` drops the verdict. The break of
+  an unreadable lock does not pass there (LR-4 kept). Test W7a: a busy run lock → `lock-busy` 75 and
+  both locks untouched; a holder that writes `watcher.json` during its judgement → not broken, the run
+  lock taken and released; run lock free and `watcher.json` unchanged → broken under the run lock.
 - `parseTranscript`: the result's non-enumerable `kind` is `transcriptKind(res)`, null: FX-W6.
   `TRANSCRIPT_KINDS` = tool, bg-wait, model, idle; `TRANSCRIPT_RECORD_TYPES` = the 27 record types
   measured in `build/facts/WH5-Wturn.md`.

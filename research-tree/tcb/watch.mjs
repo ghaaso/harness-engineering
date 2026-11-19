@@ -307,7 +307,7 @@ function freshTaskState(epoch) {
 }
 
 function loadWatcherState(root) {
-  const s = readState(fileOf(root, 'watcherJson'), 'watcher.json');
+  const s = readWatcherJson(root);
   const state = s && typeof s === 'object' ? s : {};
   return {
     schema_version: 1,
@@ -318,6 +318,74 @@ function loadWatcherState(root) {
     pending: Array.isArray(state.pending) ? state.pending : [],
     tasks: state.tasks && typeof state.tasks === 'object' ? state.tasks : {},
   };
+}
+
+// FX-W7 step 3: an unparseable watcher.json is quarantined instead of exiting 67 at every restart. It
+// is renamed, as found, to watcher.json.<pid>.<nonce8>.corrupt beside it, and the watcher starts from
+// fresh counters (spends re-parsed from byte 0). Called only while watcher.lock is held.
+function readWatcherJson(root) {
+  const file = fileOf(root, 'watcherJson');
+  try {
+    return readState(file, 'watcher.json');
+  } catch (e) {
+    if (!(e && e.code === 'table-corrupt')) throw e;
+    const aside = lib.tempName(file).replace(/\.tmp$/, '.corrupt');
+    lib.fsRetry(() => fs.renameSync(file, aside));
+    QUARANTINED.push(path.basename(aside));
+    return null;
+  }
+}
+const QUARANTINED = [];
+
+// FX-W7 step 2: run/watcher-busy.json {ce, busy_ticks}, the busy ticks in a row. Its one writer is
+// the holder of watcher.lock, without the run lock; unreadable counts as 0.
+function busyTicksOf(root) {
+  try {
+    const v = lib.readJson(lib.paths(root).watcherBusy);
+    return v && Number.isInteger(v.busy_ticks) && v.busy_ticks > 0 ? v.busy_ticks : 0;
+  } catch {
+    return 0;
+  }
+}
+function writeBusy(env, n) {
+  lib.writeAtomic(lib.paths(env.root).watcherBusy, JSON.stringify({ ce: env.ce, busy_ticks: n }) + '\n');
+  env.busyTicks = n;
+}
+
+// FX-W7 step 2: one evaluation of a copy of the state, kept by adoptState only after its hold wrote
+// watcher.json. On a busy run lock the copy is dropped, so the tick does not count and the
+// transcripts are read again from the kept end_byte; only the copy's intake record is kept (an intake
+// it spawned is running). Then assertHeld (a lost watcher.lock exits 75) and one more busy tick.
+async function evaluateCopy(env, flags, counted) {
+  const next = structuredClone(env.state);
+  if (counted) next.ticks_total += 1;
+  const out = await evaluate(env, next, lib.edgeFacts(flags), counted);
+  if (out.busy) {
+    env.handle.assertHeld();
+    if (next.intake !== undefined) env.state.intake = next.intake;
+    writeBusy(env, env.busyTicks + 1);
+  }
+  return out;
+}
+
+// FX-W7 step 2: fn(handle) in one run-lock hold that waits about watcher_lock_try_ms (retries of
+// TRY_RETRY_MS, the library's wait), the ce re-checked inside (R4). False when the run lock stayed
+// busy and fn did not run.
+const TRY_RETRY_MS = 100;
+async function holdTick(env, facts, fn) {
+  const { root, th, ce, proc } = env;
+  const retries = Math.max(0, Math.ceil(th.get('watcher_lock_try_ms') / TRY_RETRY_MS));
+  let entered = false;
+  try {
+    await lib.withRunLock(root, { ...lockOpts(th, ce, proc, facts.now), retries, retryMs: TRY_RETRY_MS }, async (handle) => {
+      entered = true;
+      await fn(handle);
+    });
+  } catch (x) {
+    if (!entered && x && x.code === 'lock-busy') return false;
+    throw x;
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------- one evaluation (spec step 4 a-i)
@@ -641,62 +709,65 @@ async function evaluate(env, state, facts, counted) {
   }
   state.active = newActive;
 
-  // Ledger appends: one run-lock acquisition, ce re-checked inside (R4).
-  if (appends.length) {
+  // FX-W7 step 2: one run-lock hold per evaluation, with a short wait (holdTick): assertHeld of
+  // watcher.lock, the ledger appends (ce re-checked inside the lock, R4) and the watcher.json write.
+  // A busy run lock writes nothing here: the caller drops this copy and counts a busy tick.
+  let result = null;
+  const held = await holdTick(env, facts, async (handle) => {
+    env.handle.assertHeld();
     try {
-      await lib.withRunLock(root, lockOpts(th, ce, proc, facts.now), async (handle) => {
-        for (const a of appends) {
-          const line = { ctx, ce, kind: a.kind, data: a.data, now: facts.now };
-          if (a.task !== undefined) line.task = a.task;
-          if (a.epoch !== undefined) line.epoch = a.epoch;
-          const written = await lib.appendLedger(root, handle, line);
-          if (a.kind === 'event' && written && Number.isInteger(written.seq)) eventSeq.set(a.data.key, written.seq);
-        }
-      });
+      for (const a of appends) {
+        const line = { ctx, ce, kind: a.kind, data: a.data, now: facts.now };
+        if (a.task !== undefined) line.task = a.task;
+        if (a.epoch !== undefined) line.epoch = a.epoch;
+        const written = await lib.appendLedger(root, handle, line);
+        if (a.kind === 'event' && written && Number.isInteger(written.seq)) eventSeq.set(a.data.key, written.seq);
+      }
     } catch (x) {
       // A broken ledger tail refuses appends; the tamper class still wakes the coordinator.
       if (!(x && x.exit === 3 && present.some((c) => c.cls === 27))) throw x;
     }
-  }
 
-  // Which keys are due: their event line is above acked_seq (no line found counts as due).
-  const isDue = (key) => {
-    const s = eventSeq.get(key);
-    return s === undefined || s > ackedSeq;
-  };
-  const due = present.filter((c) => isDue(c.key));
-  const coalesce = th.get('coalesce_ticks');
-  const pending = [];
-  for (const c of due) {
-    if (isUrgent(c.cls)) continue;
-    const old = state.pending.find((p) => p.key === c.key);
-    const entry = old ?? { key: c.key, class: c.cls, first_tick: tick };
-    if (!old && c.task) entry.task = c.task;
-    pending.push(entry);
-  }
-  state.pending = pending;
-  const ripe = pending.some((p) => tick - p.first_tick >= coalesce);
-  const urgentDue = due.some((c) => isUrgent(c.cls));
-  let classes = [];
-  if (ripe || urgentDue) classes = PRECEDENCE.filter((cl) => due.some((c) => c.cls === cl));
+    // Which keys are due: their event line is above acked_seq (no line found counts as due).
+    const isDue = (key) => {
+      const s = eventSeq.get(key);
+      return s === undefined || s > ackedSeq;
+    };
+    const due = present.filter((c) => isDue(c.key));
+    const coalesce = th.get('coalesce_ticks');
+    const pending = [];
+    for (const c of due) {
+      if (isUrgent(c.cls)) continue;
+      const old = state.pending.find((p) => p.key === c.key);
+      const entry = old ?? { key: c.key, class: c.cls, first_tick: tick };
+      if (!old && c.task) entry.task = c.task;
+      pending.push(entry);
+    }
+    state.pending = pending;
+    const ripe = pending.some((p) => tick - p.first_tick >= coalesce);
+    const urgentDue = due.some((c) => isUrgent(c.cls));
+    let classes = [];
+    if (ripe || urgentDue) classes = PRECEDENCE.filter((cl) => due.some((c) => c.cls === cl));
 
-  // 6. watcher.json (assertHeld first).
-  state.last_tick_at = isoOf(facts.now);
-  env.handle.assertHeld();
-  lib.writeAtomic(fileOf(root, 'watcherJson'), JSON.stringify(state) + '\n');
-  adoptState(env, state);
+    // 6. watcher.json (assertHeld first), then this copy becomes the state.
+    state.last_tick_at = isoOf(facts.now);
+    env.handle.assertHeld();
+    lib.writeAtomic(fileOf(root, 'watcherJson'), JSON.stringify(state) + '\n');
+    adoptState(env, state);
 
-  return {
-    exit: classes.length ? classes[0] : 0,
-    classes,
-    paused,
-    reasons: classes.length
-      ? due
-          .filter((c) => classes.includes(c.cls))
-          .sort((a, b) => PRECEDENCE.indexOf(a.cls) - PRECEDENCE.indexOf(b.cls))
-          .map((c) => ({ code: CLASS_SLUG[c.cls], detail: { key: c.key, task: c.task ?? null, epoch: c.epoch ?? null, ...(c.detail ?? {}) } }))
-      : [],
-  };
+    result = {
+      exit: classes.length ? classes[0] : 0,
+      classes,
+      paused,
+      reasons: classes.length
+        ? due
+            .filter((c) => classes.includes(c.cls))
+            .sort((a, b) => PRECEDENCE.indexOf(a.cls) - PRECEDENCE.indexOf(b.cls))
+            .map((c) => ({ code: CLASS_SLUG[c.cls], detail: { key: c.key, task: c.task ?? null, epoch: c.epoch ?? null, ...(c.detail ?? {}) } }))
+        : [],
+    };
+  });
+  return held ? result : { busy: true, exit: 0, classes: [], paused, reasons: [] };
 }
 
 async function spawnIntake(root, ce, proc) {
@@ -732,29 +803,38 @@ async function runWatcher(ctx, root, flags, once) {
   const facts0 = lib.edgeFacts(flags);
   const handle = await lib.acquireLock(root, 'watcher.lock', { script: SCRIPT, ce, proc, now: facts0.now, retries: th.get('lock_retries') });
   try {
-    const state = loadWatcherState(root); // corrupt -> 67
+    const state = loadWatcherState(root); // corrupt -> quarantined (FX-W7 step 3)
     const self = await lib.selfInfo(proc);
     state.ce = ce;
     state.pid = self.pid;
     state.start_time = self.start_time;
-    const env = { ctx, root, th, ce, proc, flags, handle, delta };
+    // env.state: the kept state; each tick evaluates a copy (evaluateCopy, FX-W7 step 2).
+    const env = { ctx, root, th, ce, proc, flags, handle, delta, state, busyTicks: busyTicksOf(root) };
     const run = once ? 'once' : 'watcher';
     let out;
     if (once) {
-      state.ticks_total += 1;
-      out = await evaluate(env, state, lib.edgeFacts(flags), true);
+      out = await evaluateCopy(env, flags, true);
+      if (out.busy) throw err('lock-busy', 75, { lock: 'run.lock', busy_ticks: env.busyTicks });
     } else {
-      // A new watcher re-evaluates everything once without counting a tick (R6).
-      out = await evaluate(env, state, lib.edgeFacts(flags), false);
-      while (out.exit === 0) {
+      // A new watcher re-evaluates everything once without counting a tick (R6). A busy run lock
+      // drops that evaluation (FX-W7): it is made again, still uncounted, and the watcher never
+      // exits on a busy tick (no wake loop, B6.1).
+      let counted = false;
+      for (;;) {
+        out = await evaluateCopy(env, flags, counted);
+        if (!out.busy) {
+          if (out.exit !== 0) break;
+          counted = true;
+        }
         await sleep(delta);
-        state.ticks_total += 1;
-        out = await evaluate(env, state, lib.edgeFacts(flags), true);
       }
     }
     return {
       exit: out.exit,
-      result: { run, classes: out.classes, ticks_total: state.ticks_total, pending: state.pending, paused: out.paused === true },
+      result: {
+        run, classes: out.classes, ticks_total: env.state.ticks_total, pending: env.state.pending, paused: out.paused === true,
+        ...(QUARANTINED.length ? { quarantined: QUARANTINED[0] } : {}),
+      },
       reasons: out.reasons,
     };
   } finally {
@@ -867,6 +947,8 @@ function reraiseStuck(env, state, present, tick) { // eslint-disable-line no-unu
 
 // FX-W7: the tick's state is kept only when its hold succeeded (the copy `next`), after watcher.json.
 function adoptState(env, state) { // eslint-disable-line no-unused-vars
+  env.state = state;
+  if (env.busyTicks) writeBusy(env, 0); // a successful hold resets the busy count
 }
 
 // The alarm's arm token: the sha256 of run/acked.json's bytes, null when it cannot be read.
