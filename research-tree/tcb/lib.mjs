@@ -162,14 +162,32 @@ function fsOf(opts) {
 const SHARING = new Set(['EPERM', 'EACCES', 'EBUSY']);
 const WRITE_RETRIES = 40;
 
-/** Retry an fs operation that failed for a Windows sharing reason (section 4.3): 40 times, 25-100 ms. */
-export function fsRetry(op) {
+// A retry budget is a span of time, read on the monotonic clock (never the wall clock).
+const monoNow = () => performance.now();
+function budgetEnd(budget) {
+  if (budget === undefined || budget === null) return Infinity;
+  if (typeof budget !== 'number' || Number.isNaN(budget)) throw err('bad-budget', 70, { budget: String(budget) });
+  return monoNow() + Math.max(0, budget);
+}
+const budgetSpent = (detail) => err('budget-spent', 2, detail);
+
+/**
+ * Retry an fs operation that failed for a Windows sharing reason (section 4.3): 40 times, 25-100 ms.
+ * `budget` (0b(c), FIX-fence §0b): the milliseconds left for the caller's whole work (the hook passes
+ * the time left until `hook_deadline_ms` from its start). The operation is tried once at least; a
+ * retry is made only when its sleep ends inside the budget, else `budget-spent` 2 (detail: the last
+ * error code, the tries). Without a budget the 40 retries stand.
+ */
+export function fsRetry(op, budget) {
+  const end = budgetEnd(budget);
   for (let i = 0; ; i++) {
     try {
       return op();
     } catch (e) {
       if (!e || !SHARING.has(e.code) || i >= WRITE_RETRIES) throw e;
-      sleepMs(jitter(25, 100));
+      const wait = jitter(25, 100);
+      if (monoNow() + wait > end) throw budgetSpent({ code: e.code, syscall: e.syscall || null, tries: i + 1, budget_ms: budget });
+      sleepMs(wait);
     }
   }
 }
@@ -185,13 +203,14 @@ function hasTempSibling(F, file) {
 }
 
 /** Read bytes; EPERM/EACCES and an ENOENT while a rename is in flight are retried 5 times, 20 ms apart. */
-function readBytes(file, F = FS) {
+function readBytes(file, F = FS, end = Infinity) {
   for (let i = 0; ; i++) {
     try {
       return F.readFileSync(file);
     } catch (e) {
       const transient = e && (SHARING.has(e.code) || (e.code === 'ENOENT' && hasTempSibling(F, file)));
       if (!transient || i >= 5) throw e;
+      if (monoNow() + 20 > end) throw budgetSpent({ path: file, code: e.code, tries: i + 1 });
       sleepMs(20);
     }
   }
@@ -655,29 +674,49 @@ export function objectId(prefix, value) {
   return `${prefix}_${sha256hex(canonicalize(value)).slice(0, 16)}`;
 }
 
-/** Exclusive create of `buf` at `file`: 'created' | 'identical' | 'different'. Atomic (temp + link). */
-function exclusiveWrite(file, buf, F = FS) {
-  F.mkdirSync(path.dirname(file), { recursive: true });
+const NO_HARDLINK = ['ENOTSUP', 'EINVAL', 'EXDEV', 'ENOSYS', 'EMLINK'];
+
+/**
+ * Exclusive create of `buf` at `file`: 'created' | 'identical' | 'different'. Atomic (temp + link).
+ * `opts` (0b, FIX-fence §0b): `strict` takes neither weak path: no folder is made (a missing parent
+ * throws `no-parent` 2) and no `wx` fallback where hard links are unsupported (`no-hardlink` 3), so
+ * the name never exists without its bytes. `budget`: the milliseconds left for the whole create;
+ * spent before the first write or before the link → `budget-spent` 2 with nothing at the name; every
+ * retry stays inside it.
+ */
+function exclusiveWrite(file, buf, F = FS, { strict = false, budget } = {}) {
+  const end = budgetEnd(budget);
+  const left = () => (end === Infinity ? undefined : Math.max(0, end - monoNow()));
+  if (left() === 0) throw budgetSpent({ path: file, tries: 0 });
+  if (!strict) F.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = tempName(file);
   let fd = null;
   try {
-    fd = fsRetry(() => F.openSync(tmp, 'wx'));
+    try {
+      fd = fsRetry(() => F.openSync(tmp, 'wx'), left());
+    } catch (e) {
+      // The temp's name is fresh, so ENOENT or ENOTDIR can only mean that its folder is missing.
+      if (strict && e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) throw err('no-parent', 2, { path: file, code: e.code });
+      throw e;
+    }
     writeAll(F, fd, buf);
     F.fsyncSync(fd);
     F.closeSync(fd);
     fd = null;
+    if (left() === 0) throw budgetSpent({ path: file, tries: 0, before: 'link' });
     let linked = false;
     try {
-      fsRetry(() => F.linkSync(tmp, file));
+      fsRetry(() => F.linkSync(tmp, file), left());
       linked = true;
     } catch (e) {
       if (e && e.code === 'EEXIST') {
         // fall through to the comparison below
-      } else if (e && ['ENOTSUP', 'EINVAL', 'EXDEV', 'ENOSYS', 'EMLINK'].includes(e.code)) {
+      } else if (e && NO_HARDLINK.includes(e.code)) {
+        if (strict) throw err('no-hardlink', 3, { path: file, code: e.code });
         // No hard links here: exclusive create with wx (not atomic against a crash mid-write).
         let fd2 = null;
         try {
-          fd2 = fsRetry(() => F.openSync(file, 'wx'));
+          fd2 = fsRetry(() => F.openSync(file, 'wx'), left());
           writeAll(F, fd2, buf);
           F.fsyncSync(fd2);
           linked = true;
@@ -691,7 +730,7 @@ function exclusiveWrite(file, buf, F = FS) {
       }
     }
     if (linked) return 'created';
-    const have = readBytes(file, F);
+    const have = readBytes(file, F, end);
     return have.equals(buf) ? 'identical' : 'different';
   } finally {
     if (fd !== null) {
@@ -702,7 +741,8 @@ function exclusiveWrite(file, buf, F = FS) {
       }
     }
     try {
-      fsRetry(() => F.unlinkSync(tmp));
+      // tried once at least, even with the budget spent
+      fsRetry(() => F.unlinkSync(tmp), left());
     } catch {
       // the temp may not exist
     }
@@ -813,10 +853,14 @@ export function removeFile(p, opts) {
   }
 }
 
-/** Exclusive create: 'created' | 'identical'; different bytes at the path: exists-different 1. */
-export function createExclusive(p, data) {
+/**
+ * Exclusive create: 'created' | 'identical'; different bytes at the path: exists-different 1.
+ * `opts` = {strict, budget} (0b, every hook write): see exclusiveWrite.
+ */
+export function createExclusive(p, data, opts) {
   const buf = toBuffer(data);
-  const r = exclusiveWrite(p, buf);
+  const o = opts && typeof opts === 'object' ? opts : {};
+  const r = exclusiveWrite(p, buf, FS, { strict: !!o.strict, budget: o.budget });
   if (r === 'different') throw err('exists-different', 1, { path: p });
   return r;
 }

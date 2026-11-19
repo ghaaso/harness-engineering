@@ -862,6 +862,72 @@ dt('T22 createExclusive creates, accepts identical bytes and refuses different b
   await throwsTcb(() => lib.createExclusive(f, 'two'), 'exists-different', 1);
   assert.equal(fs.readFileSync(f, 'utf8'), 'one');
 });
+dt('T22b createExclusive strict (0b): no folder made (no-parent 2), no fallback without hard links (no-hardlink 3), a spent budget makes nothing (budget-spent 2)', async (d) => {
+  const tmps = () => fs.readdirSync(d).filter((n) => n.endsWith('.tmp'));
+  const f = path.join(d, 'x.json');
+  assert.equal(lib.createExclusive(f, 'one', { strict: true }), 'created');
+  assert.equal(lib.createExclusive(f, 'one', { strict: true }), 'identical');
+  await throwsTcb(() => lib.createExclusive(f, 'two', { strict: true }), 'exists-different', 1);
+  assert.equal(fs.readFileSync(f, 'utf8'), 'one');
+  const g = path.join(d, 'no', 'such', 'y.json');
+  await throwsTcb(() => lib.createExclusive(g, 'y', { strict: true }), 'no-parent', 2);
+  assert.equal(fs.existsSync(path.join(d, 'no')), false, 'strict makes no folder');
+  assert.equal(lib.createExclusive(g, 'y'), 'created', 'without strict the parent is made, as before');
+  for (const code of ['ENOTSUP', 'EINVAL', 'EXDEV', 'ENOSYS', 'EMLINK']) {
+    const h = path.join(d, `h-${code}.json`);
+    const a = failing('linkSync', argHas(norm(d)), [code], { forever: true });
+    try {
+      const e = await throwsTcb(() => lib.createExclusive(h, 'z', { strict: true, budget: 5000 }), 'no-hardlink', 3);
+      assert.equal(e.detail.code, code);
+      assert.equal(fs.existsSync(h), false, `${code}: nothing at the name`);
+      assert.deepEqual(tmps(), [], `${code}: no temp file left`);
+      assert.equal(lib.createExclusive(h, 'z'), 'created', `${code}: without strict the wx fallback still creates it`);
+    } finally {
+      a.restore();
+    }
+    assert.equal(fs.readFileSync(h, 'utf8'), 'z');
+  }
+  const before = fs.readdirSync(d).sort();
+  const k = path.join(d, 'k.json');
+  await throwsTcb(() => lib.createExclusive(k, 'k', { strict: true, budget: 0 }), 'budget-spent', 2);
+  await throwsTcb(() => lib.createExclusive(k, 'k', { strict: true, budget: -5 }), 'budget-spent', 2);
+  assert.deepEqual(fs.readdirSync(d).sort(), before, 'a spent budget touches no file');
+  const o = failing('openSync', (args) => argHas(norm(d))(args) && String(args[0]).endsWith('.tmp'), ['EPERM'], { forever: true });
+  let ms;
+  try {
+    const t0 = performance.now();
+    const e = await throwsTcb(() => lib.createExclusive(k, 'k', { strict: true, budget: 150 }), 'budget-spent', 2);
+    ms = performance.now() - t0;
+    assert.equal(e.detail.code, 'EPERM');
+  } finally {
+    o.restore();
+  }
+  assert.ok(o.state.failed >= 2 && o.state.failed <= 40, `tries ${o.state.failed}`);
+  assert.ok(ms < 700, `the create gave up after ${Math.round(ms)} ms, not inside its 150 ms budget`);
+  assert.deepEqual(fs.readdirSync(d).sort(), before, 'nothing made');
+});
+test('T22c fsRetry(op, budget) (0b): one try at budget 0, retries that stop inside the budget, a non-sharing error at once, a bad budget is bad-budget 70', async () => {
+  const eperm = () => Object.assign(new Error('EPERM: simulated sharing violation'), { code: 'EPERM', syscall: 'open' });
+  let n = 0;
+  let e = await throwsTcb(() => lib.fsRetry(() => { n++; throw eperm(); }, 0), 'budget-spent', 2);
+  assert.equal(n, 1, 'budget 0: one try, no retry');
+  assert.deepEqual([e.detail.code, e.detail.tries], ['EPERM', 1]);
+  n = 0;
+  const t0 = performance.now();
+  e = await throwsTcb(() => lib.fsRetry(() => { n++; throw eperm(); }, 150), 'budget-spent', 2);
+  const ms = performance.now() - t0;
+  assert.ok(n >= 2 && n <= 40, `tries ${n}`);
+  assert.equal(e.detail.tries, n);
+  assert.ok(ms <= 150 + 100, `gave up after ${Math.round(ms)} ms with a 150 ms budget`);
+  n = 0;
+  assert.equal(lib.fsRetry(() => { if (++n <= 3) throw eperm(); return 'v'; }, 5000), 'v');
+  assert.equal(n, 4);
+  n = 0;
+  const raw = await tcbErr(() => lib.fsRetry(() => { n++; throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); }, 5000));
+  assert.deepEqual([raw.code, n], ['ENOENT', 1]);
+  for (const bad of ['5', Number.NaN, {}]) await throwsTcb(() => lib.fsRetry(() => 1, bad), 'bad-budget', 70);
+  assert.equal(lib.fsRetry(() => 'u', undefined), 'u');
+});
 dt('T23 readJson of a missing file is missing 2, of a bad file unparseable 2', async (d) => {
   await throwsTcb(() => lib.readJson(path.join(d, 'none.json')), 'missing', 2);
   const f = path.join(d, 'bad.json');

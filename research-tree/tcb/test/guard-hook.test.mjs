@@ -887,6 +887,71 @@ test('T13 the hook writes nothing: the tree, the lock folder and the ledger are 
   });
 });
 
+test('T15 the hook\'s one write (0b): a strict exclusive create inside its budget; a spent budget, a missing parent or no hard link is a deny that made nothing', async () => {
+  const m = await import(pathToFileURL(hookScript()).href);
+  assert.equal(typeof m.hookWrite, 'function', 'the module exports hookWrite');
+  await withWorld({}, async (w) => {
+    const dir = w.P('wt', 'f1-research-e1', 'outcome');
+    fs.mkdirSync(dir);
+    const names = () => fs.readdirSync(dir).sort();
+    const deny = (r, code) => {
+      assert.equal(r.allow, false, JSON.stringify(r));
+      assert.deepEqual([r.exit, r.code, r.result], [2, code, null], JSON.stringify(r));
+    };
+    const f = path.join(dir, '1.json');
+    let r = m.hookWrite(f, 'one', {});
+    assert.deepEqual([r.allow, r.exit, r.result], [true, 0, 'created']);
+    assert.equal(m.hookWrite(f, 'one', {}).result, 'identical');
+    r = m.hookWrite(f, 'two', {});
+    assert.deepEqual([r.allow, r.result], [true, 'different'], 'another writer\'s bytes are a result, not a deny');
+    assert.equal(fs.readFileSync(f, 'utf8'), 'one');
+    // the budget is spent before the create
+    deny(m.hookWrite(path.join(dir, '2.json'), 'x', { budgetMs: () => 0 }), 'budget-spent');
+    deny(m.hookWrite(path.join(dir, '2.json'), 'x', { budgetMs: () => -1 }), 'budget-spent');
+    assert.deepEqual(names(), ['1.json']);
+    // no folder is made
+    deny(m.hookWrite(path.join(dir, 'none', '3.json'), 'x', {}), 'no-parent');
+    assert.equal(fs.existsSync(path.join(dir, 'none')), false);
+    // no hard links: no fallback
+    const origLink = fs.linkSync;
+    fs.linkSync = function (a, b) {
+      if (String(b).includes('4.json')) throw Object.assign(new Error('ENOTSUP: simulated, link'), { code: 'ENOTSUP', syscall: 'link' });
+      return origLink.apply(this, arguments);
+    };
+    try {
+      deny(m.hookWrite(path.join(dir, '4.json'), 'x', {}), 'no-hardlink');
+    } finally {
+      fs.linkSync = origLink;
+    }
+    assert.deepEqual(names(), ['1.json'], 'nothing at the name, no temp file');
+    // the budget runs out during the retries of a sharing error
+    const origOpen = fs.openSync;
+    let tries = 0;
+    fs.openSync = function (p, ...rest) {
+      if (String(p).includes('5.json') && String(p).endsWith('.tmp')) {
+        tries++;
+        throw Object.assign(new Error('EPERM: simulated sharing violation, open'), { code: 'EPERM', syscall: 'open' });
+      }
+      return origOpen.call(this, p, ...rest);
+    };
+    let ms;
+    try {
+      const t0 = performance.now();
+      r = m.hookWrite(path.join(dir, '5.json'), 'x', { budgetMs: () => 150 });
+      ms = performance.now() - t0;
+    } finally {
+      fs.openSync = origOpen;
+    }
+    deny(r, 'budget-spent');
+    assert.ok(tries >= 2 && tries <= 40, `tries ${tries}`);
+    assert.ok(ms < 700, `denied after ${Math.round(ms)} ms, not inside the 150 ms left (40 retries take 1 s or more)`);
+    assert.deepEqual(names(), ['1.json']);
+    // any other failure is a deny too
+    deny(m.hookWrite(path.join(dir, '6.json'), 'x', { create: () => { throw new Error('boom'); } }), 'write-failed');
+    deny(m.hookWrite(path.join(dir, '6.json'), 'x', { create: () => 'maybe' }), 'internal');
+  });
+});
+
 // ---------------------------------------------------------------------------------------------
 // T14: the shipped role files
 // ---------------------------------------------------------------------------------------------
