@@ -87,7 +87,7 @@ An adjudication. The top session reads both, decides, and supersedes by its own 
 
 ## The board
 
-`INDEX.md` lists only records that are not superseded, at most 200 lines (board version 1.1, since fill 1). It
+`INDEX.md` lists only records that are not superseded, at most 220 lines (board version 1.2, since research round 3; 200 lines until then). It
 lists the top session's records one by one and names every other journal file in its directory "Journal
 files", with what the file was written from and what to search it for. Records of a child session or of an
 extractor are listed one by one only where the top session's work rests on them; a run of ids may stand as one

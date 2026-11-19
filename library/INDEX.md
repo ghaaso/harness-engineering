@@ -1,6 +1,7 @@
-# Library board: what is true now (version 1.1)
-Rebuilt by hand on 2026-11-18 after fill 1 and again after the build-in design (b1) from `journal/*/*.jsonl`. Line = `id [how it is known] claim, with its number`. Full record: `bash library/lookup.sh -f <id>`.
-Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. This board lists the current records of the top session (`r57`) and what the two orchestrators concluded. The 2,524 extractor records (`x01` to `x24`) are not listed one by one: find them by word (`bash library/lookup.sh <word>`) or through "Journal files" below. Nothing found = "not recorded"; see "Known gaps".
+# Library board: what is true now (version 1.2, draft)
+Draft of 2026-11-19 for the top session, not yet the board: the board of 2026-11-18 (fill 1, build-in design b1) with research round 3 added (lanes c1, w1, t1, a1), rebuilt by hand from `journal/*/*.jsonl`. Line = `id [how it is known] claim, with its number`. Full record: `bash library/lookup.sh -f <id>`.
+Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. Listed: the top session's records (`r57`) and what the two orchestrators (o1, o2), the build-in design (b1) and the four lanes of round 3 concluded. The 3,408 extractor records (`x01` to `x48`) are not listed one by one: find them by word (`bash library/lookup.sh <word>`) or through "Journal files" below. Nothing found = "not recorded"; see "Known gaps".
+Round 3 (`R:` = `docs/program/evidence/round3-2026-11-18/`): a lane record stands as the lane's refuter left it. Standing, as the records mark it: [quoted] proven in the literature as the source states it (a company's own figure: self-reported); [measured], [observed] here; [reasoned] hypothesis, untested. Its proposed corrections are not decided yet.
 ## Before you do this, look this up (one record answers it first)
 | You are about to | Look up | In short |
 |---|---|---|
@@ -9,9 +10,23 @@ Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. This board list
 | Start a helper or a child session | r57-0150 | Routes from kind of job to model; the hook refuses the rest |
 | Choose or check the model of a helper | r57-0150, r57-0120, r57-0108 | The routes, the hook, what an agent definition does not fix |
 | Decide how many helpers, sessions or heavy commands run at once | r57-0408, r57-0705, r57-0707 (how it is built in), o2-0401, o2-0403 | A number per resource, run at the smallest; untested |
-| Let two writers change one file | r57-0406, r57-0128 | Per file, by cost in what is scarce; untested |
+| Decide how many workers one check can feed | c1-0300, c1-0301, c1-0400, c1-0401, c1-0408 | One slot: N* = (S + Z)/S [quoted]; c slots: c (S + Z)/S, computed, a hypothesis; waits start below it |
+| Raise what the check can carry | c1-0403 to c1-0405, c1-0310, c1-0329, c1-0330, c1-0324 | Shorten the run first (Ekstazi: 32 % on average, 54 % on long suites), then batch what waits, then test ahead on the success path; the ranking is a hypothesis |
+| Batch changes at the check | c1-0311, c1-0312, c1-0314 to c1-0317, c1-0402, c1-0404 | Dorfman [quoted]: best pool 11 at 1 % failing, 3 at 30 % (1 % saved); pays only where changes wait; the large CI gains came with many concurrent builds |
+| Let two writers change one file | w1-0400 to w1-0407, r57-0406, r57-0128 | Ranked: reshape hot places, version-checked writes, claims below the file, wait for a hot pair; all hypotheses (w1-0511 proposes this in place of r57-0406's switch) |
+| Let model sessions write one file under version checks | w1-0353, w1-0354, w1-0356, w1-0401 | STORM [quoted]: 82.5 % against 63.8 % for own worktrees, 66.4 % for one agent, at most 4 writers, one preprint, no repeated runs; bash writes bypass it |
+| Fix the order of writes before units start | w1-0331 to w1-0334, w1-0357, w1-0405 | Order first needs each unit's sets in advance [quoted], which sessions do not know; a dependency-ordered plan survives (preprint, gpt-5-mini); landings go in one order through the check |
+| Make a unit wait for a hot place, or redo it | w1-0403, w1-0327, w1-0335 | No general answer in the literature (w1-0327); compute per pair from redo tokens and wait; better, take the hot write out of the unit |
 | Decide what to do when a job is slow | r57-0408, r57-0129, o2-0401 (memory), o2-0403 (the check) | Find which resource gives the smallest number |
-| Ask whether more work side by side uses more tokens | r57-0408, b1-0125, r57-0115, o2-0501 | A budget, not a rate; a waiting session pays at each wake; reasoned, one trial, no paper read |
+| Ask whether more work side by side uses more tokens | r57-0408, b1-0125, r57-0115, o2-0501 | A budget, not a rate; a waiting session pays at each wake; reasoned, one trial |
+| Pace a refilling token window | a1-0400, a1-0402, a1-0304, a1-0306, a1-0300 | While the share used u is ahead of the share of time gone s, spend the rest at (1 - u)/(1 - s) of the even rate; a reserve for running units; hypothesis on quoted forms |
+| Decide whether a unit may start under two or more windows | a1-0403, a1-0312, a1-0314, a1-0317, a1-0318, a1-0404 | Fit in every bucket (RFC 2698, ATM [quoted]); for our windows fit all, prices summed, each kept, not "the dearer binds" (hypothesis) |
+| Rely on how the provider's windows reset | a1-0323 to a1-0330, a1-0501, a1-0504 | 5-hour period from the first message, resets in full; weekly at a fixed time per account; no sizes, no carry-over rule [quoted, pages fetched 2026-11-19] |
+| Choose a dearer or a cheaper model while a window binds | a1-0405, a1-0507, a1-0332, a1-0333 | Value minus summed price x window usage, a redo counted (hypothesis); no saving read in tokens on code |
+| Schedule a few long units | a1-0406, a1-0337, a1-0338, a1-0342, a1-0407, a1-0408 | Reservation for the oldest unit that does not fit, shortest first behind it (EASY++: wait -23 %, four logs replayed [quoted]); one-worker units: first come, first served |
+| Choose the tree's shape for work that grows while it runs | t1-0401, t1-0405, t1-0300, t1-0304, t1-0111 | B-link split of unstarted keys, posted by one script step; a small remainder to a sibling or the next wave (hypothesis on quoted mechanisms); split or hand-over still open (t1-0111) |
+| Choose more coordinator rounds (epochs) or an inner level | t1-0402, t1-0406, t1-0335, t1-0339, t1-0340, t1-0504 | Whichever costs fewer tokens; a level only where its summary compresses and its children run at once; untested |
+| Cut the coordinator's tokens in the tree | t1-0403, t1-0500, t1-0108, t1-0117 | Fewer parent wakes, rank 1 by the cost it acts on (97 % of tokens re-read a window, other repositories); tokens per wake not measured |
 | Cite a figure on merges that are clean but wrong | r57-0305, x06-0356, x06-0360 | Human teams; shares of all merges, of clean merges, or of correct builds: say which |
 | Stop a helper writing outside its files | r57-0105, r57-0402 | Seen working once |
 | Start a session in a new folder | r57-0026, r57-0122 | Check the tier hook first |
@@ -21,138 +36,128 @@ Words: `GLOSSARY.md`. Rules and how to add records: `README.md`. This board list
 | Choose how a rule is enforced | r57-0011 | Hooks or scripts, whichever works best, or both |
 | Choose a method from one measurement | r57-0015 | The bottleneck depends on the workload |
 | Cite a figure from a paper | r57-0014 | Quote it from the paper, not a summary |
-| Rest a decision on a record whose id begins with `x` | r57-0130 | Read the place it cites first: 71 % were checked by script only |
+| Read a paper behind a sign-in or a bot check | r57-0014, "Known gaps" | Find the open copy; else list it for the owner's sign-in, never get round it |
+| Rest a decision on a record whose id begins with `x` | r57-0130 | Read the place it cites first: 71 % of fill 1 were checked by script only |
 | Save a finding | r57-0016 | A structured record; steps in `README.md` |
 | Write a skill or anything every session loads | r57-0019 | Only at source quality |
 | Report to the owner | r57-0017 | Short; what is and is not; plainly not sure |
 | Carry on past a large context | r57-0008 | Hand over to a fresh child session through files |
 ## The owner's rulings
-- r57-0001 [owner] No design questions to the owner; derive from research, compute from measurements, measure what is missing.
-- r57-0002 [owner] A parameter is an optimisation result against the objective, never his preference. Also r57-0027 [owner]: a rule is shown to him by how each conclusion was reached, never as knobs to tweak.
-- r57-0003 [owner] Objective: quality first, then least time, memory, tokens; seven measures; report tokens, not money.
-- r57-0004 [owner] A test, review or run only if its result can change what is done next; full suite once per change.
-- r57-0005 [owner] Smallest model that gives the same output; routes in r57-0150, never-for in r57-0206.
-- r57-0006 [owner] Work that can run together starts together.
-- r57-0007 [owner] No round of work he has not asked for.
-- r57-0008 [owner] One session, one purpose; hand over through files; no coordinator past its ceiling.
-- r57-0009 [owner] Open the record from the files, not from session memory; compaction is no excuse.
-- r57-0010 [owner] Nothing from a method document is reused blindly.
-- r57-0011 [owner] Hooks or scripts: whichever works best, or both.
-- r57-0012 [owner] "One writer per file" is rejected as the coarsest lock.
-- r57-0013 [owner] Use the core concurrency literature, not only agent papers.
+- r57-0001 [owner] No design questions to the owner; derive from research, compute from measurements, measure what is missing. r57-0002 [owner] A parameter is an optimisation result against the objective, never his preference. Also r57-0027 [owner]: a rule is shown to him by how each conclusion was reached, never as knobs to tweak.
+- r57-0003 [owner] Objective: quality first, then least time, memory, tokens; seven measures; report tokens, not money. r57-0004 [owner] A test, review or run only if its result can change what is done next; full suite once per change.
+- r57-0005 [owner] Smallest model that gives the same output; routes in r57-0150, never-for in r57-0206. r57-0006 [owner] Work that can run together starts together.
+- r57-0007 [owner] No round of work he has not asked for. r57-0008 [owner] One session, one purpose; hand over through files; no coordinator past its ceiling.
+- r57-0009 [owner] Open the record from the files, not from session memory; compaction is no excuse. r57-0010 [owner] Nothing from a method document is reused blindly.
+- r57-0011 [owner] Hooks or scripts: whichever works best, or both. r57-0012 [owner] "One writer per file" is rejected as the coarsest lock. r57-0013 [owner] Use the core concurrency literature, not only agent papers.
 - r57-0014 [owner] Strong literature, read in full; blocked page: find the open copy; quote figures from the paper. Also r57-0029 [owner]: "not in the papers read" is never "no paper"; search the other names and database engines; papers with large gains. r57-0030 [owner]: work that mattered, and accounts from systems in real use; a company's own figures are marked self-reported.
 - r57-0015 [owner] The bottleneck depends on the workload; a decision rule routes to the method that fits. Also r57-0028 [owner]: nothing tuned to one repository; it must hold for small and large projects.
-- r57-0016 [owner] Store knowledge as structured records, not prose. Also r57-0031 [owner]: fill it so it can be reused, and keep wrong records out; a lane reaches the board only after a check.
-- r57-0017 [owner] Reports: short, what is and is not, plainly not sure.
-- r57-0018 [owner] On a new instruction say what you understand and intend, then act on his go.
-- r57-0019 [owner] Skills only at source quality; the derived tree skill was discarded.
-- r57-0020 [owner] Harness work lives in this repository, never in the product's.
-- r57-0021 [owner] Wide literature work: Opus orchestrator child sessions; the top session decides corrections.
-- r57-0022 [owner] Test the library's structure with a dummy Sonnet session first (tests 1 and 2 run: r57-0121, r57-0124).
-- r57-0023 [owner] Later: parallelism inside the tree, node by node.
-- r57-0024 [owner] End your processes before reporting; report resource use unasked.
-- r57-0025 [owner] Tier routes are enforced, not only written; Haiku is used where the guide puts it.
-- r57-0026 [owner] Every folder a session starts in carries the tier hook; check before starting.
+- r57-0016 [owner] Store knowledge as structured records, not prose. Also r57-0031 [owner]: fill it so it can be reused, and keep wrong records out; a lane reaches the board only after a check. r57-0017 [owner] Reports: short, what is and is not, plainly not sure.
+- r57-0018 [owner] On a new instruction say what you understand and intend, then act on his go. r57-0019 [owner] Skills only at source quality; the derived tree skill was discarded.
+- r57-0020 [owner] Harness work lives in this repository, never in the product's. r57-0021 [owner] Wide literature work: Opus orchestrator child sessions; the top session decides corrections.
+- r57-0022 [owner] Test the library's structure with a dummy Sonnet session first (tests 1 and 2 run: r57-0121, r57-0124). r57-0023 [owner] Later: parallelism inside the tree, node by node.
+- r57-0024 [owner] End your processes before reporting; report resource use unasked. r57-0025 [owner] Tier routes are enforced, not only written; Haiku is used where the guide puts it. r57-0026 [owner] Every folder a session starts in carries the tier hook; check before starting.
 ## Facts about this project and this PC
-- r57-0101 [measured] Tree scripts (tcb) built: 965 tests pass, 0 fail, 53 skipped (need the real app); end-to-end 232 of 232.
-- r57-0102 [measured] 13 fixes and 0b are designed, none built; no pilot, no run of the tree.
-- r57-0103 [measured] One suite run: 596 s, one file at a time, 494 MB working set (overstates), 3 of 24 threads (whole PC).
-- r57-0127 [measured] Lane queue: 2 slots, not 1; 780 commands ran 365 min and waited 177 min; two ran at once for 41 of 324 min.
-- r57-0105 [observed] A hook refused a write and a helper's model, also with permissions bypassed (one session, Haiku, app 2.1.325).
-- r57-0106 [observed] A hook is told ids and the tool input, never the context size; about 37 ms per start.
-- r57-0107 [measured] Before the tier hook nothing refused a call; one setting, autoCompactWindow 400000, Opus only.
-- r57-0108 [summary] The caller's model value beats an agent definition's (documented, never tried here).
-- r57-0109 [observed] When a session may start a session; backslash folders; login only in the desktop app.
-- r57-0110 [observed] Read a paper: curl --ssl-no-revoke, check %PDF-, pdftotext.
-- r57-0128 [measured] Collisions: 3 fixes at once by file, 7 by function or block, 8 only by statement with 0b first; 20 shared places (9, 7, 4).
-- r57-0112 [reasoned] Build size: 14 units, 12 scripts, 52 tests, 21 app facts (estimates).
-- r57-0113 [reasoned] 9 fixes use the recorded design, 5 a variant of it; none differs.
-- r57-0114 [measured] R57 round: 7.67 million helper tokens, coordinator 404,000, week 26 % to 39 %, no script changed.
-- r57-0115 [measured] Five Sonnet readers together: 767,000 tokens, four minutes, under one point of the week.
-- r57-0116 [measured] PC: 12 cores, 31 GB; 14.9 GB used idle; processor 86 to 93 % in one busy period.
-- r57-0117 [measured] Week on 2026-11-18: 43 % all models, 35 % Fable; resets 2026-11-23 12:00 UTC.
-- r57-0118 [observed] The app restarted three times and killed helpers; write files early, commit at once.
-- r57-0119 [observed] A session loads the instructions of the folder it starts in.
-- r57-0120 [observed] Tier hook at this repo's root: 17 self-tests, 6 of 6 steps; blind to a wrong kind and to effort.
-- r57-0121 [measured] Recall test 1: of 14 questions 8 sure, 5 partly, 1 not recorded; ten changes asked.
-- r57-0122 [observed] `tools/ensure-tier-hook.sh <folder>` checks the hook and installs it inside this repository; not outside it without `--force`.
-- r57-0124 [measured] Recall test 2: 5 of 9 sure, 3 partly, 1 rightly "not recorded"; the format is judged ready to fill.
+- r57-0101 [measured] Tree scripts (tcb) built: 965 tests pass, 0 fail, 53 skipped (need the real app); end-to-end 232 of 232. r57-0102 [measured] 13 fixes and 0b are designed, none built; no pilot, no run of the tree.
+- r57-0103 [measured] One suite run: 596 s, one file at a time, 494 MB working set (overstates), 3 of 24 threads (whole PC). r57-0127 [measured] Lane queue: 2 slots, not 1; 780 commands ran 365 min and waited 177 min; two ran at once for 41 of 324 min.
+- r57-0105 [observed] A hook refused a write and a helper's model, also with permissions bypassed (one session, Haiku, app 2.1.325). r57-0106 [observed] A hook is told ids and the tool input, never the context size; about 37 ms per start.
+- r57-0107 [measured] Before the tier hook nothing refused a call; one setting, autoCompactWindow 400000, Opus only. r57-0108 [summary] The caller's model value beats an agent definition's (documented, never tried here).
+- r57-0109 [observed] When a session may start a session; backslash folders; login only in the desktop app. r57-0110 [observed] Read a paper: curl --ssl-no-revoke, check %PDF-, pdftotext.
+- r57-0128 [measured] Collisions: 3 fixes at once by file, 7 by function or block, 8 only by statement with 0b first; 20 shared places (9, 7, 4). r57-0129 [measured] In 25 episodes the limit changed by job: queue 9, blocked program starts 7, memory 4, tokens 4, processor 3, nothing 1.
+- r57-0112 [reasoned] Build size: 14 units, 12 scripts, 52 tests, 21 app facts (estimates). r57-0113 [reasoned] 9 fixes use the recorded design, 5 a variant of it; none differs.
+- r57-0114 [measured] R57 round: 7.67 million helper tokens, coordinator 404,000, week 26 % to 39 %, no script changed. r57-0115 [measured] Five Sonnet readers together: 767,000 tokens, four minutes, under one point of the week.
+- r57-0116 [measured] PC: 12 cores, 31 GB; 14.9 GB used idle; processor 86 to 93 % in one busy period. r57-0117 [measured] Week on 2026-11-18: 43 % all models, 35 % Fable; resets 2026-11-23 12:00 UTC. r57-0118 [observed] The app restarted three times and killed helpers; write files early, commit at once. r57-0119 [observed] A session loads the instructions of the folder it starts in.
+- r57-0120 [observed] Tier hook at this repo's root: 17 self-tests, 6 of 6 steps; blind to a wrong kind and to effort. r57-0122 [observed] `tools/ensure-tier-hook.sh <folder>` checks the hook and installs it inside this repository; not outside it without `--force`.
+- r57-0121 [measured] Recall test 1: of 14 questions 8 sure, 5 partly, 1 not recorded; ten changes asked. r57-0124 [measured] Recall test 2: 5 of 9 sure, 3 partly, 1 rightly "not recorded"; the format is judged ready to fill. r57-0132 [measured] Recall test 3, on the filled library: of 10 questions 4 sure, 5 partly, 1 rightly "not recorded"; its fixes are in.
 - r57-0125, r57-0126 [observed] Wave 1 of the bottleneck literature: ten collector files by Sonnet helpers under two Opus orchestrators; one reached 132,000 tokens after that wave and handed over through files.
-- r57-0129 [measured] In 25 episodes the limit changed by job: queue 9, blocked program starts 7, memory 4, tokens 4, processor 3, nothing 1.
-- r57-0130 [measured] Fill 1: 2,524 extractor records; all script-checked, 733 read by hand, 3 small corrections, none removed.
-- r57-0131 [observed] The board is version 1.1: top-session records and a directory of journal files; extractor records are found by search.
-- r57-0132 [measured] Recall test 3, on the filled library: of 10 questions 4 sure, 5 partly, 1 rightly "not recorded"; its fixes are in.
-- r57-0150 [quoted] Tier routes: haiku locates and extracts; sonnet reads, collects, runs, builds; opus builds invariants, analyses, refutes, orchestrates.
-- o1-0101 [observed] The lane's capacity file holds 2 (default 1, at most 4).
+- r57-0130 [measured] Fill 1: 2,524 extractor records; all script-checked, 733 read by hand, 3 small corrections, none removed. r57-0131 [observed] The board is version 1.1: top-session records and a directory of journal files; extractor records are found by search.
+- r57-0150 [quoted] Tier routes: haiku locates and extracts; sonnet reads, collects, runs, builds; opus builds invariants, analyses, refutes, orchestrates. o1-0101 [observed] The lane's capacity file holds 2 (default 1, at most 4).
 - r57-0134 [observed] Logged only while the hand-started recorder runs (last line 21:51 on 17 Nov): free memory, whole-PC processor share. Lane wait: lane commands only. Not logged: week and 5-hour share, tokens per unit, ready work, processor queue, conflicts.
-- r57-0135 [quoted] "At most three child sessions" is a rule in CLAUDE.md, not a measurement; the number is to be computed.
-- r57-0136 [observed] Build-in design delivered (task r57-0504), design only: 172 of 195 claims and choices confirmed, 22 hold in part, none refuted, 1 unchecked. Its facts of the code: b1-0101 to b1-0126 (lane, hook, tree scripts). Search by word.
+- r57-0135 [quoted] "At most three child sessions" is a rule in CLAUDE.md, not a measurement; the number is to be computed. r57-0136 [observed] Build-in design delivered (task r57-0504), design only: 172 of 195 claims and choices confirmed, 22 hold in part, none refuted, 1 unchecked. Its facts of the code: b1-0101 to b1-0126 (lane, hook, tree scripts). Search by word.
+- c1-0100 to c1-0110 [measured, observed] The lane and the check today: a command is killed at 25 minutes and a waiter may break a 20-minute hold, so an hour-long check cannot run (c1-0104); waiters have no order; the log shows no slot count or queue; the tree checker's batch of 12 is a guess (c1-0107); the coordinator cannot use the lane.
+- w1-0100 [observed] For harness builds the several-writers part of the rule is designed only: conflicts per file are not logged; the merge script, modes table and the hook's Write/Edit branch do not exist; only Write was seen refused.
+- t1-0100 to t1-0120 [observed] The tree as written: three levels, never more; fill_factor 0.75 read by no script; a leaf over its limit is cut and listed; P 60,000 and S0 10,000 tokens are guesses; 97 % of tokens re-read a window already there (t1-0108, other repositories); the split rules disagree (t1-0111); the tree never ran (t1-0114).
+- r57-0140 [observed] Research round 3 finished: four lanes (shared check, several writers, kind of tree, token allowance and long units), 357 lane records and 884 extractor records, a sample of 151 with none failing, recall test 4 with no wrong answer. Files: r57-0709.
 ## How far the method documents were tested
-- r57-0201 [measured] Orchestration design run once: 14 worked, 9 failed or changed, 25 never run; overhead 60,000 tokens, not 7,500.
-- r57-0202 [designed-only] Harness v2 design: nothing built or run; lane counts rest on guesses.
-- r57-0203 [measured] Horthy sweep: 78 of 861 kept, 9 with a measured figure, none controlled; nothing tried here.
-- r57-0204 [quoted] "38 of 71": of 71 practised ideas 33 worked, 38 failed; not prose against scripts.
-- r57-0205 [quoted] "Hooks stay off" was never ruled (D17, no owner answer).
-- r57-0206 [designed-only] What each tier is never used for (copied from section 3).
-- r57-0207 [designed-only] Effort levels per tier; only Opus high and xhigh ever ran.
-- r57-0208 [measured] The 14 rules that ran and worked.
-- r57-0209 [measured] The 9 rules that ran and failed or were changed.
-- r57-0210 [measured] The 25 rules never run.
-- o1-0201 [summary] Of 32 papers on detection, none switches method on a live machine by which resource binds, with a measured gain.
-- o1-0202 [observed] The 8 claims on detection went through one refute round: all narrowed to their papers' conditions, none refuted.
+- r57-0201 [measured] Orchestration design run once: 14 worked, 9 failed or changed, 25 never run; overhead 60,000 tokens, not 7,500. r57-0202 [designed-only] Harness v2 design: nothing built or run; lane counts rest on guesses.
+- r57-0203 [measured] Horthy sweep: 78 of 861 kept, 9 with a measured figure, none controlled; nothing tried here. r57-0204 [quoted] "38 of 71": of 71 practised ideas 33 worked, 38 failed; not prose against scripts.
+- r57-0205 [quoted] "Hooks stay off" was never ruled (D17, no owner answer). r57-0206 [designed-only] What each tier is never used for (copied from section 3). r57-0207 [designed-only] Effort levels per tier; only Opus high and xhigh ever ran.
+- r57-0208 [measured] The 14 rules that ran and worked. r57-0209 [measured] The 9 rules that ran and failed or were changed. r57-0210 [measured] The 25 rules never run.
+- o1-0201 [summary] Of 32 papers on detection, none switches method on a live machine by which resource binds, with a measured gain. o1-0202 [observed] The 8 claims on detection went through one refute round: all narrowed to their papers' conditions, none refuted.
+- Round 3 verdicts after gate and refuter (each status record names what was read, what not, and every refuted claim, not to be proposed again): c1-0200, c1-0201 [observed] 66 claims: 41 confirmed, 23 in part, 2 refuted (BMW keeps the full suite at its gate; rerun nondeterminism shrinks the best batch to 2-4). w1-0200 [observed] 98: 57, 39, 1 refuted (one landing per unit time on a hot place), 1 unchecked (escalation by share).
+- t1-0200 [observed] 115: 65, 42, 5 refuted (summaries merged once at the top; a minimum work per session; B-link settles the split conflict; PostgreSQL's named job; FoundationDB's window as a reason to split), 3 unchecked. a1-0200 [observed] 82: 48, 33, 1 refuted (end the plan one unit length before the reset), 0 unchecked.
 ## Published results (read in the papers unless marked)
-- r57-0301 [quoted] Locking wins when resources are scarce, optimistic when plentiful (crossover 10 to 25 units); no conflict-rate crossover.
-- r57-0302 [quoted] diff3 merges cleanly only under stated conditions (two replicas).
-- r57-0303 [quoted] 10 of 12 TPC-C invariants need no coordination.
-- r57-0304 [quoted] Operational transformation: all five algorithms fail with 3 or more sites.
+- r57-0312 [quoted] Agrawal, Carey and Livny 1987 (a simulation of one database with 1 to 50 resource units): blocking beat immediate restart and optimistic control at medium to high resource use; optimistic control won only when use was low enough to tolerate much wasted work an ...
+- r57-0302 [quoted] diff3 merges cleanly only under stated conditions (two replicas). r57-0303 [quoted] 10 of 12 TPC-C invariants need no coordination.
+- r57-0310 [quoted] Boucheneb and Imine 2008 (model checking): all five operational-transformation algorithms they checked fail to converge with three or more sites, a counterexample for each (those five, not every published one); this rules out transforms among more than two sit ...
 - r57-0305 [quoted] Human teams: 16 % textual conflicts, 1 % build and 6 % test failures of all merges.
-- r57-0306 [quoted] Test selection and merge queues: Facebook, Ekstazi, Google, Uber figures (replays, not trials).
-- r57-0307 [quoted] Scalability law peak N* = sqrt((1 - alpha) / beta); needs a first measurement.
-- r57-0308 [summary] AI agents in parallel: 19.8 to 41.7 % conflicts, 21 % faster to 39 % slower; summaries only.
+- r57-0306 [quoted] Test selection and merge queues: Facebook, Ekstazi, Google, Uber figures (replays, not trials). r57-0307 [quoted] Scalability law peak N* = sqrt((1 - alpha) / beta); needs a first measurement.
+- r57-0311 [quoted] Three preprints on AI coding agents, read in the papers: co-active pull-request pairs had textual conflicts in 19.8 % of 601 same-agent and 41.7 % of 115 cross-agent pairs (a lower bound, build and semantic conflicts not tracked; a pair rate over hours to days ...
 - r57-0309 [quoted] Graham 1966: 4/3 - 1/(3n) is the bound of longest-first order with no precedence; any list stays at 2 - 1/n.
 - o2-0300 [quoted] Denning 1968: one more program in a full memory collapses service (a model; it cites one measurement); two cures, a reserve and a shorter page transfer. The refuter added the second cure and the measurement.
 - o1-0301 to o1-0319 [quoted] 19 results on finding the bottleneck and switching method (load control, feedback control, adaptive locking). Search by word.
-- o2-0300 to o2-0331 [quoted] 32 results on scheduling when several resources are scarce (memory, multi-resource packing, quotas, cheaper models); nine reworded by a refuter. Search by word.
+- o2-0300 to o2-0331 [quoted] 32 results on scheduling when several resources are scarce (memory, multi-resource packing, quotas, cheaper models); nine reworded by a refuter. Search by word. (a1-0516, a1-0517, a1-0513 propose corrections of o2-0321, o2-0320 and o2-0317's note.)
+Round 3 results, [quoted] as the refuter left them; one line per run with words to search for; reports `R:<p>-report.md`:
+- c1-0300 to c1-0310 [quoted] The closed queue: one-slot saturation N* = (S + Z)/S (Denning and Buzen, Lazowska, Sztrik), approximations, the scalability law, the serial step moves the cap (Suleman). Search: saturation, machine-repair, Suleman.
+- c1-0311 to c1-0322 [quoted] Batching: Dorfman 1943 and the group-testing survey; Ericsson 72 % fewer runs (simulated, failing batches bisected); Chrome replays; group commit; detaching a waiting thread (Aether, one transaction). Search: Dorfman, batch, group commit.
+- c1-0323 to c1-0334 [quoted] Merge queues and a shorter check: Uber (self-reported), Zuul, GitHub, Rust; Ekstazi (c1-0329 in part: the 9-138 % spans all projects, the slowdowns are on short suites); Facebook (self-reported); flaky tests. Search: merge queue, selection, flaky.
+- w1-0300 to w1-0317 [quoted] Anomalies and grain: lost update, write skew, phantom (Berenson); SSI under 7 % (Ports and Grittner); gap and key-range locks; Ries 1977 (about 10 granules suffice); escalation. Search: write skew, phantom, granule, escalation.
+- w1-0318 to w1-0341 [quoted] Engines: optimistic against locking, wait against no-wait (no general answer, w1-0327); Calvin and Aria (order needs the sets); Doppel 38x on one hot key; partitions lose past about 20 % crossing. Search: Silo, Aria, Doppel, NoWait.
+- w1-0342 to w1-0357 [quoted] Merging and agents: structured merge (about 24 % fewer conflicts, no fewer wrong clean merges); agent conflict rates 19.8 and 41.7 %; STORM, CAID, Co-Coder (preprints, no repeated runs reported). Search: structured merge, STORM, worktree.
+- w1-0358 to w1-0374 [quoted] Long transactions and real systems: sagas, split transactions, notice (no gain ever measured); Perry's parallel changes; Figma, Google Docs, Google's trunk, Discord (self-reported); every engine unit read lasted seconds or less (w1-0374). Search: long transaction, saga, Figma.
+- t1-0300 to t1-0313 [quoted] Concurrent B-trees: the B-link split (Lehman and Yao, Graefe); Bw-tree 18.7x BerkeleyDB in its designers' benchmark, 1.5-4.5x slower than lock-based indexes rebuilt; lock coupling; ARIES/IM. Search: B-link, split, latch.
+- t1-0314 to t1-0329 [quoted] Buffers and versions: buffer and B-epsilon trees (inserts 16x faster), LSM leveling against tiering, copy-on-write, multiversion splits, fill (B* 2/3). Search: buffer flush, leveling, copy-on-write.
+- t1-0330 to t1-0343 [quoted] Hierarchies of agents and aggregation: Kim's scaling study, Dremel's levels, Astrolabe, TAG, MacNet, RAO (196K against 1,029K tokens, 1,021K of them cache reads), self-formed depth at most 2. Search: hierarchy, depth, aggregation.
+- t1-0344 to t1-0361 [quoted] Engines in use: PostgreSQL never merges partly full pages; InnoDB 15/16 fill in key order; LMDB; RocksDB (self-reported); FoundationDB's 5 s window; Discord, Uber (self-reported). Search: PostgreSQL, InnoDB, RocksDB.
+- a1-0300 to a1-0309 [quoted] Budget pacing: dual mirror descent and gradient pacing (bounds per step, constants unread); Yahoo re-plans every slot; LinkedIn campaign life +44 % and +149 % (self-reported). Search: pacing, budget, fast finish.
+- a1-0310 to a1-0321 [quoted] Several budgets and reserves: a fixed price at 25 to 100 units (known demand); bid prices summed; bandits with knapsacks; online knapsack; two-bucket specifications; Stripe, Google SRE (self-reported). Search: bid price, knapsack, token bucket.
+- a1-0322 to a1-0336 [quoted] The provider's pages (fetched 2026-11-19) and cheaper models: 5-hour period from the first message, weekly at a fixed time, no sizes; RouteLLM, AutoMix, Hybrid LLM; budgets on code. Search: five-hour, weekly, RouteLLM.
+- a1-0337 to a1-0348 [quoted] Long units: EASY++ (wait -23 %, bounded slowdown -37 %, four logs replayed); uncorrected predictions +454 % wait; project scheduling (a1-0344 in part: the 60-activity row is Debels's, not the best at 1,000 and 5,000 schedules); speculative copies. Search: backfill, Tsafrir, LATE.
 ## Hypotheses (all untested)
-- r57-0408 [reasoned] The decision rule: a number per resource at every start and finish, run at the smallest, act only at the gate; tokens are a budget, not a rate.
-- r57-0406 [reasoned] Several writers on one file: per file, own copies or one owner, by the cost of redoing against waiting, counted in what is scarce.
-- r57-0409 [reasoned] The next unit: among those that fit all free resources, the shortest expected check first, then the oldest; cheaper model where the gap is measured small.
-- r57-0401 [reasoned] Skeleton change, then several fixes on own copies, one script merges: the case of r57-0406 in which tokens are scarce.
-- r57-0402 [reasoned] Enforcement as a mix of script, hook, check and audit.
-- r57-0403 [reasoned] Suite files side by side, 596 s down to about 270 s.
+- r57-0408 [reasoned] The decision rule: a number per resource at every start and finish, run at the smallest, act only at the gate; tokens are a budget, not a rate (a1-0514 proposes: the allowance limits starts from the moment u > s, not only near its end).
+- r57-0406 [reasoned] Several writers on one file: per file, own copies or one owner, by the cost of redoing against waiting, counted in what is scarce (w1-0511 proposes: this switch becomes the last rungs of w1-0400 to w1-0406).
+- r57-0409 [reasoned] The next unit: among those that fit all free resources, the shortest expected check first, then the oldest; cheaper model where the gap is measured small (a1-0515 proposes: the width is in papers; the age cap has a published alternative, a1-0406).
+- r57-0401 [reasoned] Skeleton change, then several fixes on own copies, one script merges: the case of r57-0406 in which tokens are scarce. r57-0402 [reasoned] Enforcement as a mix of script, hook, check and audit. r57-0403 [reasoned] Suite files side by side, 596 s down to about 270 s (rank 1 of the check in c1-0403).
 - r57-0404 [designed-only] Hand over at about 133,000 tokens (coordinator), 115,000 to 155,000 (child). Against it, r57-0139 [measured]: an orchestrator stood at about 114,000 tokens before its first helper; one lane took two sessions.
-- o1-0401 to o1-0405 [reasoned] The detection side of the rule: the numbers per resource, the check's two cases, gate only, slow controllers only as an outer check, the papers' numbers do not carry over.
+- o1-0401 to o1-0405 [reasoned] The detection side of the rule: the numbers per resource, the check's two cases, gate only, slow controllers only as an outer check, the papers' numbers do not carry over (c1-0500 proposes of o1-0402: case B is published for one slot, computed for c slots).
 - o2-0400 to o2-0407 [reasoned] One rule per scarce resource: processor, memory, memory bandwidth, the check, tokens, two at once, a moving bottleneck, a cheaper model.
 - b1-0401 to b1-0423 [reasoned] 23 design choices for building the rule in: one `widths()` function, its gates (lane, tier hook, admit, watcher), signals through files, safe defaults, build order B1 to B14. 7 were changed by the refuter.
+- c1-0400 to c1-0402 [reasoned] The check's cap: c (S + Z)/S for c slots (computed on the exact model, follows from two bounds for any distribution); at that point the check is already 79-92 % busy and queues; batching raises it by 1/C(k, p). Search: saturation, slots, Dorfman.
+- c1-0403 to c1-0408 [reasoned] The check, ranked: shorten the run; batch what waits, capped by p; test ahead on the success path; let a waiting worker go on, with a cap; a visible, ordered queue with timeouts above the longest check; the worker cap. Search: shorten, batch, speculative, detach.
+- w1-0400 to w1-0406 [reasoned] Several writers, ranked: reshape shared places (entries applied at landing, one allocator); version-checked writes with a diff and a reservation; claims below the file; wait for a hot pair; checkpoints; one landing order through the check, which binds first when T < 10N minutes at 596 s a run; structured merge last.
+- w1-0407 [reasoned] The overlap law: 1 - C(F-k, k)/C(F, k) per pair, about k^2/F; textual overlap only, so p is measured per region, never computed from F. Search: overlap, region, registry, version.
+- t1-0400 to t1-0402 [reasoned] The tree by case: small and known: the bulk-loaded two-level tree with f from R; grows: a B-link split of unstarted keys; very large (L > b): epochs or an inner level, by tokens. Search: split, epoch, inner level.
+- t1-0403 to t1-0409 [reasoned] The tree, ranked by the cost each acts on: fewer parent wakes; f = 1/q_{1-p}(R); the split; epochs or a level; one bounded summary per child; copy-on-write records through one map; duplicates dropped only when observed. Search: wake, fill, summary.
+- a1-0400 to a1-0404 [reasoned] Pacing: re-plan at (1 - u)/(1 - s) when u > s; value per token first while a window limits; a reserve for running units; fit every window, prices summed; the week binds when k is below the 5-hour windows opened per week. Search: pacing, window, reserve.
+- a1-0405 to a1-0410 [reasoned] The model by value minus priced usage, a redo counted; a reservation for the oldest unit; a copy only when worth its tokens; batch bounds 2 - 1/m; a reserved share; no usable number at tens of units (a1-0410). Search: model choice, backfill, speculative.
+- v2-0400 to v2-0440 [reasoned] Version 2 of the decision rule as drafted from round 3: not yet decided by the top session (r57-0515). Until then version 1 stands (r57-0406, r57-0408, r57-0409).
 ## Open, in the order of work (a line is blocked by what it names)
-1. IN WORK r57-0512 [open] Research the owner asked for, four lanes (r57-0137, r57-0138): w1 several writers as database engines solve it; c1 a serial check shared by many workers; t1 which kind of B-tree fits nodes that are sessions; a1 a refilling token allowance and a few long units. State files and standards: `docs/program/evidence/round3-2026-11-18/`.
-2. r57-0513 [open] The measurements that set the decision rule's numbers: eight need a run and the owner's word, tokens per unit is a count. After r57-0512; planned for projects of different size (r57-0028).
-3. r57-0505 [open] Parallelism inside the tree, node by node. Blocked by: nothing.
+1. NEXT r57-0515 [open] Decide version 2 of the decision rule (`docs/program/evidence/round3-2026-11-18/RULE-V2-DRAFT.md`, v2-0400 to v2-0440, five statements unchecked) and show it to the owner by how each conclusion was reached. In a fresh session started in this repository.
+2. r57-0513 [open] The measurements that set the decision rule's numbers: eight need a run and the owner's word, tokens per unit is a count. After r57-0512; planned for projects of different size (r57-0028). The lanes name theirs (a run needs the owner's word; a count over files on disk needs no run):
+   - check: no open record; named in c1-0403 to c1-0408: suite time with files side by side and their independence, whether two runs at once slow each other, p per change at the gate, runs on merges of 1, 2 and 4 changes, the flaky share, the share of a worker's cycle spent waiting.
+   - writers: w1-0500 to w1-0508 (M1 to M9: regions per unit and file, redo and re-apply tokens, waits, conflicts, clean merges that fail, crossing owners, the Edit hook, a replay, minutes per unit); counts: M1, M2, M6, M8, M9.
+   - tree: t1-0500 to t1-0506 and t1-0510 (tokens per parent wake, R per leaf, start cost, new keys, inner compression, read share, duplicates and restarts, S per epoch); t1-0500 is a count from transcripts.
+   - budget: a1-0500 to a1-0510 (M1 to M11: usage per unit, window sizes and weights, the per-model window, cache, carry-over, units per window, largest unit's share, pass rate by model, value, length spread, in-flight usage and meter lag); a1-0500 is a count; the weekly reset time is read in Settings (a1-0504).
+3. r57-0505 [open] Parallelism inside the tree, node by node. Blocked by: nothing. (t1 left it knowledge transfer between nodes and the choice between availability and consistency, `R:t1-report.md` section 4.)
 4. r57-0506 [open] The small tests. Blocked by: the owner's word for each.
 5. r57-0507 [open] The build: 13 fixes and 0b, the R57 model check, the pilot; then the rule's pieces in the order of r57-0707. Blocked by: the revised rule (r57-0512) and the owner's word.
-6. o2-0501 [open] No paper covers an allowance that refills over hours or days; whether our 5-hour window is fixed or rolling is unknown. Also o2-0502 [open] Memory-bandwidth contention on this PC is unmeasured.
+6. r57-0514 [open] Before the numbers of a token rule are set, find out whether a unit on the separately limited model also moves the all-models weekly meter, whether an unspent part of a window is lost at its reset and what starts the next five-hour period, how cached input cou ... Also o2-0502 [open]: memory-bandwidth contention on this PC is unmeasured.
 ## Corrections decided by the top session
+- r57-0810 to r57-0840 [reasoned] Round 3: 30 proposed corrections decided from the intake packets (24 right, 6 right in part, none wrong) and one more (c1-0515). The replacements: results r57-0310 to r57-0327, hypotheses r57-0411 to r57-0413, open r57-0514, mistake r57-0611, pointer r57-0708; `bash library/lookup.sh <old id>` shows the mark. Three on the rule's own records (r57-0406, r57-0408, r57-0409) were right in part and wait for version 2.
 - r57-0801 [measured] o1-0501 right: the lane has 2 slots (r57-0127). r57-0802 [measured] fill-0500 right: 8 at once only at statement level (r57-0128). r57-0803 [reasoned] o2-0500 right on Graham's bound (r57-0309).
 - r57-0804 to r57-0809 All six of b1's proposals hold: the rule's "logged today" column corrected (0804); o1-0102 replaced by r57-0134 (0805); r57-0511 by r57-0513 (0806); x21-0120 by r57-0135 (0807); r57-0408 kept, the cost of waiting made exact in b1-0125 (0808); r57-0407 by r57-0409 (0809).
 ## Mistakes, each with the situation it happens in
-- r57-0601 [observed] 29 design questions put to the owner.
-- r57-0602 [observed] A derived skill taken for the orchestration document; the sources not opened.
-- r57-0603 [observed] Helpers on the most expensive model, one after another.
-- r57-0604 [observed] A coordinator ran on past 404,000 tokens instead of handing over.
-- r57-0605 [observed] A design chosen from one run ("mostly idle").
-- r57-0606 [observed] Figures reported from fetch summaries (about 38 wrong; that count is in no file).
-- r57-0607 [observed] One page for everything; rules as a prose skill.
-- r57-0608 [observed] A count given without saying what it counts ("0 built").
-- r57-0609 [observed] Four wrong claims stated to the owner. Also r57-0610 [observed]: wrote "in no paper" after a narrow search; the library already held such a paper.
+- r57-0601 [observed] 29 design questions put to the owner. r57-0602 [observed] A derived skill taken for the orchestration document; the sources not opened. r57-0603 [observed] Helpers on the most expensive model, one after another.
+- r57-0604 [observed] A coordinator ran on past 404,000 tokens instead of handing over. r57-0605 [observed] A design chosen from one run ("mostly idle"). r57-0606 [observed] Figures reported from fetch summaries (about 38 wrong; that count is in no file).
+- r57-0607 [observed] One page for everything; rules as a prose skill. r57-0608 [observed] A count given without saying what it counts ("0 built"). r57-0609 [observed] Four wrong claims stated to the owner. Also r57-0610 [observed]: wrote "in no paper" after a narrow search; the library already held such a paper (round 3 found papers for a shared check and a refilling allowance: c1-0515, a1-0511).
 ## Where things are
-- r57-0701 to r57-0703 [measured] The evidence folder of 2026-11-18 (`E:`); the research tree's files; the method documents.
-- r57-0704 [owner] The decision sheet that must not be used.
-- r57-0705 [observed] The decision rule: `docs/program/evidence/bottleneck-2026-11-18/DECISION-RULE.md`, with the two literature reports beside it. r57-0707, b1-0701 [observed]: how it is built in, `BUILD-IN.md` in the same folder.
-- r57-0706 [observed] The owner's page for the decision rule (a private Artifact) and its source `decision-rule.html`.
+- r57-0701 to r57-0703 [measured] The evidence folder of 2026-11-18 (`E:`); the research tree's files; the method documents. r57-0704 [owner] The decision sheet that must not be used.
+- r57-0705 [observed] The decision rule: `docs/program/evidence/bottleneck-2026-11-18/DECISION-RULE.md`, with the two literature reports beside it. r57-0707, b1-0701 [observed]: how it is built in, `BUILD-IN.md` in the same folder. r57-0706 [observed] The owner's page for the decision rule (a private Artifact) and its source `decision-rule.html`.
+- w1-0700 [observed] Round 3 in `R:`: the round's rules `ROUND.md`; per lane `<p>-report.md` (answer, table, ranked architecture, not found), `<p>-claims.md`, `<p>-gate.md`, `<p>-refute.md` (a1: two), `<p>-collect-<topic>.md`; the intake `intake-state.md`, `intake-sample-<p>.md`. Paper texts in `R:papers/` are not committed.
 ## Journal files (in `journal/2026-11-18/` unless a date is given)
 How the content of each `x` file is known, before you open the place a record cites: papers read in full
 (x02 to x06); summaries only (x07); documentation, not observed here (x01); seen or measured on this PC
-(x13, x14, x18); our own documents and records, restated (all others).
+(x13, x14, x18); our own documents and records, restated (all others of fill 1, and x35). Round 3 (x25 to x48, 884 records, in `journal/2026-11-19/`): papers, documentation and company accounts as the lane's collect file quotes them at the source's line (x41 to x43: systems in real use, self-reported); each lane's step 5 checked every record by script; the intake read 151 lane and extractor records at their sources: 144 stand, 7 hold in part, none fails (`R:intake-state.md`).
+Read in the narrowed form: c1-0329, a1-0344 (above); x31-0315 (Dorfman's was the most used among group-testing methods; group testing was little used for Covid-19); x35-0123 (the note enters the window; "per commit" and "no buffer" are the collector's reading); x37-0323 ("memory large enough for the buffer" is not in the paper); x38-0307 (no degradation on Search-100, 3-10 % on the others); x39-0323 (up to 96.4 %, with two defences together). Company figures not marked self-reported in their records, read them so: x27-0341, x32-0337, c1-0331, x33-0303, x33-0304.
 
 | File | Records | Written from | Search it for |
 |---|---|---|---|
@@ -173,8 +178,7 @@ How the content of each `x` file is known, before you open the place a record ci
 | `x10.jsonl` | 143 | `E:horthy-instruction-files.md` | Instruction files, hand-over, context fill |
 | `x11.jsonl` | 169 | `E:horthy-proved-general.md` | The 78 kept Horthy ideas and what carries a result |
 | `x12.jsonl` | 95 | `E:orchestration-design-status.md` | Each rule of the orchestration design against its one run |
-| `x13.jsonl` | 32 | `E:probe-hooks.md` | The hook probe in a real session |
-| `x14.jsonl` | 26 | `E:probe-suite-memory.md` | The suite run: time, memory, threads |
+| `x13.jsonl`, `x14.jsonl` | 32, 26 | `E:probe-hooks.md`, `E:probe-suite-memory.md` | The hook probe in a real session; the suite run: time, memory, threads |
 | `x15.jsonl` | 163 | `E:several-writers-options.md` | The options for several writers (a hypothesis) |
 | `x16.jsonl` | 98 | `E:testing-evidence.md` | What checking cost and changed |
 | `x17.jsonl` | 113 | `E:write-collision-points.md` | Which fixes touch which place |
@@ -182,19 +186,30 @@ How the content of each `x` file is known, before you open the place a record ci
 | `x19.jsonl`, `x24.jsonl` | 155, 3 | `research-tree/SELECTIONS-MAP.md` | The 103 recorded design selections |
 | `x20.jsonl` | 187 | `research-tree/DESIGN-RECORD.md` | The tree's design decisions and their reasons |
 | `x21.jsonl` | 145 | `research-tree/ATTACK-AND-COST-RECORD.md` | Attack rounds and cost figures |
-| `x22.jsonl` | 60 | `research-tree/BUILD-SIZE.md` | The size of the build |
-| `x23.jsonl` | 40 | `research-tree/FAULTS-AND-FIXES.md` | The faults and the 13 fixes |
+| `x22.jsonl`, `x23.jsonl` | 60, 40 | `research-tree/BUILD-SIZE.md`, `research-tree/FAULTS-AND-FIXES.md` | The size of the build; the faults and the 13 fixes |
+| `2026-11-19/c1.jsonl` | 73 | `R:c1-report.md` (lane check) | The shared check: queue model, batching, merge queues, a shorter check, our lane's facts; 15 proposed corrections, one task |
+| `2026-11-19/x30` to `x34`, `x43` | 14, 41, 41, 26, 35, 24 | `R:c1-collect-` queue, group, mergeq, shorter, bottleneck, production | Finite-source queues (x30); group testing, batching, group commit (x31); merge queues (x32); test selection (x33); the serial step, scalability law (x34); queues in real use (x43) |
+| `2026-11-19/w1.jsonl` | 99 | `R:w1-report.md` (lane writers) | Anomalies, grain, engines, order, merge, agent studies, long units; the seven parts; M1 to M9 |
+| `2026-11-19/x25` to `x29`, `x40`, `x41` | 18, 14, 43, 45, 41, 32, 21 | `R:w1-collect-` isolation, grain, engines, order, merge, long, production | Isolation, SSI (x25); granules, escalation (x26); OCC, 2PL, MVCC engines (x27); deterministic order, commuting writes (x28); structured merge, agent conflicts (x29); long transactions (x40); Figma, Google Docs, Discord (x41) |
+| `2026-11-19/t1.jsonl` | 105 | `R:t1-report.md` (lane tree) | The tree's facts today, B-tree results, the three cases and seven ranked parts, measurements |
+| `2026-11-19/x35` to `x39`, `x42` | 25, 36, 39, 51, 96, 41 | `R:t1-collect-` ours, concurrent, writes, versions, hierarchy, production | Our tree files (x35, facts); B-link, Bw-tree (x36); buffers, B-epsilon, LSM (x37); copy-on-write, fill (x38); agent hierarchies, aggregation (x39); PostgreSQL, InnoDB, RocksDB in use (x42) |
+| `2026-11-19/a1.jsonl` | 80 | `R:a1-report.md` (lane budget) | Pacing, several windows, the provider's pages, model choice, backfilling; M1 to M11 |
+| `2026-11-19/x44` to `x48` | 41, 34, 54, 42, 30 | `R:a1-collect-` pacing, allocation, quotas, longjobs, llmbudget | Budget pacing (x44); revenue management, knapsacks (x45); quotas, token buckets, the provider's pages (x46); backfilling, project scheduling, stragglers (x47); cheaper models, budgets (x48) |
 ## Known gaps: the library does not hold
 - Token cost of building one fix: not recorded (r57-0114 is design and checking, not building).
-- Whether a deny rule works here: not tried (r57-0108 is documentation only).
-- Whether test files can run side by side: not tested (r57-0403).
-- What a hook sees for the Edit tool, a time-out, or a compacted session: not tested (r57-0105).
-- Whether an agent started with no model keeps its definition's model: not tried (r57-0106).
-- The effort each past helper ran at, or any smaller-against-larger model comparison: no record (r57-0201).
-- Memory of one agent session (a helper or a child session): not measured. The 494 MB of r57-0103 is a suite run, not a helper.
-- Memory or tokens of any run but one suite run; the processor share of one job: not measured (r57-0129).
+- Whether a deny rule works here: not tried (r57-0108 is documentation only). Whether test files can run side by side: not tested (r57-0403, c1-0403).
+- What a hook sees for the Edit tool, a time-out, or a compacted session: not tested (r57-0105; the measurement is w1-0506).
+- Whether an agent started with no model keeps its definition's model: not tried (r57-0106). The effort each past helper ran at, or any smaller-against-larger model comparison: no record (r57-0201).
+- Memory of one agent session (a helper or a child session): not measured. The 494 MB of r57-0103 is a suite run, not a helper. Memory or tokens of any run but one suite run; the processor share of one job: not measured (r57-0129).
 - Time and tokens of the attack rounds of the R57 round: no record.
 - Whether the tier hook fires in sessions started in other folders: not tested (r57-0120, r57-0122).
-- Any number of the decision rule (a reserve, a threshold, a count of quiet units): none is set; the measurements are r57-0513.
-- A paper on an allowance that refills over hours or days, on a check shared by separate programs, or on work lasting minutes with few workers: none among the papers read, after a narrow search (r57-0610); open task r57-0512.
-- By-hand reading of 1,791 of the 2,524 extractor records: not done (r57-0130).
+- Any number of the decision rule (a reserve, a threshold, a count of quiet units): none is set; the measurements are r57-0513 and the lanes' (Open, item 2).
+- Papers on an allowance that refills over hours or days and on a check shared by separate programs: round 3 read them (a1-0511, c1-0515; not yet decided). On units lasting minutes with 3 to 16 workers: still none (the backfilling logs ran 100-1,152 processors, a1-0337; every engine unit read lasted seconds or less, w1-0374).
+- By-hand reading of 1,791 of the 2,524 extractor records of fill 1: not done (r57-0130). Of round 3's 884, 102 were read at the intake (Journal files).
+- Round 3, not found in the sources read (which is not "no paper", r57-0029), and not opened; links and reasons in each report's last section:
+  - check: N* for c slots in any source (computed, c1-0400); N* with batches in a closed queue; a measured speedup from splitting a suite over machines; a paper on computing affected build targets; a controlled before-and-after of batching at a known failure rate in real use.
+  - writers: any mechanism measured with units of minutes or with reruns that differ; a crossover conflict rate of locking and optimistic control; a gain for sagas, split transactions, check-out or notice; repeated runs of any agent benchmark; a semantic-conflict rate between sessions. Agrawal, Carey and Livny 1987 on "fake restarts" is held only as a summary: do not write "no source models a differing rerun".
+  - tree: how long a half-split lasts; a law in ratios for structure changes per insert; any study of 3 to 16 writers with units of minutes; depth against fan-out at equal work with tokens per level; LSM against B-epsilon on one workload. Not searched: task networks, Borg restarts, TiKV, MongoDB's change of engine.
+  - budget: pacing against two windows on separate clocks counting the same tokens; a pacing price used to choose a model; a team's account of hitting a usage limit; project scheduling with rough durations; the plans' window sizes, carry-over and cache weight (a1-0501 to a1-0504).
+- Papers that need the owner's sign-in (bot check, rate limit or publisher login): check: Beheshtian, Bavand and Rigby TSE 2021; Bavand and Rigby ICSME 2021; Reiser and Lavenberg 1980; Adams, Balas and Zawack 1988; Duclos and Spencer 1995. Writers: Adya 1999; Cahill, Rohm and Fekete 2008 and 2009; Fekete and others 2005; IntelliMerge 2019; Korth, Kim and Bancilhon 1988. Tree: Sagiv 1986; Johnson and Shasha 1990 and 1993 (would settle t1's unchecked claim on utilisation by delete share); Lanin and Shasha 1986. Budget: Balseiro and Gur 2019; Balseiro, Kim, Mahdian and Mirrokni 2017/2021; Wang and others, SIGMETRICS 2017.
+- Not opened for other reasons: paywalled or sold (Kolisch 1996, ITU-T I.371, Bayer and Schkolnick 1977, Yao 1978, Baeza-Yates 1989, Graefe 2011); Mu'alem and Feitelson 2001 is saved but needs OCR, which needs the owner's word; Pradel 1986, on which w1-0401's "serious only if read before" rests.

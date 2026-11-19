@@ -41,7 +41,8 @@ once, right now.
    comes in thousands. Only the shape of each rule carries over (r57-0002).
 8. **Three parts have no paper among those read** (which is not "no paper exists": r57-0610) and are
    reasoning only: the token allowance (weekly and
-   5-hour), a check shared by separate programs, and units that last minutes with a handful of workers.
+   5-hour), a check shared by separate programs, and units that last minutes with a handful of workers. Round 3 has since read the
+   literature for all three (r57-0140); version 2 of the rule replaces this point.
 
 ## What limited us so far (25 episodes of our own work, r57-0129)
 
