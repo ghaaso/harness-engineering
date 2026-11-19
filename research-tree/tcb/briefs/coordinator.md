@@ -12,7 +12,8 @@ touch (0 and 5) has one sub-step per fix. Until then the coordinator works from 
 An alarm that has registered creates its exit marker `run/arm/exited-<pid>-<start_time>.json` {ce, exit, at} just
 before it exits: 30 `alarm` (a whole period passed with no endturn), 0 `superseded` (`alarm.json` names a newer
 alarm), 64 `stale-ce`, or an error exit (67, 70). That exit wakes you. From then on the alarm is dead, never unknown,
-whatever the process list says: reconcile and endturn report it as `alarm-missing`. The marker is the alarm's own:
+whatever the process list says: reconcile reports it as `arm-unconfirmed` (FX-W2, place 3) and endturn as
+`alarm-missing`. The marker is the alarm's own:
 never write, move or delete anything under `run/arm/`; reconcile prunes the old markers. A hard kill writes no marker:
 the process list alone then judges that alarm, and a list that cannot tell makes it unknown, never dead (endturn
 exit 2); on unknown, start nothing.
@@ -35,11 +36,26 @@ values. Never bind on a later turn.
 
 ## 2. Call 1, in the background: the ensure (FX-W2; S1: one ensure)
 
-(empty until FX-W2)
+The first call of every turn (after the bind, on a successor's first turn) starts the alarm as the ensure, as a
+background command: `node <root>/tcb/watch.mjs --alarm --ensure --nonce X --root <root> --ce <ce>`. X is a new
+nonce each turn, 32 lowercase hex; never reuse one. `--alarm` without `--ensure --nonce X` is refused (exit 66;
+the hook admits only this form). Under S1 there is one ensure per turn and no second nonce. The ensure records its
+outcome in `run/arm/<X>.json`; it registers in the free slot `run/arm/slot-1.json` and then sleeps as the alarm
+(its later exits are place 0a), or finds the slot held by an alarm that has not exited and exits 0 `present`. Its
+exits before it registers (0 `present`, `nonce-reused` or `abandoned`, 64, 75) write no marker and ask nothing of
+you: whether the turn is armed is reconcile's verdict (place 3). Do not wait for the ensure; make call 2 at once.
 
 ## 3. Call 2, in the foreground: reconcile (FX-W2)
 
-(empty until FX-W2)
+Right after call 1: `node <root>/tcb/status.mjs --reconcile --arm-nonces X --root <root> --ce <ce>`, with call 1's
+X. Reconcile writes `run/turn.json` (`turn_seq` + 1, `read_seq`, arm `unconfirmed`), waits for the ensure's outcome
+(at least `release_ms`, at most `arm_confirm_ms`), then counts the live slots. A slot is live only by what the
+scripts wrote (a slot record of this ce with no exit marker that the process list does not judge dead), never by
+the nonce you pass. Exit 0: the arm is `confirmed`, and this turn may create work (place 6). Exit 1
+`arm-unconfirmed` {ce, live, need, slots}: the turn is unarmed and `unarmed_turns` grows by one; do the
+revocations (place 5, never gated by the arm) and start nothing that creates work (FX-W3 refuses it, exit 6
+`not-armed`); the next turn's call 1 ensures again with a new nonce. A later reconcile in the same turn runs
+without `--arm-nonces` and keeps a `confirmed` arm (B1.4). Exit 75: place 8.
 
 ## 4. Restart a dead watcher (FX-W1, FIX-JOIN point 1; on exit 2, start nothing)
 

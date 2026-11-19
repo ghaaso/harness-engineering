@@ -151,7 +151,7 @@ transcript paths below it otherwise pass 260 characters; `handover.mjs init` rep
 as reason `root-long` (a warning, not a refusal; tests use long temp roots). `handover.mjs init`
 creates missing directories, an empty task table (§2.1), a `.gitattributes` holding `* -text` and a
 `.gitignore` listing `wt/`, `.snapshots/`, `sealed/`, `tmp/`, `run/*.lock`, `run/alarm.json`,
-`run/watcher.json`, `run/arm/` (the alarms' files of round 3: the exit markers of FX-W1, §3.9), `run/*.stale`, `run/*.orphan`, `*.tmp`. The owner makes the git repository; no
+`run/watcher.json`, `run/arm/` (the alarms' files of round 3: the exit markers of FX-W1, the slot and nonce files of FX-W2, §3.9), `run/*.stale`, `run/*.orphan`, `*.tmp`. The owner makes the git repository; no
 script commits to it in the pilot (`commit.mjs` records `git: null`, §8 decision 23); fsck reads it.
 
 ```
@@ -199,6 +199,9 @@ held**: a script takes its facts before the lock and writes after taking it (the
 | `run/coord.json` | handover | lib.writeAtomic |
 | `run/acked.json` | status `--endturn` | lib.writeAtomic |
 | `run/alarm.json` | watch `--alarm` | lib.writeAtomic |
+| `run/arm/slot-<k>.json` | watch `--alarm --ensure` (hold 1) | lib.writeAtomic |
+| `run/arm/<nonce>.json` | watch `--alarm --ensure` (create, hold 1); status `--reconcile` (hold 2, `abandoned`) | exclusive create; writeAtomic |
+| `run/turn.json` | status `--reconcile` (main hold, hold 2) | lib.writeAtomic |
 | `run/watcher.json`; `run/watcher.lock` | watch (watcher mode) | writeAtomic; wx |
 | `run/intents/<key>.json`, `.done` | status `intent` | exclusive create |
 | `run/audit/<task>-e<e>.json`, `run/audit/search-<task>-e<e>.jsonl`, `run/audit/coordinator-ce<ce>.json` | audit | writeAtomic |
@@ -424,6 +427,25 @@ does not apply); `not_run` lists (check, subject) whose last `check` line is not
   marker makes `lib.liveness` judge that alarm `dead`, whatever the process list says. Pruned only by
   `status --reconcile` in its hold 2, and only when neither `alarm.json`, a slot file nor that hold's
   slots name its pid and start time.
+- [arm-slot] `run/arm/slot-<k>.json`: `{ce, pid, start_time, nonce}` (FX-W2; FX-W3 adds `turn_seq_at_reg`),
+  k in 1..`alarm_slots` (branch S1: 1). Written only by the ensure (`watch.mjs --alarm --ensure`) in its
+  hold 1, under the run lock, when slot k is free: absent, corrupt, of another ce, named by an exit
+  marker, or judged dead by the ensure's one process list (cut at `ensure_query_ms`) with its bytes
+  unchanged; `alarm.json` is written in the same hold, so under S1 both name the same alarm. A record
+  without an integer pid > 0 and a string start_time is corrupt.
+- [arm-nonce] `run/arm/<nonce>.json`, nonce 32 lowercase hex: `{state: 'started'|'registered'|'present'|
+  'abandoned', k?, pid?}` (FX-W2). The ensure creates it `{started, pid}` by exclusive create (a name
+  already there: exit 0 `nonce-reused`, nothing else written) and in its hold 1 rewrites it `{registered,
+  k, pid}` or `{present, pid}`; `status --reconcile --arm-nonces` rewrites a given nonce still absent,
+  corrupt or `started` as `{abandoned}` in its hold 2. A nonce carries no weight of its own: only live
+  slots confirm a turn.
+- [turn] `run/turn.json`: `{ce, turn_seq, read_seq, arm: 'unconfirmed'|'confirmed', slots: [{k, pid,
+  start_time}], unarmed_turns}` (FX-W2; FX-W3 adds `spent`, written by the endturn). `status
+  --reconcile` writes it in its main hold after `status.json` (turn_seq + 1, never reset; read_seq the
+  ledger head `status.json` reflects; arm `unconfirmed` and slots [] unless no nonce is given and the
+  previous record is of this ce and `confirmed`) and again in its hold 2 (the live slots: `confirmed`
+  and unarmed_turns 0 when they reach `alarm_slots`, else `unconfirmed` and unarmed_turns + 1); hold 2
+  writes nothing when the file is no longer the main hold's record. Absent or corrupt counts as absent.
 - [intent] `run/intents/<key>.json`: `{key, ce, subject, text_sha, created_at}`; `.done`: `{key, done_at}`.
 
 ### 3.10 Watcher [watcher] — `run/watcher.json`; `run/watcher.lock` [lock-record]
@@ -1066,8 +1088,8 @@ the coordinator rely on are fixed here; everything else is in its spec.
 | U1a | replace.mjs | The one start and restart path: the step machine's fence, start and bind; builds attempt folders, settings, agent files, manifest, brief, inputs, checkpoint, todo and `review-in/` | `plan`; `fence --task --epoch --reason [--tick]`; `start --task --epoch` (admission through admit.mjs's exported `decide`); `bind --task --epoch --session` | 0, 1 (`limit`, `hmax`), 2, 3, 5, 6 |
 | U1a | admit.mjs | Admission decision (R10): deps, protocol hash, gate, selftest, fresh fsck, slots over live processes, memory, reservation, gate A, halt, drain; design-check tasks skip the gate | `check [--task]` (read-only); exports `decide(facts) → {admit, reasons, reservation}` (pure) | 0, 6, 2 |
 | U1a | stop.mjs | Fence-first stop: records the request, verifies non-growth over `stop_verify_deltas` watcher ticks without sleeping, reports (never kills) processes that name the attempt, counts zombie spend | `request --task --epoch`; `verify --task --epoch` (repeated: samples, then compares) | 0, 1, 2, 6 |
-| U1b | watch.mjs | The watcher: ticks, counters, V, spend, loop, memory, windows, events, wake by exit | (default) `--ce`; `--once` (one tick, tests); `--alarm --ce [--sleep-ms]`; `--intake --ce` (harvest, commit intake, snap, witness, promote `--from witness`, tms, status, one at a time; spawned detached, not awaited) | 10-17, 20-27, 30, 0 (`--once` quiet, alarm superseded, intake done), 3 (a tamper exit inside intake), 70 |
-| U1b | status.mjs | Builds `run/status.json`; reconciles started steps; end-of-turn check; owner, intent and meter lines | (default); `--reconcile`; `--endturn --acked-seq`; `intent open|done --key`; `owner --act --subject --quote-file`; `meter --pct` | 0, 1 (endturn; reconcile `alarm-missing`), 2 |
+| U1b | watch.mjs | The watcher: ticks, counters, V, spend, loop, memory, windows, events, wake by exit | (default) `--ce`; `--once` (one tick, tests); `--alarm --ensure --nonce --ce [--sleep-ms]` (FX-W2: the ensure); `--intake --ce` (harvest, commit intake, snap, witness, promote `--from witness`, tms, status, one at a time; spawned detached, not awaited) | 10-17, 20-27, 30, 0 (`--once` quiet, alarm superseded, the ensure `nonce-reused`, `present` or `abandoned`, intake done), 3 (a tamper exit inside intake), 70 |
+| U1b | status.mjs | Builds `run/status.json`; reconciles started steps; end-of-turn check; owner, intent and meter lines | (default); `--reconcile [--arm-nonces]`; `--endturn --acked-seq`; `intent open|done --key`; `owner --act --subject --quote-file`; `meter --pct` | 0, 1 (endturn; reconcile `arm-unconfirmed`, FX-W2), 2 |
 | U1b | handover.mjs | Coordinator epochs: first coordinator, ce raise after the drain, binding the successor | `init --tcb-commit [--session]`; `raise --ce`; `bind --ce --session` | 0, 6 (not quiescent / no drain), 1, 2 (`missing`, `proc-unavailable`, `no-coordinator`) |
 | U2a | commit.mjs | The acceptor: validates staging, stores objects, flags R18 (d)(e), writes commit records (no git in the pilot) | `intake --task --epoch`; `record --task --epoch --step` | 0, 1, 2, 3, 6 (`intake-new`, `fsck-stale`, `audit-missing`, `cards-pending`) |
 | U2a | harvest.mjs | Copies readers' schema-checked results from transcripts into `staging/harvested/`, re-validated against tcb's card schema | `--task --epoch` | 0, 1 (some invalid), 2, 3 (`untrusted-path`, `harvested-differs`) |
@@ -1255,7 +1277,8 @@ Settled here where the sources leave it open or disagree (D = the design, L = a 
     new.) **M2** (NoDeadlock): `status --reconcile`, the first act of every turn, checks the alarm
     of this ce and exits 1 `alarm-missing` when none lives (also when the process list is
     unavailable), so the coordinator starts `watch.mjs --alarm` before anything else and a turn
-    that dies before its endturn still leaves a wake source. **M3** (AlwaysCanResolve,
+    that dies before its endturn still leaves a wake source (replaced in round 3 by FX-W2's ensure and
+    `arm-unconfirmed`, decision 41). **M3** (AlwaysCanResolve,
     EventuallyResolves): the watcher raises class 17 `act-due` on the planner's own predicate (the
     `next` of status §3.8 for each row, `owner` excluded; `replace-fence`/`replace-start` only with
     a free slot and neither halted nor draining; `stop-verify` once its sample is
@@ -1276,6 +1299,13 @@ Settled here where the sources leave it open or disagree (D = the design, L = a 
     or unknown: exit 1 when any is dead, 2 only when none is dead and some is unknown. Every alarm
     writes an exit marker before it exits, so an alarm that fired or was superseded is dead, never
     unknown. On a dead watcher the coordinator starts a new one; on unknown it starts nothing.
+    FX-W2 (R6-a, FIX-JOIN part 3, branch S1: `alarm_slots` 1, one ensure per turn, no second nonce):
+    "The coordinator's first call of every turn starts `watch.mjs --alarm --ensure` in the background,
+    which registers an alarm only when no slot holds one that has not exited; its second is `status
+    --reconcile`, which counts the slots holding an alarm with no exit marker that is alive or unknown,
+    and records the turn as armed only if enough are." It replaces M2's `alarm-missing` (decision 40):
+    reconcile exits 1 `arm-unconfirmed` when the turn is not armed, and a second reconcile of an armed
+    turn keeps it armed in its main hold while hold 2 re-checks the slots ([turn], §3.9).
 
 ### FX-PLAN (round 3): the planner's acts, first match (class 17; status `next`)
 `lib.planAct(row, lib.planFacts(root, row, ctx))`, called by status's `nextOf` and the watcher's `rowAct`

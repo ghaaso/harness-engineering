@@ -352,7 +352,9 @@ empty step returns its neutral value, so behaviour is unchanged (FIX-JOIN point 
   `exitMarkers(root)` -> the Set of keys of the names `run/arm/exited-<key>.json` present (names only,
   no parse: the strict create is all or nothing); a missing folder gives an empty set; `unarmed-*`, slot
   files and `*.tmp` names are not markers. Tested in `tcb/test/lib.test.mjs` (FX-W1 liveness).
-- `realProc({timeoutMs, exe})`: unchanged; FX-W2 passes `timeoutMs: ensure_query_ms`.
+- `realProc({timeoutMs, exe})`: unchanged; FX-W2 (built) passes `timeoutMs: ensure_query_ms` for the
+  ensure's one list; a list cut by the timeout throws `proc-unavailable` {why: `ETIMEDOUT`}, which the
+  ensure reads as unknown (tested in `tcb/test/watch.test.mjs`, FX-W2 confirm deadline).
 - `withRunLock(root, {requireArmed})`: `requireArmed: true` runs the empty step `armedCheck(root, handle)`
   after the ce check: FX-W3 (exit 6 `not-armed`).
 - `acquireLock`: the break of a lock judged stale passes `breakStep(c, doBreak)`. For run.lock it

@@ -9,7 +9,7 @@ put the owner's word, intents and meter readings into the ledger (§8 decision 2
 ## Command line
 ```
 node tcb/status.mjs --root R --ce N [--now ISO] [--free-mb M] [--dry-run]
-node tcb/status.mjs --reconcile --root R --ce N [--now ISO] [--free-mb M] [--dry-run]
+node tcb/status.mjs --reconcile [--arm-nonces X] --root R --ce N [--now ISO] [--free-mb M] [--dry-run]
 node tcb/status.mjs --endturn --acked-seq K --root R --ce N [--now ISO] [--dry-run]
 node tcb/status.mjs intent open --key KEY --subject S [--text-file P] --root R --ce N
 node tcb/status.mjs intent done --key KEY --root R --ce N
@@ -20,13 +20,17 @@ node tcb/status.mjs owner --act closed --subject SID --quote-file P --root R --c
 node tcb/status.mjs meter --pct P --root R --ce N
 ```
 Modes `intent` (sub-mode `open|done`), `owner`, `meter`; the default and the two flags otherwise.
-`--reconcile` and `--endturn` together → 66. `--pct` an integer 0..100; `--key` the intent-key
+`--reconcile` and `--endturn` together → 66. `--arm-nonces X[,X2]` (FX-W2) only with `--reconcile`
+(else 66): the nonces of this turn's ensures (branch S1: one), each 32 lowercase hex, comma-separated,
+else 66 before any write; a later reconcile of the same turn passes none. `--pct` an integer 0..100; `--key` the intent-key
 pattern (CONTRACT §1.5); `--quote-file`/`--text-file` must resolve under `<root>/plan/notes/`
 (`isUnder`; the coordinator's only writable place for them) → else 66 `path-outside-root`.
 
 ## Reads
 `run/coord.json`, `run/tasks.json`, `run/ledger.jsonl`, `run/acked.json`, `run/watcher.json`,
-`run/watcher.lock`, `run/alarm.json`, `run/arm/` (the exit markers and slot files, FX-W1), `run/intents/`, `tcb/thresholds.json`, `store/commits/`,
+`run/watcher.lock`, `run/alarm.json`, `run/arm/` (the exit markers and slot files, FX-W1; the nonce
+files, FX-W2), `run/turn.json` (FX-W2), `run/intents/`, `tcb/thresholds.json` (FX-W2 also `alarm_slots`,
+`release_ms`, `arm_confirm_ms`), `store/commits/`,
 `store/status/card_status.jsonl`, `wt/*/outcome/` (the READY of an epoch, FX-OUT; a bad log is anomaly
 `outcome-tamper`), `wt/*/staging/READY.json` (zombie-write telemetry only), transcripts (spend, windows,
 reconcile), the process list (slots, wake sources).
@@ -36,7 +40,9 @@ reconcile), the process list (slots, wake sources).
 (reconcile: `step` started, `attempts[].session`), `run/intents/<key>.json` and `.done` (exclusive
 create), ledger lines `started` {session}, `owner` {act, subject, quote}, `intent-open` {key},
 `intent-done` {key}, `meter` {pct, self_reported: true}. Reconcile removes `run/arm/exited-*.json`
-markers that nothing names (hold 2, FX-W1).
+markers that nothing names (hold 2, FX-W1). Reconcile writes `run/turn.json` (FX-W2: in the main hold
+after `status.json`, and again in hold 2; CONTRACT §3.9 [turn]) and `run/arm/<nonce>.json` {state:
+'abandoned'} for a given nonce still absent or `started` (hold 2; [arm-nonce]).
 
 ## Steps
 **Build (default; also the last step of `--reconcile`).** 1 Facts outside the lock: `proc.list()`
@@ -76,15 +82,31 @@ attempt, windows. 2 Under `withRunLock(ce)`: read every file, compute [status] �
 exactly one session → `updateRow(steps ['admitted'], epoch e)`: step `started`,
 `attemptOf(row, e).session`; append `started` {session}. Two or more sessions → no change, anomaly
 `several-sessions`. For every attempt not current with `session` null and folder transcripts: set
-that attempt's `session` (no step change, no line). Then build. **Then the alarm (M2, CONTRACT
-decision 40):** reconcile is the first act of every turn, so it checks the wake source a dying
-turn would otherwise leave missing: alarm = `alarm.json` of this ce whose `lib.liveness` (with the
-exit markers, over the list taken before the lock) is not dead. **FX-W1 (D1 at S:596):** unknown (the
-list unavailable) asks nothing. When it is dead (absent, corrupt, another ce, an exit marker, or gone
-from the list), exit 1 with reason `alarm-missing` {ce, pid, alive: false, state: `dead`} (the status
-is still built and written, the rows still reconciled; `result.arm` = `"alarm"`); the coordinator starts `watch.mjs --alarm` as a background
-command before anything else in the turn. A live alarm is left as it is (endturn's `acked.json`
-write re-arms it, M1). Reconcile starts and kills nothing.
+that attempt's `session` (no step change, no line). Then build. **Then the arm (FX-W2, FIX-wake FX-W2
+steps 5-7, branch S1; it replaces M2's `alarm-missing` check, CONTRACT decision 40):** call 1 of each
+turn runs the ensure `watch.mjs --alarm --ensure --nonce X` as a background command and this reconcile
+with `--arm-nonces X`. r1, before the process list: the bytes of `slot-1` .. `slot-<alarm_slots>`,
+judged after the list with the exit markers (`lib.liveness`; unknown when the list is unavailable,
+FX-W1 D1). The main hold, after `status.json`: `turn.json` {ce, turn_seq: the previous + 1 (never
+reset), read_seq: the ledger head `status.json` reflects, arm, slots, unarmed_turns: the previous},
+arm `unconfirmed` with slots [] unless no nonce is given and the previous record is of this ce and
+`confirmed` (a second reconcile of the turn keeps it, B1.4); an absent or corrupt `turn.json` counts as
+absent and is rewritten. Then, outside every lock and only with nonces, the wait (step 6): read the
+nonce files every 200 ms until none is absent or `started` and `release_ms` has passed, or until
+`arm_confirm_ms`. Hold 2, one hold of the run lock with the ce re-checked, files only (step 7): each
+given nonce still absent, corrupt or `started` is written `abandoned` (under the lock the ensure's
+hold 1 also takes, so a `registered` is never overwritten); when `turn.json` is no longer the record
+the main hold wrote, nothing is written and the exit is 1 `arm-unconfirmed` {why: `turn-moved`}.
+Otherwise slot k is live when its record is of this ce, has no exit marker now, was not judged dead
+in r1 with its bytes unchanged, and either was registered by a given nonce (its record carries the
+nonce and the nonce file says `registered` with its k and pid) or was judged alive or unknown in r1
+with its bytes unchanged. Live slots ≥ `alarm_slots`: arm `confirmed`, slots the live ones,
+unarmed_turns 0, exit 0; otherwise arm `unconfirmed`, unarmed_turns + 1, exit 1 `arm-unconfirmed`
+{ce, live, need, slots: [{k, state, pid}]} (state absent, corrupt, other-ce, exited, dead,
+registered, alive, unknown or unjudged). Nonces carry no weight of their own: a reused nonce whose
+alarm has exited confirms nothing. The status is still built and written and the rows reconciled;
+`result` adds `arm`, `turn_seq`, `slots`. A dry run computes the same and writes none of it.
+Reconcile starts and kills nothing; endturn's `acked.json` write re-arms a live alarm (M1).
 
 **--endturn.** 1 Under `withRunLock(ce)`: K > ledger head seq → exit 1 `acked-ahead`; K < the
 stored acked_seq → exit 1 `acked-backwards`; write `acked.json` {ce, acked_seq: K, at: now}.
@@ -112,8 +134,8 @@ subject that is a task in the table (else 1 `no-task`); append `owner` {act, sub
 **meter.** Append `meter` {pct, self_reported: true}.
 
 ## Exit codes
-0; 1 `acked-ahead`, `acked-backwards`, `watcher-missing`, `alarm-missing` (endturn; and
-reconcile, M2), `intent-differs`, `no-task`; 2 `proc-unavailable` (endturn: none dead, some unknown), `missing`, `schema-version`; 3 `run-from-attempt`; 64;
+0; 1 `acked-ahead`, `acked-backwards`, `watcher-missing`, `alarm-missing` (endturn),
+`arm-unconfirmed` (reconcile, FX-W2), `intent-differs`, `no-task`; 2 `proc-unavailable` (endturn: none dead, some unknown), `missing`, `schema-version`; 3 `run-from-attempt`; 64;
 65 (reconcile CAS); 66; 67 (tasks, coord, acked or an intent file corrupt; a corrupt watcher or alarm
 record is the anomaly `state-corrupt`, FX-W1); 70; 75.
 
@@ -123,7 +145,8 @@ R1 (status.json under the lock), R3 (reconcile: a transcript means the start hap
 first; acked seq; two wake sources), R10 (slots, reservation never stored), R12 (status is the only
 state), R20 (a view, rebuilt), R40 (`not_run`), R58; decisions 3, 4, 5, 17, 25, 40. Model findings F4
 (endturn never starts a second watcher), A8 and "acked seq not persisted"; second model check M1
-(endturn's acked.json is the arm token; nothing killed) and M2 (alarm armed at turn start).
+(endturn's acked.json is the arm token; nothing killed) and M2 (alarm armed at turn start; since
+FX-W2 the ensure and reconcile's two arm holds).
 
 ## Behaviours (tests)
 - T1 build on a root with two rows (one planned, one bound with a fake transcript of 3 calls, 1200
@@ -142,11 +165,19 @@ state), R20 (a view, rebuilt), R40 (`not_run`), R58; decisions 3, 4, 5, 17, 25, 
 - T6 `tasks.json` corrupt → exit 67, `status.json` unchanged; `coord.json` absent → exit 2
   `no-coordinator`; stale `--ce` → 64, nothing written.
 - T7 reconcile: admitted row whose folder has one fake transcript (cwd = folder) → step `started`,
-  `attemptOf(row, e).session` set, one `started` line; a repeat → no line (exit 1 `alarm-missing`
-  in T7-T9 and T16, whose roots have no alarm; M2).
-- M2 reconcile and the alarm: no `alarm.json` → exit 1 `alarm-missing`, `result.arm` "alarm",
-  status.json still written; an `alarm.json` of this ce naming a live sleeper → exit 0; one naming a
-  finished child, or of another ce → exit 1 `alarm-missing`; the sleeper is alive afterwards.
+  `attemptOf(row, e).session` set, one `started` line; a repeat → no line (exit 1 `arm-unconfirmed`
+  in T7-T9 and T16, whose roots have no alarm slot; FX-W2).
+- FX-W2 reconcile and the arm: no slot → exit 1 `arm-unconfirmed` {ce: 1, live: 0, need: 1, slots:
+  [{k: 1, state: absent, pid: null}]}, `result.arm` "unconfirmed", status.json still written,
+  turn.json {turn_seq 1, unconfirmed, slots [], unarmed_turns 1}; slot 1 naming a finished child →
+  state `dead`; naming a live sleeper of another ce → `other-ce`, unarmed_turns 3; naming a live
+  sleeper of this ce → exit 0, `arm` confirmed, `slots` [{k, pid, start_time}], turn.json {turn_seq 4,
+  confirmed, unarmed_turns 0}; the sleeper is alive afterwards.
+- FX-W2 B1.4: through an fs seam that fails hold 2's `turn.json` write (exit 70), the file shows the
+  main hold's record: a second reconcile without nonces after a confirmed turn keeps `confirmed` and
+  its slots (turn_seq 2); one given a nonce (its file `present`, kept) writes `unconfirmed`, slots [];
+  without the seam hold 2 confirms by the live slot; after that alarm's exit marker hold 1 keeps
+  confirmed and hold 2 writes `unconfirmed`, unarmed_turns 1 (exit 1, slot 1 `exited`).
 - M1 endturn re-arms by writing: with a live alarm sleeper, endturn changes the sha256 of
   `acked.json` (the arm token), leaves `alarm.json` byte-identical and the sleeper alive.
 - T8 reconcile with transcripts of two sessions for one folder → row unchanged, anomaly
@@ -174,11 +205,11 @@ state), R20 (a view, rebuilt), R40 (`not_run`), R58; decisions 3, 4, 5, 17, 25, 
   then `proc-unavailable` {unknown: [watcher]}.
 - FX-W1 corrupt records: a torn `watcher.json` and a non-JSON `alarm.json` → build exit 0 with two
   `state-corrupt` anomalies {file} and both alive false; endturn exit 1 with both sources dead;
-  reconcile exit 1 `alarm-missing`. Never 67.
-- FX-W1 reconcile, list unavailable: an unmarked alarm of this ce → exit 0 (no `arm`), status alive
-  null for both, no `*-dead` anomaly, `proc-unavailable` present; with its exit marker → exit 1
-  `alarm-missing` {alive: false, state: dead}, `alarm.alive` false, anomaly `alarm-dead`, and the
-  marker (named by `alarm.json`) is kept.
+  reconcile exit 1 `arm-unconfirmed`. Never 67.
+- FX-W1 reconcile, list unavailable: an unmarked alarm of this ce, also in slot 1 → exit 0 (`arm`
+  confirmed: the slot unknown counts), status alive null for both, no `*-dead` anomaly,
+  `proc-unavailable` present; with its exit marker → exit 1 `arm-unconfirmed` (slot 1 `exited`),
+  `alarm.alive` false, anomaly `alarm-dead`, and the marker (named by `alarm.json`) is kept.
 - FX-W1 prune: markers of `alarm.json`'s alarm, of a slot file's alarm and of an alarm nothing names,
   plus an `unarmed-*` record → `--dry-run` removes nothing; reconcile removes only the unnamed marker.
 
@@ -187,18 +218,20 @@ That a real session's transcript appears in `projectDirName(folder)` with that `
 start (§7 item 7); that the watcher's and alarm's exits reach the coordinator (item 5).
 
 ## Round-3 skeleton (S0.5)
-- Reconcile after its main hold, in both paths before `armAtStart` (FIX-wake FX-W2 steps 6-7; FIX-JOIN
+- Reconcile after its main hold, in both paths (FX-W2 removed M2's `armAtStart`) (FIX-wake FX-W2 steps 6-7; FIX-JOIN
   point 6, part 2b row 3 and part 2c `turn.json`; collision point B11): `reconcileHold2({root, ce, th,
   flags, facts, proc, pre, dry}, res)` runs `hold2Wait(hold)` (FX-W2 step 6, the nonces' wait, outside
   every lock), then hold 2: `hold2Lock(hold, fn)` (FX-W2: one hold of the run lock with the ce re-checked;
-  a dry run without it, as the main hold; until FX-W2 fills it, `fn(null)` without the lock) runs
+  a dry run without it, as the main hold) runs
   `hold2ArmSlots(hold, handle)` (FX-W2 step 7: the live slots, `turn.json` arm and slots, `hold.slots`)
   and then `hold2PruneMarkers(hold, handle)` (FX-W1: reads `hold.slots` in the same hold, takes no lock
   of its own). Hold 2 is file-only: no process list inside it (FX-W1 step 1). Returns `hold.res`.
   FX-W1 built: `hold2PruneMarkers` lists `run/arm/` first, then reads what keeps a marker (`alarm.json`,
   every `slot-*.json`, `hold.slots`) and removes each `exited-*` marker none of them names, so a marker
   made after the listing is never touched; `unarmed-*` records stay; a dry run removes nothing.
-- Flags of the default mode: `ARM_FLAGS` (FX-W2, `arm-nonces`) and `DEADMAN_FLAGS` (FX-W4, `deadman`), empty.
+- Flags of the default mode: `ARM_FLAGS` (FX-W2, `arm-nonces`, built) and `DEADMAN_FLAGS` (FX-W4, `deadman`), empty.
+- FX-W2 built: `armNonces`, `readArmSlots`/`judgeArmSlots` (r1), `turnHold1` (the main hold's
+  `turn.json`), `hold2Wait`, `hold2Lock` (`lib.withRunLock` with `lockOpts`), `hold2ArmSlots`.
 - `deadmanRun(ctx, flags, dry)` (FX-W4) runs right after the dry-run flag is read, before the ce check;
   null goes on.
 

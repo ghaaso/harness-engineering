@@ -94,7 +94,8 @@ ledger, so the cost does not grow with the run); checker: `queue/<b>/batch.json`
     --<req>`, `<flags> together`. The test seams `TEST_SEAM_FLAGS` (`--once`, `--boot`, `--tick`,
     `--now`, `--sleep-ms`, `--interval-ms`, `--free-mb`, `--no-intake`, and `--rng-seed`,
     `--transcripts-root`) are in no form, so they are refused for every script (CONTRACT §1.2). The
-    alarm form also admits a bare `--alarm` (the as-built M2 call) until FX-W2 requires `--ensure`.
+    alarm form requires `--alarm --ensure --nonce` (FX-W2): a bare `--alarm` is refused (`flag not
+    allowed: watch without --ensure`).
 13. agent: `subagent_type` present and in `agent_types` → pass; else `agent-type`.
 14. Allow: exit 0.
 

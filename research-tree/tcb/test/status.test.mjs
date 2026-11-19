@@ -278,19 +278,28 @@ function liveWatcher(ctx, { ce = 1, recCe = ce } = {}) {
   });
   return s;
 }
+// FX-W2: the ensure's slot record run/arm/slot-<k>.json {ce, pid, start_time, nonce}.
+const slotPath = (ctx, k = 1) => path.join(ctx.root, 'run', 'arm', `slot-${k}.json`);
+const turnPath = (ctx) => path.join(ctx.root, 'run', 'turn.json');
+const putSlot = (ctx, rec, { ce = 1, k = 1, nonce = crypto.randomBytes(16).toString('hex') } = {}) => w(slotPath(ctx, k), { ce, pid: rec.pid, start_time: rec.start_time, nonce });
+// a live alarm as an ensure registers it (S1): alarm.json and slot 1 name the same sleeper
 function liveAlarm(ctx, { ce = 1 } = {}) {
   const s = ctx.sleeper();
   w(path.join(ctx.root, 'run', 'alarm.json'), { schema_version: 1, pid: s.pid, start_time: s.start_time, ce, armed_at: NOW, sleep_ms: 1000 });
+  putSlot(ctx, s, { ce });
   return s;
 }
-// M2 (CONTRACT decision 40): a reconcile on a root with no live alarm of this ce asks for one: exit 1
-// alarm-missing, result.arm "alarm"; the rows are reconciled and the status is built all the same.
-function recNoAlarm(res) {
+// FX-W2 (FIX-wake FX-W2 step 7; M2's alarm-missing is gone): a reconcile that counts fewer live slots
+// of this ce than alarm_slots exits 1 arm-unconfirmed, result.arm "unconfirmed"; the rows are
+// reconciled and the status is built all the same.
+function recUnarmed(res) {
   const j = assertLine(res, 1);
-  assert.ok(hasReason(j, 'alarm-missing'), 'reason alarm-missing');
-  assert.equal(j.result.arm, 'alarm');
+  assert.ok(hasReason(j, 'arm-unconfirmed'), 'reason arm-unconfirmed');
+  assert.ok(!hasReason(j, 'alarm-missing'), 'no alarm-missing from reconcile');
+  assert.equal(j.result.arm, 'unconfirmed');
   return j;
 }
+const armDetail = (j) => j.reasons.find((r) => r.code === 'arm-unconfirmed').detail;
 
 // =============================================================== the tests
 test('T1 build: status.json validates, spent and next per row, deterministic for one --now', async () => {
@@ -498,7 +507,7 @@ test('T7 reconcile: an admitted row with one folder transcript becomes started, 
     const sid = newSid();
     setTasks(ctx, [admittedRow(task)]);
     writeTranscript(tpath(ctx.root, sid, projectDirName(folderAbs(ctx, task))), { sessionId: sid, cwd: folderAbs(ctx, task), calls: 1 });
-    recNoAlarm(reconcile(ctx));
+    recUnarmed(reconcile(ctx));
     const r = readTasks(ctx).tasks[0];
     assert.equal(r.step, 'started');
     assert.equal(r.attempts.find((a) => a.epoch === 1).session, sid);
@@ -508,7 +517,7 @@ test('T7 reconcile: an admitted row with one folder transcript becomes started, 
     assert.equal(started[0].task, task);
     assert.equal(started[0].epoch, 1);
     assert.ok(fs.existsSync(statusPath(ctx)), 'reconcile ends with a build');
-    recNoAlarm(reconcile(ctx));
+    recUnarmed(reconcile(ctx));
     assert.equal(ledgerLines(ctx.root, 'started').length, 1, 'a repeat adds no line');
   });
 });
@@ -536,7 +545,7 @@ test('T8 reconcile: a transcript whose cwd is another folder is ignored', async 
     const proj = projectDirName(folderAbs(ctx, task));
     writeTranscript(tpath(ctx.root, mine, proj), { sessionId: mine, cwd: folderAbs(ctx, task), calls: 1 });
     writeTranscript(tpath(ctx.root, other, proj), { sessionId: other, cwd: folderAbs(ctx, 'f2-other'), calls: 1 });
-    recNoAlarm(reconcile(ctx));
+    recUnarmed(reconcile(ctx));
     const r = readTasks(ctx).tasks[0];
     assert.equal(r.step, 'started');
     assert.equal(r.attempts.find((a) => a.epoch === 1).session, mine);
@@ -565,7 +574,7 @@ test('T9 reconcile: a row fenced meanwhile (epoch moved) is skipped, others are 
     } finally {
       fs.rmSync(lockFile, { force: true });
     }
-    recNoAlarm(await s.done);
+    recUnarmed(await s.done);
     const rows = readTasks(ctx).tasks;
     const ra = rows.find((r) => r.task === a); const rb = rows.find((r) => r.task === b);
     assert.equal(ra.epoch, 2);
@@ -804,11 +813,11 @@ test('T16 --dry-run of build, reconcile and endturn: the result of the real run,
     fs.rmSync(statusPath(ctx));
 
     before = snapshotTree(ctx.root);
-    const dRec = recNoAlarm(reconcile(ctx, ['--dry-run']));
+    const dRec = recUnarmed(reconcile(ctx, ['--dry-run']));
     assert.equal(dRec.dry_run, true);
     assert.deepEqual(snapshotTree(ctx.root), before, 'dry-run reconcile changed a file');
     assert.equal(readTasks(ctx).tasks[0].step, 'admitted');
-    const rRec = recNoAlarm(reconcile(ctx));
+    const rRec = recUnarmed(reconcile(ctx));
     assert.deepEqual(keys(dRec), keys(rRec));
     assert.equal(readTasks(ctx).tasks[0].step, 'started');
 
@@ -843,22 +852,57 @@ test('T17 run.lock busy exits 75 for every mode, one line each, ledger still ver
 });
 
 // ------------------------------------------------ second model check (CONTRACT decision 40)
-test('M2 reconcile asks for the alarm at turn start: none -> exit 1 alarm-missing; a live one of this ce -> exit 0', async () => {
+test('FX-W2 reconcile confirms the arm only by a live slot of this ce: none, a dead one, another ce -> exit 1 arm-unconfirmed; a live one -> exit 0 confirmed', async () => {
   await withRoot({}, async (ctx) => {
     meterLine(ctx.root);
-    const j = recNoAlarm(reconcile(ctx));
+    const j = recUnarmed(reconcile(ctx));
     assert.ok(fs.existsSync(statusPath(ctx)), 'the status is still built and written');
     assert.equal(j.result.written, true);
-    // a dead alarm record and one of another ce both count as missing
-    w(path.join(ctx.root, 'run', 'alarm.json'), { schema_version: 1, ...deadRecord(), ce: 1, armed_at: NOW, sleep_ms: 1000 });
-    assert.equal(recNoAlarm(reconcile(ctx)).reasons[0].detail.alive, false);
+    assert.deepEqual(armDetail(j), { ce: 1, live: 0, need: 1, slots: [{ k: 1, state: 'absent', pid: null }] });
+    assert.deepEqual(J(turnPath(ctx)), { ce: 1, turn_seq: 1, read_seq: j.result.status.ledger.seq, arm: 'unconfirmed', slots: [], unarmed_turns: 1 });
+    // a dead slot record and one of another ce both leave the turn unarmed
+    const dead = deadRecord();
+    putSlot(ctx, dead);
+    assert.deepEqual(armDetail(recUnarmed(reconcile(ctx))).slots, [{ k: 1, state: 'dead', pid: dead.pid }]);
     const s = liveAlarm(ctx, { ce: 2 });
-    recNoAlarm(reconcile(ctx));
+    assert.deepEqual(armDetail(recUnarmed(reconcile(ctx))).slots, [{ k: 1, state: 'other-ce', pid: s.pid }]);
+    assert.equal(J(turnPath(ctx)).unarmed_turns, 3);
     s.kill();
     const s2 = liveAlarm(ctx);
     const ok = assertLine(reconcile(ctx), 0);
-    assert.equal(ok.result.arm, undefined);
+    assert.equal(ok.result.arm, 'confirmed');
+    assert.deepEqual(ok.result.slots, [{ k: 1, pid: s2.pid, start_time: s2.start_time }]);
+    const turn = J(turnPath(ctx));
+    assert.deepEqual([turn.turn_seq, turn.arm, turn.unarmed_turns], [4, 'confirmed', 0]);
+    assert.deepEqual(turn.slots, ok.result.slots);
     assert.ok(s2.child.exitCode === null && s2.child.signalCode === null, 'reconcile neither kills nor replaces the alarm');
+  });
+});
+
+// FX-W2: each --arm-nonces value becomes a file name, run/arm/<nonce>.json (path.join keeps `..`); the hook checks no
+// value, so this check is the only guard on those names (W2's blind review, mutation row 17).
+test('FX-W2 --arm-nonces refuses a value holding .. or a path separator: exit 66 usage before any write, also when one value of the list is bad', async () => {
+  await withRoot({}, async (ctx) => {
+    meterLine(ctx.root);
+    const ok = crypto.randomBytes(16).toString('hex');
+    const bad = ['..', '../x', '..\\x', 'a/b', 'a\\b', `/${ok}`, `../../${ok}`, `..\\..\\${ok}`,
+      `${'0'.repeat(30)}..`, `${'0'.repeat(31)}/`, `${'0'.repeat(31)}\\`, `${ok},../${ok}`, `${ok},${'0'.repeat(30)}..`];
+    const read = (f) => (fs.existsSync(f) ? fs.readFileSync(f) : null);
+    const armDir = path.join(ctx.root, 'run', 'arm');
+    const snap = () => ({ status: read(statusPath(ctx)), turn: read(turnPath(ctx)), arm: fs.existsSync(armDir) ? fs.readdirSync(armDir).sort() : [] });
+    const was = snap();
+    const lines = ledgerLines(ctx.root).length;
+    for (const v of bad) {
+      const j = assertLine(reconcile(ctx, ['--arm-nonces', v]), 66);
+      assert.ok(j.reasons.some((r) => r.code === 'usage' && r.detail && r.detail.flag === 'arm-nonces' && /hex/.test(String(r.detail.expect))),
+        `the value check refuses ${JSON.stringify(v)}`);
+      assert.deepEqual(snap(), was, `nothing written for ${JSON.stringify(v)}`);
+    }
+    assert.deepEqual(was.arm, [], 'no nonce file was made');
+    for (const f of [path.join(ctx.root, 'x.json'), path.join(ctx.root, 'run', 'x.json'), path.join(ctx.root, `${ok}.json`), path.join(ctx.root, 'run', `${ok}.json`)]) {
+      assert.ok(!fs.existsSync(f), `${f} not written`);
+    }
+    assert.equal(ledgerLines(ctx.root).length, lines, 'no line appended');
   });
 });
 
@@ -932,25 +976,25 @@ test('FX-W1 a corrupt watcher.json or alarm.json is the anomaly state-corrupt (b
     const j = assertLine(endturn(ctx, 1), 1);
     assert.deepEqual(j.result.sources, { watcher: 'dead', alarm: 'dead' });
     assert.ok(hasReason(j, 'watcher-missing') && hasReason(j, 'alarm-missing'), JSON.stringify(j.reasons));
-    recNoAlarm(reconcile(ctx));
+    recUnarmed(reconcile(ctx));
   });
 });
 
-test('FX-W1 reconcile with the list unavailable: an unmarked alarm of this ce asks nothing (exit 0, alive null); a marked one is dead (exit 1 alarm-missing, anomaly alarm-dead)', async () => {
+test('FX-W1 reconcile with the list unavailable: an unmarked alarm slot of this ce is unknown and counts (exit 0, alive null); a marked one is dead (exit 1 arm-unconfirmed, anomaly alarm-dead)', async () => {
   await withRoot({ thr: NO_LIST }, async (ctx) => {
     meterLine(ctx.root);
     const { ar } = wakeRecords(ctx);
+    putSlot(ctx, ar); // FX-W2: the alarm as registered in slot 1
     const j = assertLine(reconcile(ctx), 0);
-    assert.equal(j.result.arm, undefined);
+    assert.equal(j.result.arm, 'confirmed');
     let st = statusJson(ctx);
     assert.equal(st.alarm.alive, null);
     assert.equal(st.watcher.alive, null);
     assert.ok(!st.anomalies.some((a) => a.code === 'alarm-dead' || a.code === 'watcher-dead'), JSON.stringify(st.anomalies));
     assert.ok(st.anomalies.some((a) => a.code === 'proc-unavailable'));
     putMarker(ctx, ar);
-    const j2 = recNoAlarm(reconcile(ctx));
-    assert.equal(j2.reasons[0].detail.alive, false);
-    assert.equal(j2.reasons[0].detail.state, 'dead');
+    const j2 = recUnarmed(reconcile(ctx));
+    assert.deepEqual(armDetail(j2).slots, [{ k: 1, state: 'exited', pid: ar.pid }]);
     st = statusJson(ctx);
     assert.equal(st.alarm.alive, false);
     assert.ok(st.anomalies.some((a) => a.code === 'alarm-dead'), 'a marked alarm is dead with the list unknown');
@@ -971,14 +1015,66 @@ test('FX-W1 reconcile prunes an exit marker no record names; the markers of alar
     w(unarmed, { ce: 1, turn_seq: 0 });
     const before = fs.readdirSync(armDir(ctx)).sort();
     assert.equal(before.length, 5);
-    recNoAlarm(reconcile(ctx, ['--dry-run']));
+    recUnarmed(reconcile(ctx, ['--dry-run']));
     assert.deepEqual(fs.readdirSync(armDir(ctx)).sort(), before, '--dry-run removes nothing');
-    recNoAlarm(reconcile(ctx));
+    recUnarmed(reconcile(ctx));
     assert.equal(fs.existsSync(markFile(ctx, old)), false, 'the marker no record names is removed');
     assert.ok(fs.existsSync(markFile(ctx, named)), "alarm.json's marker stays");
     assert.ok(fs.existsSync(markFile(ctx, slot)), "slot-1's marker stays");
     assert.ok(fs.existsSync(unarmed), 'unarmed-* is not touched');
     assert.ok(fs.existsSync(path.join(armDir(ctx), 'slot-1.json')));
+  });
+});
+
+// FX-W2 (B1.4): hold 2's turn.json write fails (exit 70) through the library's fs seam (lib.setFsSeam,
+// preloaded with --import), so the file shows what hold 1 wrote: the second write of a turn record
+// (the one with "unarmed_turns") throws.
+function turnSeam(ctx) {
+  const f = path.join(ctx.root, 'tmp', 'turn-seam.mjs');
+  fs.writeFileSync(f, [
+    "import fs from 'node:fs';",
+    `import * as lib from ${JSON.stringify(pathToFileURL(path.join(TCB_SRC, 'lib.mjs')).href)};`,
+    "const needle = Buffer.from('\"unarmed_turns\"');",
+    'let n = 0;',
+    'lib.setFsSeam({ writeSync(fd, buf, ...rest) {',
+    "  if (Buffer.isBuffer(buf) && buf.includes(needle) && ++n === 2) throw new Error('seam: hold 2 does not write turn.json');",
+    '  return fs.writeSync(fd, buf, ...rest);',
+    '} });',
+    '',
+  ].join('\n'));
+  return pathToFileURL(f).href;
+}
+const seamReconcile = (ctx, seam, extra = []) => parseOut(cp.spawnSync(process.execPath,
+  ['--import', seam, scriptPath(ctx.root, 'status'), '--reconcile', ...common(ctx), '--now', NOW, '--free-mb', '100000', ...extra],
+  { cwd: ctx.root, encoding: 'utf8', windowsHide: true, timeout: 120000 }));
+
+test('FX-W2 a second reconcile of a confirmed turn keeps it confirmed in hold 1 (B1.4); given nonces hold 1 starts the turn unconfirmed; hold 2 re-checks the slots all the same', async () => {
+  await withRoot({}, async (ctx) => {
+    meterLine(ctx.root);
+    const seam = turnSeam(ctx);
+    const s = liveAlarm(ctx);
+    assertLine(reconcile(ctx), 0);
+    const t1 = J(turnPath(ctx));
+    assert.deepEqual([t1.turn_seq, t1.arm, t1.unarmed_turns], [1, 'confirmed', 0]);
+    // the turn's second reconcile, no nonces, hold 2 failing: turn.json is hold 1's record, still confirmed
+    const second = seamReconcile(ctx, seam);
+    assert.equal(second.exit, 70, `${second.stdout}\n${second.stderr}`);
+    assert.deepEqual(J(turnPath(ctx)), { ...t1, turn_seq: 2, read_seq: statusJson(ctx).ledger.seq });
+    // given a nonce (the first reconcile of a turn), hold 1 writes the turn unconfirmed with no slots
+    const x = crypto.randomBytes(16).toString('hex');
+    w(path.join(armDir(ctx), `${x}.json`), { state: 'present', pid: s.pid });
+    assert.equal(seamReconcile(ctx, seam, ['--arm-nonces', x]).exit, 70);
+    const t3 = J(turnPath(ctx));
+    assert.deepEqual([t3.turn_seq, t3.arm, t3.slots, t3.unarmed_turns], [3, 'unconfirmed', [], 0]);
+    assert.deepEqual(J(path.join(armDir(ctx), `${x}.json`)), { state: 'present', pid: s.pid }, 'an outcome other than started is kept');
+    // hold 2 confirms by the live slot; after the alarm's exit marker hold 1 keeps confirmed and hold 2 unarms
+    assertLine(reconcile(ctx), 0);
+    assert.equal(J(turnPath(ctx)).arm, 'confirmed');
+    putMarker(ctx, s);
+    const last = recUnarmed(reconcile(ctx));
+    assert.deepEqual(armDetail(last).slots, [{ k: 1, state: 'exited', pid: s.pid }]);
+    const t5 = J(turnPath(ctx));
+    assert.deepEqual([t5.turn_seq, t5.arm, t5.slots, t5.unarmed_turns], [5, 'unconfirmed', [], 1]);
   });
 });
 

@@ -43,7 +43,11 @@ const COMMON = {
 };
 // The round-3 flags of the default mode (S0.5), each filled by its fix: FX-W2's `arm-nonces` (with
 // --reconcile) and FX-W4's `deadman`.
-const ARM_FLAGS = {};
+const ARM_FLAGS = { 'arm-nonces': { type: 'string' } };
+// FX-W2: the ensure nonces of this turn's call 1 (S1: one), 32 lowercase hex each, comma-separated.
+const NONCE_RE = /^[0-9a-f]{32}$/;
+// FX-W2 step 6: reconcile reads the nonce files this often while it waits.
+const NONCE_POLL_MS = 200;
 const DEADMAN_FLAGS = {};
 const FLAGS_BY_MODE = {
   default: { ...COMMON, reconcile: { type: 'bool' }, endturn: { type: 'bool' }, 'acked-seq': { type: 'int' }, ...ARM_FLAGS, ...DEADMAN_FLAGS },
@@ -610,10 +614,13 @@ async function runBuild(ctx, root, flags, reconcile, dry) {
   const th = lib.thresholds(root);
   const facts = lib.edgeFacts(flags);
   const proc = lib.realProc({ exe: th.get('proc_exe') });
+  const nonces = reconcile ? armNonces(flags) : []; // FX-W2: a malformed list is 66 before any write
   const table0 = lib.readTasks(root);
   const wake0 = readWake(root); // FX-W1 step 1: the wake records, read before the process list
+  const arm0 = reconcile ? readArmSlots(root, th) : null; // FX-W2 step 7: the slot records, read before r1
   const pre = await gatherFacts(root, th, table0, proc, { reconcile });
   pre.wake = judgeWake(wake0, pre.procList, lib.exitMarkers(root));
+  if (reconcile) pre.arm = { nonces, slots: judgeArmSlots(arm0, pre.procList, lib.exitMarkers(root), ce) };
 
   if (dry) {
     const anomalies = [...pre.anomalies];
@@ -621,8 +628,9 @@ async function runBuild(ctx, root, flags, reconcile, dry) {
     const changes = reconcile ? await applyReconcile(ctx, root, null, pre, ce, facts, anomalies, table) : [];
     const status = await computeStatus(root, th, ce, pre, facts, table, anomalies);
     lib.checkFormat(root, 'status', status);
+    if (reconcile) pre.turn = turnHold1(root, ce, nonces, status.ledger.seq);
     const res = { exit: 0, result: { run: reconcile ? 'reconcile' : 'build', written: false, reconciled: changes, status } };
-    return reconcile ? armAtStart(root, ce, pre.procList, await reconcileHold2({ root, ce, th, flags, facts, proc, pre, dry }, res)) : res;
+    return reconcile ? reconcileHold2({ root, ce, th, flags, facts, proc, pre, dry }, res) : res;
   }
 
   let out = null;
@@ -634,13 +642,80 @@ async function runBuild(ctx, root, flags, reconcile, dry) {
     lib.checkFormat(root, 'status', status);
     handle.assertHeld();
     lib.writeAtomic(fileOf(root, 'status'), serialize(status));
+    if (reconcile) {
+      pre.turn = turnHold1(root, ce, nonces, status.ledger.seq);
+      handle.assertHeld();
+      lib.writeAtomic(lib.paths(root).turn, serialize(pre.turn));
+    }
     out = { run: reconcile ? 'reconcile' : 'build', written: true, reconciled: changes, status };
   });
   const res = { exit: 0, result: out };
-  return reconcile ? armAtStart(root, ce, pre.procList, await reconcileHold2({ root, ce, th, flags, facts, proc, pre, dry }, res)) : res;
+  return reconcile ? reconcileHold2({ root, ce, th, flags, facts, proc, pre, dry }, res) : res;
 }
 
-// Reconcile after its main hold (S0.5), in both paths before armAtStart, in the order of FIX-wake
+// ---------------------------------------------------------------- FX-W2: the arm (FIX-wake FX-W2)
+
+// --arm-nonces X[,X2]: the nonces of this turn's ensures; absent: [] (a reconcile later in the turn).
+function armNonces(flags) {
+  const v = flags['arm-nonces'];
+  if (v === undefined) return [];
+  const list = String(v).split(',');
+  if (!list.every((x) => NONCE_RE.test(x))) throw usage({ flag: 'arm-nonces', expect: '32 lowercase hex, comma-separated' });
+  return [...new Set(list)];
+}
+
+// alarm_slots (FX-W2, branch S1: 1), an integer >= 1.
+function slotCountOf(th) {
+  const n = th.get('alarm_slots');
+  if (!Number.isInteger(n) || n < 1) throw err('param-invalid', 2, { name: 'alarm_slots', value: n ?? null });
+  return n;
+}
+
+// A slot record names a process: an object with an integer pid > 0 and a string start_time.
+function slotRec(rec) {
+  return !!rec && Number.isInteger(rec.pid) && rec.pid > 0 && typeof rec.start_time === 'string' ? rec : null;
+}
+
+// FX-W2 step 7's r1 part, outside every lock: the slot files' bytes, read BEFORE the process list
+// (a record written after the list would name a live process the list does not show), judged after it.
+function readArmSlots(root, th) {
+  const P = lib.paths(root);
+  const out = [];
+  for (let k = 1; k <= slotCountOf(th); k += 1) out.push({ k, ...readSource(P.armSlot(k)) });
+  return out;
+}
+function judgeArmSlots(arm0, procList, markers, ce) {
+  return arm0.map((s) => {
+    const rec = slotRec(s.rec);
+    return { k: s.k, bytes: s.bytes, state: rec && rec.ce === ce ? lib.liveness(rec, listProc(procList), markers) : 'dead' };
+  });
+}
+
+// turn.json as last written, or null when absent or not a turn record (rewritten then, never 67).
+function readTurn(root) {
+  const t = readLoose(lib.paths(root).turn);
+  if (!t || typeof t !== 'object' || !Number.isInteger(t.ce) || !Number.isInteger(t.turn_seq) || !Array.isArray(t.slots)) return null;
+  return { ...t, unarmed_turns: Number.isInteger(t.unarmed_turns) && t.unarmed_turns >= 0 ? t.unarmed_turns : 0 };
+}
+
+// FX-W2 step 5, the record the r8-r13 hold writes after status.json: turn_seq + 1 (never reset, so a
+// waiting abandoned ensure always sees it grow), read_seq (the ledger head status.json reflects),
+// arm unconfirmed and no slots, except that a reconcile given no nonces keeps a confirmed turn of this
+// ce (B1.4: a second reconcile in one turn; hold 2 re-checks its slots all the same).
+function turnHold1(root, ce, nonces, readSeq) {
+  const prev = readTurn(root);
+  const keep = nonces.length === 0 && !!prev && prev.ce === ce && prev.arm === 'confirmed';
+  return {
+    ce,
+    turn_seq: (prev ? prev.turn_seq : 0) + 1,
+    read_seq: readSeq,
+    arm: keep ? 'confirmed' : 'unconfirmed',
+    slots: keep ? prev.slots : [],
+    unarmed_turns: prev ? prev.unarmed_turns : 0,
+  };
+}
+
+// Reconcile after its main hold (S0.5), in both paths (FX-W2 removed M2's armAtStart), in the order of FIX-wake
 // FX-W2 steps 6-7 and FIX-JOIN part 2b row 3 (collision point B11):
 //   1. hold2Wait (FX-W2 step 6): the wait for this call's nonces, outside every lock.
 //   2. Hold 2: hold2Lock runs the next two steps in one hold of the run lock (FIX-JOIN point 6: the
@@ -663,23 +738,106 @@ async function reconcileHold2({ root, ce, th, flags, facts, proc, pre, dry }, re
   return hold.res;
 }
 
-// FX-W2 step 6, before hold 2 and outside every lock: poll the given nonces' files every 200 ms (at
-// least release_ms, at most arm_confirm_ms), then write `abandoned` into each one still `started`.
-async function hold2Wait(hold) { // eslint-disable-line no-unused-vars
+// FX-W2 step 6, before hold 2 and outside every lock: poll the given nonces' files every 200 ms; the
+// wait ends when none is absent or `started` and release_ms has passed, or at arm_confirm_ms (a bound
+// on this one call, read on the monotonic clock). No nonces (a later reconcile of the turn): no wait.
+// The `abandoned` write is hold 2's (hold2ArmSlots), under the run lock the ensure's hold 1 also takes.
+async function hold2Wait(hold) {
+  const nonces = hold.pre.arm ? hold.pre.arm.nonces : [];
+  if (!nonces.length) return;
+  const least = hold.th.get('release_ms');
+  const most = hold.th.get('arm_confirm_ms');
+  const P = lib.paths(hold.root);
+  const t0 = performance.now();
+  for (;;) {
+    const open = nonces.filter((x) => { const v = readLoose(P.armNonce(x)); return !v || v.state === 'started'; });
+    const t = performance.now() - t0;
+    if ((open.length === 0 && t >= least) || t >= most) return;
+    await new Promise((r) => setTimeout(r, NONCE_POLL_MS));
+  }
 }
 
 // FX-W2 (runBuild's two holds): hold 2 runs fn(handle) under the run lock with the ce re-checked
 // (lib.withRunLock with lockOpts(hold.th, hold.ce, hold.proc, hold.facts.now)); a dry run checks the
-// ce and passes null, as the main hold does. Until FX-W2 fills it, fn(null) runs without the lock
-// (both steps are empty). FX-W1's step takes no lock of its own: run.lock is not re-entrant.
-async function hold2Lock(hold, fn) { // eslint-disable-line no-unused-vars
-  return fn(null);
+// ce and passes null, as the main hold does. FX-W1's step takes no lock of its own: run.lock is not
+// re-entrant.
+async function hold2Lock(hold, fn) {
+  if (hold.dry) {
+    lib.checkCe(hold.root, hold.ce);
+    return fn(null);
+  }
+  let out;
+  await lib.withRunLock(hold.root, lockOpts(hold.th, hold.ce, hold.proc, hold.facts.now), async (handle) => { out = await fn(handle); });
+  return out;
 }
 
-// FX-W2 step 7, in hold 2: the live slots n of this ce; n >= alarm_slots gives arm confirmed, slots
-// (also hold.slots) and unarmed_turns 0; otherwise arm unconfirmed, unarmed_turns + 1, exit 1
-// arm-unconfirmed.
-async function hold2ArmSlots(hold, handle) { // eslint-disable-line no-unused-vars
+// FX-W2 step 7, in hold 2 (files only): first each nonce of this call still absent or `started` is
+// written `abandoned`; then a slot of this ce is live when it has no exit marker now, was not judged
+// dead by r1 with its bytes unchanged, and either was registered by a nonce of this call (its record
+// carries that nonce and the nonce file says registered with its k and pid) or was judged alive or
+// unknown by r1 with its bytes unchanged. n >= alarm_slots: arm confirmed, slots (also hold.slots),
+// unarmed_turns 0; otherwise arm unconfirmed, unarmed_turns + 1, exit 1 arm-unconfirmed. turn.json is
+// written only while it is still the record this call's main hold wrote (otherwise `turn-moved`).
+async function hold2ArmSlots(hold, handle) {
+  const { root, ce, th, dry, pre } = hold;
+  if (handle) handle.assertHeld();
+  const P = lib.paths(root);
+  const nonces = pre.arm ? pre.arm.nonces : [];
+  const states = new Map();
+  for (const x of nonces) {
+    let v = readLoose(P.armNonce(x));
+    if (!v || typeof v !== 'object' || v.state === 'started') {
+      v = { state: 'abandoned' };
+      if (handle) lib.writeAtomic(P.armNonce(x), JSON.stringify(v) + '\n');
+    }
+    states.set(x, v);
+  }
+  const base = pre.turn;
+  const res = hold.res;
+  const need = slotCountOf(th);
+  if (!dry) {
+    const cur = readTurn(root);
+    if (!cur || cur.ce !== base.ce || cur.turn_seq !== base.turn_seq) {
+      hold.slots = cur ? cur.slots : [];
+      hold.res = {
+        exit: 1,
+        result: { ...res.result, arm: 'unconfirmed', turn_seq: base.turn_seq, slots: [] },
+        reasons: [...(res.reasons ?? []), { code: 'arm-unconfirmed', detail: { ce, why: 'turn-moved', turn_seq: cur ? cur.turn_seq : null } }],
+      };
+      return;
+    }
+  }
+  const markers = lib.exitMarkers(root);
+  const live = [];
+  const seen = [];
+  for (let k = 1; k <= need; k += 1) {
+    const s = readSource(P.armSlot(k));
+    const rec = slotRec(s.rec);
+    const r1 = pre.arm ? pre.arm.slots.find((v) => v.k === k) : null;
+    const same = !!r1 && !!r1.bytes && !!s.bytes && s.bytes.equals(r1.bytes);
+    let state;
+    if (!rec) state = s.bytes ? 'corrupt' : 'absent';
+    else if (rec.ce !== ce) state = 'other-ce';
+    else if (markers.has(lib.markerKey(rec.pid, rec.start_time))) state = 'exited';
+    else if (same && r1.state === 'dead') state = 'dead';
+    else {
+      const byCall = nonces.some((x) => {
+        const v = states.get(x);
+        return rec.nonce === x && v.state === 'registered' && v.k === k && Number(v.pid) === rec.pid;
+      });
+      state = byCall ? 'registered' : same ? r1.state : 'unjudged';
+    }
+    seen.push({ k, state, pid: rec ? rec.pid : null });
+    if (state === 'registered' || state === 'alive' || state === 'unknown') live.push({ k, pid: rec.pid, start_time: rec.start_time });
+  }
+  const confirmed = live.length >= need;
+  const turn = { ...base, arm: confirmed ? 'confirmed' : 'unconfirmed', slots: live, unarmed_turns: confirmed ? 0 : base.unarmed_turns + 1 };
+  hold.slots = live;
+  if (handle) lib.writeAtomic(P.turn, serialize(turn));
+  const result = { ...res.result, arm: turn.arm, turn_seq: turn.turn_seq, slots: live };
+  hold.res = confirmed
+    ? { ...res, result }
+    : { exit: 1, result, reasons: [...(res.reasons ?? []), { code: 'arm-unconfirmed', detail: { ce, live: live.length, need, slots: seen } }] };
 }
 
 // FX-W1 (FIX-JOIN point 6), in hold 2 after hold2ArmSlots: an exit marker is removed only when
@@ -773,22 +931,6 @@ function sourceNow(file, j, markers) {
   if (markers.has(lib.markerKey(s.rec.pid, s.rec.start_time))) return { ...s, state: 'dead' };
   if (j && j.bytes && s.bytes.equals(j.bytes)) return { ...s, state: j.state };
   return { ...s, state: 'unknown' };
-}
-
-// M2 (CONTRACT decision 40): reconcile is the first act of every turn, so it asks for the alarm
-// whenever none of this ce is known to live (absent, another ce, corrupt, an exit marker, or gone
-// from the process list). The coordinator then starts `watch.mjs --alarm` before anything else, and
-// a turn that dies before its endturn still leaves a wake source. Nothing is started or killed here.
-// FX-W1 (D1 at S:596): an unavailable list is unknown, not dead, and asks nothing.
-function armAtStart(root, ce, procList, res) {
-  const alarm = readLoose(fileOf(root, 'alarm'));
-  const state = alarm && alarm.ce === ce ? lib.liveness(alarm, listProc(procList), lib.exitMarkers(root)) : 'dead';
-  if (state !== 'dead') return res;
-  return {
-    exit: 1,
-    result: { ...res.result, arm: 'alarm' },
-    reasons: [{ code: 'alarm-missing', detail: { ce: alarm ? alarm.ce ?? null : null, pid: alarm ? alarm.pid ?? null : null, alive: false, state } }],
-  };
 }
 
 // ---------------------------------------------------------------- endturn
@@ -1016,6 +1158,7 @@ async function main(ctx) {
   else {
     if (flags.reconcile && flags.endturn) throw usage({ expect: '--reconcile and --endturn are exclusive' });
     if (flags['acked-seq'] !== undefined && !flags.endturn) throw usage({ flag: 'acked-seq', expect: 'with --endturn only' });
+    if (flags['arm-nonces'] !== undefined && !flags.reconcile) throw usage({ flag: 'arm-nonces', expect: 'with --reconcile only' });
     if (flags.endturn) out = await runEndturn(ctx, root, flags, dry);
     else out = await runBuild(ctx, root, flags, flags.reconcile === true, dry);
   }

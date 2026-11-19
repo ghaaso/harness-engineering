@@ -428,7 +428,8 @@ async function main() {
   await sc('handover', ['init', '--tcb-commit', '1'.repeat(40)], { ce: false, exit: 1, code: 'coord-exists', name: 'handover init with another commit is refused (coord-exists)' });
   await sc('status', ['owner', '--act', 'approve', '--subject', 'protocol:f1', '--quote-file', P('plan', 'notes', 'approve-protocol.txt')], { name: 'status owner approve protocol:f1' });
   await sc('status', ['owner', '--act', 'approve', '--subject', 'analysis-plan', '--quote-file', P('plan', 'notes', 'approve-plan.txt')], { name: 'status owner approve analysis-plan' });
-  await sc('status', ['--reconcile'], { free: true, exit: 1, code: 'alarm-missing', name: 'status --reconcile: no alarm yet -> alarm-missing (the turn must start one)' });
+  // FX-W2: reconcile confirms the arm only by a live alarm slot (run/arm/slot-1.json); none yet -> the turn is unarmed
+  await sc('status', ['--reconcile'], { free: true, exit: 1, code: 'arm-unconfirmed', name: 'status --reconcile: no alarm slot yet -> arm-unconfirmed (the turn is unarmed)' });
 
   if (FORCE_SELFTEST) {
     await forceSelftest('forced by --force-selftest (development)');
@@ -490,7 +491,7 @@ async function main() {
   chk('f1-research: attempt folder has inputs, settings, agents, todo', exists(path.join(R.folder, 'in', 'protocol.json')) && exists(path.join(R.folder, '.claude', 'settings.json')) && exists(path.join(R.folder, 'view', 'todo.json')) && exists(path.join(R.folder, '.claude', 'agents', 'reader.md')), R.folder, 'replace.mjs');
   // the session start is the app's: a transcript whose cwd is the folder, found by --reconcile
   writeTranscript(R.file, { sessionId: R.sid, cwd: R.folder, calls: [readCall(path.join(R.folder, 'in', 'brief.md'))] });
-  await sc('status', ['--reconcile'], { free: true, exit: 1, code: 'alarm-missing', name: 'f1-research: status --reconcile finds the transcript by folder', check: () => (rowOf('f1-research').step === 'started' ? true : 'step ' + rowOf('f1-research').step) });
+  await sc('status', ['--reconcile'], { free: true, exit: 1, code: 'arm-unconfirmed', name: 'f1-research: status --reconcile finds the transcript by folder', check: () => (rowOf('f1-research').step === 'started' ? true : 'step ' + rowOf('f1-research').step) });
   put('claim.json', LIB.claimRecord(R.sid), R.folder); // FX-CLAIM: the hook's claim at the session's first tool call, simulated like the transcript
   await sc('replace', ['bind', '--task', 'f1-research', '--epoch', '1', '--session', R.sid], { boot: true, name: 'f1-research: replace bind (started -> bound)' });
   // the guard hook (a pure decision script: stdin JSON, exit 0 allow, 2 deny)
@@ -731,7 +732,13 @@ async function main() {
   fs.writeFileSync(P('run', 'watcher.json'), JSON.stringify({ ...wj, ce: CE, pid: me.pid, start_time: me.start_time }));
   fs.writeFileSync(P('run', 'watcher.lock'), JSON.stringify({ pid: me.pid, start_time: me.start_time, nonce: '0'.repeat(32), script: 'watch', ce: CE, acquired_at: tick() }));
   fs.writeFileSync(P('run', 'alarm.json'), JSON.stringify({ pid: me.pid, start_time: me.start_time, ce: CE, armed_at: tick(), sleep_ms: 3600000 }));
-  await sc('status', ['--reconcile'], { free: true, name: 'status --reconcile with a live alarm (stand-in): nothing missing' });
+  // FX-W2: the ensure's hold 1 writes the slot and its nonce file with alarm.json (watch --alarm --ensure --nonce X);
+  // call 2 is reconcile with that nonce, which confirms the arm by the live slot it registered
+  const armNonce = 'a1'.repeat(16);
+  fs.mkdirSync(P('run', 'arm'), { recursive: true });
+  fs.writeFileSync(P('run', 'arm', 'slot-1.json'), JSON.stringify({ ce: CE, pid: me.pid, start_time: me.start_time, nonce: armNonce }));
+  fs.writeFileSync(P('run', 'arm', `${armNonce}.json`), JSON.stringify({ state: 'registered', k: 1, pid: me.pid }));
+  await sc('status', ['--reconcile', '--arm-nonces', armNonce], { free: true, name: 'status --reconcile --arm-nonces with a live alarm slot (stand-in): the arm is confirmed', check: () => (rj(P('run', 'turn.json')).arm === 'confirmed' ? true : 'turn ' + JSON.stringify(rj(P('run', 'turn.json')))) });
   const ledHead = LIB.ledgerHead(ROOT).seq;
   await sc('status', ['--endturn', '--acked-seq', String(ledHead)], { name: 'status --endturn: both wake sources run' });
   await sc('status', ['--endturn', '--acked-seq', String(ledHead + 5)], { exit: 1, code: 'acked-ahead', name: 'status --endturn with an acked seq beyond the ledger is refused' });

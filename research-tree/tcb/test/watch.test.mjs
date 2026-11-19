@@ -294,14 +294,14 @@ function startScript(root, name, args) {
   const done = new Promise((res) => child.on('close', (code, signal) => res(parseOut({ status: code, signal, stdout: out, stderr: err }))));
   return { child, done };
 }
-function assertLine(res, exit) {
+function assertLine(res, exit, script = 'watch') {
   const dbg = `exit=${res.exit} signal=${res.signal}\nstdout=${res.stdout.slice(0, 800)}\nstderr=${res.stderr.slice(0, 800)}`;
   assert.equal(res.exit, exit, `expected exit ${exit}\n${dbg}`);
   assert.equal(res.lines.length, 1, `stdout must be exactly one line\n${dbg}`);
   const j = res.json;
   assert.ok(j, `stdout line is not JSON\n${dbg}`);
   for (const k of ['ok', 'script', 'mode', 'exit', 'code', 'dry_run', 'result', 'reasons', 'ledger_seq']) assert.ok(k in j, `stdout line lacks "${k}"`);
-  assert.match(String(j.script), /^watch(\.mjs)?$/);
+  assert.ok(String(j.script) === script || String(j.script) === `${script}.mjs`, `script ${j.script}, not ${script}`);
   assert.equal(j.exit, exit);
   assert.equal(j.code, SLUG[exit]);
   if (exit === 0) assert.equal(j.ok, true);
@@ -1005,18 +1005,28 @@ test('T19 intake: snap --new runs only when f5_given is true', async () => {
   assert.ok(p.includes('--from') && p.includes('witness'));
 });
 
-const alarmArgs = (ctx, ms, ce = 1) => ['--alarm', '--root', ctx.root, '--ce', String(ce), '--sleep-ms', String(ms), '--now', NOW];
+// FX-W2: an alarm starts only as the ensure, with a new nonce each time unless one is given.
+const newNonce = () => crypto.randomBytes(16).toString('hex');
+const alarmArgs = (ctx, ms, ce = 1, nonce = newNonce()) => ['--alarm', '--ensure', '--nonce', nonce, '--root', ctx.root, '--ce', String(ce), '--sleep-ms', String(ms), '--now', NOW];
 const alarmFile = (ctx) => path.join(ctx.root, 'run', 'alarm.json');
+const slotFile = (ctx, k = 1) => path.join(ctx.root, 'run', 'arm', `slot-${k}.json`);
+const nonceFile = (ctx, x) => path.join(ctx.root, 'run', 'arm', `${x}.json`);
 test('T20 alarm: --sleep-ms 100 writes alarm.json and exits 30', async () => {
   await withRoot({}, async (ctx) => {
-    const j = assertLine(run(ctx.root, 'watch', alarmArgs(ctx, 100)), 30);
+    const x = newNonce();
+    const j = assertLine(run(ctx.root, 'watch', alarmArgs(ctx, 100, 1, x)), 30);
     assert.equal(j.result.run, 'alarm');
+    assert.equal(j.result.ensure, 'registered');
+    assert.equal(j.result.k, 1);
     const a = J(alarmFile(ctx));
     assert.ok(Number.isInteger(a.pid) && a.pid > 0);
     assert.equal(a.ce, 1);
     assert.equal(a.sleep_ms, 100);
     assert.equal(typeof a.start_time, 'string');
     assert.equal(typeof a.armed_at, 'string');
+    // FX-W2: the ensure registered in slot 1 under its nonce, in the hold that wrote alarm.json
+    assert.deepEqual(J(slotFile(ctx)), { ce: 1, pid: a.pid, start_time: a.start_time, nonce: x });
+    assert.deepEqual(J(nonceFile(ctx, x)), { state: 'registered', k: 1, pid: a.pid });
   });
 });
 
@@ -1029,21 +1039,31 @@ test('T20 alarm: a coord ce raised during the sleep exits 64', async () => {
   });
 });
 
-test('T20 alarm: a second alarm supersedes the first without signalling it', async () => {
+// FX-W2: with the one slot (S1) live, a second ensure is `present` and writes nothing but its nonce
+// file; only an ensure that finds the slot free registers, and its alarm.json supersedes the first.
+test('T20 alarm: a second ensure while the first sleeps exits 0 present; once slot 1 is lost a third supersedes the first without signalling it', async () => {
   await withRoot({}, async (ctx) => {
-    const first = startScript(ctx.root, 'watch', alarmArgs(ctx, 6000));
-    await waitFor(() => fs.existsSync(alarmFile(ctx)));
-    assert.equal(J(alarmFile(ctx)).pid, first.child.pid);
-    const second = startScript(ctx.root, 'watch', alarmArgs(ctx, 2000));
-    await waitFor(() => { try { return J(alarmFile(ctx)).pid === second.child.pid; } catch { return false; } });
-    const r2 = await second.done;
-    const j2 = assertLine(r2, 30);
-    assert.ok(JSON.stringify(j2.result.previous ?? null).includes(String(first.child.pid)), 'result.previous records the first alarm');
+    const first = startScript(ctx.root, 'watch', alarmArgs(ctx, 8000));
+    await waitFor(() => { try { return J(alarmFile(ctx)).pid === first.child.pid; } catch { return false; } });
+    assert.equal(J(slotFile(ctx)).pid, first.child.pid);
+    const slot1 = fs.readFileSync(slotFile(ctx));
+    const x2 = newNonce();
+    const p = assertLine(run(ctx.root, 'watch', alarmArgs(ctx, 2000, 1, x2)), 0);
+    assert.equal(p.result.ensure, 'present');
+    assert.deepEqual(p.result.slots, [{ k: 1, state: 'alive' }]);
+    assert.equal(J(nonceFile(ctx, x2)).state, 'present');
+    assert.ok(slot1.equals(fs.readFileSync(slotFile(ctx))), 'present writes no slot');
+    assert.equal(J(alarmFile(ctx)).pid, first.child.pid, 'present leaves alarm.json');
+    fs.rmSync(slotFile(ctx)); // the slot is lost: the next ensure finds it free
+    const third = startScript(ctx.root, 'watch', alarmArgs(ctx, 1000));
+    await waitFor(() => { try { return J(alarmFile(ctx)).pid === third.child.pid; } catch { return false; } });
+    const j3 = assertLine(await third.done, 30);
+    assert.ok(JSON.stringify(j3.result.previous ?? null).includes(String(first.child.pid)), 'result.previous records the first alarm');
     assert.equal(first.child.exitCode, null, 'the first alarm was not signalled and still sleeps');
     const r1 = await first.done;
     assertLine(r1, 0);
     assert.ok(r1.stdout.includes('superseded'));
-    assert.equal(J(alarmFile(ctx)).pid, second.child.pid, 'alarm.json names the second');
+    assert.equal(J(alarmFile(ctx)).pid, third.child.pid, 'alarm.json names the third');
   });
 });
 
@@ -1201,6 +1221,20 @@ test('X5 usage: --once with --alarm, an unknown flag and a missing --ce exit 66'
     assert.equal(run(ctx.root, 'watch', [...baseArgs(ctx), '--once', '--alarm']).exit, 66);
     assert.equal(run(ctx.root, 'watch', [...baseArgs(ctx), '--once', '--no-such-flag']).exit, 66);
     assert.equal(run(ctx.root, 'watch', ['--root', ctx.root, '--once']).exit, 66);
+    assert.equal(fs.existsSync(ledgerFile(ctx.root)), false);
+  });
+});
+
+test('FX-W2 usage: --alarm needs --ensure and a 32-hex --nonce; --ensure or --nonce without --alarm exits 66; nothing written', async () => {
+  await withRoot({}, async (ctx) => {
+    const x = newNonce();
+    const base = ['--root', ctx.root, '--ce', '1', '--sleep-ms', '50', '--now', NOW];
+    for (const args of [['--alarm'], ['--alarm', '--nonce', x], ['--alarm', '--ensure'], ['--alarm', '--ensure', '--nonce', x.toUpperCase()],
+      ['--alarm', '--ensure', '--nonce', x.slice(1)], ['--alarm', '--ensure', '--nonce', '../' + x.slice(3)], ['--ensure', '--nonce', x], ['--nonce', x], ['--once', '--ensure']]) {
+      assert.equal(run(ctx.root, 'watch', [...args, ...base]).exit, 66, args.join(' '));
+    }
+    assert.equal(fs.existsSync(path.join(ctx.root, 'run', 'arm')), false, 'no run/arm/ written');
+    assert.equal(fs.existsSync(alarmFile(ctx)), false);
     assert.equal(fs.existsSync(ledgerFile(ctx.root)), false);
   });
 });
@@ -1649,4 +1683,163 @@ test('FX-W1 alarm: every exit after registration leaves run/arm/exited-<pt>.json
   await midSleep((ctx, a) => w(alarmFile(ctx), { ...a, pid: a.pid + 1 }), 0);
   await midSleep((ctx) => w(path.join(ctx.root, 'run', 'coord.json'), { schema_version: 1, ce: 2, started_at: NOW, tcb_commit: COMMIT }), 64);
   await midSleep((ctx) => w(path.join(ctx.root, 'run', 'coord.json'), '{"ce": 1,'), 67);
+});
+
+// FX-W2 (FIX-wake.md FX-W2; branch S1: one slot, one ensure per turn): the ensure and reconcile's two
+// arm holds, run as the coordinator runs them (watch --alarm --ensure --nonce X, then status
+// --reconcile --arm-nonces X).
+const reconcileW = (ctx, extra = []) => run(ctx.root, 'status', ['--reconcile', '--root', ctx.root, '--ce', '1', '--now', NOW, '--free-mb', '100000', ...extra]);
+const armReason = (j) => (j.reasons ?? []).find((r) => r.code === 'arm-unconfirmed');
+const setThr = (ctx, name, value) => {
+  const f = path.join(ctx.root, 'tcb', 'thresholds.json');
+  const t = J(f);
+  t.params[name] = { ...t.params[name], value };
+  w(f, t);
+};
+
+test('FX-W2 a reused nonce is harmless: X fires and is marked, X again is nonce-reused and writes nothing, reconcile X stays unconfirmed; a new Y registers, confirms, and the old marker is pruned', async () => {
+  await withRoot({}, async (ctx) => {
+    const x = newNonce();
+    const fired = assertLine(run(ctx.root, 'watch', alarmArgs(ctx, 50, 1, x)), 30);
+    assert.equal(fired.result.ensure, 'registered');
+    const xr = J(slotFile(ctx));
+    const xMark = path.join(ctx.root, 'run', 'arm', `exited-${LIB.markerKey(xr.pid, xr.start_time)}.json`);
+    assert.ok(fs.existsSync(xMark), 'X exited and left its marker');
+    const files = ['run/arm/slot-1.json', `run/arm/${x}.json`, 'run/alarm.json'].map((f) => [f, fs.readFileSync(path.join(ctx.root, f))]);
+    const names = fs.readdirSync(path.join(ctx.root, 'run', 'arm')).sort();
+    const again = assertLine(run(ctx.root, 'watch', alarmArgs(ctx, 50, 1, x)), 0);
+    assert.equal(again.result.ensure, 'nonce-reused');
+    assert.deepEqual(again.reasons.map((r) => r.code), ['nonce-reused']);
+    for (const [f, b] of files) assert.ok(b.equals(fs.readFileSync(path.join(ctx.root, f))), `${f} unchanged by the reused nonce`);
+    assert.deepEqual(fs.readdirSync(path.join(ctx.root, 'run', 'arm')).sort(), names, 'no file added (no marker: never registered)');
+    // reconcile given X: X's outcome says registered, but the slot's process has exited: no weight
+    const r1 = assertLine(reconcileW(ctx, ['--arm-nonces', x]), 1, 'status');
+    assert.equal(r1.result.arm, 'unconfirmed');
+    assert.deepEqual(armReason(r1).detail.slots, [{ k: 1, state: 'exited', pid: xr.pid }]);
+    assert.equal(J(nonceFile(ctx, x)).state, 'registered', 'a registered outcome is not rewritten');
+    assert.ok(fs.existsSync(xMark), 'slot 1 still names X: its marker stays');
+    // the next turn's new nonce Y takes the slot X's marker freed and confirms the arm
+    const y = newNonce();
+    const ys = startScript(ctx.root, 'watch', alarmArgs(ctx, 60000, 1, y));
+    try {
+      await waitFor(() => { try { return J(nonceFile(ctx, y)).state === 'registered'; } catch { return false; } });
+      const yr = J(slotFile(ctx));
+      assert.deepEqual(yr, { ce: 1, pid: ys.child.pid, start_time: yr.start_time, nonce: y });
+      const r2 = assertLine(reconcileW(ctx, ['--arm-nonces', y]), 0, 'status');
+      assert.equal(r2.result.arm, 'confirmed');
+      assert.deepEqual(r2.result.slots, [{ k: 1, pid: ys.child.pid, start_time: yr.start_time }]);
+      const turn = J(path.join(ctx.root, 'run', 'turn.json'));
+      assert.deepEqual([turn.turn_seq, turn.arm, turn.unarmed_turns], [2, 'confirmed', 0]);
+      assert.equal(fs.existsSync(xMark), false, 'no record names X any more: its marker is pruned');
+    } finally {
+      ys.child.kill();
+      await ys.done;
+    }
+  });
+});
+
+test('FX-W2 the confirm deadline: shipped arm_confirm_ms covers query, lock wait and margin; a cut query is unknown (present), a whole one finds the dead slot (registered); a nonce no ensure ran is abandoned at arm_confirm_ms; an abandoned ensure with no free slot exits into the next turn', async () => {
+  const ship = J(path.join(TCB_SRC, 'thresholds.json')).params;
+  assert.ok(ship.arm_confirm_ms.value >= ship.ensure_query_ms.value + ship.lock_retries.value * 100 + 5000, 'arm_confirm_ms >= ensure_query_ms + lock wait + 5 s');
+  assert.equal(ship.alarm_slots.value, 1, 'branch S1: one slot');
+  assert.throws(() => LIB.realProc({ timeoutMs: 1, exe: PS_EXE }).list(), (e) => e.code === 'proc-unavailable' && e.detail.why === 'ETIMEDOUT');
+  // a dead slot of this ce without a marker: free only when the one query sees it gone
+  await withRoot({ thr: { ensure_query_ms: 1 } }, async (ctx) => {
+    const dead = deadRecord();
+    w(slotFile(ctx), { ce: 1, pid: dead.pid, start_time: dead.start_time, nonce: newNonce() });
+    const p = assertLine(run(ctx.root, 'watch', alarmArgs(ctx, 50)), 0);
+    assert.equal(p.result.ensure, 'present');
+    assert.deepEqual(p.result.slots, [{ k: 1, state: 'unknown' }], 'the query cut at 1 ms: unknown, never dead');
+    assert.equal(J(slotFile(ctx)).pid, dead.pid);
+    setThr(ctx, 'ensure_query_ms', 10000);
+    const r = assertLine(run(ctx.root, 'watch', alarmArgs(ctx, 50)), 30);
+    assert.equal(r.result.ensure, 'registered');
+    assert.equal(J(slotFile(ctx)).pid, r.result.armed.pid);
+  });
+  // reconcile given a nonce whose ensure never ran waits arm_confirm_ms, then abandons it
+  await withRoot({ thr: { arm_confirm_ms: 1500 } }, async (ctx) => {
+    const z = newNonce();
+    const t0 = performance.now();
+    const r = assertLine(reconcileW(ctx, ['--arm-nonces', z]), 1, 'status');
+    assert.ok(performance.now() - t0 >= 1500, 'reconcile waited arm_confirm_ms');
+    assert.equal(r.result.arm, 'unconfirmed');
+    assert.deepEqual(J(nonceFile(ctx, z)), { state: 'abandoned' });
+    const late = assertLine(run(ctx.root, 'watch', alarmArgs(ctx, 50, 1, z)), 0);
+    assert.equal(late.result.ensure, 'nonce-reused', 'a late ensure of an abandoned nonce does nothing');
+    assert.equal(fs.existsSync(slotFile(ctx)), false);
+  });
+  // an ensure held off hold 1 (a live holder of run.lock) while reconcile abandons its nonce, with the
+  // one slot live: it registers nothing and exits 0 abandoned once turn.json's turn_seq grows
+  await withRoot({}, async (ctx) => {
+    const s = ctx.sleeper();
+    w(slotFile(ctx), { ce: 1, pid: s.pid, start_time: s.start_time, nonce: newNonce() });
+    const turnFile = path.join(ctx.root, 'run', 'turn.json');
+    let n = 5;
+    w(turnFile, { ce: 1, turn_seq: n, read_seq: 0, arm: 'unconfirmed', slots: [], unarmed_turns: 0 });
+    const lockFile = path.join(ctx.root, 'run', 'run.lock');
+    w(lockFile, JSON.stringify(lockRec({ pid: process.pid, start_time: psStart(process.pid) })));
+    const x = newNonce();
+    const e = startScript(ctx.root, 'watch', alarmArgs(ctx, 60000, 1, x));
+    let out = null;
+    try {
+      try {
+        await waitFor(() => fs.existsSync(nonceFile(ctx, x)));
+        assert.equal(J(nonceFile(ctx, x)).state, 'started');
+        w(nonceFile(ctx, x), { state: 'abandoned' }); // as reconcile's hold 2 writes it
+      } finally {
+        fs.rmSync(lockFile, { force: true });
+      }
+      // the next turns' reconciles: turn_seq grows every 2.5 s until the ensure exits
+      for (let i = 0; i < 12 && !out; i += 1) {
+        out = await Promise.race([e.done, sleep(2500).then(() => null)]);
+        if (!out) { n += 1; w(turnFile, { ce: 1, turn_seq: n, read_seq: 0, arm: 'unconfirmed', slots: [], unarmed_turns: 0 }); }
+      }
+    } finally {
+      if (!out) e.child.kill();
+    }
+    const j = assertLine(out ?? await e.done, 0);
+    assert.equal(j.result.ensure, 'abandoned');
+    assert.equal(j.reasons[0].code, 'abandoned');
+    assert.equal(j.reasons[0].detail.why, 'turn');
+    assert.ok(j.result.turn_seq > j.result.turn_seq_seen, 'it exited after turn_seq grew');
+    assert.deepEqual(J(nonceFile(ctx, x)), { state: 'abandoned' }, 'the abandoned outcome stays');
+    assert.equal(J(slotFile(ctx)).pid, s.pid, 'the live slot is not taken');
+    assert.deepEqual([...LIB.exitMarkers(ctx.root)], [], 'never registered: no exit marker');
+  });
+});
+
+// FX-W2, the coordinator's order (brief places 2 and 3; from W2's blind review): the ensure in the background
+// and reconcile at once; the run lock held so that reconcile's r1 reads the slot before the ensure can register.
+test('FX-W2 the coordinator\'s order: an ensure that registers after reconcile r1 has read the slot confirms the arm in that reconcile', async () => {
+  await withRoot({}, async (ctx) => {
+    const dead = deadRecord();
+    w(slotFile(ctx), { ce: 1, pid: dead.pid, start_time: dead.start_time, nonce: newNonce() });
+    const before = fs.readFileSync(slotFile(ctx));
+    const lockFile = path.join(ctx.root, 'run', 'run.lock');
+    w(lockFile, JSON.stringify(lockRec({ pid: process.pid, start_time: psStart(process.pid) })));
+    const x = newNonce();
+    let e = null;
+    let rc = null;
+    try {
+      e = startScript(ctx.root, 'watch', alarmArgs(ctx, 60000, 1, x));
+      await waitFor(() => fs.existsSync(nonceFile(ctx, x)));
+      rc = startScript(ctx.root, 'status', ['--reconcile', '--root', ctx.root, '--ce', '1', '--now', NOW, '--free-mb', '100000', '--arm-nonces', x]);
+      await sleep(6000);
+      assert.ok(before.equals(fs.readFileSync(slotFile(ctx))), 'nothing registered while the lock is held');
+      assert.equal(J(nonceFile(ctx, x)).state, 'started');
+    } finally {
+      fs.rmSync(lockFile, { force: true });
+    }
+    try {
+      const j = assertLine(await rc.done, 0, 'status');
+      assert.equal(j.result.arm, 'confirmed');
+      assert.equal(j.result.slots.length, 1);
+      assert.equal(j.result.slots[0].pid, e.child.pid);
+      assert.equal(J(nonceFile(ctx, x)).state, 'registered');
+      assert.equal(J(path.join(ctx.root, 'run', 'turn.json')).arm, 'confirmed');
+    } finally {
+      e.child.kill();
+      await e.done;
+    }
+  });
 });
