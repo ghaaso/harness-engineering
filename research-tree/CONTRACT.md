@@ -416,7 +416,8 @@ does not apply); `not_run` lists (check, subject) whose last `check` line is not
 `watcher.json`: `{ce, pid, start_time, ticks_total, last_tick_at, intake: {pid, start_time}?,
 active: {<key>: onset_tick}, pending: [{key, class, task?, first_tick}] (non-urgent, coalescing),
 tasks: {<task>: {epoch, calls, stall_calls, hang_ticks, V, V_min, loop: {sig, run}, spend, window,
-zombie_tokens, files: {<path relative to transcripts_root>: parse-state}}}, coord_file:
+zombie_tokens, kind, deadline, age_ticks, age_base (FX-W6), files: {<path relative to transcripts_root>:
+parse-state, which also keeps the transcript's `tail` and `kind` (FX-W6, §4.8)}}}, coord_file:
 {<relpath>: parse-state}?}`. Counters are continued by any later watcher; a new epoch resets that
 task's counters. A class instance's **key** is `<class>|<task or ->|<epoch or ->|<onset_tick>`:
 `onset_tick` is the tick at which the condition became present after being absent (kept in
@@ -548,7 +549,9 @@ value `tcb/thresholds.json` ships:
 | Name | Default | Source | Name | Default | Source |
 |---|---|---|---|---|---|
 | delta_ms | 60000 | mapping D1-02 | coalesce_ticks | 2 | guess (δ = 2 min) |
-| stall_calls (c) | 30 | guess | hang_ticks (h) | 10 | guess |
+| stall_calls (c) | 30 | guess | hang_ticks (h) | 10 | guess; read by no script since FX-W6 (the kind deadlines below) |
+| model_ticks / tool_slack_ticks | 10 / 12 | guess, branch B1 (FX-W6 step 3: a model call; a tool call waits its declared timeout in ticks of Δ + this slack) | bg_wait_ticks | 60 | guess, branch B1 (FX-W6 step 3: a wait on a background task) |
+| idle_ticks | 30 | guess (FX-W6 step 4: act-due `idle-child`, never a hang) | attempt_max_ticks | 240 | guess, a placeholder (FX-W6 step 5: act-due `age-cap`, uncharged) |
 | loop_k | 3 | mapping D3-06 | W_cc_ticks | 30 | mapping D1-09 |
 | R | 1 | design R8 | H_max | 2 | guess |
 | Z_frac | 0.1 | guess | stop_verify_deltas | 2 (ticks) | guess (R9's 2Δ) |
@@ -822,8 +825,11 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
   `<root>/<projectDirName(folder)>/` whose first record carrying `cwd` names the folder (case-folded).
   If that folder is absent, every `<root>/*/` whose name starts with the first 100 characters of
   `projectDirName(folder)` is scanned the same way (the harness is believed to shorten long names).
-- `parseTranscript(path, {fromByte=0, lastCall=null}) → {sessionId, cwd, calls, toolUses,
-  toolResults, structured, turnEnds, endByte, torn, badLines}`; reads the file in 1 MiB chunks
+- `parseTranscript(path, {fromByte=0, lastCall=null, tail=null}) → {sessionId, cwd, calls, toolUses,
+  toolResults, structured, turnEnds, endByte, torn, badLines}` plus the non-enumerable `tail` (the
+  tail state, continued from the option `tail` when the parse resumes at fromByte) and `kind` (`tool`,
+  `bg-wait`, `model` or `idle`; an unreadable transcript is `model`) of FX-W6, as `spec/lib.md` defines
+  them; reads the file in 1 MiB chunks
   (`fs.readSync`), never as one string:
   - a **model call** is one distinct `message.id` among `type:"assistant"` records whose
     `message.model` is not `<synthetic>`; its usage is taken from the last record of that id (the
