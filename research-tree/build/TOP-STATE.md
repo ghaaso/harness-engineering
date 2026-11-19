@@ -15,5 +15,7 @@ The root: session local_a4b13878-b721-4778-a8db-a7ce6c2eafce ("orchestrate: buil
 owner from card task_646eca31; in slice 0 (S0.3 running at 16:38 UTC).
 
 Next, in order:
-4. The owner's page: a Sonnet helper writes and publishes a short page on what changed after his go (section 13).
+4. DONE: the owner's page, private Artifact https://claude.ai/artifact/4ChkWDXBP94SRoyLz1ed5M ("Build: after the go",
+   source `research-tree/build/pages/after-the-go.html`, brief `briefs/PAGE-AFTER-GO.md`; a Sonnet helper, 8 calls,
+   0.61 M tokens; its suite line corrected by the top session in version 2).
 5. Report to the owner and wrap up. Meter 65 % all models at 16:31 UTC (63 % at the go; stop line 78 %), Fable 49 %.
