@@ -3821,10 +3821,44 @@ export function planAct(row, facts) { // eslint-disable-line no-unused-vars
 /**
  * liveness(rec, proc, markers) -> 'alive' | 'dead' | 'unknown' (FX-W1; FIX-wake.md FX-W1 step 1):
  * dead when an exit marker names (rec.pid, rec.start_time); otherwise proc.alive: true alive, false
- * dead, null unknown. Never called inside a run-lock hold.
+ * dead, null unknown. Never called inside a run-lock hold. `markers`: the keys of the exit markers
+ * present (exitMarkers(root)), anything with has(key), or an array; `proc`: anything with
+ * alive(pid, start_time) -> true | false | null (the provider, or a reader's adapter over one list).
+ * A record that is not an object names no process: dead. A throwing or absent alive() is unknown.
  */
-export function liveness(rec, proc, markers) { // eslint-disable-line no-unused-vars
-  throw notBuilt('liveness', 'FX-W1');
+export function liveness(rec, proc, markers) {
+  if (!rec || typeof rec !== 'object' || Array.isArray(rec)) return 'dead';
+  const key = markerKey(rec.pid, rec.start_time);
+  const has = markers && typeof markers.has === 'function' ? (k) => markers.has(k)
+    : Array.isArray(markers) ? (k) => markers.includes(k) : () => false;
+  if (has(key)) return 'dead';
+  let v = null;
+  try {
+    v = proc && typeof proc.alive === 'function' ? proc.alive(Number(rec.pid), rec.start_time ?? null) : null;
+  } catch {
+    v = null;
+  }
+  return v === true ? 'alive' : v === false ? 'dead' : 'unknown';
+}
+
+/**
+ * exitMarkers(root) -> Set of the keys (markerKey) of the alarms' exit markers present in `run/arm/`
+ * (FX-W1 step 2): names `exited-<key>.json` only; a missing folder gives an empty set. File names
+ * only, no parse: a marker exists or not (its strict create is all or nothing).
+ */
+export function exitMarkers(root) {
+  let names = [];
+  try {
+    names = fs.readdirSync(path.join(path.resolve(root), 'run', 'arm'));
+  } catch {
+    names = [];
+  }
+  const out = new Set();
+  for (const n of names) {
+    const m = /^exited-([0-9A-Za-z-]+)\.json$/.exec(n);
+    if (m) out.add(m[1]);
+  }
+  return out;
 }
 
 /**
