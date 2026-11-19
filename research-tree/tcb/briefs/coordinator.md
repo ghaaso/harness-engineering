@@ -9,7 +9,13 @@ touch (0 and 5) has one sub-step per fix. Until then the coordinator works from 
 
 ### 0a. An alarm exits 30, 0 (superseded) or 64, each after its exit marker (FX-W1)
 
-(empty until FX-W1)
+An alarm that has registered creates its exit marker `run/arm/exited-<pid>-<start_time>.json` {ce, exit, at} just
+before it exits: 30 `alarm` (a whole period passed with no endturn), 0 `superseded` (`alarm.json` names a newer
+alarm), 64 `stale-ce`, or an error exit (67, 70). That exit wakes you. From then on the alarm is dead, never unknown,
+whatever the process list says: reconcile and endturn report it as `alarm-missing`. The marker is the alarm's own:
+never write, move or delete anything under `run/arm/`; reconcile prunes the old markers. A hard kill writes no marker:
+the process list alone then judges that alarm, and a list that cannot tell makes it unknown, never dead (endturn
+exit 2); on unknown, start nothing.
 
 ### 0b. On exit 30, an `unarmed` record when `turn_seq` has not moved (FX-W3)
 

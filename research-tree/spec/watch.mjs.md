@@ -30,7 +30,8 @@ list.
 
 ## Writes
 `run/watcher.lock` (wx, held for life), `run/watcher.json` (writeAtomic, `assertHeld` first),
-`run/alarm.json` (alarm mode, under the run lock), ledger lines `event` {class, code, urgent,
+`run/alarm.json` (alarm mode, under the run lock), `run/arm/exited-<pt>.json` {ce, exit, at} (alarm
+mode, FX-W1: a lock-free exclusive create, CONTRACT §3.9 [arm-exited]), ledger lines `event` {class, code, urgent,
 detail, key}, `zombie-write` {epoch_seen, tokens}, `drain` {window, w_star}, `halt` {reason,
 fails[]}, `incident` (intake steps) — every append through `withRunLock(ce)`, so the ce is
 re-checked inside the lock before each append (R4). Transcripts are parsed before the lock (§2.1).
@@ -141,7 +142,13 @@ one last read → the alarm was re-armed: keep the new token, `rearms += 1`, and
 write, no clock read); else exit 30 `alarm`, `result {previous, armed, superseded, rearms}`. So the
 alarm fires only after a whole period in which no endturn ran, and nobody ever kills it (the
 model's busy loop came from killing the alarm at each endturn, whose exit then woke the
-coordinator).
+coordinator). 6 **The exit marker (FX-W1 step 2).** Every exit after the registration of step 3 (30, 0
+`superseded`, 64, and an error exit: 67 or 70 in the sleep loop, or the registration hold losing its
+lock after `alarm.json` was written) first creates `run/arm/exited-<pt>.json` {ce, exit, at} by
+`lib.createExclusive` (not strict: `run/arm/` is made when absent; `<pt>` = `lib.markerKey(pid,
+start_time)` of this process; `at` from the edge facts, so `--now` fixes it). The create takes no lock; a failure writes one stderr line and leaves
+the exit code as it was (readers then judge this alarm by the process list alone). An exit before
+registration (64 at step 1, 75 for a busy lock) writes none; a hard kill writes none.
 
 ## Intake steps
 `checkCe` → 64. Run each as a child process (`process.execPath`, `cwd: root`, `shell: false`,
@@ -243,6 +250,10 @@ All with `--once` or `--interval-ms 50` and `--no-intake` unless stated; fake tr
 - T20 `--alarm --sleep-ms 100` → `alarm.json` written, exit 30; a coord ce raised during the sleep →
   64; a second alarm (`--sleep-ms 2000`) started once `alarm.json` names the first: the first is not
   signalled, exits 0 `superseded` when it wakes, and `alarm.json` names the second.
+- FX-W1 alarm exit marker: exit 30 (`--sleep-ms 50`) leaves `run/arm/exited-<pt>.json` {ce: 1, exit:
+  30, at: the `--now`}; with `--sleep-ms 1500` there is no marker while the alarm sleeps, and then
+  `alarm.json` naming another pid → exit 0 and marker {exit: 0}; coord ce 2 → 64 and {exit: 64}; a torn
+  `coord.json` → 67 and {exit: 67}; `lib.exitMarkers` then holds exactly that alarm's key.
 - T21 every exit prints one §1.3 line; every ledger written verifies.
 - T22 incremental parse: a 50 MB fake transcript parsed at tick 1; tick 2 after 3 calls are appended
   reads only the new bytes (`files[path].end_byte` advances; a spy on the read count or the elapsed
@@ -302,3 +313,5 @@ real transcripts matching the parser (item 7); a real session's window in its tr
 - The alarm: in the registration hold, before alarm.json, `alarmSlotTurnSeq(reg)` (FX-W3), then
   `alarmRegisterSlot(reg)` (FX-W2). Every exit after registration passes `alarmExit(reg, out or exit
   code)`: `alarmUnarmedRecord` (FX-W3, exit 30 only), then `alarmExitMarker` (FX-W1); an error is rethrown.
+  FX-W1 built: `alarmExitMarker` (alarm step 6); `reg.registered` is set after the `alarm.json` write, so
+  a registration hold that throws after it (a 75 at the release) also passes `alarmExit`.

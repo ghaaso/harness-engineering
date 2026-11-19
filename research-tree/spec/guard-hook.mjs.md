@@ -83,6 +83,18 @@ ledger, so the cost does not grow with the run); checker: `queue/<b>/batch.json`
     quotes), then arguments made only of `[A-Za-z0-9_\-./:=]` or double-quoted strings of those plus
     space and `\`; `<n>` matches `^[a-z][a-z-]*$`, is not `lib`, and the file exists; else
     `bash-pattern`. No shell metacharacter (`;&|<>$'(){}*?!%^@,`, a backtick, a newline) ever passes.
+    Then **the allow list (FX-W1 step 5, R29; `stepAllowList`):** the script (the path's file name),
+    its mode (the third token when it is not a `--` token) and its flags (the name, up to `=`, of
+    every `--` token: `lib.parseArgs` reads each as a flag) must fit one of that script's production
+    forms in `EXEC_FORMS` [mode or none, required flags, other allowed flags], taken from each
+    script's spec ("## Command line") with the round-3 forms (`handover bind --nonce`, `replace fence
+    --if-unclaimed`, `watch --alarm --ensure --nonce`, `status --reconcile --arm-nonces`, `status
+    --deadman`); else `bash-pattern` with detail `flag not allowed: <script> <why>`, why one of
+    `--<flag>`, `(no production form)` (the hook itself), `without a mode`, `mode <m>`, `without
+    --<req>`, `<flags> together`. The test seams `TEST_SEAM_FLAGS` (`--once`, `--boot`, `--tick`,
+    `--now`, `--sleep-ms`, `--interval-ms`, `--free-mb`, `--no-intake`, and `--rng-seed`,
+    `--transcripts-root`) are in no form, so they are refused for every script (CONTRACT §1.2). The
+    alarm form also admits a bare `--alarm` (the as-built M2 call) until FX-W2 requires `--ensure`.
 13. agent: `subagent_type` present and in `agent_types` → pass; else `agent-type`.
 14. Allow: exit 0.
 
@@ -91,7 +103,7 @@ ledger, so the cost does not grow with the run); checker: `queue/<b>/batch.json`
 |---|---|---|---|---|---|---|
 | child, child-reviewing, canary | Read Glob Grep Write Edit Agent WebFetch ToolSearch | `{attempt}/` | `{attempt}/staging/` | reader | witnessed | none |
 | fresh-reviewer, control, stpa, fmea, mapper | Read Glob Grep Write | `{attempt}/` | `{attempt}/staging/` | — | none | none |
-| coordinator | Read Glob Grep Write Edit Agent Bash PowerShell ToolSearch + the host's session tools (owner lists them as `<prefix>*`) | `{root}/run/status.json`, `{root}/views/`, `{root}/store/objects/x_`, `{root}/completeness/gate.json`, `{root}/plan/`, `{root}/tcb/briefs/`, `{root}/tcb/README.md` | the coordinator paths of CONTRACT §2.1: `{root}/plan/questions/`, `{root}/plan/approaches.json`, `{root}/plan/protocols/`, `{root}/plan/analysis-plan.json`, `{root}/plan/cost-inputs.json`, `{root}/plan/tasks-plan.json`, `{root}/plan/plant-candidates/`, `{root}/plan/our-work/`, `{root}/plan/notes/` | checker, mapper | none | tcb-node |
+| coordinator | Read Glob Grep Write Edit Agent Bash PowerShell ToolSearch + the host's session tools (owner lists them as `<prefix>*`) | `{root}/run/status.json`, `{root}/views/`, `{root}/store/objects/x_`, `{root}/completeness/gate.json`, `{root}/plan/`, `{root}/tcb/briefs/`, `{root}/tcb/README.md` | the coordinator paths of CONTRACT §2.1: `{root}/plan/questions/`, `{root}/plan/approaches.json`, `{root}/plan/protocols/`, `{root}/plan/analysis-plan.json`, `{root}/plan/cost-inputs.json`, `{root}/plan/tasks-plan.json`, `{root}/plan/plant-candidates/`, `{root}/plan/our-work/`, `{root}/plan/notes/` | checker | none | tcb-node |
 | reader | WebSearch WebFetch ToolSearch StructuredOutput | — | — | — | any | none |
 | checker | Read StructuredOutput | `{root}/queue/{batch}/` | — | — | none | none |
 
@@ -142,7 +154,8 @@ the exit code is 0 or 2, stdout is empty, and on 2 stderr starts `[guard-hook] d
 - T5 Bash for child → `tool-denied`; coordinator `node tcb/status.mjs --root C:/r --ce 1`
   (cwd root) and the absolute quoted form → 0; `node tcb/x.mjs; del y`, `node -e 1`,
   `node tcb/../../a.mjs`, `node tcb/lib.mjs`, `node tcb/nosuch.mjs`, the old layout `node tcb/scripts/status.mjs` (relative or absolute), `$(x)`,
-  a newline → 2 `bash-pattern`.
+  a newline → 2 `bash-pattern`. (Its allowed calls are production forms, so they pass the FX-W1 allow
+  list unchanged; its denied ones fail the grammar before it.)
 - T6 Agent `subagent_type: reader` from a child → 0; `general-purpose` or absent → 2 `agent-type`;
   coordinator `checker` → 0, `reader` → 2.
 - T7 A helper call (`agent_type: reader`) in a child folder: WebFetch of any http URL → 0, Read of
@@ -174,6 +187,15 @@ the exit code is 0 or 2, stdout is empty, and on 2 stderr starts `[guard-hook] d
   `budget-spent` after 2 to 40 tries inside about that time; a throwing `create` → `write-failed`, a strange
   result → `internal`. Nothing is left at a denied name. (Runs in a checkout whose path has no `.claude` segment:
   under `.claude/` T2-T4, T11 and T13 deny every write `write-claude`.)
+
+- T16 FX-W1 allow list (in process, through `decide`): one production call of every form of every
+  script of `EXEC_FORMS`, with the round-3 forms and `--flag=value` spelling → allowed; each of the ten
+  test seams, as `--x v` and `--x=v`, added to a production call of every script → `bash-pattern`
+  `flag not allowed: <script> --<x>`; a mode flag's companions without it (`watch --ensure --nonce`,
+  `status --arm-nonces`), two modes together, no mode, a flag of another mode, an unknown flag, a
+  quoted `"--now"` and `guard-hook.mjs` itself → `bash-pattern` with the reason; and every `--flag`
+  each script's spec names under "## Command line" (except "no `--x`" mentions) is in a form of that
+  script or is a seam. (Named `FX-W1 allow list` in `tcb/test/guard-hook.test.mjs`.)
 
 ## Cannot be tested without the app (written, then `t.skip('needs-app: ...')`)
 - needs-app 1: the harness runs this hook before every tool call, helpers included, passes the

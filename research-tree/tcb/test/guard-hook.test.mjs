@@ -499,7 +499,7 @@ function casesT6(w) {
     list.push({ n: `${role} Agent reader (Agent not in its tools)`, role, tool: 'Agent', input: { subagent_type: 'reader', prompt: 'x' }, expect: 'tool-not-allowed' });
   }
   list.push({ n: 'coordinator Agent checker', role: 'coordinator', tool: 'Agent', input: { subagent_type: 'checker', prompt: 'x' }, expect: 0 });
-  list.push({ n: 'coordinator Agent mapper', role: 'coordinator', tool: 'Agent', input: { subagent_type: 'mapper', prompt: 'x' }, expect: 0 });
+  list.push({ n: 'coordinator Agent mapper (U3-F8: not a coordinator agent type)', role: 'coordinator', tool: 'Agent', input: { subagent_type: 'mapper', prompt: 'x' }, expect: 'agent-type' });
   list.push({ n: 'coordinator Agent reader', role: 'coordinator', tool: 'Agent', input: { subagent_type: 'reader', prompt: 'x' }, expect: 'agent-type' });
   list.push({ n: 'coordinator Agent without type', role: 'coordinator', tool: 'Agent', input: { prompt: 'x' }, expect: 'agent-type' });
   return list;
@@ -1148,10 +1148,13 @@ test('G1 bind by nonce: the first binder at ce strict-creates coord-session-<ce>
       cgCall(w, 'wrong nonce', 'Bash', bind(`--root ${rootF} --ce 2 --nonce ${'cd'.repeat(16)}`), 'stale-coordinator', { session: NEW_SESSION }),
       cgCall(w, 'wrong ce', 'Bash', bind(`--root ${rootF} --ce 1 --nonce ${CG_NONCE}`), 'stale-coordinator', { session: NEW_SESSION }),
       cgCall(w, 'another root', 'Bash', bind(`--root C:/other --ce 2 --nonce ${CG_NONCE}`), 'stale-coordinator', { session: NEW_SESSION }),
-      cgCall(w, 'an extra flag', 'Bash', bind(`${good} --now x`), 'stale-coordinator', { session: NEW_SESSION }),
+      // FX-W1's allow list (step 6, exec) runs before stepBind and stepCurrentSession (FIX-JOIN 2b rows 1-2): a test
+      // seam or a mode the script lacks is bash-pattern there; an extra flag the bind form admits reaches stepBind
+      cgCall(w, 'an extra flag', 'Bash', bind(`${good} --now x`), 'bash-pattern', { session: NEW_SESSION }),
+      cgCall(w, 'an extra flag the bind form admits', 'Bash', bind(`${good} --dry-run`), 'stale-coordinator', { session: NEW_SESSION }),
       cgCall(w, 'the session bound at ce 1 with the right nonce', 'Bash', bind(good), 'stale-coordinator'),
       cgCall(w, 'a caller id that is not a UUID', 'Bash', bind(good), 'stale-coordinator', { session: 's-fixture' }),
-      cgCall(w, 'status.mjs with the bind flags', 'Bash', { command: `node tcb/status.mjs bind ${good}` }, 'stale-coordinator', { session: NEW_SESSION }),
+      cgCall(w, 'status.mjs with the bind flags', 'Bash', { command: `node tcb/status.mjs bind ${good}` }, 'bash-pattern', { session: NEW_SESSION }),
     ];
     assert.deepEqual(await runCases(w, before, 1), []);
     assert.equal(fs.existsSync(file), false, 'no call above may bind');
@@ -1325,7 +1328,7 @@ const COORD = {
   tools_allow: ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Agent', 'Bash', 'PowerShell', 'ToolSearch'],
   read_prefixes: ['{root}/run/status.json', '{root}/views/', '{root}/store/objects/x_', '{root}/completeness/gate.json', '{root}/plan/', '{root}/tcb/briefs/', '{root}/tcb/README.md'],
   write_prefixes: ['{root}/plan/questions/', '{root}/plan/approaches.json', '{root}/plan/protocols/', '{root}/plan/analysis-plan.json', '{root}/plan/cost-inputs.json', '{root}/plan/tasks-plan.json', '{root}/plan/plant-candidates/', '{root}/plan/our-work/', '{root}/plan/notes/'],
-  agent_types: ['checker', 'mapper'],
+  agent_types: ['checker'],
   fetch: 'none',
   bash: 'tcb-node',
 };
@@ -1523,4 +1526,126 @@ test('needs-app 2: user-level denies bind every session and the // absolute form
 });
 test('needs-app 3: a session started in wt/<task>-e<e>/ obeys that folder\'s settings and agent files and no ancestor\'s', (t) => {
   t.skip('needs-app: needs the app (which settings files a session reads is decided by the harness)');
+});
+
+// FX-W1 step 5 (FIX-wake.md FX-W1, rev 4): the coordinator's exec calls carry production flags only.
+// In-process through decide(): every production form of the specs' command lines (with the round-3
+// forms) is allowed; every test seam, also as --flag=value, is refused for every script; a flag
+// that needs its mode flag is refused without it; and every flag that a spec's "## Command line"
+// names is in a form of its script or is a refused seam.
+test('FX-W1 allow list: production forms allowed, test seams refused for every script, mode flags need their form, every spec flag accounted for', async () => {
+  const m = await import(pathToFileURL(hookScript()).href);
+  assert.equal(typeof m.EXEC_FORMS, 'object', 'the hook exports its allow list');
+  const seams = ['once', 'boot', 'tick', 'now', 'sleep-ms', 'interval-ms', 'free-mb', 'no-intake', 'rng-seed', 'transcripts-root'];
+  assert.deepEqual([...m.TEST_SEAM_FLAGS].sort(), [...seams].sort());
+  const S = SESSION;
+  const T = 'C:/t/x.jsonl';
+  const R = '--root C:/r --ce 1';
+  const prod = [
+    'admit.mjs check --root C:/r --task f1-plan',
+    `audit.mjs ${R} --task f1-plan --epoch 1 --dry-run`,
+    `audit.mjs ${R} --coordinator --session ${S} --dry-run`,
+    `certify.mjs ${R} --task f1-plan --epoch 1 --dry-run`,
+    `check-queue.mjs ${R} --mode intake --field f1 --batch-size 12 --classes S1 --classes J2 --no-seeds --requeue --dry-run`,
+    `commit.mjs intake ${R} --task f1-plan --epoch 1 --dry-run`,
+    `commit.mjs record ${R} --task f1-plan --epoch 1 --step s1 --dry-run`,
+    `compare.mjs anon ${R} --dry-run`,
+    `compare.mjs score ${R} --scorer-transcript ${T} --dry-run`,
+    'cost.mjs compute --inputs plan/cost-inputs.json --text',
+    'cost.mjs predict --root C:/r --inputs plan/cost-inputs.json --g 2 --child-form a --s2 --actual 100',
+    `cost.mjs from-transcripts ${R} --dry-run`,
+    `fsck.mjs ${R} --dry-run`,
+    `gate.mjs cut ${R} --design plan/design.md --dry-run`,
+    `gate.mjs check ${R} --dry-run`,
+    `handover.mjs init --root C:/r --tcb-commit ${'a'.repeat(40)} --session ${S} --dry-run`,
+    `handover.mjs raise ${R} --dry-run`,
+    `handover.mjs bind ${R} --session ${S} --nonce ${'b'.repeat(32)} --dry-run`,
+    `harvest.mjs ${R} --task f1-plan --epoch 1 --dry-run`,
+    `promote.mjs ${R} --from witness --dry-run`,
+    `promote.mjs ${R} --batch b1 --transcript ${T} --dry-run`,
+    `promote.mjs revert ${R} --class J1 --dry-run`,
+    `protocol-freeze.mjs freeze ${R} --file plan/protocols/f1.json --dry-run`,
+    `protocol-freeze.mjs amend ${R} --file plan/protocols/f1.json --reason-code other --dry-run`,
+    `protocol-freeze.mjs plan ${R} --file plan/analysis-plan.json --dry-run`,
+    `render.mjs ${R} --dry-run`,
+    `replace.mjs plan ${R} --dry-run`,
+    `replace.mjs fence ${R} --task f1-plan --epoch 1 --reason crash --if-unclaimed --dry-run`,
+    `replace.mjs start ${R} --task f1-plan --epoch 1 --dry-run`,
+    `replace.mjs bind ${R} --task f1-plan --epoch 1 --session ${S} --dry-run`,
+    `seed.mjs plant ${R} --task f1-plan --k 3 --dry-run`,
+    `seed.mjs score ${R} --batch b1 --transcript ${T} --dry-run`,
+    `selftest.mjs run ${R} --jobs 1 --case-timeout-ms 60000 --only status --keep-failed --dry-run`,
+    `selftest.mjs canary ${R} --transcript ${T} --expect plan/expect.json --dry-run`,
+    `snap.mjs ${R} --url https://example.test/a --dry-run`,
+    `snap.mjs ${R} --new`,
+    `status.mjs ${R} --dry-run`,
+    `status.mjs --reconcile ${R} --arm-nonces ${'c'.repeat(32)} --dry-run`,
+    `status.mjs --endturn --acked-seq 3 ${R} --dry-run`,
+    'status.mjs --deadman --root C:/r',
+    `status.mjs intent open --key k-1 --subject s --text-file plan/notes/t.md ${R}`,
+    `status.mjs intent done --key k-1 ${R}`,
+    `status.mjs owner --act ruling --subject s --quote-file plan/notes/q.md ${R}`,
+    `status.mjs meter --pct 5 ${R}`,
+    `stop.mjs request ${R} --task f1-plan --epoch 1 --dry-run`,
+    `stop.mjs verify ${R} --task f1-plan --epoch 1 --dry-run`,
+    `tms.mjs ${R} --target f1-plan.s1 --target f1-plan.s2 --dry-run`,
+    `watch.mjs ${R}`,
+    `watch.mjs --alarm --ensure --nonce ${'d'.repeat(32)} ${R}`,
+    `watch.mjs --alarm ${R}`,
+    `watch.mjs --intake ${R}`,
+    `witness.mjs ${R} --card c_0123456789abcdef --dry-run`,
+    `status.mjs --root=C:/r --ce=1`,
+  ].map((c) => `node tcb/${c}`);
+  await withWorld({}, async (w) => {
+    const call = (command) => {
+      const { args, stdin } = buildInvocation(w, { role: 'coordinator', tool: 'Bash', input: { command } });
+      return m.decide(stdin, args);
+    };
+    const bad = [];
+    const want = (command, allow, detail) => {
+      const r = call(command);
+      if (allow && !r.allow) bad.push(`denied ${command}: ${r.code} ${r.detail}`);
+      if (!allow && (r.allow || r.code !== 'bash-pattern')) bad.push(`not bash-pattern ${command}: ${JSON.stringify(r)}`);
+      else if (!allow && detail && !r.detail.startsWith(detail)) bad.push(`detail of ${command}: ${r.detail}`);
+    };
+    for (const c of prod) want(c, true);
+    // every test seam, on every production form of every script (refute W1 M10c), in both spellings
+    const first = new Map();
+    for (const c of prod) {
+      const s = /^node tcb\/([a-z-]+)\.mjs/.exec(c)[1];
+      if (!first.has(s)) first.set(s, c);
+    }
+    assert.equal(first.size, Object.keys(m.EXEC_FORMS).length, 'a production form for every script of the list');
+    for (const c of prod) {
+      const s = /^node tcb\/([a-z-]+)\.mjs/.exec(c)[1];
+      for (const f of seams) {
+        want(`${c} --${f} 5`, false, `flag not allowed: ${s} --${f}`);
+        want(`${c} --${f}=2026-11-20T00:00:00.000Z`, false, `flag not allowed: ${s} --${f}`);
+      }
+    }
+    // a flag that belongs to another mode's form
+    want(`node tcb/watch.mjs --ensure --nonce ${'d'.repeat(32)} ${R}`, false, 'flag not allowed: watch without --alarm');
+    want(`node tcb/status.mjs --arm-nonces ${'c'.repeat(32)} ${R}`, false, 'flag not allowed: status without --reconcile');
+    want(`node tcb/status.mjs --reconcile --endturn --acked-seq 1 ${R}`, false, 'flag not allowed: status');
+    want(`node tcb/watch.mjs --alarm --intake ${R}`, false, 'flag not allowed: watch');
+    want(`node tcb/commit.mjs ${R} --task f1-plan --epoch 1`, false, 'flag not allowed: commit without a mode');
+    want(`node tcb/replace.mjs plan ${R} --task f1-plan`, false, 'flag not allowed: replace --task');
+    want(`node tcb/status.mjs ${R} --unknown-flag`, false, 'flag not allowed: status --unknown-flag');
+    want(`node tcb/status.mjs ${R} "--now"`, false, 'flag not allowed: status --now');
+    want(`node tcb/guard-hook.mjs --root C:/r --role coordinator`, false, 'flag not allowed: guard-hook (no production form)');
+    assert.deepEqual(bad, []);
+  });
+  // every --flag that a script's spec names under "## Command line" is in a form of that script or is a seam
+  const specDir = path.join(BUILD, 'spec');
+  const missing = [];
+  for (const [s, forms] of Object.entries(m.EXEC_FORMS)) {
+    const text = fs.readFileSync(path.join(specDir, `${s}.mjs.md`), 'utf8');
+    const sec = /^## Command line[^\n]*\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(text);
+    assert.ok(sec, `${s}: the spec has a "## Command line" section`);
+    // a flag the section names only to say the script has none ("no `--ce`", "No `--epoch`") is skipped
+    for (const [, f] of sec[1].replace(/\b[Nn]o `--[a-z][a-z0-9-]*`/g, '').matchAll(/--([a-z][a-z0-9-]*)/g)) {
+      if (!seams.includes(f) && !forms.some((x) => x[1].includes(f) || x[2].includes(f))) missing.push(`${s} --${f}`);
+    }
+  }
+  assert.deepEqual([...new Set(missing)], []);
 });

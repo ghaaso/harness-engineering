@@ -711,10 +711,14 @@ async function main() {
   const ledHead = LIB.ledgerHead(ROOT).seq;
   await sc('status', ['--endturn', '--acked-seq', String(ledHead)], { name: 'status --endturn: both wake sources run' });
   await sc('status', ['--endturn', '--acked-seq', String(ledHead + 5)], { exit: 1, code: 'acked-ahead', name: 'status --endturn with an acked seq beyond the ledger is refused' });
-  await sc('handover', ['raise'], { name: 'handover raise (drain, quiescent): ce 2', check: (r) => (rj(P('run', 'coord.json')).ce === 2 && /ce 2/.test(r.json.result?.brief || '') ? true : 'coord ' + JSON.stringify(rj(P('run', 'coord.json')))) });
+  const raised = await sc('handover', ['raise'], { name: 'handover raise (drain, quiescent): ce 2', check: (r) => (rj(P('run', 'coord.json')).ce === 2 && /ce 2/.test(r.json.result?.brief || '') ? true : 'coord ' + JSON.stringify(rj(P('run', 'coord.json')))) });
   await sc('status', [], { ce: 1, exit: 64, name: 'a stale ce is refused by every writing script (64)' });
   CE = 2;
-  await sc('handover', ['bind', '--session', COORD2_SID], { name: 'handover bind (successor session)' });
+  // FX-CGATE (FIX-fence part 3, steps 1-2): the successor takes the nonce from the raise's brief line; the hook's
+  // bind step names its session in run/coord-session-2.json (this process stands in for the hook); bind checks the nonce
+  const nonce = /--nonce ([0-9a-f]{32})/.exec(raised.json?.result?.brief || '')?.[1] ?? 'no-nonce-in-brief';
+  fs.writeFileSync(P('run', 'coord-session-2.json'), JSON.stringify({ session_id: COORD2_SID }));
+  await sc('handover', ['bind', '--nonce', nonce], { name: 'handover bind (successor session)', check: () => (rj(P('run', 'coord.json')).session === COORD2_SID && rj(P('run', 'coord.json')).successor_nonce === undefined ? true : 'coord ' + JSON.stringify(rj(P('run', 'coord.json')))) });
   await sc('gate', ['cut', '--design', designFile], { name: 'gate cut at ce 2: the design cut is identical, nothing new' });
   await sc('fsck', [], { name: 'fsck at ce 2' });
   return finish();

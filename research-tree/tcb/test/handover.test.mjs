@@ -249,7 +249,7 @@ const FOLDERS = [
   'review-in', 'completeness', 'sealed/heldout', 'sealed/seeds', 'sealed/plants', 'sealed/blind',
   '.snapshots/raw', '.snapshots/text', '.snapshots/meta', '.snapshots/by-url', 'wt',
 ];
-const GITIGNORE = ['wt/', '.snapshots/', 'sealed/', 'tmp/', 'run/*.lock', 'run/alarm.json', 'run/watcher.json', 'run/*.stale', 'run/*.orphan', '*.tmp'];
+const GITIGNORE = ['wt/', '.snapshots/', 'sealed/', 'tmp/', 'run/*.lock', 'run/alarm.json', 'run/watcher.json', 'run/arm/', 'run/*.stale', 'run/*.orphan', '*.tmp'];
 
 test('T1 init on a root with only tcb/: folders, .gitignore, .gitattributes, empty table, coord.json ce 1, one coord-init line', async () => {
   await withRoot({ bare: true }, async (ctx) => {

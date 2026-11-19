@@ -33,7 +33,7 @@ const RUN_DIRS = [
 ];
 const GITIGNORE_LINES = [
   'wt/', '.snapshots/', 'sealed/', 'tmp/', 'run/*.lock', 'run/alarm.json', 'run/watcher.json',
-  'run/*.stale', 'run/*.orphan', '*.tmp',
+  'run/arm/', 'run/*.stale', 'run/*.orphan', '*.tmp',
 ];
 const GITATTRIBUTES = '* -text\n';
 

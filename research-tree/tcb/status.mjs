@@ -401,8 +401,14 @@ async function computeStatus(root, th, ce, pre, facts, table, anomalies) {
   const head = headLine ? { seq: headLine.seq, hash: headLine.hash } : { seq: 0, hash: ZERO64 };
   const acked = readState(fileOf(root, 'acked'), 'acked.json');
   const ackedSeq = acked && Number.isInteger(acked.acked_seq) ? acked.acked_seq : 0;
-  const watcher = readState(fileOf(root, 'watcherJson'), 'watcher.json');
-  const alarm = readState(fileOf(root, 'alarm'), 'alarm.json');
+  // FX-W1 steps 1 and 4: the wake records re-read here (files only), corrupt is an anomaly, not 67.
+  const markers = lib.exitMarkers(root);
+  const wNow = sourceNow(fileOf(root, 'watcherJson'), pre.wake ? pre.wake.watcher : null, markers);
+  const aNow = sourceNow(fileOf(root, 'alarm'), pre.wake ? pre.wake.alarm : null, markers);
+  const watcher = wNow.rec;
+  const alarm = aNow.rec;
+  if (wNow.corrupt) anomalies.push({ code: 'state-corrupt', detail: { file: 'watcher.json' } });
+  if (aNow.corrupt) anomalies.push({ code: 'state-corrupt', detail: { file: 'alarm.json' } });
 
   const tr = pre.tr;
   const spentOf = (task, e) => pre.spend.get(`${task}|${e}`)?.total ?? 0;
@@ -471,12 +477,13 @@ async function computeStatus(root, th, ce, pre, facts, table, anomalies) {
     });
   }
 
-  // Wake sources.
-  const wAlive = aliveIn(pre.procList, watcher) === true;
-  const aAlive = aliveIn(pre.procList, alarm) === true;
-  if (watcher && pre.procList && !wAlive) anomalies.push({ code: 'watcher-dead', detail: { pid: watcher.pid ?? null } });
+  // Wake sources (FX-W1): alive true, false (dead: absent, gone, or an exit marker) or null (unknown).
+  const tri = (s) => (s === 'alive' ? true : s === 'unknown' ? null : false);
+  const wAlive = tri(wNow.state);
+  const aAlive = tri(aNow.state);
+  if (watcher && wNow.state === 'dead') anomalies.push({ code: 'watcher-dead', detail: { pid: watcher.pid ?? null } });
   if (watcher && watcher.ce !== coord.ce) anomalies.push({ code: 'watcher-stale-ce', detail: { ce: watcher.ce ?? null } });
-  if (alarm && pre.procList && !aAlive) anomalies.push({ code: 'alarm-dead', detail: { pid: alarm.pid ?? null } });
+  if (alarm && aNow.state === 'dead') anomalies.push({ code: 'alarm-dead', detail: { pid: alarm.pid ?? null } });
 
   // Lock orphans.
   let runEntries = [];
@@ -611,7 +618,9 @@ async function runBuild(ctx, root, flags, reconcile, dry) {
   const facts = lib.edgeFacts(flags);
   const proc = lib.realProc({ exe: th.get('proc_exe') });
   const table0 = lib.readTasks(root);
+  const wake0 = readWake(root); // FX-W1 step 1: the wake records, read before the process list
   const pre = await gatherFacts(root, th, table0, proc, { reconcile });
+  pre.wake = judgeWake(wake0, pre.procList, lib.exitMarkers(root));
 
   if (dry) {
     const anomalies = [...pre.anomalies];
@@ -683,7 +692,34 @@ async function hold2ArmSlots(hold, handle) { // eslint-disable-line no-unused-va
 // FX-W1 (FIX-JOIN point 6), in hold 2 after hold2ArmSlots: an exit marker is removed only when
 // neither a slot record nor hold.slots names its (pid, start_time); `unarmed-*` records of the
 // current ce stay.
-async function hold2PruneMarkers(hold, handle) { // eslint-disable-line no-unused-vars
+// The names are read after the folder is listed, so a marker that appears later is not touched, and
+// a marker is kept when alarm.json, a slot file or hold.slots names it. A dry run removes nothing.
+async function hold2PruneMarkers(hold, handle) {
+  if (hold.dry) return;
+  if (handle) handle.assertHeld();
+  const dir = lib.paths(hold.root).arm;
+  let names = [];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  const keep = new Set();
+  const name = (r) => {
+    if (r && typeof r === 'object' && r.pid !== undefined && r.pid !== null) keep.add(lib.markerKey(r.pid, r.start_time));
+  };
+  name(readLoose(fileOf(hold.root, 'alarm')));
+  for (const n of names) if (/^slot-[^.]+\.json$/.test(n)) name(readLoose(path.join(dir, n)));
+  for (const s of Array.isArray(hold.slots) ? hold.slots : []) name(s);
+  for (const n of names) {
+    const m = /^exited-([0-9A-Za-z-]+)\.json$/.exec(n);
+    if (!m || keep.has(m[1])) continue;
+    try {
+      fs.unlinkSync(path.join(dir, n));
+    } catch {
+      /* removed already */
+    }
+  }
 }
 
 // FX-W4: `status.mjs --deadman --root R` (read-only, no lock, no ce). Runs before the ce check and
@@ -692,18 +728,73 @@ async function deadmanRun(ctx, flags, dry) { // eslint-disable-line no-unused-va
   return null;
 }
 
+// ---------------------------------------------------------------- FX-W1: the wake sources' liveness
+
+// lib.liveness's `proc` over one process list taken outside every lock: true, false, or null when
+// the list is unavailable.
+function listProc(procList) {
+  return { alive: (pid, startTime) => aliveIn(procList, { pid, start_time: startTime }) };
+}
+
+// A wake source's record from its bytes: absent (no file), corrupt (unreadable, not JSON, UTF-16 or
+// not an object) or the record.
+function readSource(file) {
+  let bytes = null;
+  try {
+    bytes = fs.readFileSync(file);
+  } catch (e) {
+    if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return { file, bytes: null, rec: null, corrupt: false };
+    return { file, bytes: null, rec: null, corrupt: true };
+  }
+  if (bytes.length >= 2 && ((bytes[0] === 0xff && bytes[1] === 0xfe) || (bytes[0] === 0xfe && bytes[1] === 0xff))) {
+    return { file, bytes, rec: null, corrupt: true };
+  }
+  const b = bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? bytes.subarray(3) : bytes;
+  let rec = null;
+  try {
+    rec = JSON.parse(b.toString('utf8'));
+  } catch {
+    rec = null;
+  }
+  const ok = !!rec && typeof rec === 'object' && !Array.isArray(rec);
+  return { file, bytes, rec: ok ? rec : null, corrupt: !ok };
+}
+
+// FX-W1 step 1, outside every lock: the watcher's and the alarm's records, read BEFORE the process
+// list is taken (wake0), judged after it (judgeWake): a record that predates the list names a
+// process the list shows if it lives. Absent or corrupt: dead.
+function readWake(root) {
+  return { watcher: readSource(fileOf(root, 'watcherJson')), alarm: readSource(fileOf(root, 'alarm')) };
+}
+function judgeWake(wake0, procList, markers) {
+  const judge = (s) => ({ ...s, state: lib.liveness(s.rec, listProc(procList), markers) });
+  return { watcher: judge(wake0.watcher), alarm: judge(wake0.alarm) };
+}
+
+// FX-W1 step 1, inside a hold (files only): the verdict `j` counts only while the record's bytes
+// are unchanged. A marker for the record now: dead. Changed bytes: unknown (that record was in no
+// list). Absent or corrupt now: dead.
+function sourceNow(file, j, markers) {
+  const s = readSource(file);
+  if (!s.rec) return { ...s, state: 'dead' };
+  if (markers.has(lib.markerKey(s.rec.pid, s.rec.start_time))) return { ...s, state: 'dead' };
+  if (j && j.bytes && s.bytes.equals(j.bytes)) return { ...s, state: j.state };
+  return { ...s, state: 'unknown' };
+}
+
 // M2 (CONTRACT decision 40): reconcile is the first act of every turn, so it asks for the alarm
-// whenever none of this ce is known to live (absent, another ce, dead, or the process list
-// unavailable). The coordinator then starts `watch.mjs --alarm` before anything else, and a turn
-// that dies before its endturn still leaves a wake source. Nothing is started or killed here.
+// whenever none of this ce is known to live (absent, another ce, corrupt, an exit marker, or gone
+// from the process list). The coordinator then starts `watch.mjs --alarm` before anything else, and
+// a turn that dies before its endturn still leaves a wake source. Nothing is started or killed here.
+// FX-W1 (D1 at S:596): an unavailable list is unknown, not dead, and asks nothing.
 function armAtStart(root, ce, procList, res) {
   const alarm = readLoose(fileOf(root, 'alarm'));
-  const alive = alarm && alarm.ce === ce ? aliveIn(procList, alarm) : false;
-  if (alive === true) return res;
+  const state = alarm && alarm.ce === ce ? lib.liveness(alarm, listProc(procList), lib.exitMarkers(root)) : 'dead';
+  if (state !== 'dead') return res;
   return {
     exit: 1,
     result: { ...res.result, arm: 'alarm' },
-    reasons: [{ code: 'alarm-missing', detail: { ce: alarm ? alarm.ce ?? null : null, pid: alarm ? alarm.pid ?? null : null, alive } }],
+    reasons: [{ code: 'alarm-missing', detail: { ce: alarm ? alarm.ce ?? null : null, pid: alarm ? alarm.pid ?? null : null, alive: false, state } }],
   };
 }
 
@@ -717,13 +808,6 @@ async function runEndturn(ctx, root, flags, dry) {
   const th = lib.thresholds(root);
   const facts = lib.edgeFacts(flags);
   const proc = lib.realProc({ exe: th.get('proc_exe') });
-  let procList = null;
-  try {
-    procList = await proc.list();
-    if (!Array.isArray(procList)) procList = null;
-  } catch {
-    procList = null;
-  }
 
   const step1 = (handle) => {
     const { lines } = lib.readLedger(root);
@@ -746,22 +830,36 @@ async function runEndturn(ctx, root, flags, dry) {
     return { exit: 1, result: { acked_seq: null, written: false }, reasons: [{ code: refusal.code, detail: refusal.detail }] };
   }
 
-  // Step 2: the two wake sources (checked, never started or killed).
-  const watcher = readState(fileOf(root, 'watcherJson'), 'watcher.json');
-  const alarm = readState(fileOf(root, 'alarm'), 'alarm.json');
+  // Step 2 (FX-W1 step 3): the two wake sources, each alive, dead or unknown; checked, never started
+  // or killed. The records are read first (corrupt counts as absent, not 67), then the process list
+  // is taken, so a record names a process the list shows if it lives; all outside every lock.
+  const watcher = readLoose(fileOf(root, 'watcherJson'));
+  const alarm = readLoose(fileOf(root, 'alarm'));
   const wlock = readLoose(fileOf(root, 'watcherLock'));
   const wFiles = !!watcher && watcher.ce === ce && !!wlock && Number(wlock.pid) === Number(watcher.pid) && lib.sameStartTime(wlock.start_time, watcher.start_time);
   const aFiles = !!alarm && alarm.ce === ce;
-  const wAlive = wFiles ? aliveIn(procList, watcher) : false;
-  const aAlive = aFiles ? aliveIn(procList, alarm) : false;
-  const result = { acked_seq: K, written: !dry, watcher: wAlive === true, alarm: aAlive === true };
-  if (wAlive === null || aAlive === null) {
-    return { exit: 2, result, reasons: [{ code: 'proc-unavailable', detail: null }] };
+  let procList = null;
+  try {
+    procList = await proc.list();
+    if (!Array.isArray(procList)) procList = null;
+  } catch {
+    procList = null;
   }
+  const markers = lib.exitMarkers(root);
+  const sources = {
+    watcher: wFiles ? lib.liveness(watcher, listProc(procList), markers) : 'dead',
+    alarm: aFiles ? lib.liveness(alarm, listProc(procList), markers) : 'dead',
+  };
+  const result = { acked_seq: K, written: !dry, watcher: sources.watcher === 'alive', alarm: sources.alarm === 'alive', sources };
+  const missing = (rec) => ({ ce: rec && typeof rec === 'object' ? rec.ce ?? null : null, pid: rec && typeof rec === 'object' ? rec.pid ?? null : null, state: 'dead' });
   const reasons = [];
-  if (wAlive !== true) reasons.push({ code: 'watcher-missing', detail: watcher ? { ce: watcher.ce ?? null, pid: watcher.pid ?? null } : null });
-  if (aAlive !== true) reasons.push({ code: 'alarm-missing', detail: alarm ? { ce: alarm.ce ?? null, pid: alarm.pid ?? null } : null });
-  return { exit: reasons.length ? 1 : 0, result, reasons };
+  if (sources.watcher === 'dead') reasons.push({ code: 'watcher-missing', detail: missing(watcher) });
+  if (sources.alarm === 'dead') reasons.push({ code: 'alarm-missing', detail: missing(alarm) });
+  const unknown = ['watcher', 'alarm'].filter((k) => sources[k] === 'unknown');
+  // exit 1 when any source is dead; 2 only when none is dead and some is unknown; else 0.
+  if (unknown.length) reasons.push({ code: 'proc-unavailable', detail: { unknown } });
+  const anyDead = sources.watcher === 'dead' || sources.alarm === 'dead';
+  return { exit: anyDead ? 1 : unknown.length ? 2 : 0, result, reasons };
 }
 
 // ---------------------------------------------------------------- intent, owner, meter

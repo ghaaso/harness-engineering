@@ -635,8 +635,111 @@ function stepClaim(pass) {
   if (r === 'different' && !held()) throw new Deny('claim-invalid', file);
 }
 
-// FX-W1: the exec allow list, after the tcb-node grammar check (step 6).
-function stepAllowList(pass) { // eslint-disable-line no-unused-vars
+// FX-W1 step 5 (rev 4; FIX-wake.md FX-W1): the coordinator's production calls, per script, as forms
+// [mode (null: none), required flags, other allowed flags], from each spec's "## Command line" with
+// the round-3 forms added (handover bind --nonce, replace fence --if-unclaimed, watch --alarm
+// --ensure --nonce, status --reconcile --arm-nonces, status --deadman). Departure W1-2: the alarm
+// form also admits a bare --alarm (as built, M2) until FX-W2 makes --ensure required. A script
+// with no form (the hook itself) is refused.
+const RC = ['root', 'ce'];
+export const EXEC_FORMS = Object.freeze({
+  admit: [['check', [], ['root', 'task']]],
+  audit: [[null, [], [...RC, 'task', 'epoch', 'dry-run']], [null, ['coordinator'], [...RC, 'session', 'dry-run']]],
+  certify: [[null, [], [...RC, 'task', 'epoch', 'dry-run']]],
+  'check-queue': [[null, [], [...RC, 'mode', 'field', 'batch-size', 'classes', 'no-seeds', 'requeue', 'dry-run']]],
+  commit: [['intake', [], [...RC, 'task', 'epoch', 'dry-run']], ['record', [], [...RC, 'task', 'epoch', 'step', 'dry-run']]],
+  compare: [['anon', [], [...RC, 'dry-run']], ['score', [], [...RC, 'scorer-transcript', 'dry-run']]],
+  cost: [
+    ['compute', [], ['inputs', 'text']],
+    ['predict', [], ['root', 'inputs', 'g', 'child-form', 's2', 'actual']],
+    ['from-transcripts', [], [...RC, 'dry-run']],
+  ],
+  fsck: [[null, [], [...RC, 'dry-run']]],
+  gate: [['cut', [], [...RC, 'design', 'dry-run']], ['check', [], [...RC, 'dry-run']]],
+  handover: [
+    ['init', [], ['root', 'tcb-commit', 'session', 'dry-run']],
+    ['raise', [], [...RC, 'dry-run']],
+    ['bind', [], [...RC, 'session', 'nonce', 'dry-run']],
+  ],
+  harvest: [[null, [], [...RC, 'task', 'epoch', 'dry-run']]],
+  promote: [[null, [], [...RC, 'from', 'dry-run']], [null, [], [...RC, 'batch', 'transcript', 'dry-run']], ['revert', [], [...RC, 'class', 'dry-run']]],
+  'protocol-freeze': [
+    ['freeze', [], [...RC, 'file', 'dry-run']],
+    ['plan', [], [...RC, 'file', 'dry-run']],
+    ['amend', [], [...RC, 'file', 'reason-code', 'dry-run']],
+  ],
+  render: [[null, [], [...RC, 'dry-run']]],
+  replace: [
+    ['plan', [], [...RC, 'dry-run']],
+    ['fence', [], [...RC, 'task', 'epoch', 'reason', 'if-unclaimed', 'dry-run']],
+    ['start', [], [...RC, 'task', 'epoch', 'dry-run']],
+    ['bind', [], [...RC, 'task', 'epoch', 'session', 'dry-run']],
+  ],
+  seed: [['plant', [], [...RC, 'task', 'k', 'dry-run']], ['score', [], [...RC, 'batch', 'transcript', 'dry-run']]],
+  selftest: [
+    ['run', [], [...RC, 'jobs', 'case-timeout-ms', 'only', 'keep-failed', 'dry-run']],
+    ['canary', [], [...RC, 'transcript', 'expect', 'dry-run']],
+  ],
+  snap: [[null, [], [...RC, 'url', 'new', 'dry-run']]],
+  status: [
+    [null, [], [...RC, 'dry-run']],
+    [null, ['reconcile'], [...RC, 'arm-nonces', 'dry-run']],
+    [null, ['endturn'], [...RC, 'acked-seq', 'dry-run']],
+    [null, ['deadman'], ['root']],
+    ['intent', [], [...RC, 'key', 'subject', 'text-file']],
+    ['owner', [], [...RC, 'act', 'subject', 'quote-file']],
+    ['meter', [], [...RC, 'pct']],
+  ],
+  stop: [['request', [], [...RC, 'task', 'epoch', 'dry-run']], ['verify', [], [...RC, 'task', 'epoch', 'dry-run']]],
+  tms: [[null, [], [...RC, 'target', 'dry-run']]],
+  watch: [[null, [], [...RC]], [null, ['alarm'], [...RC, 'ensure', 'nonce']], [null, ['intake'], [...RC]]],
+  witness: [[null, [], [...RC, 'card', 'dry-run']]],
+});
+// The test seams, refused for every script: the eight of FX-W1 step 5, and rng-seed and
+// transcripts-root, which the specs also label test seams (departure W1-3).
+export const TEST_SEAM_FLAGS = Object.freeze(['once', 'boot', 'tick', 'now', 'sleep-ms', 'interval-ms', 'free-mb', 'no-intake', 'rng-seed', 'transcripts-root']);
+
+// The tokens of a command that passed checkTcbNode, by its own token rule (kept apart from it).
+function execTokens(command) {
+  const cmd = String(command).trim();
+  const out = [];
+  const re = /\s*(?:"([A-Za-z0-9_\-./:= \\]*)"|([A-Za-z0-9_\-./:=]+))(?=\s|$)/y;
+  let pos = 0;
+  while (pos < cmd.length) {
+    re.lastIndex = pos;
+    const m = re.exec(cmd);
+    if (!m) return null;
+    out.push(m[1] !== undefined ? m[1] : m[2]);
+    pos = re.lastIndex;
+  }
+  return out;
+}
+
+// FX-W1: the exec allow list, after the tcb-node grammar check (step 6). The script is the file name
+// of the second token, the mode the third token when it is not a flag, the flags the names (up to
+// `=`) of every `--` token: the scripts' parser (lib.parseArgs) reads every `--` token as a flag.
+// Allowed when one form of the script has that mode, all its required flags and no other flag.
+function stepAllowList(pass) {
+  const tokens = execTokens(pass.access.command);
+  if (!tokens || tokens.length < 2) throw new Deny('bash-pattern', 'flag not allowed: no script');
+  const script = tokens[1].split(/[\\/]/).pop().replace(/\.mjs$/, '');
+  const mode = tokens.length > 2 && !tokens[2].startsWith('--') ? tokens[2] : null;
+  const flags = tokens.filter((t) => t.startsWith('--')).map((t) => t.slice(2).split('=')[0]);
+  const forms = Object.prototype.hasOwnProperty.call(EXEC_FORMS, script) ? EXEC_FORMS[script] : [];
+  const has = (f, x) => f[1].includes(x) || f[2].includes(x);
+  if (forms.some((f) => f[0] === mode && f[1].every((r) => flags.includes(r)) && flags.every((x) => has(f, x)))) return;
+  const seam = flags.find((x) => TEST_SEAM_FLAGS.includes(x));
+  const same = forms.filter((f) => f[0] === mode);
+  const stray = flags.find((x) => !same.some((f) => has(f, x)));
+  const near = same.find((f) => flags.every((x) => has(f, x)));
+  let why;
+  if (seam !== undefined) why = `--${seam}`;
+  else if (!forms.length) why = '(no production form)';
+  else if (!same.length) why = mode === null ? 'without a mode' : `mode ${mode}`;
+  else if (stray !== undefined) why = `--${stray}`;
+  else if (near) why = `without --${near[1].find((r) => !flags.includes(r))}`;
+  else why = `${flags.map((x) => `--${x}`).join(' ')} together`;
+  throw new Deny('bash-pattern', `flag not allowed: ${script} ${why}`);
 }
 
 // FX-OUT, child side (FIX-fence.md section 1, "Steps, child side" 2-4): a task role's Write of READY

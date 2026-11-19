@@ -914,14 +914,22 @@ async function runAlarm(ctx, root, flags) {
   let token = armToken(root);
   const record = { schema_version: 1, pid: self.pid, start_time: self.start_time, ce, armed_at: isoOf(facts.now), sleep_ms: sleepMs };
   // the alarm's registration, for the round-3 steps (S0.5): handle is set in the hold only
-  const reg = { root, ce, th, proc, flags, facts, self, record, handle: null };
-  await lib.withRunLock(root, lockOpts(th, ce, proc, facts.now), async (handle) => {
-    handle.assertHeld();
-    reg.handle = handle;
-    alarmSlotTurnSeq(reg);
-    alarmRegisterSlot(reg);
-    lib.writeAtomic(fileOf(root, 'alarm'), JSON.stringify(record) + '\n');
-  });
+  const reg = { root, ce, th, proc, flags, facts, self, record, handle: null, registered: false };
+  try {
+    await lib.withRunLock(root, lockOpts(th, ce, proc, facts.now), async (handle) => {
+      handle.assertHeld();
+      reg.handle = handle;
+      alarmSlotTurnSeq(reg);
+      alarmRegisterSlot(reg);
+      lib.writeAtomic(fileOf(root, 'alarm'), JSON.stringify(record) + '\n');
+      reg.registered = true;
+    });
+  } catch (e) {
+    reg.handle = null;
+    // FX-W1: alarm.json written, then the hold failed (its lock lost at the release, 75): an exit after registration
+    if (reg.registered) alarmExit(reg, e && Number.isInteger(e.exit) ? e.exit : 70);
+    throw e;
+  }
   reg.handle = null;
   const result = { run: 'alarm', previous, armed: record, rearms: 0 };
   let out = null;
@@ -979,7 +987,16 @@ function alarmUnarmedRecord(reg) { // eslint-disable-line no-unused-vars
 }
 
 // FX-W1: the exit marker run/arm/exited-<pt>.json {ce, exit, at}, a lock-free strict create.
-function alarmExitMarker(reg, exit) { // eslint-disable-line no-unused-vars
+// It makes run/arm/ when absent. A failure costs one stderr line and leaves the exit code as it was:
+// readers then judge this alarm by the process list alone.
+function alarmExitMarker(reg, exit) {
+  try {
+    const at = isoOf(lib.edgeFacts(reg.flags).now);
+    const file = lib.paths(reg.root).armExited(reg.self.pid, reg.self.start_time);
+    lib.createExclusive(file, JSON.stringify({ ce: reg.ce, exit, at }) + '\n');
+  } catch (e) {
+    process.stderr.write(`watch --alarm: exit marker not written: ${(e && (e.code || e.message)) || e}\n`);
+  }
 }
 
 // FX-W6: the act-due `idle-child` (idle_ticks) and `age-cap` (attempt_max_ticks) for the coordinator,
