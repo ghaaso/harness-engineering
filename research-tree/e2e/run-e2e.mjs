@@ -300,6 +300,7 @@ const readsOf = (folder, limit = 12) => [path.join(folder, 'in', 'brief.md'), ..
 
 async function bind(a, name) {
   writeTranscript(a.file, { sessionId: a.sid, cwd: a.folder, calls: [readCall(path.join(a.folder, 'in', 'brief.md'))] });
+  put('claim.json', LIB.claimRecord(a.sid), a.folder); // FX-CLAIM: the hook's claim at the session's first tool call, simulated like the transcript
   return sc('replace', ['bind', '--task', a.task, '--epoch', String(a.e), '--session', a.sid], { boot: true, name: `${name || a.task}: replace bind e${a.e}` });
 }
 const ready = (a, step) => put(path.join('wt', `${a.task}-e${a.e}`, 'staging', 'READY.json'), { kind: 'ready', task: a.task, epoch: a.e, step }, ROOT);
@@ -470,6 +471,7 @@ async function main() {
   // the session start is the app's: a transcript whose cwd is the folder, found by --reconcile
   writeTranscript(R.file, { sessionId: R.sid, cwd: R.folder, calls: [readCall(path.join(R.folder, 'in', 'brief.md'))] });
   await sc('status', ['--reconcile'], { free: true, exit: 1, code: 'alarm-missing', name: 'f1-research: status --reconcile finds the transcript by folder', check: () => (rowOf('f1-research').step === 'started' ? true : 'step ' + rowOf('f1-research').step) });
+  put('claim.json', LIB.claimRecord(R.sid), R.folder); // FX-CLAIM: the hook's claim at the session's first tool call, simulated like the transcript
   await sc('replace', ['bind', '--task', 'f1-research', '--epoch', '1', '--session', R.sid], { boot: true, name: 'f1-research: replace bind (started -> bound)' });
   // the guard hook (a pure decision script: stdin JSON, exit 0 allow, 2 deny)
   const hook = (tool, input) => JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: tool, tool_input: input, cwd: R.folder, session_id: R.sid, transcript_path: R.file });

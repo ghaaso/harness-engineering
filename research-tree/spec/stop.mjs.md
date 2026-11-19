@@ -133,3 +133,10 @@ transcript flush timing within `stop_verify_deltas` ticks.
 ## FX-CLAIM (round 3)
 
 `request` (FX-CLAIM step 6, rev 5 point 1): a tombstone confirms at once only with no folder session visible; otherwise stop-requested with `sessions` (every folder session) in the line; a session claim is the named session. Test: T3b.
+
+## FX-REDO: a missing ledger line after a death (FIX-fence section 5)
+
+The row is written before its line, so a death between the two leaves the row moved and the line missing. The mode's own repeat is the redo, from the row (the after-image): only at the exact post-state, inside the mode's hold, the missing line is appended with `data.redo: true` and the answer is exit 0 with `result.repeat` true and `result.redo` (true when a line was written; a dry run writes nothing). Elsewhere the old answer stands.
+
+- `request` at stop-requested: the `stop-request` line (the target attempt's session, else the folder session). At stopped (both modes): the confirmed `stop` line of the target attempt (`stop` confirmed), `zombie_tokens` null (0 for a committed row). `verify` at stopped takes the run lock only when that line looks missing, and reads the row again under it.
+- Test: `tcb/test/redo.test.mjs`.

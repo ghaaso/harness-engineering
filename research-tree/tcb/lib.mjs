@@ -1353,6 +1353,10 @@ export function acquireLock(root, name, opts = {}) {
   record.acquired_at = now === undefined ? null : now instanceof Date ? now.toISOString() : now;
   const bytes = Buffer.from(JSON.stringify(record), 'utf8');
   const judged = new Map(); // nonce -> alive verdict, so one holder costs one process query
+  // FX-W7 step 1: watcher.json as it was when the watcher.lock holder was judged (read before the
+  // judgement), so the break under the run lock can see whether the holder wrote since.
+  const stateFile = name === 'watcher.lock' ? path.join(runDir, 'watcher.json') : null;
+  const judgedState = new Map(); // nonce -> stateSnapshot(stateFile)
 
   const tryCreate = () => {
     let fd;
@@ -1376,6 +1380,7 @@ export function acquireLock(root, name, opts = {}) {
     if (!proc || typeof proc.alive !== 'function' || !held || !Number.isInteger(held.pid)) return false;
     const key = String(held.nonce);
     if (!judged.has(key)) {
+      if (stateFile) judgedState.set(key, stateSnapshot(stateFile));
       let a = null;
       try {
         a = proc.alive(held.pid, held.start_time ?? null);
@@ -1424,9 +1429,16 @@ export function acquireLock(root, name, opts = {}) {
       if (missing) {
         if (++spins < 1000) continue; // released between our create and read
       } else if (held && seen > judgeAfter && isStale(held)) {
-        const out = breakStep(name, () => breakStale(file, held, heldBytes, nonce, bytes));
+        const key = String(held.nonce);
+        const out = breakStep({ root: R, name, file, heldBytes, stateFile, state: judgedState.get(key), lockOpts: { script, ce, proc, now, retries, retryMs, ctx } },
+          () => breakStale(file, held, heldBytes, nonce, bytes));
         if (out === 'held') return finish(held);
-        if (++spins < 1000) continue;
+        if (out === 'progress') {
+          // The holder wrote watcher.json after it was judged dead: judge it again after a new run of sightings.
+          judged.delete(key);
+          lastSeen = null;
+          seen = 0;
+        } else if (++spins < 1000) continue;
       } else if (!held && heldBytes && retries >= LOCK_UNREADABLE_MIN_RETRIES && seen > retries) {
         // Unchanged and unreadable for the whole retry budget: no holder ever finished writing it.
         const out = breakStale(file, null, heldBytes, nonce, bytes);
@@ -2566,9 +2578,11 @@ function hidden(obj, key, value) {
  * Entries keep the contract's shapes; two extras are non-enumerable (absent from JSON and deep
  * equality): `line` on every tool use, tool result and structured entry (the 1-based line of the
  * parse, the file's line when fromByte is 0; harvest's `source.line`), and `open: true` on a turn end
- * that the end of the file closed rather than a user record.
+ * that the end of the file closed rather than a user record. Two more are non-enumerable (FX-W6):
+ * `tail`, the tail state (tailState), continued from the option `tail` when the parse resumes at
+ * fromByte without a reset, and `kind`, the kind of the tail (transcriptKind).
  */
-export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
+export function parseTranscript(file, { fromByte = 0, lastCall = null, tail = null } = {}) {
   let start = Number.isInteger(fromByte) && fromByte > 0 ? fromByte : 0;
   let reset = false;
   try {
@@ -2593,6 +2607,7 @@ export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
   let firstCall = true;
   let lineNo = 0; // 1-based line of the parse (the file's line number when fromByte is 0)
   const prevId = start > 0 && lastCall && typeof lastCall.id === 'string' ? lastCall.id : null;
+  const tl = tailState(start > 0 ? tail : null); // FX-W6: continued only when the parse resumes
 
   const closeRun = (open) => {
     if (!run) return;
@@ -2665,6 +2680,7 @@ export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
         }
         firstCall = false;
       }
+      tailOnAssistant(tl, id, msg, content);
       const key = id ?? `line:${lineNo}`;
       if (!run) run = { lastId: key, ts, texts: [] };
       if (run.lastId !== key) {
@@ -2696,11 +2712,13 @@ export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
           }
         }
       }
+      tailOnUser(tl, rec, msg.content);
       if (!isToolResult) closeRun(false);
       return;
     }
     if (rec.type === 'attachment') {
       const a = rec.attachment;
+      tailOnAttachment(tl, a);
       if (a && typeof a === 'object' && a.type === 'structured_output') {
         const item = { data: a.data === undefined ? null : a.data };
         const tid = a.toolUseID ?? a.toolUseId ?? a.tool_use_id;
@@ -2748,6 +2766,7 @@ export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
     }
   }
   closeRun(true);
+  hidden(res, 'tail', tl);
   hidden(res, 'kind', transcriptKind(res));
   return res;
 }
@@ -3971,11 +3990,44 @@ function armedCheck(root, handle) { // eslint-disable-line no-unused-vars
 }
 
 /**
- * breakStep(name, doBreak) -> doBreak(): acquireLock's break of a lock judged stale (FX-W7 fills it:
- * the break of watcher.lock under the run lock). The unreadable-lock break does not pass here.
+ * breakStep(c, doBreak) -> doBreak() or 'gone' | 'changed' | 'progress': acquireLock's break of a lock
+ * judged stale. run.lock: doBreak() at once. watcher.lock (FX-W7 step 1, lock fencing): the holder was
+ * judged dead outside every lock; the waiter now takes run.lock (c.lockOpts: the caller's retries, so
+ * a busy run lock ends in lock-busy 75), re-reads watcher.lock and watcher.json, and breaks only when
+ * both are byte-for-byte as they were at the judgement (c.heldBytes, c.state). A watcher writes
+ * watcher.json only inside a run-lock hold after its assertHeld, so a holder broken here cannot write
+ * again. 'progress': watcher.json changed, the holder is judged again. The unreadable-lock break
+ * (LR-4) does not pass here and keeps its rule.
  */
-function breakStep(name, doBreak) { // eslint-disable-line no-unused-vars
-  return doBreak();
+function breakStep(c, doBreak) {
+  if (c.name !== 'watcher.lock') return doBreak();
+  const run = acquireLock(c.root, 'run.lock', c.lockOpts);
+  try {
+    const cur = readLockRecord(c.file);
+    if (cur.missing) return 'gone';
+    if (!cur.bytes || !c.heldBytes || !cur.bytes.equals(c.heldBytes)) return 'changed';
+    if (!sameSnapshot(c.state, stateSnapshot(c.stateFile))) return 'progress';
+    run.assertHeld();
+    return doBreak();
+  } finally {
+    run.release();
+  }
+}
+
+/** {ok: true, bytes: Buffer | null (absent)} of a file, or {ok: false} when it cannot be read. */
+function stateSnapshot(file) {
+  try {
+    return { ok: true, bytes: readBytes(file) };
+  } catch (e) {
+    return e && e.code === 'ENOENT' ? { ok: true, bytes: null } : { ok: false };
+  }
+}
+
+/** Two snapshots are the same only when both were read and hold the same bytes (or both absent). */
+function sameSnapshot(a, b) {
+  if (!a || !b || !a.ok || !b.ok) return false;
+  if (a.bytes === null || b.bytes === null) return a.bytes === b.bytes;
+  return a.bytes.equals(b.bytes);
 }
 
 /**
@@ -3998,10 +4050,118 @@ export const TRANSCRIPT_RECORD_TYPES = Object.freeze([
 export const TRANSCRIPT_KINDS = Object.freeze(['tool', 'bg-wait', 'model', 'idle']);
 
 /**
- * transcriptKind(res) -> one of TRANSCRIPT_KINDS, or null: the kind of the parse's tail (FX-W6).
- * parseTranscript sets it as the non-enumerable `kind` of its result (absent from JSON and deep
- * equality). Empty step: null until FX-W6.
+ * transcriptKind(res) -> one of TRANSCRIPT_KINDS: the kind of the parse's tail (FX-W6), read from
+ * `res.tail`. parseTranscript sets it as the non-enumerable `kind` of its result (absent from JSON
+ * and deep equality). In order: no conversation record read (an empty or unreadable transcript) ->
+ * `model`; a tool use of the last call without its result -> `tool`; the turn ended -> `bg-wait`
+ * while a background task it launched has not ended, else `idle`; anything else (a prompt, a
+ * notification or a tool result awaiting the model, a call still streaming) -> `model`.
  */
-function transcriptKind(res) { // eslint-disable-line no-unused-vars
-  return null;
+function transcriptKind(res) {
+  const t = res && res.tail;
+  if (!t || !(t.n > 0)) return 'model';
+  if (Object.keys(t.pending).length) return 'tool';
+  if (t.last === 'end') return Object.keys(t.bg).length ? 'bg-wait' : 'idle';
+  return 'model';
+}
+
+/**
+ * The tail state of a transcript (FX-W6), a plain JSON object the watcher stores in each file's
+ * parse-state: {n, last, msg, pending, bg}. Only the conversation records move it: `assistant` and
+ * `user` (each adds 1 to `n`). The other 25 known record types (attachment and the 24 that
+ * parseTranscript skips: TRANSCRIPT_RECORD_TYPES), and any unknown type, never change `n`, `last`
+ * or `pending`; they are not "unreadable". Only an attachment's `queued_command` prompt is read, for
+ * the task notifications it delivers (bg).
+ * - `last`: `call` (an assistant record whose stop_reason is null, tool_use or pause_turn), `end`
+ *   (an assistant record with any other stop_reason, or a user record that is only an interrupt
+ *   notice "[Request interrupted by user..."), `input` (any other user record), or null.
+ * - `msg`: the message id of the last call; a new id ends the last call's tool uses.
+ * - `pending`: {<tool_use id>: declared timeout in ms, 0 when none}: tool uses of the last call
+ *   without a tool_result. The declared timeout is the input's `timeout`, else `timeout_ms`.
+ * - `bg`: {<tool_use id>: task id}: background tasks launched (a tool result whose record's
+ *   toolUseResult has a string `backgroundTaskId` or `taskId`, or `isAsync` true with `agentId`)
+ *   that have not ended. A task ends at a `<task-notification>` naming its tool use id or its task id
+ *   (in a user record or an attachment's `queued_command` prompt), or at a TaskStop, KillShell or
+ *   KillBash tool use whose input names its task id.
+ */
+function tailState(prev) {
+  const ok = !!prev && typeof prev === 'object';
+  const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? { ...v } : {});
+  return {
+    n: ok && Number.isInteger(prev.n) && prev.n >= 0 ? prev.n : 0,
+    last: ok && ['call', 'end', 'input'].includes(prev.last) ? prev.last : null,
+    msg: ok && typeof prev.msg === 'string' ? prev.msg : null,
+    pending: ok ? obj(prev.pending) : {},
+    bg: ok ? obj(prev.bg) : {},
+  };
+}
+
+const TURN_GOES_ON = new Set(['tool_use', 'pause_turn']);
+const STOP_TOOLS = new Set(['TaskStop', 'KillShell', 'KillBash']);
+const INTERRUPT_RE = /^\[Request interrupted by user/;
+const NOTIFIED_RE = /<(tool-use-id|task-id)>([^<\s]{1,200})<\/\1>/g;
+
+function declaredTimeoutMs(input) {
+  for (const k of ['timeout', 'timeout_ms']) {
+    const v = input[k];
+    if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v;
+  }
+  return 0;
+}
+
+function notifiedIds(s) {
+  if (typeof s !== 'string' || !s.includes('<task-notification>')) return [];
+  return [...s.matchAll(NOTIFIED_RE)].map((m) => m[2]);
+}
+
+function endBackground(tl, ids) {
+  if (!ids.length) return;
+  const set = new Set(ids);
+  for (const [k, v] of Object.entries(tl.bg)) if (set.has(k) || (typeof v === 'string' && v && set.has(v))) delete tl.bg[k];
+}
+
+function textsOf(content) {
+  if (typeof content === 'string') return [content];
+  if (!Array.isArray(content)) return [];
+  return content.filter((b) => b && b.type === 'text' && typeof b.text === 'string').map((b) => b.text);
+}
+
+function tailOnAssistant(tl, id, msg, content) {
+  tl.n += 1;
+  if (id !== null && id !== tl.msg) {
+    tl.pending = {};
+    tl.msg = id;
+  }
+  for (const b of content) {
+    if (!b || b.type !== 'tool_use' || typeof b.id !== 'string') continue;
+    const input = b.input && typeof b.input === 'object' ? b.input : {};
+    tl.pending[b.id] = declaredTimeoutMs(input);
+    if (STOP_TOOLS.has(b.name)) endBackground(tl, Object.values(input).filter((v) => typeof v === 'string'));
+  }
+  const sr = msg.stop_reason;
+  tl.last = typeof sr === 'string' && sr !== '' && !TURN_GOES_ON.has(sr) ? 'end' : 'call';
+}
+
+function tailOnUser(tl, rec, content) {
+  tl.n += 1;
+  const texts = textsOf(content);
+  for (const s of texts) endBackground(tl, notifiedIds(s));
+  let results = 0;
+  for (const b of Array.isArray(content) ? content : []) {
+    if (!b || b.type !== 'tool_result' || typeof b.tool_use_id !== 'string') continue;
+    results += 1;
+    delete tl.pending[b.tool_use_id];
+    const r = rec.toolUseResult;
+    if (!r || typeof r !== 'object' || Array.isArray(r)) continue;
+    let task = null;
+    if (typeof r.backgroundTaskId === 'string') task = r.backgroundTaskId;
+    else if (typeof r.taskId === 'string') task = r.taskId;
+    else if (r.isAsync === true) task = typeof r.agentId === 'string' ? r.agentId : '';
+    if (task !== null) tl.bg[b.tool_use_id] = task;
+  }
+  tl.last = results === 0 && texts.length > 0 && texts.every((s) => INTERRUPT_RE.test(s)) ? 'end' : 'input';
+}
+
+function tailOnAttachment(tl, a) {
+  if (a && typeof a === 'object' && a.type === 'queued_command') for (const s of textsOf(a.prompt)) endBackground(tl, notifiedIds(s));
 }

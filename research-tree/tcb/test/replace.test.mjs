@@ -785,7 +785,7 @@ test('T9 fence with a stale epoch is refused; two concurrent fences: one wins, o
     t2.after(w.cleanup);
     const { root } = w;
     table(root, [boundRow()]);
-    const [a, b] = await Promise.all([runAsync(root, 'fence', { task: RES, epoch: 1, reason: 'stall', tick: 5, boot: BOOT_A }), runAsync(root, 'fence', { task: RES, epoch: 1, reason: 'stall', tick: 5, boot: BOOT_A })]);
+    const [a, b] = await Promise.all([runAsync(root, 'fence', { task: RES, epoch: 1, reason: 'stall', tick: 5, boot: BOOT_A }), runAsync(root, 'fence', { task: RES, epoch: 1, reason: 'hang', tick: 5, boot: BOOT_A })]);
     assert.deepEqual([a.status, b.status].sort((x, y) => x - y), [0, 65]);
     parse(a);
     parse(b);
