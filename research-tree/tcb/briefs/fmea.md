@@ -18,6 +18,8 @@ Write `staging/fmea.json`: `schema_version` 1, `kind: "fmea"`, `cut_sha` (the li
 Write what the description supports. Where it is silent about a behaviour, record the finding as a gap in the description rather than assuming a mechanism.
 
 ## Finishing
-When `staging/fmea.json` is complete, write `staging/READY.json` last: `{"kind":"ready","task":"{{task}}","epoch":{{epoch}},"step":"fmea"}`. If an input file is missing, write `{"kind":"repair","task":"{{task}}","epoch":{{epoch}},"missing":"other"}` and end your turn.
+When `staging/fmea.json` is complete, write `staging/READY.json` last: `{"kind":"ready","task":"{{task}}","epoch":{{epoch}},"step":"fmea"}`. If an input file is missing, write `{"kind":"repair","task":"{{task}}","epoch":{{epoch}},"missing":"other"}` and end your turn. Write READY with the Write tool only (an Edit of it is denied): the hook records it in the attempt's outcome log, which decides; READY.json is only a copy. If writing READY is denied `attempt-fenced`, your attempt has been ended: write nothing more and end your turn.
 
 Your last line of every turn is exactly `TURN-END {{task}}`, and nothing follows it.
+
+If every tool call is denied `attempt-claimed` or `attempt-cancelled`, another session holds this attempt or it was cancelled: end your turn (FX-CLAIM).

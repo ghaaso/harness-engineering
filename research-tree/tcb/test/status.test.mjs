@@ -211,8 +211,16 @@ const tpath = (root, sid, proj = 'proj-test') => path.join(root, 'transcripts', 
 function fixtureText(name, sid, cwd) {
   return fs.readFileSync(path.join(FIXDIR, name), 'utf8').replaceAll('{{sid}}', sid).replaceAll('{{cwd}}', JSON.stringify(cwd).slice(1, -1));
 }
+// FX-OUT: a valid READY is also the ready slot the hook records in outcome/ (READY.json is the copy).
 function readyFile(ctx, task, epoch, body) {
-  w(path.join(ctx.root, 'wt', `${task}-e${epoch}`, 'staging', 'READY.json'), body ?? { kind: 'ready', task, epoch, step: 'pack' });
+  const v = body ?? { kind: 'ready', task, epoch, step: 'pack' };
+  w(path.join(ctx.root, 'wt', `${task}-e${epoch}`, 'staging', 'READY.json'), v);
+  if (v && v.kind === 'ready' && v.task === task && v.epoch === epoch && typeof v.step === 'string') {
+    const dir = path.join(ctx.root, 'wt', `${task}-e${epoch}`, 'outcome');
+    fs.mkdirSync(dir, { recursive: true });
+    const j = fs.readdirSync(dir).filter((n) => /^[0-9]+.json$/.test(n)).length;
+    fs.writeFileSync(path.join(dir, `${j}.json`), canon({ kind: 'ready', task, epoch, step: v.step }));
+  }
 }
 
 // ---------------------------------------------------------------- running the script
@@ -721,6 +729,32 @@ test('T14 owner: drop of an unknown task exits 1 no-task', async () => {
     const j = assertLine(owner(ctx, ['--act', 'drop', '--subject', 'zz-nothing', '--quote-file', q]), 1);
     assert.ok(hasReason(j, 'no-task'));
     assert.equal(ledgerLines(ctx.root, 'owner').length, 0);
+  });
+});
+
+test('S1 FX-CGATE owner closed: the CLI session id only; the owner line and run/close/done/<sid>.json outcome owner; a record already there is kept; a dry run writes nothing', async () => {
+  await withRoot({}, async (ctx) => {
+    const q = notes(ctx, 'closed.txt', 'that session is gone, I closed it');
+    const sid = '0a1b2c3d-0000-4000-8000-0000000000c1';
+    const done = (s) => path.join(ctx.root, 'run', 'close', 'done', `${s}.json`);
+    const closed = (s, more = []) => owner(ctx, ['--act', 'closed', '--subject', s, '--quote-file', q, ...more]);
+    for (const bad of ['self', `local_${sid}`, sid.toUpperCase(), 'f1-research']) assertLine(closed(bad), 66);
+    assert.equal(fs.existsSync(path.join(ctx.root, 'run', 'close')), false, 'a refused act writes nothing');
+    const dry = assertLine(closed(sid, ['--dry-run']), 0);
+    assert.equal(dry.dry_run, true);
+    assert.equal(fs.existsSync(done(sid)), false, 'a dry run writes nothing');
+    const j = assertLine(closed(sid), 0);
+    assert.equal(j.result.done, 'created');
+    assert.deepEqual(J(done(sid)), { kind: 'close-done', session: sid, outcome: 'owner', by: null });
+    const lines = ledgerLines(ctx.root, 'owner');
+    assert.equal(lines.length, 1);
+    assert.deepEqual(lines[0].data, { act: 'closed', subject: sid, quote: 'that session is gone, I closed it' });
+    // a hook's record already at the name stands
+    const other = '0a1b2c3d-0000-4000-8000-0000000000c2';
+    w(done(other), { kind: 'close-done', session: other, outcome: 'stopped', by: sid });
+    assert.equal(assertLine(closed(other), 0).result.done, 'kept');
+    assert.equal(J(done(other)).outcome, 'stopped');
+    assert.equal(ledgerLines(ctx.root, 'owner').length, 2);
   });
 });
 

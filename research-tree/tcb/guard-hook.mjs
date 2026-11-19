@@ -223,14 +223,14 @@ function parseInput(input) {
   }
   if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Deny('bad-input', 'input is not an object');
   if (typeof v.tool_name !== 'string' || v.tool_name === '') throw new Deny('bad-input', 'no tool_name');
-  if (v.hook_event_name !== 'PreToolUse') throw new Deny('bad-input', `hook_event_name ${oneLine(v.hook_event_name)}`);
+  if (!HOOK_EVENTS.includes(v.hook_event_name)) throw new Deny('bad-input', `hook_event_name ${oneLine(v.hook_event_name)}`);
   return v;
 }
 
 function profileShapeError(v, role) {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return 'not an object';
   for (const k of Object.keys(v)) {
-    if (k === 'schema_version') continue;
+    if (k === 'schema_version' || k === 'session_tools') continue; // session_tools: optional (FX-CGATE)
     if (!PROFILE_KEYS.includes(k)) return `extra field ${k}`;
   }
   if ('schema_version' in v && v.schema_version !== 1) return 'schema_version';
@@ -247,7 +247,7 @@ function profileShapeError(v, role) {
     if (/[{}]/.test(left)) return `placeholder in ${p}`;
     if (!/^\{(root|attempt)\}/.test(p)) return `prefix ${p} not anchored`;
   }
-  return null;
+  return sessionToolsError(v, role);
 }
 
 function loadProfile(root, role, io) {
@@ -441,6 +441,7 @@ function decideInner(input, args, io) {
   }
   // the one context of the round-3 steps (S0.5): row is set at step 4, access at step 6
   const pass = { hook, root, role, task, epoch, attempt, toolName, toolInput, cwd, io, profile, row: null, access: null };
+  if (hook.hook_event_name !== 'PreToolUse') return postToolUse(pass); // FX-CGATE step 6: steps 4-7 are PreToolUse's
 
   // step 4
   if (TASK_ROLES.has(role)) {
@@ -606,7 +607,32 @@ function checkAccess(pass) {
 // create, 0b), after every read-only check of the call (point 9).
 
 // FX-CLAIM step 1: the attempt's claim.json on every task-role call, after the epoch gate (step 4).
-function stepClaim(pass) { // eslint-disable-line no-unused-vars
+// No lock: the strict create (0b) is atomic. No claim yet -> create {kind:'session', session_id};
+// created or identical -> go on. Another session's claim -> deny attempt-claimed; a tombstone (the
+// fence cancelled the attempt) -> deny attempt-cancelled. A malformed session_id -> deny bad-input.
+function stepClaim(pass) {
+  const { io, attempt, task, epoch } = pass;
+  // the session id's form: FX-CGATE's SESSION_ID_RE, a lowercase UUID (callerSession)
+  const sid = callerSession(pass);
+  if (!sid) throw new Deny('bad-input', 'session_id missing or not a UUID');
+  const file = W.join(attempt, 'claim.json');
+  const held = () => {
+    let v;
+    try {
+      v = io.readJson(file);
+    } catch (e) {
+      if (isTcbError(e) && e.code === 'missing') return null;
+      throw new Deny('claim-invalid', `${file}: ${errText(e)}`);
+    }
+    if (v && v.kind === 'tombstone') throw new Deny('attempt-cancelled', `${task} e${epoch}: the attempt was fenced before any session claimed it`);
+    if (!v || v.kind !== 'session' || typeof v.session_id !== 'string') throw new Deny('claim-invalid', file);
+    if (v.session_id !== sid) throw new Deny('attempt-claimed', `${task} e${epoch} is claimed by another session`);
+    return v;
+  };
+  if (held()) return;
+  const r = hookCreate(io, file, lib.claimRecord(sid));
+  // 'different': another writer took the name first; its claim decides (a tombstone or another session denies)
+  if (r === 'different' && !held()) throw new Deny('claim-invalid', file);
 }
 
 // FX-W1 step 5 (rev 4; FIX-wake.md FX-W1): the coordinator's production calls, per script, as forms
@@ -716,16 +742,203 @@ function stepAllowList(pass) {
   throw new Deny('bash-pattern', `flag not allowed: ${script} ${why}`);
 }
 
-// FX-OUT, child side: a task role's Write or Edit of READY becomes a ready slot, outcome/<j>.json.
-function stepReadySlot(pass) { // eslint-disable-line no-unused-vars
+// FX-OUT, child side (FIX-fence.md section 1, "Steps, child side" 2-4): a task role's Write of READY
+// becomes a ready slot, outcome/<j>.json, by the hook's test-and-set on the log; READY.json itself is
+// the copy the harness then writes, which no decision reads. Runs after the epoch gate (step 4), the
+// claim and steps 5-6, so every read-only check of the call came first (FIX-JOIN point 9).
+function stepReadySlot(pass) {
+  const { root, attempt, task, epoch, row, toolName, toolInput, cwd, io, access } = pass;
+  if (!attempt || !row) return;
+  // 2: is the target READY? (the same path key as steps 3-6: case, `..`, trailing dots and spaces)
+  const ready = pathKey(W.join(attempt, 'staging', 'READY.json'));
+  const raw = access && Array.isArray(access.paths) ? access.paths : [];
+  if (!raw.some((p) => { const r = resolveToolPath(p, cwd); return r !== null && pathKey(r) === ready; })) return;
+  if (toolName !== 'Write') throw new Deny('ready-write-only', toolName);
+  // 3: a valid READY of this task, epoch and one of its steps; a repair marker takes no slot
+  let v;
+  try {
+    if (typeof toolInput.content !== 'string') throw new Error('content is not a string');
+    v = JSON.parse(toolInput.content.replace(/^﻿/, ''));
+    lib.checkFormat(root, 'ready', v);
+  } catch (e) {
+    throw new Deny('ready-invalid', isTcbError(e) ? e.code : errText(e));
+  }
+  if (v.task !== task || v.epoch !== epoch) throw new Deny('ready-invalid', `task ${oneLine(v.task)} epoch ${oneLine(v.epoch)}, hook ${task} e${epoch}`);
+  if (v.kind === 'repair') return;
+  const steps = Array.isArray(row.steps) ? row.steps : [];
+  if (v.kind !== 'ready' || typeof v.step !== 'string' || !steps.includes(v.step)) throw new Deny('ready-invalid', `step ${oneLine(v.step)} not in ${steps.join(',')}`);
+  // 4: the log; fenced -> deny; the same ready slot -> allow; else the first free slot (0b's create)
+  let r;
+  try {
+    r = lib.outcomeAppend(attempt, { kind: 'ready', task, epoch, step: v.step }, { row, create: (file, bytes) => hookCreate(io, file, bytes) });
+  } catch (e) {
+    if (isTcbError(e)) throw new Deny(e.code, JSON.stringify(e.detail ?? null));
+    throw e;
+  }
+  if (r.result === 'fenced') throw new Deny('attempt-fenced', `${task} e${epoch}: ${r.state.fenced}`);
+}
+
+// ---- FX-CGATE (FIX-fence 3): the names, the session tools and the helpers of steps 2-6 ----------
+// A caller is named by the hook input's `session_id`, the CLI's id: a lowercase UUID (F-P1b). The app's
+// session tools name a session by the app's own id, `local_<uuid>` (CGATE M1): a close record is named
+// by that id only, so `self`, a CLI id or any other text is never a stop target (a CLI id given to the
+// archive tool answers "not found" while the session lives). FX-CLAIM's stepClaim checks the same form.
+const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const APP_SESSION_ID_RE = /^local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const NONCE_RE = /^[0-9a-f]{32}$/;
+// PostToolUse and PostToolUseFailure come only from the coordinator's settings, for the stop tools.
+const HOOK_EVENTS = ['PreToolUse', 'PostToolUse', 'PostToolUseFailure'];
+// The start tool's inputs that would start the session anywhere but the attempt folder (CGATE M4).
+const START_ABSENT = ['host', 'preset', 'environment', 'repository', 'proposal_id', 'source_branch', 'branch_name'];
+
+// A profile's optional `session_tools` {start, stop} (Q5a), the coordinator's only: exact tool names
+// (a prefix would admit an ungated start), each in tools_allow, start and stop disjoint.
+function sessionToolsError(v, role) {
+  if (!('session_tools' in v)) return null;
+  if (role !== 'coordinator') return `session_tools on role ${role}`;
+  const st = v.session_tools;
+  if (!st || typeof st !== 'object' || Array.isArray(st)) return 'session_tools not an object';
+  for (const k of Object.keys(st)) if (k !== 'start' && k !== 'stop') return `session_tools extra field ${k}`;
+  for (const k of ['start', 'stop']) {
+    const list = st[k];
+    if (!Array.isArray(list) || list.some((s) => typeof s !== 'string' || s === '' || s.endsWith('*'))) return `session_tools.${k} not a list of tool names`;
+    for (const s of list) if (!v.tools_allow.includes(s)) return `session_tools.${k} ${s} not in tools_allow`;
+  }
+  if (st.start.some((s) => st.stop.includes(s))) return 'session_tools start and stop overlap';
+  return null;
+}
+
+function isSessionTool(pass, kind) {
+  const st = pass.profile && pass.profile.session_tools;
+  return !!st && Array.isArray(st[kind]) && st[kind].includes(pass.toolName);
+}
+
+// The caller's session id, or null when the hook input holds none of the UUID form.
+function callerSession(pass) {
+  const s = pass.hook.session_id;
+  return typeof s === 'string' && SESSION_ID_RE.test(s) ? s : null;
+}
+
+function toolUseId(pass) {
+  const t = pass.hook.tool_use_id;
+  return typeof t === 'string' && t !== '' ? t : null;
+}
+
+// run/coord.json, or null when it is unreadable or holds no valid ce.
+function coordOf(pass) {
+  try {
+    const c = pass.io.readJson(lib.paths(pass.root).coord);
+    return c && typeof c === 'object' && Number.isInteger(c.ce) && c.ce >= 1 ? c : null;
+  } catch {
+    return null;
+  }
+}
+
+// The session id run/coord-session-<ce>.json names, or null (absent, unreadable, not a UUID).
+function boundSession(pass, ce) {
+  try {
+    const v = pass.io.readJson(lib.paths(pass.root).coordSession(ce));
+    return v && typeof v === 'object' && typeof v.session_id === 'string' && SESSION_ID_RE.test(v.session_id) ? v.session_id : null;
+  } catch {
+    return null;
+  }
+}
+
+// True when the file holds a record of this kind for this session (FX-CGATE "Name validation").
+function recordIs(pass, file, kind, session) {
+  try {
+    const v = pass.io.readJson(file);
+    return !!v && typeof v === 'object' && v.kind === kind && v.session === session;
+  } catch {
+    return false;
+  }
+}
+
+// The tokens of a command step 6 admitted (checkTcbNode's grammar), or null.
+function commandTokens(command) {
+  const cmd = String(command).trim();
+  const re = /\s*(?:"([A-Za-z0-9_\-./:= \\]*)"|([A-Za-z0-9_\-./:=]+))(?=\s|$)/y;
+  const out = [];
+  let pos = 0;
+  while (pos < cmd.length) {
+    re.lastIndex = pos;
+    const m = re.exec(cmd);
+    if (!m) return null;
+    out.push(m[1] !== undefined ? m[1] : m[2]);
+    pos = re.lastIndex;
+  }
+  return out;
+}
+
+// The flags of the bind call, `node <root>/tcb/handover.mjs bind` and exactly the pairs --root R, --ce N
+// and --nonce X in any order, or null for any other command.
+function bindCall(pass) {
+  const t = commandTokens(pass.access.command);
+  if (!t || t.length !== 9 || t[0] !== 'node' || t[2] !== 'bind') return null;
+  if (!/(?:^|[\\/])tcb[\\/]handover\.mjs$/.test(t[1])) return null;
+  const flags = {};
+  for (let i = 3; i < 9; i += 2) {
+    if (!['--root', '--ce', '--nonce'].includes(t[i]) || Object.prototype.hasOwnProperty.call(flags, t[i])) return null;
+    flags[t[i]] = t[i + 1];
+  }
+  return flags;
+}
+
+// True when a run/coord-session-<k>.json with k < ce names sid or cannot be read: a session bound at
+// an earlier ce, or beside a file the hook cannot vouch for, never binds again.
+function earlierBinding(pass, ce, sid) {
+  let names;
+  try {
+    names = fs.readdirSync(W.join(pass.root, 'run'));
+  } catch {
+    return true;
+  }
+  for (const n of names) {
+    const m = /^coord-session-([1-9][0-9]{0,8})\.json$/i.exec(n);
+    if (!m || Number(m[1]) >= ce) continue;
+    let v;
+    try {
+      v = pass.io.readJson(W.join(pass.root, 'run', n));
+    } catch {
+      return true;
+    }
+    if (!v || typeof v !== 'object' || typeof v.session_id !== 'string' || v.session_id === sid) return true;
+  }
+  return false;
 }
 
 // FX-CGATE step 2: the bind call (handover.mjs bind --ce --nonce) strict-creates run/coord-session-<ce>.json.
-function stepBind(pass) { // eslint-disable-line no-unused-vars
+// It qualifies when its root is this root, its ce coord.json's, its nonce coord.json's successor_nonce,
+// the caller's id a UUID that no earlier ce's session file names; it is then allowed (step 3 would refuse
+// a caller not yet bound). A file at the name that names another session is bound-elsewhere. Every other
+// exec call goes on to step 3.
+function stepBind(pass) {
+  if (!pass.access || pass.access.kind !== 'exec') return undefined;
+  const f = bindCall(pass);
+  const sid = callerSession(pass);
+  const coord = f && sid ? coordOf(pass) : null;
+  if (!coord) return undefined;
+  if (!isAbsDrivePath(f['--root']) || !samePath(f['--root'], pass.root)) return undefined;
+  if (f['--ce'] !== String(coord.ce)) return undefined;
+  const nonce = coord.successor_nonce;
+  if (typeof nonce !== 'string' || !NONCE_RE.test(nonce) || f['--nonce'] !== nonce) return undefined;
+  if (earlierBinding(pass, coord.ce, sid)) return undefined;
+  const r = hookCreate(pass.io, lib.paths(pass.root).coordSession(coord.ce), { session_id: sid });
+  if (r === 'different') throw new Deny('bound-elsewhere', `run/coord-session-${coord.ce}.json names another session`);
+  return 'allow';
 }
 
 // FX-CGATE step 3: a session other than coord-session-<current ce> may only Read under the read prefixes.
-function stepCurrentSession(pass) { // eslint-disable-line no-unused-vars
+// The read kind (Read, Glob, Grep) passes, step 6 having checked its paths; any other call of a session
+// that is not the one bound at coord.json's ce is stale-coordinator; an unreadable coord.json or session
+// file leaves reads only.
+function stepCurrentSession(pass) {
+  if (pass.access && pass.access.kind === 'read') return;
+  const sid = callerSession(pass);
+  const coord = coordOf(pass);
+  const bound = coord ? boundSession(pass, coord.ce) : null;
+  if (sid !== null && bound !== null && sid === bound) return;
+  throw new Deny('stale-coordinator', `session ${oneLine(String(pass.hook.session_id ?? '(none)'))} is not the one bound at ce ${coord ? coord.ce : '(unreadable)'}`);
 }
 
 // FX-W3: an act that creates work (session start, replace start, fence first) needs "armed".
@@ -733,15 +946,133 @@ function stepArmed(pass) { // eslint-disable-line no-unused-vars
 }
 
 // FX-CGATE step 4, its read-only part: the session-start target's row is active/admitted at E.
-function stepRowAtAdmitted(pass) { // eslint-disable-line no-unused-vars
+// The target is the start tool's `cwd`, exactly <root>\wt\<T>-e<E>, in a fresh local session without a
+// worktree, every input that would start it elsewhere absent (CGATE M4), else bad-target; the row is
+// read without a lock.
+function stepRowAtAdmitted(pass) {
+  if (!isSessionTool(pass, 'start')) return;
+  const target = startTarget(pass);
+  let table;
+  try {
+    table = pass.io.readTasks(pass.root);
+  } catch (e) {
+    if (isTcbError(e)) throw new Deny('table-unreadable', e.code);
+    throw e;
+  }
+  const rows = table && Array.isArray(table.tasks) ? table.tasks : null;
+  if (!rows) throw new Deny('table-unreadable', 'no tasks array');
+  const row = rows.find((r) => r && r.task === target.task);
+  if (!row || row.epoch !== target.epoch || row.state !== 'active' || row.step !== 'admitted') {
+    throw new Deny('wrong-step', row ? `${target.task} row epoch ${row.epoch} state ${row.state} step ${row.step}, start at e${target.epoch}` : `no row ${target.task}`);
+  }
+  pass.start = target;
+}
+
+function startTarget(pass) {
+  const inp = pass.toolInput;
+  const bad = (why) => new Deny('bad-target', why);
+  const p = isAbsDrivePath(inp.cwd) ? resolveToolPath(inp.cwd, null) : null;
+  if (p === null) throw bad(`cwd ${oneLine(JSON.stringify(inp.cwd ?? null))} is not an absolute path`);
+  const m = /^(.+)-e([1-9][0-9]{0,8})$/.exec(W.basename(p));
+  if (!samePath(W.dirname(p), W.join(pass.root, 'wt')) || !m || !TASK_RE.test(m[1])) throw bad(`cwd ${oneLine(inp.cwd)} is not <root>/wt/<task>-e<epoch>`);
+  if (inp.use_worktree !== false) throw bad('use_worktree must be false');
+  if (inp.context !== undefined && inp.context !== 'fresh') throw bad('context must be fresh');
+  if (inp.target !== undefined && inp.target !== 'local') throw bad('target must be local');
+  for (const k of START_ABSENT) if (inp[k] !== undefined) throw bad(`${k} must be absent`);
+  return { task: m[1], epoch: Number(m[2]) };
+}
+
+function watcherTick(pass) {
+  try {
+    const w = pass.io.readJson(lib.paths(pass.root).watcher);
+    return w && Number.isInteger(w.ticks_total) ? w.ticks_total : null;
+  } catch {
+    return null;
+  }
 }
 
 // FX-CGATE step 4: the session-start tool strict-creates wt/<T>-e<E>/start.json.
-function stepStartRecord(pass) { // eslint-disable-line no-unused-vars
+// One start per attempt: the record names the caller and the call's tool_use_id; the same call again
+// (same session, same non-null tool_use_id) is allowed, any other start of the attempt is start-issued.
+function stepStartRecord(pass) {
+  if (!isSessionTool(pass, 'start')) return;
+  const sid = callerSession(pass);
+  if (!pass.start || !sid) throw new Deny('internal', 'start record without its target or caller');
+  const tuid = toolUseId(pass);
+  const { task, epoch } = pass.start;
+  const file = lib.paths(pass.root).startRecord(task, epoch);
+  const rec = { kind: 'start', session: sid, tool_use_id: tuid, tick: watcherTick(pass), at: new Date().toISOString() };
+  if (hookCreate(pass.io, file, rec) !== 'different') return;
+  let old = null;
+  try {
+    old = pass.io.readJson(file);
+  } catch {
+    old = null;
+  }
+  if (old && old.kind === 'start' && old.session === sid && tuid !== null && old.tool_use_id === tuid) return;
+  throw new Deny('start-issued', `${task}-e${epoch}: start.json holds another start`);
+}
+
+function stopTarget(pass) {
+  const t = pass.toolInput.session_id;
+  if (typeof t !== 'string' || !APP_SESSION_ID_RE.test(t)) throw new Deny('bad-target', `session_id ${oneLine(JSON.stringify(t ?? null))} is not an app session id`);
+  return t;
 }
 
 // FX-CGATE step 5: the session-stop tool strict-creates run/close/intent/<sid>.json.
-function stepStopIntent(pass) { // eslint-disable-line no-unused-vars
+// The target is the tool's session_id, an app id (M1), else bad-target with nothing written; a record at
+// the name is a retried close when it is a close-intent of the same target, anything else record-tamper.
+function stepStopIntent(pass) {
+  if (!isSessionTool(pass, 'stop')) return;
+  const t = stopTarget(pass);
+  const sid = callerSession(pass);
+  if (!sid) throw new Deny('internal', 'stop intent without its caller');
+  const file = lib.paths(pass.root).closeIntent(t);
+  const r = hookCreate(pass.io, file, { kind: 'close-intent', session: t, by: sid, tool_use_id: toolUseId(pass) });
+  if (r === 'different' && !recordIs(pass, file, 'close-intent', t)) throw new Deny('record-tamper', file);
+}
+
+// The text of a tool's result: tool_response as a string, or the joined `text` of a content array or
+// of {content}; PostToolUseFailure's `error`.
+function postText(hook) {
+  const parts = [];
+  const add = (v, depth) => {
+    if (typeof v === 'string') parts.push(v);
+    else if (depth > 2 || !v || typeof v !== 'object') return;
+    else if (Array.isArray(v)) for (const x of v) add(x, depth + 1);
+    else if (typeof v.text === 'string') parts.push(v.text);
+    else if (v.content !== undefined) add(v.content, depth + 1);
+  };
+  add(hook.tool_response, 0);
+  add(hook.error, 0);
+  return parts.join('\n');
+}
+
+// The close's outcome for target t from the result text (CGATE M2), or null: write nothing.
+function closeOutcome(text, t) {
+  const s = text.trimStart();
+  const head = `Archived session ${t}`;
+  if (s.startsWith(head) && (s.startsWith(' (', head.length) || s.startsWith('.', head.length))) return 'stopped';
+  if (text.includes(`Session ${t} is already archived.`)) return 'stopped';
+  if (text.includes(`Session ${t} not found.`)) return 'no-such-session';
+  return null;
+}
+
+// FX-CGATE step 6: PostToolUse and PostToolUseFailure of the session-stop tools. Archived, or already
+// archived, is `stopped` (the session's process is gone); not found is `no-such-session`; any other
+// text (stop_session's interrupt, an archive deferred to a later turn) writes nothing, and the close
+// falls back to the owner's `closed`. A Post event of another role or tool is bad-input.
+function postToolUse(pass) {
+  const { hook, role, toolName } = pass;
+  if (role !== 'coordinator' || !isSessionTool(pass, 'stop')) throw new Deny('bad-input', `${hook.hook_event_name} of ${role} ${oneLine(toolName)}`);
+  const t = stopTarget(pass);
+  const outcome = closeOutcome(postText(hook), t);
+  if (outcome === null) return;
+  const sid = callerSession(pass);
+  if (!sid) throw new Deny('bad-input', 'session_id is not a UUID');
+  const file = lib.paths(pass.root).closeDone(t);
+  const r = hookCreate(pass.io, file, { kind: 'close-done', session: t, outcome, by: sid });
+  if (r === 'different' && !recordIs(pass, file, 'close-done', t)) throw new Deny('record-tamper', file);
 }
 
 // The coordinator's steps in their order (FIX-JOIN point 9, part 2b): the read-only checks, then the

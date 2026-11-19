@@ -71,7 +71,10 @@ Nothing else.
 
 ## Steps
 1. Parse args; `coord.json` missing → exit 2 `no-coordinator`; `readTasks` corrupt → 67.
-2. Phase 1, without the lock (git runs only here, CONTRACT §2.1): note ledger head H1; run checks 1-9.
+2. Phase 1, without the lock (git runs only here, CONTRACT §2.1): note ledger head H1; run checks 1-10.
+   Check 10 (FX-OUT, CONTRACT §3.23), `outcome`: each attempt's `outcome/` read by `lib.outcomeState`; a bad
+   log fails as `outcome-<why>` (gap, after-fenced, slot-unparseable, slot-shape, slot-owner, slot-name,
+   slot-not-file, not-a-folder), id `<task>-e<e>`; an attempt with no `outcome/` is not counted.
 3. Phase 2, `withRunLock` + `checkCe` (64): read `card_status.jsonl` and `witness.jsonl` again; if the
    head moved past H1 or either status file changed, verify the chain from H1 and run checks 1, 2, 4
    and the status coverage check 5 again over the current ledger and status files (so a passing line
@@ -83,7 +86,7 @@ Nothing else.
 
 ## Exit codes
 0 pass; 2 not_run (`no-git`, `no-coordinator`); 3 any failing item (also when another check was not
-run); 64, 66, 67, 70, 75. Result: {checks: {objects: {n, failing}, commits, ledger, fk, status, tcb,
+run); 64, 66, 67, 70, 75. Result: {checks: {objects: {n, failing}, commits, ledger, fk, status, tcb, outcome,
 claude, frozen}, failing, anomalies: [{code, id}], head_checked: {seq, hash}}.
 
 ## Behaviours
@@ -125,3 +128,7 @@ claude, frozen}, failing, anomalies: [{code, id}], head_checked: {seq, hash}}.
 ## Needs the app
 - None: every check reads files and runs git inside the temp root. (Whether a real session obeys the
   settings fsck guards is §7 item 3, owned by selftest.)
+
+## FX-REDO: missing ledger lines (FIX-fence section 5)
+
+An anomaly (a warning, not a failing item) `ledger-line-missing`, id `<task>-e<epoch>:<kind>`, for each row move whose line the ledger lacks. Shown for good by the row: a cut attempt E -> the `fence` to E+1 (`from` E); `bound_at` -> `bind`; a confirmed stop of attempt k -> a confirmed `stop` at k+1 (k for the last attempt of a committed row). Shown only by the current step: admitted with a manifest -> `admit`; active at started -> `started`; stop-requested -> `stop-request`. A first fence and a cut or drop with no attempt leave no mark and are not checked. Test: `tcb/test/redo.test.mjs`.

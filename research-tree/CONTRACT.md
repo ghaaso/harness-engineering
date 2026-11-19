@@ -444,6 +444,16 @@ too: `17|<task or ->:<act>|<epoch or ->|<onset_tick>` (acts: `replace-fence`, `r
 last_context, peak_context, loop: {sig, run}}`: each tick parses only from `end_byte`
 (`parseTranscript(..., {fromByte, lastCall})`); a file shorter than `end_byte` is re-parsed from 0.
 Lock record (run.lock and watcher.lock): `{pid, start_time, nonce: 32 hex, script, ce?, acquired_at}`.
+**FX-W7 (lock fencing).** Each evaluation runs on a copy of the state. It takes the run lock with a
+short wait (`watcher_lock_try_ms`) and, inside that one hold, runs `assertHeld` of watcher.lock, its
+appends and the `watcher.json` write; only then is the copy kept. On a busy run lock the copy is
+dropped: nothing is written, the tick does not count, transcripts are read again from the kept
+`end_byte`, and the watcher does not exit (it exits 75 only on a lost watcher.lock; `--once` exits 75
+`lock-busy`). `run/watcher-busy.json` `{ce, busy_ticks}`: the busy ticks in a row, rewritten without
+the run lock by its one writer, the holder of watcher.lock; a held tick resets it to 0; FX-W4 alerts
+at `busy_alert_ticks`. An unparseable `watcher.json` is quarantined: renamed as found to
+`watcher.json.<pid>.<nonce8>.corrupt` (named in `result.quarantined`), and the watcher starts from
+fresh counters instead of exiting 67.
 
 ### 3.11 Commit record [commit-record] — `store/commits/<task>.<step>.json`
 `{schema_version, task, step, epoch, step_key: 64 hex, outputs: [{id, kind, sha256}] (sorted by id), outputs_sha}`
@@ -455,7 +465,11 @@ through commit records and re-check every `sha256` first.
 ### 3.12 Ready marker [ready] — `wt/<task>-e<e>/staging/READY.json` (the session)
 `{kind: "ready"|"repair", task, epoch, step?: commit step (ready), question_ids?: key[] (repair),
 missing?: source|snapshot|card|check|other (repair)}`. Untrusted: a READY whose `epoch` differs from
-the table is zombie-write telemetry only.
+the table is zombie-write telemetry only. READY.json is a copy that no decision reads; the decision is
+the outcome log (§3.23): the guard-hook turns a valid Write of READY (`kind: ready`) into a ready slot
+before the harness writes the copy, denies an Edit of READY (`ready-write-only`) and a READY of another
+task, epoch or step (`ready-invalid`), and lets a repair marker through with no slot. READY.json is
+still read for the repair marker (watcher class 12) and the zombie-write telemetry.
 
 ### 3.13 Snapshot metadata [snapshot-meta] — `.snapshots/meta/<raw_sha>.json`
 `{url, final_url, retrieved_at, http_status: int, content_type, bytes: int, raw_sha, text_sha?,
@@ -604,6 +618,15 @@ audit flags a checker that read more than one batch). Profiles exist for every r
   \"{root}\" --role <role> --task {task} --epoch {epoch}", timeout: 30}]}` under `PreToolUse`. The
   owner installs `tcb/settings/coordinator.json` (no task, no epoch) and merges `user-deny.json` into
   his user settings. guard-hook and audit enforce the same profile.
+- **Session tools (FX-CGATE).** The coordinator's profile alone has `session_tools: {start: string[], stop:
+  string[]}`: the app's session tools by exact name (no prefix rule), each also in `tools_allow`, start and stop
+  disjoint (shipped: start `mcp__ccd_session__start_session`; stop `mcp__ccd_session_mgmt__archive_session`,
+  `mcp__ccd_session_mgmt__stop_session`). `tcb/settings/coordinator.json` keeps its one `PreToolUse` entry and adds
+  `PostToolUse` and `PostToolUseFailure` entries, matcher = the stop tools joined by `|`, the same command and
+  timeout. Those events carry `tool_use_id` and `tool_response` (Post) or `error` (PostToolUseFailure); the hook
+  writes the close records from them (`spec/guard-hook.mjs.md`, FX-CGATE). A session is named by the CLI id
+  (`session_id` of the hook input, a lowercase UUID) and by the app id (`local_<uuid>`, the session tools' input):
+  `coord-session-<ce>.json` and `start.json` hold CLI ids, the close records are named by app ids.
 - **Agent files.** `tcb/agents/<type>.md` (U3b: front matter `name`, `description`, `tools`; body =
   the verbatim `tcb/briefs/<type>.md`). replace copies the file of every type in the profile's
   `agent_types` into `.claude/agents/`; the manifest lists them (`agents`); fsck accepts exactly those.
@@ -673,7 +696,27 @@ as written there; the spec is the single place of their fields.
 
 ### 3.23 Outcome log [outcome-slot] — `wt/<task>-e<e>/outcome/<j>.json`
 
-Filled by FX-OUT (`model/as-built/FIX-fence.md`; the slot's bytes are in `lib.RUNTIME_FILES`, S0.5).
+FX-OUT (`model/as-built/FIX-fence.md` section 1). The two outcomes of attempt e, finished (READY) and
+revoked (fenced), race through one log of write-once slots, one per file, j = 0, 1, 2 ...: every party
+proposes by a strict exclusive create (0b, §8.20) of the next slot name, exactly one create of a name
+succeeds, and everyone reads the winner (test-and-set, as in CORFU and the Paxos log).
+- **Layout.** `replace start` makes `outcome/` with the manifest; it lies outside the session's write
+  prefix (`{attempt}/staging/`). Ready slot bytes `{kind:"ready", task, epoch, step}` (written by the
+  guard-hook for the session's READY); fenced slot bytes `{kind:"fenced", task, epoch, reason}` (written
+  by `replace fence`); each the canonical JSON of exactly those fields (`lib.outcomeSlotBytes`). The log
+  has no gaps, and nothing is ever appended after a fenced slot. A repeat READY for a step has identical
+  bytes and takes no new slot, so a log holds at most |steps| ready slots and one fenced slot.
+- **Reading rules** (`lib.outcomeState(attemptDir, row)`, the one reader of commit, the fence, the hook,
+  the planners and fsck):
+  - **R-a.** A log that holds a fenced slot is fenced (reason r): commit refuses (exit 1
+    `attempt-fenced`), the fence takes its retry path, the hook denies (`attempt-fenced`).
+  - **R-b.** A ready slot is uncommitted when its own step is not in `row.commits`.
+  - **R-c.** Only names `<j>.json` are slots, read only when `lstat` shows a regular file; a slot whose
+    bytes do not parse, or are not a slot of this folder's task and epoch, a name with leading zeros, a
+    gap, a slot after the fenced one, or an `outcome` that is not a real folder is tamper:
+    `outcome-tamper` 3 in a script, a deny in the hook, a failing item `outcome-<why>` in fsck. Other
+    names (a create's temp file) are not read. No `outcome/` (an attempt never admitted, or started
+    before the fix) is an empty log: the hook's create fails `no-parent` and the fence writes no slot.
 
 ## 4. The library `tcb/lib.mjs`
 
@@ -767,6 +810,11 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
     `fs.linkSync(renamed, lock)` (fails rather than replace) and unlink the renamed file; if the link
     fails because a lock exists, keep the file as `<name>.<nonce>.orphan` and log an `incident`
     at the next acquisition. Then start over.
+  - watcher.lock (FX-W7): the waiter judges the holder outside every lock (unknown is never broken)
+    and reads `watcher.json`'s bytes before the judgement. A holder judged dead is broken only under
+    the run lock (taken with the caller's retries; busy → `lock-busy` 75): the waiter re-reads the
+    lock and `watcher.json` and breaks only when both are byte-for-byte unchanged. A changed
+    `watcher.json` means the holder wrote: its verdict is dropped and it is judged again later.
   - Unreadable (empty, or no lock record; e.g. a reset between the `wx` create and the write): never
     judged by `proc`. When `retries` ≥ `LOCK_UNREADABLE_MIN_RETRIES` (50) and the lock's bytes stay
     unchanged for the whole budget, it is broken with the same rename / re-read / create protocol,
@@ -803,9 +851,18 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
 - `fence(root, handle, {task, expectEpoch, reason, host, tick, readyCheck, cut, spendAtFence, R,
   Hmax}) → {row, from, to, restartCharged, limit}`: the §3.6 fence rows on `updateRow`. For a failure
   reason other than `tainted` it calls `readyCheck()` under the lock first; true → `ready-wins` 5 with
-  no change. (Decision 40, M6: the rule is every reason but `first` and `tainted` on a row with a
-  running attempt; until the library's check is widened, `replace.mjs fence` makes the same
-  re-check itself under the same lock before it calls `fence`.) `handover`/`memory` at `handovers + parks ≥ Hmax` → `hmax` 1, no change. The limit path
+  no change. The callback reads the outcome log (§3.23): an uncommitted ready slot in a log that is not
+  fenced (FX-OUT, Q6 b: the library's scope stays failure-only). Decision 40, M6, the rule for every
+  reason but `first` and `tainted` on a running attempt, is `replace.mjs fence`'s, in the same lock hold
+  before it calls `fence` (FX-OUT steps 1-5): the log read (a log fenced with another reason → 65
+  `fence-pending` {reason}); every refusal (`stale-epoch`, `wrong-step`, `hmax`) before any write; then,
+  only when the fence moves the row to e+1 and attempt e has a manifest, the ready check (an uncommitted
+  ready slot → `ready-wins` 5, never over `tainted`) and the fenced slot by `outcomeAppend` (a ready slot
+  that takes the name first → `ready-wins` 5; `tainted` appends after it). By the time `fence` runs, its
+  callback sees the fence's own slot as the winner.
+- `outcomeState(attemptDir, row) → {present, fenced, slots, ready, next}` and `outcomeAppend(attemptDir,
+  slot, {row, check, create}) → {result: created|identical|fenced, j, state}` (§3.23; FX-OUT): the log's
+  one reader and its test-and-set; `outcomeSlotBytes(slot)` the canonical bytes of a slot. `handover`/`memory` at `handovers + parks ≥ Hmax` → `hmax` 1, no change. The limit path
   applies the fence and returns `limit:true` (the caller exits 1). `cut`/`drop` on a row at planned/none
   or active/stopped takes the no-attempt row of §3.6 (state `cut`/`dropped`, epoch unchanged).
 - `stagingCut(attemptDir) → {files: {relpath: {len, sha256}}, links: relpath[]}`: every regular file
@@ -931,6 +988,26 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
   unknown (never zero, so back-to-back starts cannot all pass); else a transcript exists → unknown.
   A `procList` of null (PowerShell failed) makes every such attempt unknown. Admission uses `live +
   unknown + unconfirmed < N_max` (R10; fail-safe). Shared by admit, status and handover.
+  **FX-CLAIM step 7** (`opts.root`, passed by admit, status, handover and watch): plus one `unconfirmed`
+  for every folder session (a transcript whose first `cwd` is an attempt folder; any row but planned,
+  any attempt) that is not its attempt's own session (the claim holder, else the recorded `session`)
+  and has no counting `run/close/done/<sid>.json`: `stopped` and `owner` count; `no-such-session`
+  counts only when the attempt's `start.json` `session` equals the record's `by`, or the process list
+  matches nothing for the folder or the session (rev 4, H3). There is no fixed ceiling of 3: the cap is
+  `min(N_max, N_ceiling)` (ORCHESTRATION 9 row 5).
+- FX-CLAIM claims (`model/as-built/FIX-fence.md` section 2, rev 5): `readClaim(dir) → {kind: none |
+  session | tombstone, session_id}` (`wt/<T>-e<E>/claim.json`; bytes that do not parse are tamper,
+  `claim-invalid` 3); `claimRecord(sid)`, `tombstoneRecord(task, epoch)`, both made by strict create
+  (0b) and never deleted while the attempt lives. The child hook claims on every task-role call after
+  the epoch gate (deny `bad-input`, `attempt-claimed`, `attempt-cancelled`, `claim-invalid`). `fence`
+  tombstones an attempt with a manifest; for a failure reason, not host, a tombstone is a no-start
+  fence, uncharged while `nostart < H_nostart` (then `nostart + 1`, capped at H_nostart, and no `fails`
+  entry, so no R8 fail), charged like a failure past it; a session claim resets `nostart` to 0.
+  `--if-unclaimed`: a session claim → exit 5 `claimed-late`, checked before any write. `bind` needs
+  the claim (exit 6 `not-claimed`, exit 1 `not-claim-holder`). Reconcile takes `started` from the
+  claim first, transcripts second; another folder session is the anomaly `duplicate-session`. `stop
+  request` on a tombstone confirms at once only with no folder session visible. `startLeaseExpired(start,
+  ticks_total, now_ms, {start_lease_ticks, start_lease_ms})`: both bounds passed (N3).
 - `variant(root, row, {f5Given}) → {V, covered: key[], uncovered: key[]}` (R5), used by replace
   (todo), stop and replace (overflow ids), watch (stall) and status: **research** and **control**:
   `covered` = `row.question_ids` carried by a card of this task (named by an `intake` line of the

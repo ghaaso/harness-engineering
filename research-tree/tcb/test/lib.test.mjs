@@ -1154,6 +1154,46 @@ rt('T30 a lock whose holder is dead is broken, no .stale file is left and a lock
   await w.release();
   assert.equal((await ledger(root)).length, n);
 });
+rt('W7a FX-W7 step 1: a dead watcher.lock holder is broken only under the run lock and only while watcher.json is unchanged', async (root) => {
+  const wl = lockFile(root, 'watcher.lock');
+  const wj = P(root, 'run', 'watcher.json');
+  fs.writeFileSync(wj, '{"ticks_total":1}\n');
+  const dead = putLock(root, mkRec({ script: 'watch' }), 'watcher.lock');
+  const before = fs.readFileSync(wl);
+  const alive = (pid) => pid !== dead.pid;
+  const runCreates = () => failing('openSync', (args) => argHas('/run/run.lock')(args) && JSON.stringify(args.slice(1)).includes('wx'), []);
+  // 1. The run lock is held by a live holder: the waiter cannot take it, so nothing is broken.
+  putLock(root, mkRec({ pid: 999002, script: 'other' }));
+  const runBefore = fs.readFileSync(lockFile(root));
+  await throwsTcb(() => lib.acquireLock(root, 'watcher.lock', lo({ proc: fproc({ alive }), retries: 2, retryMs: 1 })), 'lock-busy', 75);
+  assert.deepEqual(fs.readFileSync(wl), before, 'watcher.lock untouched');
+  assert.deepEqual(fs.readFileSync(lockFile(root)), runBefore, 'the run lock untouched');
+  fs.rmSync(lockFile(root));
+  // 2. The holder writes watcher.json after the waiter read it and while it judges the holder: under
+  // the run lock the waiter sees the change (progress) and breaks nothing.
+  const writer = fproc({ alive: (pid) => { if (pid === dead.pid) fs.writeFileSync(wj, `{"ticks_total":${Date.now()}}\n`); return alive(pid); } });
+  const spy2 = runCreates();
+  try {
+    await throwsTcb(() => lib.acquireLock(root, 'watcher.lock', lo({ proc: writer, retries: 5, retryMs: 1 })), 'lock-busy', 75);
+  } finally {
+    spy2.restore();
+  }
+  assert.ok(spy2.state.matched >= 1, 'the waiter took the run lock to check');
+  assert.deepEqual(fs.readFileSync(wl), before, 'watcher.lock untouched after progress');
+  assert.equal(fs.existsSync(lockFile(root)), false, 'the run lock released');
+  // 3. Run lock free and watcher.json unchanged since the judgement: broken under the run lock.
+  const spy3 = runCreates();
+  let h;
+  try {
+    h = await lib.acquireLock(root, 'watcher.lock', lo({ proc: fproc({ alive }), retries: 5, retryMs: 1 }));
+  } finally {
+    spy3.restore();
+  }
+  assert.ok(spy3.state.matched >= 1, 'the break ran under the run lock');
+  assert.equal(JSON.parse(fs.readFileSync(wl, 'utf8')).nonce, h.nonce);
+  assert.equal(fs.existsSync(lockFile(root)), false, 'the run lock released');
+  await h.release();
+});
 rt('T31 a lock whose pid is alive with another start time is stale and is broken', async (root) => {
   const stale = putLock(root, mkRec({ pid: process.pid, start_time: '2000-01-01T00:00:00.0000000Z' }));
   const p = fproc({ alive: (pid, st) => pid === process.pid && lib.sameStartTime(st, OWN_START()) });
@@ -3087,7 +3127,9 @@ test('S0.5 round-3 skeleton: threshold keys marked guesses, stub signatures, not
     assert.ok(Number.isInteger(p.value), `${k} has an integer value`);
     assert.match(p.unit, /guess/, `${k}'s unit says it is a guess`);
   }
-  const stubs = { outcomeState: 2, outcomeAppend: 3, readClaim: 1, claimRecord: 1, tombstoneRecord: 2, planAct: 2 };
+  const stubs = { readClaim: 1, claimRecord: 1, tombstoneRecord: 2, planAct: 2 };
+  // FX-CLAIM built readClaim, claimRecord, tombstoneRecord (their tests: T96z): the arity stays, not-built goes
+  for (const [name, n] of [['readClaim', 1], ['claimRecord', 1], ['tombstoneRecord', 2]]) { assert.equal(lib[name].length, n, name); delete stubs[name]; }
   for (const [name, n] of Object.entries(stubs)) {
     assert.equal(typeof lib[name], 'function', name);
     assert.equal(lib[name].length, n, `${name} takes ${n} arguments`);
@@ -3149,4 +3191,66 @@ test('FX-W1 liveness: tri-state with exit markers; exitMarkers reads only the ex
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------- FX-CLAIM
+const CL = (i) => `11111111-0000-4000-8000-00000000000${i}`;
+test('T96z FX-CLAIM readClaim and the claim records: none, a session claim made once by strict create, a tombstone that loses to it, an unparseable claim is tamper 3', (t) => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'cl0-'));
+  t.after(() => fs.rmSync(d, { recursive: true, force: true }));
+  const f = path.join(d, 'claim.json');
+  assert.deepEqual(lib.readClaim(d), { kind: 'none', session_id: null });
+  assert.equal(lib.createExclusive(f, lib.claimRecord(CL(1)), { strict: true }), 'created');
+  assert.equal(lib.createExclusive(f, lib.claimRecord(CL(1)), { strict: true }), 'identical');
+  assert.throws(() => lib.createExclusive(f, lib.tombstoneRecord('x', 1), { strict: true }), (e) => e.code === 'exists-different');
+  assert.deepEqual(lib.readClaim(d), { kind: 'session', session_id: CL(1) });
+  assert.deepEqual(lib.tombstoneRecord('x', 1), { kind: 'tombstone', task: 'x', epoch: 1 });
+  fs.writeFileSync(f, '{ not json');
+  assert.throws(() => lib.readClaim(d), (e) => e.code === 'claim-invalid' && e.exit === 3);
+});
+
+test('T96y FX-CLAIM the start lease (N3) expires only when both the ticks and the wall time have passed', () => {
+  const start = { kind: 'start', session: CL(9), tool_use_id: null, tick: 5, at: '2026-11-20T10:00:00.000Z' };
+  const L = { start_lease_ticks: 10, start_lease_ms: 600000 };
+  const t0 = Date.parse(start.at);
+  assert.equal(lib.startLeaseExpired(start, 15, t0 + 600000, L), true);
+  assert.equal(lib.startLeaseExpired(start, 14, t0 + 600000, L), false, 'ticks short');
+  assert.equal(lib.startLeaseExpired(start, 1000, t0 + 599999, L), false, 'a subject advancing the ticks alone');
+  assert.equal(lib.startLeaseExpired(start, 14, t0 + 1e12, L), false, 'a wall jump alone');
+  assert.equal(lib.startLeaseExpired({ ...start, at: 'not a time' }, 1000, t0 + 1e12, L), false);
+  assert.equal(lib.startLeaseExpired(null, 1000, t0 + 1e12, L), false);
+});
+
+test('T96x FX-CLAIM slotCount step 7: a folder session that is not its attempt\'s own counts one unconfirmed slot until a close-done record counts (H3)', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cl7-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const tr = path.join(root, 'transcripts');
+  const folder = path.join(root, 'wt', 'x-e1');
+  fs.mkdirSync(folder, { recursive: true });
+  const tx = (sid) => {
+    const dir = path.join(tr, lib.projectDirName(folder));
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${sid}.jsonl`), JSON.stringify({ type: 'user', cwd: folder, sessionId: sid, timestamp: '2026-11-20T10:00:00.000Z', message: { role: 'user', content: 'x' } }) + '\n');
+  };
+  tx(CL(1));
+  tx(CL(2));
+  fs.writeFileSync(path.join(folder, 'claim.json'), JSON.stringify(lib.claimRecord(CL(1))));
+  const rows = [{ task: 'x', state: 'active', step: 'fenced', epoch: 2, attempts: [{ epoch: 1, folder: 'wt/x-e1', stop: 'confirmed' }, { epoch: 2, folder: 'wt/x-e2', stop: 'none' }] }];
+  const done = (o) => {
+    fs.mkdirSync(path.join(root, 'run', 'close', 'done'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'run', 'close', 'done', `${CL(2)}.json`), JSON.stringify({ kind: 'close-done', session: CL(2), by: CL(8), ...o }));
+  };
+  // the claim holder (its attempt's stop confirmed) is not counted; the duplicate is
+  assert.deepEqual(lib.slotCount(rows, [], tr, { root }), { live: 0, unknown: 0, unconfirmed: 1 });
+  done({ outcome: 'stopped' });
+  assert.equal(lib.slotCount(rows, [], tr, { root }).unconfirmed, 0);
+  // "no such session" for another coordinator's start: counts only when the process list matches nothing
+  done({ outcome: 'no-such-session' });
+  fs.writeFileSync(path.join(folder, 'start.json'), JSON.stringify({ kind: 'start', session: CL(7), tool_use_id: null, tick: 1, at: '2026-11-20T10:00:00.000Z' }));
+  const proc = [{ pid: 4242, ppid: 1, name: 'node.exe', cmdline: `node child.mjs --cwd "${folder}"` }];
+  assert.equal(lib.slotCount(rows, proc, tr, { root }).unconfirmed, 1);
+  assert.equal(lib.slotCount(rows, [], tr, { root }).unconfirmed, 0);
+  // this coordinator's own start: the record counts whatever the process list says
+  fs.writeFileSync(path.join(folder, 'start.json'), JSON.stringify({ kind: 'start', session: CL(8), tool_use_id: null, tick: 1, at: '2026-11-20T10:00:00.000Z' }));
+  assert.equal(lib.slotCount(rows, proc, tr, { root }).unconfirmed, 0);
 });

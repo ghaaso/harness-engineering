@@ -21,7 +21,11 @@ touch (0 and 5) has one sub-step per fix. Until then the coordinator works from 
 
 ## 1. Bind, on the successor's first turn only (FX-CGATE)
 
-(empty until FX-CGATE)
+The owner's brief line ends with your bind call: `node <root>/tcb/handover.mjs bind --root <root> --ce <ce> --nonce <X>`.
+Run it exactly as written as the first call of your first turn, before any other call. Until it has run, every call
+but a Read under your read paths is refused (`stale-coordinator`). Exit 0: you are the coordinator of this ce. A
+refusal (`bound-elsewhere`, `nonce-mismatch`, `not-bound`, `no-nonce`): stop and tell the owner; never retry with other
+values. Never bind on a later turn.
 
 ## 2. Call 1, in the background: the ensure (FX-W2; S1: one ensure)
 
@@ -43,7 +47,13 @@ step 4; point 9).
 
 ### 5a. `replace fence`, any reason but `first`: the refusals, the ready check, the fenced slot; `commit` refuses a fenced log (FX-OUT)
 
-(empty until FX-OUT)
+An attempt's outcome is its log `wt/<task>-e<e>/outcome/<j>.json`, never `staging/READY.json` (a copy).
+`replace fence` makes every refusal before it writes: exit 65 `stale-epoch` or `wrong-step`, or exit 1
+`hmax`, leaves no slot. Exit 5 `ready-wins`: an uncommitted ready slot wins over every reason but `first`
+and `tainted`; do not fence again for it, audit and commit the step instead. Exit 65 `fence-pending`
+(detail `reason`): a fence with that reason wrote its slot and did not finish; call `replace fence` again
+with exactly that reason, never another. `commit record` exits 1 `attempt-fenced` on a fenced log: the
+fence won; finish that fence first. Exit 3 `outcome-tamper`: stop and report it.
 
 ### 5b. The tombstone, in the same fence hold before `lib.fence`; `--if-unclaimed` (FX-CLAIM)
 
@@ -55,7 +65,12 @@ step 4; point 9).
 
 ### 5d. The close tool: the hook records the intent before the call and the close after it (FX-CGATE)
 
-(empty until FX-CGATE)
+Close with `mcp__ccd_session_mgmt__archive_session`, `session_id` = the app's id of the session (`local_<uuid>`, as
+the start tool or the session list gave it); never `self`, never the CLI id (a bare UUID): the hook refuses both
+(`bad-target`). A session still working: `mcp__ccd_session_mgmt__stop_session` with the same id first, then archive.
+The hook writes `run/close/intent/<id>.json` before the call and `run/close/done/<id>.json` after an answer it can
+read (archived or already archived: `stopped`; not found: `no-such-session`). Any other answer leaves the close
+open: tell the owner, who records it with `status.mjs owner --act closed --subject <the CLI session id>`.
 
 ## 6. Acts that create work, only when call 2 confirmed the arm (FX-W3; a session start only on a turn the owner typed, Q5a)
 

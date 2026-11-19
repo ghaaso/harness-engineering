@@ -330,7 +330,15 @@ All tests in this section set `{concurrency: false}` (§4.11).
 ## Round-3 skeleton (S0.5): signatures fixed, bodies filled by the fixes
 Until its fix lands, each API function below throws `not-built` (exit 70, detail `{fn, fix}`) and each
 empty step returns its neutral value, so behaviour is unchanged (FIX-JOIN point 11, build order).
-- `outcomeState(attemptDir, row)` -> `{fenced, slots, ready}`; `outcomeAppend(attemptDir, slot, opts)`: FX-OUT.
+- `outcomeState(attemptDir, row)` -> `{present, fenced, slots, ready, next}`; `outcomeAppend(attemptDir, slot,
+  {row, check, create})` -> `{result: created|identical|fenced, j, state}`; `outcomeSlotBytes(slot)`: FX-OUT, built
+  (CONTRACT §3.23 and §4.6). outcomeState: no `outcome/` → an empty log (`present` false); R-a fenced (the
+  fenced slot's reason), R-b `ready` = steps of ready slots not in `row.commits`; R-c only `<j>.json` names,
+  a regular file whose bytes are exactly a slot of the folder's task and epoch; a gap, a slot after the
+  fenced one, a leading-zero name or a non-folder `outcome` → `outcome-tamper` 3 (detail `why`). outcomeAppend:
+  reads the log, returns `fenced` on a fenced log, runs `check(state)` on every read before writing, returns
+  `identical` for a slot with the same bytes, else creates `<next>.json` (`create` default: the strict create
+  of 0b) and reads again when another writer took the name. T56 (`fence`'s callback) is not widened (Q6 b).
 - `readClaim(attemptDir)` -> `{kind: 'none'|'session'|'tombstone', session_id}`; `claimRecord(sessionId)`;
   `tombstoneRecord(task, epoch)`: FX-CLAIM.
 - `planAct(row, facts)` -> one act name, `none` and `owner` included: FX-PLAN.
@@ -347,8 +355,13 @@ empty step returns its neutral value, so behaviour is unchanged (FIX-JOIN point 
 - `realProc({timeoutMs, exe})`: unchanged; FX-W2 passes `timeoutMs: ensure_query_ms`.
 - `withRunLock(root, {requireArmed})`: `requireArmed: true` runs the empty step `armedCheck(root, handle)`
   after the ce check: FX-W3 (exit 6 `not-armed`).
-- `acquireLock`: the break of a lock judged stale passes `breakStep(name, doBreak)`, which returns
-  `doBreak()`: FX-W7 (watcher.lock). The break of an unreadable lock does not pass there.
+- `acquireLock`: the break of a lock judged stale passes `breakStep(c, doBreak)`. For run.lock it
+  returns `doBreak()`. For watcher.lock (FX-W7 step 1, built) it takes run.lock with the caller's
+  retries, re-reads watcher.lock and `watcher.json`, and breaks only when both are as they were at the
+  judgement (`watcher.json` is read before the judgement); `progress` drops the verdict. The break of
+  an unreadable lock does not pass there (LR-4 kept). Test W7a: a busy run lock → `lock-busy` 75 and
+  both locks untouched; a holder that writes `watcher.json` during its judgement → not broken, the run
+  lock taken and released; run lock free and `watcher.json` unchanged → broken under the run lock.
 - `parseTranscript` (FX-W6): option `tail` and the result's non-enumerable `tail` and `kind`. The tail
   state `{n, last, msg, pending, bg}` (lib.mjs `tailState`) is moved only by `assistant` and `user`
   records; attachment and the 24 skipped types of `TRANSCRIPT_RECORD_TYPES` (and unknown types) are
@@ -364,3 +377,7 @@ empty step returns its neutral value, so behaviour is unchanged (FIX-JOIN point 
   callers pass it.
 - `RUNTIME_FILES`: the 13 runtime files of the round-3 fixes (path, helper of `paths(root)`, fix, writer,
   fields, rewritten); `markerKey(pid, start_time)` names the arm markers `exited-<pt>`, `unarmed-<pt>`.
+
+## FX-CLAIM (round 3)
+
+`readClaim`, `claimRecord`, `tombstoneRecord`, `startLeaseExpired` (CONTRACT 4.10); `fence` reads the claim of attempt E for `nostart` (failure reasons, not host); `slotCount` step 7. Tests: lib T96x (step 7 and H3), T96y (the lease), T96z (claims).

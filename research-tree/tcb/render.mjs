@@ -34,6 +34,22 @@ const BACK_ROUTES = new Set(['backward', 'forward', 'contrary']);
 // ---------------------------------------------------------------------------------------------
 // small helpers
 // ---------------------------------------------------------------------------------------------
+// The first bind or started line of a set of tasks (spec step 6, time), as indices into the ledger.
+// FX-REDO (FIX-fence section 5): a redone line (`data.redo`) is written after lines it belongs
+// among; when the set holds one, each task's start is its bind or started line of the lowest epoch
+// (seq within it), and the set's is the earliest of these.
+function firstStart(lines, mine) {
+  const isStart = (i) => lines[i].kind === 'bind' || lines[i].kind === 'started';
+  if (!mine.some((i) => lines[i].data && lines[i].data.redo === true)) return mine.find(isStart);
+  const best = new Map();
+  for (const i of mine) {
+    if (!isStart(i)) continue;
+    const b = best.get(lines[i].task);
+    if (b === undefined || (lines[i].epoch ?? 0) < (lines[b].epoch ?? 0)) best.set(lines[i].task, i);
+  }
+  return best.size ? Math.min(...best.values()) : undefined;
+}
+
 function isoNow(flags) {
   let now;
   try { now = edgeFacts(flags).now; } catch { now = flags.now; }
@@ -622,7 +638,7 @@ async function main(ctx) {
     let time = null;
     const mine = [];
     lines.forEach((l, i) => { if (l.task && taskSet.has(l.task)) mine.push(i); });
-    const firstIdx = mine.find((i) => lines[i].kind === 'bind' || lines[i].kind === 'started');
+    const firstIdx = firstStart(lines, mine);
     if (firstIdx !== undefined) {
       const lastIdx = mine[mine.length - 1];
       const t0 = Date.parse(lines[firstIdx].ts);

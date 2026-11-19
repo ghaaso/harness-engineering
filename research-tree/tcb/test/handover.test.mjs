@@ -222,7 +222,10 @@ function detailValue(j, key) {
 }
 const init = (ctx, args = [], o = {}) => runFrom(ctx.root, ['init', '--root', ctx.root, '--tcb-commit', o.commit ?? COMMIT, '--now', NOW, ...args]);
 const raise = (ctx, ce = 1, args = []) => runFrom(ctx.root, ['raise', '--root', ctx.root, '--ce', String(ce), '--now', NOW, ...args]);
-const bind = (ctx, ce, session, args = []) => runFrom(ctx.root, ['bind', '--root', ctx.root, '--ce', String(ce), '--session', session, '--now', NOW, ...args]);
+// FX-CGATE: bind takes the successor's nonce; the guard hook names the session (run/coord-session-<ce>.json)
+const bind = (ctx, ce, nonce, args = []) => runFrom(ctx.root, ['bind', '--root', ctx.root, '--ce', String(ce), '--nonce', nonce, '--now', NOW, ...args]);
+const NONCE = 'ab'.repeat(16);
+const sessionFile = (ctx, ce) => path.join(ctx.root, 'run', `coord-session-${ce}.json`);
 const coordPath = (ctx) => path.join(ctx.root, 'run', 'coord.json');
 const coord = (ctx) => J(coordPath(ctx));
 function liveWatcher(ctx) {
@@ -403,7 +406,9 @@ test('T6 raise, quiescent, with a live watcher and a live alarm: ce 2, both stil
     assert.equal(typeof brief, 'string');
     assert.ok(!brief.includes('\n'), 'the brief is one line');
     assert.ok(brief.includes(path.basename(ctx.root)));
-    assert.match(brief, new RegExp(`^Coordinator ce 2 for run .+, tcb ${COMMIT}: run node .+status\\.mjs --root .+ --ce 2 and act on run/status\\.json\\.$`));
+    const bm = new RegExp(`^Coordinator ce 2 for run .+, tcb ${COMMIT}: run node .+status\\.mjs --root .+ --ce 2 and act on run/status\\.json\\. Before any other call: node \\S+/handover\\.mjs bind --root \\S+ --ce 2 --nonce ([0-9a-f]{32})\\.$`).exec(brief);
+    assert.ok(bm, `brief: ${brief}`);
+    assert.equal(bm[1], c.successor_nonce, 'the brief carries the nonce of coord.json');
     const stale = j.result.stale_wake_sources;
     assert.ok(stale.length >= 2 && stale.every((x) => ['watcher', 'alarm'].includes(x.which)));
     const sw = stale.find((s) => s.which === 'watcher');
@@ -464,24 +469,74 @@ test('T10 raise --dry-run reports to 2 and changes nothing', async () => {
   });
 });
 
-test('T11 bind sets the session once; the same session again is exit 0; another exits 1 session-differs; a stale ce exits 64', async () => {
-  await withRoot({ ce: 2 }, async (ctx) => {
+test('T11 bind (FX-CGATE) sets the session of the hook\'s file once and clears the nonce; again is exit 0; another session file then exits 1 no-nonce; a stale ce exits 64', async () => {
+  await withRoot({ ce: 2, coord: { successor_nonce: NONCE } }, async (ctx) => {
     const sid = newSid();
-    assertLine(bind(ctx, 2, sid), 0);
-    assert.equal(coord(ctx).session, sid);
-    assert.equal(coord(ctx).ce, 2);
+    w(sessionFile(ctx, 2), { session_id: sid });
+    const j0 = assertLine(bind(ctx, 2, NONCE), 0);
+    assert.deepEqual(j0.result, { ce: 2, session: sid, changed: true });
+    const c = coord(ctx);
+    assert.equal(c.session, sid);
+    assert.equal(c.ce, 2);
+    assert.equal('successor_nonce' in c, false, 'the nonce is used once');
     const binds = ledgerLines(ctx.root, 'coord-bind');
     assert.equal(binds.length, 1);
     assert.equal(binds[0].data.session, sid);
     const after = fs.readFileSync(coordPath(ctx));
-    assertLine(bind(ctx, 2, sid), 0);
+    assert.equal(assertLine(bind(ctx, 2, NONCE), 0).result.changed, false);
     assert.equal(ledgerLines(ctx.root, 'coord-bind').length, 1, 'no second line');
-    const j = assertLine(bind(ctx, 2, newSid()), 1);
-    assert.ok(hasReason(j, 'session-differs'));
+    w(sessionFile(ctx, 2), { session_id: newSid() });
+    const j = assertLine(bind(ctx, 2, NONCE), 1);
+    assert.ok(hasReason(j, 'no-nonce'));
     assert.ok(after.equals(fs.readFileSync(coordPath(ctx))));
-    assertLine(bind(ctx, 1, newSid()), 64);
+    assertLine(bind(ctx, 1, NONCE), 64);
     assert.ok(after.equals(fs.readFileSync(coordPath(ctx))));
     assert.equal(ledgerLines(ctx.root, 'coord-bind').length, 1);
+  });
+});
+
+test('H1 FX-CGATE nonce: init and raise write successor_nonce and the brief carries it; bind refuses a wrong nonce and a missing or invalid session file with an incident; a dry run writes nothing', async () => {
+  await withRoot({ bare: true }, async (ctx) => {
+    const j = assertLine(init(ctx), 0);
+    const c = coord(ctx);
+    assert.match(c.successor_nonce, /^[0-9a-f]{32}$/);
+    const m = / Before any other call: node \S+\/handover\.mjs bind --root (\S+) --ce 1 --nonce ([0-9a-f]{32})\.$/.exec(j.result.brief);
+    assert.ok(m, `brief: ${j.result.brief}`);
+    assert.equal(m[1], ctx.root.replaceAll('\\', '/'));
+    assert.equal(m[2], c.successor_nonce);
+    for (const d of ['run/close/intent', 'run/close/done']) assert.ok(fs.statSync(path.join(ctx.root, d)).isDirectory(), `init makes ${d}`);
+  });
+  await withRoot({ coord: { successor_nonce: 'cd'.repeat(16) } }, async (ctx) => {
+    drainLine(ctx.root);
+    const dry = assertLine(raise(ctx, 1, ['--dry-run']), 0);
+    assert.ok(!dry.result.brief.includes('--nonce'), 'a dry run names no nonce');
+    const j = assertLine(raise(ctx), 0);
+    const c = coord(ctx);
+    assert.equal(c.ce, 2);
+    assert.match(c.successor_nonce, /^[0-9a-f]{32}$/);
+    assert.notEqual(c.successor_nonce, 'cd'.repeat(16), 'raise writes a fresh nonce');
+    assert.ok(j.result.brief.endsWith(` --ce 2 --nonce ${c.successor_nonce}.`), j.result.brief);
+    const before = fs.readFileSync(coordPath(ctx));
+    const incidents = () => ledgerLines(ctx.root, 'incident').length;
+    const sid = newSid();
+    w(sessionFile(ctx, 2), { session_id: sid });
+    let r = assertLine(bind(ctx, 2, 'ef'.repeat(16)), 1);
+    assert.ok(hasReason(r, 'nonce-mismatch'));
+    assert.equal(incidents(), 1);
+    r = assertLine(bind(ctx, 2, c.successor_nonce, ['--dry-run']), 0);
+    assert.deepEqual([r.dry_run, r.result.changed, r.result.session], [true, true, sid]);
+    fs.rmSync(sessionFile(ctx, 2));
+    assert.ok(hasReason(assertLine(bind(ctx, 2, c.successor_nonce), 1), 'not-bound'));
+    w(sessionFile(ctx, 2), { session_id: sid.toUpperCase() });
+    assert.ok(hasReason(assertLine(bind(ctx, 2, c.successor_nonce), 1), 'not-bound'));
+    assert.equal(incidents(), 3);
+    assert.ok(before.equals(fs.readFileSync(coordPath(ctx))), 'no refusal and no dry run changes coord.json');
+    assert.equal(ledgerLines(ctx.root, 'coord-bind').length, 0);
+    w(sessionFile(ctx, 2), { session_id: sid });
+    assert.equal(assertLine(bind(ctx, 2, c.successor_nonce), 0).result.session, sid);
+    assert.equal(coord(ctx).session, sid);
+    assert.equal('successor_nonce' in coord(ctx), false);
+    assertLine(runFrom(ctx.root, ['bind', '--root', ctx.root, '--ce', '2', '--nonce', 'XY'.repeat(16)]), 66);
   });
 });
 
@@ -489,7 +544,7 @@ test('T12 coord.json unparseable: raise and bind exit 67, init exits 67', async 
   await withRoot({}, async (ctx) => {
     w(coordPath(ctx), '{ not json');
     assertLine(raise(ctx), 67);
-    assertLine(bind(ctx, 1, newSid()), 67);
+    assertLine(bind(ctx, 1, NONCE), 67);
     assertLine(init(ctx), 67);
     assert.equal(fs.readFileSync(coordPath(ctx), 'utf8'), '{ not json', 'the corrupt file is left alone');
   });
@@ -508,13 +563,13 @@ test('T13 run.lock held by a live process exits 75 for init, raise and bind', as
     w(path.join(ctx.root, 'run', 'run.lock'), JSON.stringify(lockRec(holder, { script: 'test' })));
     const before = fs.readFileSync(coordPath(ctx));
     assertLine(raise(ctx), 75);
-    assertLine(bind(ctx, 1, newSid()), 75);
+    assertLine(bind(ctx, 1, NONCE), 75);
     assert.ok(before.equals(fs.readFileSync(coordPath(ctx))));
     assert.equal(ledgerLines(ctx.root).length, 1, 'nothing was appended');
   });
 });
 
-test('X1 usage: init takes no --ce; raise needs --ce; bind needs a 36-character session; unknown flag', async () => {
+test('X1 usage: init takes no --ce; raise needs --ce; bind needs a 32-hex nonce and takes no --session (FX-CGATE); unknown flag', async () => {
   await withRoot({ bare: true }, async (ctx) => {
     assertLine(runFrom(ctx.root, ['init', '--root', ctx.root, '--tcb-commit', COMMIT, '--ce', '1']), 66);
     assertLine(runFrom(ctx.root, ['init', '--root', ctx.root, '--tcb-commit', COMMIT, '--no-such-flag']), 66);
@@ -524,6 +579,7 @@ test('X1 usage: init takes no --ce; raise needs --ce; bind needs a 36-character 
     assertLine(runFrom(ctx.root, ['raise', '--root', ctx.root]), 66);
     assertLine(runFrom(ctx.root, ['bind', '--root', ctx.root, '--ce', '1']), 66);
     assertLine(runFrom(ctx.root, ['bind', '--root', ctx.root, '--ce', '1', '--session', 'short']), 66);
+    assertLine(runFrom(ctx.root, ['bind', '--root', ctx.root, '--ce', '1', '--nonce', NONCE, '--session', newSid()]), 66);
     assertLine(runFrom(ctx.root, ['--root', ctx.root]), 66);
   });
 });

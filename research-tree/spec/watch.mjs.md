@@ -38,7 +38,7 @@ re-checked inside the lock before each append (R4). Transcripts are parsed befor
 
 ## Watcher steps (default and `--once`)
 1 `checkCe` (stale → 64 at once). 2 `acquireLock(watcher.lock)`: a live holder → 75 after retries;
-a dead holder is broken by lib. 3 Read `watcher.json` (absent → fresh counters; corrupt → 67);
+a dead holder is broken by lib, under the run lock (FX-W7). 3 Read `watcher.json` (absent → fresh counters; corrupt → quarantined, fresh counters, FX-W7);
 counters of every task continue from any earlier watcher (R5); set ce, pid, start_time.
 4 Default mode: one **start evaluation** with no tick counted (a new watcher re-evaluates everything,
 R6); then loop: sleep Δ, `ticks_total += 1`, evaluate. `--once`: `ticks_total += 1`, evaluate once.
@@ -67,7 +67,9 @@ b. Per row active at step started|bound (current attempt e): parse its transcrip
      it is (new calls still reset it). This is the watcher's only use of a clock difference and it
      can only withhold a hang count; an unparseable or missing `last_tick_at` counts the tick.
    - `loopRun` of the main transcript's tool uses: run ≥ `loop_k` → 22; stored as `loop {sig, run}`.
-   - READY of epoch e: kind ready for a step without a commit record → 11; kind repair → 12. Either
+   - READY of epoch e (FX-OUT): an uncommitted ready slot in the outcome log (`lib.outcomeState`, R-b; a
+     fenced or unreadable log has none) → 11 (detail step: the latest such slot); else a repair marker in
+     `staging/READY.json` (it takes no slot) → 12. Either
      voids 20, 21, 22 for that epoch (R5, finding A4).
    - spend (current attempt) ≥ ⌊soft_frac·e_task⌋ → 13; ≥ ⌊hard_frac·e_task⌋ → 23.
    - window = `last_context`; `W_star_child` a gate and window ≥ it → 15.
@@ -166,6 +168,35 @@ args, exit, timeout?}]}`; exit 0.
 0 (`--once` quiet, alarm superseded, intake done), 10-17, 20-27, 30, 3 (`run-from-attempt`, tamper
 in intake), 64, 66, 67, 70, 75.
 
+## Raised again while the condition holds (FX-W5, round 3, branch R1)
+FIX-wake.md FX-W5; `build/branches.md` row 6. Fills the skeleton's `ownerOrNone` and `reraiseStuck`.
+- Step 1: `rowAct` raises nothing for a planned act `owner` or `none` (`ownerOrNone`), so such a row is
+  never raised again nor `stuck`. The act is `planAct`'s once FX-PLAN fills `rowActPlanned`, whose
+  facts bring zombie-over (FIX-JOIN point 11); until then `planned` is undefined and today's filters decide.
+- Classes raised again: every act-due (17) but `run-terminal` (its condition never clears), and stall,
+  hang and loop (20-22), the set the model checked R1 with (ABLATION-wake.md:234-235). Others are
+  raised once per onset as before.
+- Step 2, in evaluate after the present set is keyed by ident and before the active keys are renewed:
+  a present ident of those classes whose key's `event` line is acknowledged (seq ≤ `acked_seq`) and
+  whose last raise (the key's tick) is at least `min(15 × 2^b, 60)` ticks old, b = min(n, 2) after n
+  raises, is raised again: its key leaves `active`, so step 5 gives it a new key `<ident>|<tick>` and
+  one new `event` line with `detail.reraise` = n + 1, which exits like any new key (17 after
+  coalescing, 20-22 at once). An unacknowledged key is due anyway and is not raised again. 15 and 60
+  are marked guesses in the code (slice 1 writes no thresholds.json key).
+- Step 3: `stuck_count` = the raises made once b was at its cap, n − 3 (the raises at 15, 30 and 60
+  ticks reach it). At `stuck_raises` (thresholds.json, 3; missing or not a positive integer: 3) the
+  ident is in `stuck`: 15 + 30 + 60, then 3 × 60 = 285 ticks after the onset (about 4.75 h at Δ 60 s,
+  FIX-wake.md:54). FX-W4's dead-man reads it.
+- `watcher.json` gains `reraise: {<ident>: n ≥ 1}` and `stuck: [<ident>]` (sorted), rebuilt from the
+  present idents at each evaluation: an ident leaving the active set leaves both.
+- Tests: **W5 re-raise** (a planned row's `replace-fence`, acknowledged: quiet one tick short of each
+  interval, raised at 15, 30, 60 and 60 ticks with a new key and `detail.reraise`; `stuck_raises` 1 puts
+  it in `stuck` at the 4th raise, not the 3rd; left unacknowledged it exits 17 and is not raised again);
+  **W5 stuck** (an acknowledged hang raised again and exiting 21 at once, six times; in `stuck` only at
+  the 6th, 285 ticks after the onset; a new call clears the hang and empties `stuck` and `reraise`);
+  **W5 stuck stays** (once stuck at the 4th raise, the acknowledged act-due stays in `stuck` at quiet
+  ticks 1 and 59 ticks later, where FX-W4 reads it at its own times; nothing is raised there).
+
 ## Rules implemented
 R1, R4 (reads, decides, exits; watcher.lock; ce first and inside the lock; intake spawned, not
 awaited; no deadline exit), R5 (V, stall by calls, hang by ticks, loop, READY voids suspicion),
@@ -207,7 +238,7 @@ All with `--once` or `--interval-ms 50` and `--no-intake` unless stated; fake tr
   at most one `watcher.json` write after the raise (review U1-F3).
 - T16 a second watcher while the first holds `watcher.lock` → 75; a lock whose holder is dead is
   broken and the watcher runs.
-- T17 `watcher.json` unparseable → 67; `tasks.json` unparseable → 67.
+- T17 `watcher.json` unparseable → quarantined, exit 0 from fresh counters (FX-W7); `tasks.json` unparseable → 67.
 - T18 intake spawn (without `--no-intake`; test reads `watcher.json.intake.pid`, waits for that
   process to end and asserts it was a `--intake` run): spawned once; a second tick while it is alive
   spawns none.
@@ -267,6 +298,18 @@ real transcripts matching the parser (item 7); a real session's window in its tr
 - `evaluate`: `actDueIdleAgeCap(env, state, conds, {rows, tick})` after the row acts (FX-W6);
   `reraiseStuck(env, state, present, tick)` before the active keys are renewed (FX-W5); `adoptState(env,
   state)` after watcher.json is written (FX-W7).
+- FX-W7 (built). `evaluateCopy(env, flags, counted)` evaluates `structuredClone(env.state)` (`ticks_total
+  += 1` when counted); `holdTick` takes the run lock with about `watcher_lock_try_ms` of retries (100 ms
+  apart) and runs, in that one hold, `assertHeld` of watcher.lock, the appends, the due and pending
+  steps, the `watcher.json` write and `adoptState` (`env.state` = the copy; a non-zero busy count
+  written back to 0). A busy run lock: the copy is dropped except its `intake` record, `assertHeld`
+  outside the hold, `run/watcher-busy.json` `{ce, busy_ticks}` + 1; the loop sleeps Δ and evaluates
+  again (a dropped start evaluation stays uncounted), `--once` exits 75 `lock-busy`. Step 3: an
+  unparseable `watcher.json` is renamed to `watcher.json.<pid>.<nonce8>.corrupt` (`result.quarantined`)
+  and the counters start fresh; T17's first half now expects that. Test W7b: two busy `--once` ticks
+  with class 24 present → 75, busy 1 then 2, no `watcher.json`, no event; a default-mode watcher stays
+  up through busy ticks; after the release it exits 24 with one event line, `ticks_total` 0, busy 0;
+  a following `--once` → 24, no second line, `ticks_total` 1. Reads also `watcher_lock_try_ms`.
 - The alarm: in the registration hold, before alarm.json, `alarmSlotTurnSeq(reg)` (FX-W3), then
   `alarmRegisterSlot(reg)` (FX-W2). Every exit after registration passes `alarmExit(reg, out or exit
   code)`: `alarmUnarmedRecord` (FX-W3, exit 30 only), then `alarmExitMarker` (FX-W1); an error is rethrown.

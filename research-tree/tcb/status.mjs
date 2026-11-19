@@ -240,12 +240,13 @@ async function gatherFacts(root, th, table, proc, { reconcile }) {
   if (reconcile) {
     for (const row of table.tasks ?? []) {
       if (row.state === 'active' && row.step === 'admitted') {
-        recon.push({ task: row.task, epoch: row.epoch, current: true, sessions: folderSessions(root, tr, row, row.epoch) });
+        recon.push({ task: row.task, epoch: row.epoch, current: true, sessions: folderSessions(root, tr, row, row.epoch), claim: claimOf(root, row, row.epoch) });
       }
       for (const att of row.attempts ?? []) {
         if (att.epoch === row.epoch || att.session) continue;
         const sessions = folderSessions(root, tr, row, att.epoch);
-        if (sessions.length) recon.push({ task: row.task, epoch: att.epoch, rowEpoch: row.epoch, current: false, sessions });
+        const claim = claimOf(root, row, att.epoch);
+        if (sessions.length || claim.kind === 'session') recon.push({ task: row.task, epoch: att.epoch, rowEpoch: row.epoch, current: false, sessions, claim });
       }
     }
   }
@@ -262,17 +263,43 @@ function folderSessions(root, tr, row, e) {
   return [...new Set(found.map((f) => f.sessionId).filter(Boolean))].sort();
 }
 
+// FX-CLAIM step 3: the attempt's claim, the first source of `started` ({kind:'invalid'} when it does not parse).
+function claimOf(root, row, e) {
+  try {
+    return lib.readClaim(attemptDir(root, row, e));
+  } catch (err) {
+    if (err && err.exit === 3) return { kind: 'invalid', session_id: null };
+    throw err;
+  }
+}
+
 // ---------------------------------------------------------------- reconcile (under the lock)
 
 async function applyReconcile(ctx, root, handle, pre, ce, facts, anomalies, dryTable) {
   const changes = [];
   for (const r of pre.recon) {
-    if (r.sessions.length > 1) {
-      anomalies.push({ code: 'several-sessions', detail: { task: r.task, epoch: r.epoch, sessions: r.sessions } });
+    // FX-CLAIM step 3: a session claim is the first source (the session is the claim holder; any other
+    // folder session is the anomaly duplicate-session); transcripts are the second, as before. A
+    // tombstone (a no-start fence cancelled the attempt) starts nothing; an invalid claim is tamper.
+    const kind = r.claim ? r.claim.kind : 'none';
+    if (kind === 'invalid') {
+      anomalies.push({ code: 'claim-invalid', detail: { task: r.task, epoch: r.epoch } });
       continue;
     }
-    if (r.sessions.length !== 1) continue;
-    const sid = r.sessions[0];
+    if (kind === 'tombstone') continue;
+    let sid;
+    if (kind === 'session') {
+      sid = r.claim.session_id;
+      const others = r.sessions.filter((s) => s !== sid);
+      if (others.length) anomalies.push({ code: 'duplicate-session', detail: { task: r.task, epoch: r.epoch, holder: sid, sessions: others } });
+    } else {
+      if (r.sessions.length > 1) {
+        anomalies.push({ code: 'several-sessions', detail: { task: r.task, epoch: r.epoch, sessions: r.sessions } });
+        continue;
+      }
+      if (r.sessions.length !== 1) continue;
+      sid = r.sessions[0];
+    }
     if (dryTable) {
       const row = dryTable.tasks.find((x) => x.task === r.task);
       if (!row) continue;
@@ -317,7 +344,27 @@ async function applyReconcile(ctx, root, handle, pre, ce, facts, anomalies, dryT
       throw e;
     }
   }
+  await reconcileRedo(ctx, root, handle, ce, facts, dryTable, changes); // FX-REDO
   return changes;
+}
+
+// FX-REDO (FIX-fence section 5): the reconcile repeated at its exact post-state. A row at started
+// whose `started` line a death left missing gets it from the row (the attempt's session, the same
+// as the row's when that is set), marked `data.redo: true`, in this hold; rows this call moved are
+// skipped. A dry run lists it and writes nothing.
+async function reconcileRedo(ctx, root, handle, ce, facts, dryTable, changes) {
+  const table = dryTable ?? lib.readTasks(root);
+  const { lines } = lib.readLedger(root);
+  for (const row of table.tasks ?? []) {
+    if (row.state !== 'active' || row.step !== 'started') continue;
+    if (changes.some((c) => c.task === row.task && c.epoch === row.epoch)) continue;
+    const att = (row.attempts ?? []).find((a) => a && a.epoch === row.epoch);
+    const sid = att && typeof att.session === 'string' ? att.session : null;
+    if (!sid || (row.session && row.session !== sid)) continue;
+    if (lib.lastLine(lines ?? [], 'started', (l) => l.task === row.task && l.epoch === row.epoch)) continue;
+    if (handle) await lib.appendLedger(root, handle, { ctx, ce, kind: 'started', task: row.task, epoch: row.epoch, data: { session: sid, redo: true }, now: facts.now });
+    changes.push({ task: row.task, epoch: row.epoch, session: sid, step: 'started', redo: true });
+  }
 }
 
 function setSession(row, e, sid) {
@@ -369,7 +416,7 @@ async function computeStatus(root, th, ce, pre, facts, table, anomalies) {
 
   if (torn && (torn.length === undefined || torn.length > 0)) anomalies.push({ code: 'ledger-torn', detail: { bytes: torn.length ?? null } });
 
-  const slots = await lib.slotCount(table.tasks, pre.procList, tr);
+  const slots = await lib.slotCount(table.tasks, pre.procList, tr, { root });
   const res = await lib.reservation(table.tasks, spentOf);
   const flags = lib.runFlags(lines, ce);
   const blocked = flags.halted === true || flags.draining === true;
@@ -404,13 +451,14 @@ async function computeStatus(root, th, ce, pre, facts, table, anomalies) {
     }
 
     // READY of the current epoch.
+    // An uncommitted ready slot in the outcome log, not READY.json (FX-OUT; R-a: a fenced log has none).
     let readyPending = false;
     if (e >= 1) {
-      const r = readReady(root, row, e);
-      if (r.bad) anomalies.push({ code: 'ready-unparseable', detail: { task: row.task, epoch: e } });
-      else if (r.value && r.value.kind === 'ready' && r.value.epoch === e) {
-        const step = readyStep(root, row, r.value);
-        if (step && !commitExists(root, row.task, step)) readyPending = true;
+      try {
+        const log = lib.outcomeState(attemptDir(root, row, e), row);
+        readyPending = log.fenced === null && log.ready.length > 0;
+      } catch (x) {
+        anomalies.push({ code: 'outcome-tamper', detail: { task: row.task, epoch: e, why: x && x.detail ? x.detail.why ?? null : null } });
       }
     }
 
@@ -878,6 +926,7 @@ async function runIntent(ctx, root, flags, sub, dry) {
 
 async function runOwner(ctx, root, flags, dry) {
   const act = flags.act;
+  if (act === 'closed') return runOwnerClosed(ctx, root, flags, dry); // FX-CGATE
   if (!ACTS.includes(act)) throw usage({ flag: 'act', expect: ACTS });
   if (typeof flags.subject !== 'string' || flags.subject.length === 0) throw usage({ flag: 'subject' });
   if (typeof flags['quote-file'] !== 'string') throw usage({ flag: 'quote-file' });
@@ -895,6 +944,37 @@ async function runOwner(ctx, root, flags, dry) {
       await lib.appendLedger(root, handle, { ctx, ce: flags.ce, kind: 'owner', data: { act, subject: flags.subject, quote }, now: facts.now });
     }
     return { exit: 0, result: { act, subject: flags.subject, quote_chars: n } };
+  });
+}
+
+// FX-CGATE: `owner --act closed --subject SID --quote-file P --root R --ce N`. The owner says a session's
+// process is gone: the close's fallback when no hook record names it (the hook names a close by the
+// app's id, FX-CLOSE's verify reads by the CLI's: departures/CGATE.md). SID is the CLI session id, a
+// lowercase UUID, else 66. In the hold: the owner line, then run/close/done/<SID>.json {kind:
+// 'close-done', session, outcome: 'owner', by: null} by an exclusive create (a record already there is
+// kept: the first record stands). A dry run writes nothing.
+const CLI_SESSION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+async function runOwnerClosed(ctx, root, flags, dry) {
+  const sid = flags.subject;
+  if (typeof sid !== 'string' || !CLI_SESSION.test(sid)) throw usage({ flag: 'subject', expect: 'act closed takes the CLI session id, a lowercase UUID' });
+  if (typeof flags['quote-file'] !== 'string') throw usage({ flag: 'quote-file' });
+  const quote = stripBom(notesFile(root, flags['quote-file']).toString('utf8'));
+  const n = [...quote].length;
+  if (n < 1 || n > 500) throw err('quote-length', 66, { length: n });
+  return withLockOrDry(root, flags, dry, async (handle, facts) => {
+    let done = null;
+    if (handle) {
+      await lib.appendLedger(root, handle, { ctx, ce: flags.ce, kind: 'owner', data: { act: 'closed', subject: sid, quote }, now: facts.now });
+      handle.assertHeld();
+      try {
+        done = lib.createExclusive(lib.paths(root).closeDone(sid), { kind: 'close-done', session: sid, outcome: 'owner', by: null });
+      } catch (e) {
+        if (!(e && e.code === 'exists-different')) throw e;
+        done = 'kept';
+      }
+    }
+    return { exit: 0, result: { act: 'closed', subject: sid, quote_chars: n, done } };
   });
 }
 

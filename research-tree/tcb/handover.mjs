@@ -1,10 +1,11 @@
 // handover.mjs (unit U1b): coordinator epochs (R12, R28).
 //   init  --root R --tcb-commit SHA40 [--session SID] [--now ISO] [--dry-run]
 //   raise --root R --ce N [--now ISO] [--dry-run]
-//   bind  --root R --ce N --session SID [--now ISO] [--dry-run]
+//   bind  --root R --ce N --nonce X [--now ISO] [--dry-run]   (FX-CGATE: the hook names the session)
 // Source of truth: CONTRACT.md (sections 1-6, decisions 4, 5, 21, 29) and spec/handover.mjs.md.
 // Starts, kills and messages nothing (CONTRACT section 6, decision 29). Process facts are taken
 // before the run lock (CONTRACT section 2.1).
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,12 +14,15 @@ import * as lib from './lib.mjs';
 const SCRIPT = 'handover';
 const SHA40 = /^[0-9a-f]{40}$/;
 const SESSION = /^[0-9a-f-]{36}$/;
+// FX-CGATE: a CLI session id (a lowercase UUID, F-P1b) and the successor's bind nonce.
+const SESSION_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const NONCE = /^[0-9a-f]{32}$/;
 
 // Folders of CONTRACT section 2 that init creates when missing (`tcb/` is the owner's).
 const RUN_DIRS = [
   'plan', 'plan/questions', 'plan/protocols', 'plan/plant-candidates', 'plan/our-work', 'plan/notes',
   'plan/frozen',
-  'run', 'run/intents', 'run/audit', 'run/stop-sample',
+  'run', 'run/intents', 'run/audit', 'run/stop-sample', 'run/close', 'run/close/intent', 'run/close/done',
   'store', 'store/objects', 'store/commits', 'store/status',
   'views', 'views/blind',
   'queue', 'review-in',
@@ -47,7 +51,8 @@ const FLAGS = {
   root: { type: 'string', required: true },
   ce: { type: 'int', required: ['raise', 'bind'] },
   'tcb-commit': { type: 'string', required: ['init'] },
-  session: { type: 'string', required: ['bind'] },
+  session: { type: 'string' },
+  nonce: { type: 'string', required: ['bind'] },
   now: { type: 'string' },
   'free-mb': { type: 'int' },
   boot: { type: 'string' },
@@ -206,12 +211,14 @@ async function doInit(ctx, root, flags, dry) {
       outcome = { exit: 0 };
       return;
     }
-    const value = { schema_version: 1, ce: 1, session: flags.session ?? null, started_at: nowIso, tcb_commit: commit };
+    const nonce = newNonce();
+    const value = { schema_version: 1, ce: 1, session: flags.session ?? null, started_at: nowIso, tcb_commit: commit, successor_nonce: nonce };
     // The ledger line first: a broken ledger refuses before coord.json exists.
     await lib.appendLedger(root, handle, { ctx, ce: 1, kind: 'coord-init', data: { tcb_commit: commit }, now: facts.now });
     handle.assertHeld();
     lib.writeAtomic(fileOf(root, 'coord'), serialize(value));
     result.coord = 'created';
+    result.brief = briefLine(flags.root, 1, commit, nonce);
     outcome = { exit: 0 };
   });
 
@@ -274,7 +281,7 @@ export async function doRaise(ctx, root, flags, dry, hooks = {}) {
     throw err('proc-unavailable', 2, { detail: e && e.message ? e.message : null });
   }
   if (!Array.isArray(procList)) throw err('proc-unavailable', 2, null);
-  const slots = await lib.slotCount(table.tasks, procList, tr);
+  const slots = await lib.slotCount(table.tasks, procList, tr, { root });
   const counts = { live: slots.live ?? 0, unknown: slots.unknown ?? 0, unconfirmed: slots.unconfirmed ?? 0 };
   if (counts.live + counts.unknown + counts.unconfirmed > 0) {
     return refuse(ctx, root, th, proc, facts, dry, N, 6, 'not-quiescent', counts);
@@ -336,8 +343,9 @@ export async function doRaise(ctx, root, flags, dry, hooks = {}) {
       return;
     }
     const coord = readState(fileOf(root, 'coord'), 'coord.json');
-    const value = { schema_version: coord.schema_version ?? 1, ce: to, session: null, started_at: nowIso, tcb_commit: coord.tcb_commit };
-    result.brief = briefLine(flags.root, to, coord.tcb_commit);
+    const nonce = newNonce();
+    const value = { schema_version: coord.schema_version ?? 1, ce: to, session: null, started_at: nowIso, tcb_commit: coord.tcb_commit, successor_nonce: nonce };
+    result.brief = briefLine(flags.root, to, coord.tcb_commit, nonce);
     await lib.appendLedger(root, handle, { ctx, ce: N, kind: 'ce-raise', data: { from: N, to }, now: facts.now });
     handle.assertHeld();
     lib.writeAtomic(fileOf(root, 'coord'), serialize(value));
@@ -352,12 +360,25 @@ export async function doRaise(ctx, root, flags, dry, hooks = {}) {
 function briefLine(root, ce, tcbCommit, nonce = null) {
   const status = path.join(path.dirname(fileURLToPath(import.meta.url)), 'status.mjs').replace(/\\/g, '/');
   return `Coordinator ce ${ce} for run ${root}, tcb ${tcbCommit}: run node ${status} --root ${root} --ce ${ce} and act on run/status.json.`
-    + briefNoncePart(nonce) + briefPathPart(root);
+    + briefNoncePart(nonce, root, ce) + briefPathPart(root);
 }
 
 // FX-CGATE step 1: the successor's bind nonce (`handover.mjs bind --ce <ce> --nonce <X>`) in the brief line.
-function briefNoncePart(nonce) { // eslint-disable-line no-unused-vars
-  return '';
+// The command is in the guard hook's tcb-node grammar (forward slashes; a path with a blank quoted), so
+// the successor's first call passes the hook's bind step (FX-CGATE step 2). No nonce (a dry run): ''.
+function briefNoncePart(nonce, root, ce) {
+  if (typeof nonce !== 'string' || !NONCE.test(nonce)) return '';
+  const q = (s) => {
+    const f = String(s).replace(/\\/g, '/');
+    return /\s/.test(f) ? `"${f}"` : f;
+  };
+  const script = path.join(path.dirname(fileURLToPath(import.meta.url)), 'handover.mjs');
+  return ` Before any other call: node ${q(script)} bind --root ${q(root)} --ce ${ce} --nonce ${nonce}.`;
+}
+
+// A fresh bind nonce: 16 random bytes in hex.
+function newNonce() {
+  return crypto.randomBytes(16).toString('hex');
 }
 
 // FX-W3: the path of the coordinator's brief, tcb/briefs/coordinator.md, in the brief line (FIX-JOIN 2c).
@@ -379,31 +400,46 @@ async function refuse(ctx, root, th, proc, facts, dry, N, exit, code, detail) {
 
 // ---------------------------------------------------------------- bind
 
+// FX-CGATE step 1 (FIX-fence 3): the successor names no session. Its first call, `bind --ce N --nonce X`,
+// passes the guard hook's bind step, which strict-creates run/coord-session-<N>.json naming the caller;
+// bind then checks X against coord.json's successor_nonce and copies that session into coord.json,
+// clearing the nonce. No nonce left: exit 0 when coord.json already names the session file's session
+// (a repeat), else no-nonce; a wrong nonce is nonce-mismatch and a missing or invalid session file
+// not-bound, each with an incident line.
 async function doBind(ctx, root, flags, dry) {
   const N = flags.ce;
-  const sid = flags.session;
+  const nonce = flags.nonce;
   if (!Number.isInteger(N) || N < 1) throw err('usage', 66, { flag: 'ce' });
-  if (typeof sid !== 'string' || !SESSION.test(sid)) throw err('usage', 66, { flag: 'session', expect: '[0-9a-f-]{36}' });
+  if (flags.session !== undefined) throw err('usage', 66, { flag: 'session', expect: 'bind takes --nonce; the guard hook names the session' });
+  if (typeof nonce !== 'string' || !NONCE.test(nonce)) throw err('usage', 66, { flag: 'nonce', expect: '32 lowercase hex' });
   if (flags['tcb-commit'] !== undefined) throw err('usage', 66, { flag: 'tcb-commit', expect: 'bind takes no --tcb-commit' });
 
   lib.checkCe(root, N);
   const th = lib.thresholds(root);
   const facts = lib.edgeFacts(flags);
+  const sessionFile = lib.paths(root).coordSession(N);
 
   const decide = (coord) => {
-    const cur = coord.session ?? null;
-    if (cur === null) return { exit: 0, change: true };
-    if (cur === sid) return { exit: 0, change: false };
-    return { exit: 1, change: false, code: 'session-differs', detail: { session: cur } };
+    const bound = boundSessionOf(sessionFile);
+    const want = coord.successor_nonce;
+    if (want === undefined || want === null) {
+      if (bound !== null && coord.session === bound) return { exit: 0, change: false, session: bound };
+      return { exit: 1, change: false, session: coord.session ?? null, code: 'no-nonce', detail: { session: coord.session ?? null } };
+    }
+    if (want !== nonce) return { exit: 1, change: false, session: null, code: 'nonce-mismatch', detail: { ce: N }, incident: true };
+    if (bound === null) return { exit: 1, change: false, session: null, code: 'not-bound', detail: { file: `run/coord-session-${N}.json` }, incident: true };
+    return { exit: 0, change: true, session: bound };
   };
+  const out = (d) => ({
+    exit: d.exit,
+    result: { ce: N, session: d.session, changed: d.change },
+    reasons: d.code ? [{ code: d.code, detail: d.detail }] : [],
+  });
 
   if (dry) {
-    const d = decide(readState(fileOf(root, 'coord'), 'coord.json'));
-    return {
-      exit: d.exit,
-      result: { ce: N, session: sid, changed: d.change },
-      reasons: d.code ? [{ code: d.code, detail: d.detail }] : [],
-    };
+    const coord = readState(fileOf(root, 'coord'), 'coord.json');
+    if (!coord) throw err('no-coordinator', 2, null);
+    return out(decide(coord));
   }
 
   const proc = lib.realProc({ exe: th.get('proc_exe') });
@@ -412,22 +448,29 @@ async function doBind(ctx, root, flags, dry) {
     const coord = readState(fileOf(root, 'coord'), 'coord.json');
     if (!coord) throw err('no-coordinator', 2, null);
     d = decide(coord);
-    if (d.code) {
+    if (d.incident) {
       await lib.recordIncident(root, handle, {
         ctx, ce: N, cls: 'refusal', detail: { script: SCRIPT, code: d.code, ...d.detail }, now: facts.now,
       });
-      return;
     }
     if (!d.change) return;
-    await lib.appendLedger(root, handle, { ctx, ce: N, kind: 'coord-bind', data: { session: sid }, now: facts.now });
+    await lib.appendLedger(root, handle, { ctx, ce: N, kind: 'coord-bind', data: { session: d.session }, now: facts.now });
     handle.assertHeld();
-    lib.writeAtomic(fileOf(root, 'coord'), serialize({ ...coord, session: sid }));
+    const { successor_nonce: _used, ...rest } = coord; // eslint-disable-line no-unused-vars
+    lib.writeAtomic(fileOf(root, 'coord'), serialize({ ...rest, session: d.session }));
   });
-  return {
-    exit: d.exit,
-    result: { ce: N, session: sid, changed: d.change },
-    reasons: d.code ? [{ code: d.code, detail: d.detail }] : [],
-  };
+  return out(d);
+}
+
+// The session a run/coord-session-<ce>.json names, or null when it is missing or invalid.
+function boundSessionOf(file) {
+  let v;
+  try {
+    v = lib.readJson(file);
+  } catch {
+    return null;
+  }
+  return v && typeof v === 'object' && typeof v.session_id === 'string' && SESSION_UUID.test(v.session_id) ? v.session_id : null;
 }
 
 // ---------------------------------------------------------------- main
