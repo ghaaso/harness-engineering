@@ -360,3 +360,7 @@ empty step returns its neutral value, so behaviour is unchanged (FIX-JOIN point 
   callers pass it.
 - `RUNTIME_FILES`: the 13 runtime files of the round-3 fixes (path, helper of `paths(root)`, fix, writer,
   fields, rewritten); `markerKey(pid, start_time)` names the arm markers `exited-<pt>`, `unarmed-<pt>`.
+
+## FX-CLAIM (round 3)
+
+`readClaim`, `claimRecord`, `tombstoneRecord`, `startLeaseExpired` (CONTRACT 4.10); `fence` reads the claim of attempt E for `nostart` (failure reasons, not host); `slotCount` step 7. Tests: lib T96x (step 7 and H3), T96y (the lease), T96z (claims).

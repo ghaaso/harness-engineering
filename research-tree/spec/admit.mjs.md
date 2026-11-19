@@ -51,7 +51,7 @@ Nothing. stdout line only.
    and `tcb_sha` = `treeSha(tcb/)` (R41, decision 18).
 5. `fsck-missing|fsck-fail|fsck-stale`: the last `fsck` line must pass and be newer (higher seq)
    than the last `intake` or `commit` line (R23, decision 18).
-6. `ceiling` {N_max, N_ceiling}: N_max > N_ceiling (never above 3). `slots-full` {live, unknown,
+6. `ceiling` {N_max, N_ceiling}: N_max > N_ceiling (no fixed ceiling of 3: FX-CLAIM, ORCHESTRATION 9 row 5). `slots-full` {live, unknown,
    unconfirmed, N_max}: live + unknown + unconfirmed ≥ N_max (lib `slotCount`: an admitted, started
    or bound current attempt always counts one slot, so back-to-back starts cannot all pass).
    `slots-unknown`: slots null (process list failed) — fail-safe refusal.

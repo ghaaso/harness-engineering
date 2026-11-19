@@ -170,6 +170,10 @@ start (§7 item 7); that the watcher's and alarm's exits reach the coordinator (
 - `deadmanRun(ctx, flags, dry)` (FX-W4) runs right after the dry-run flag is read, before the ce check;
   null goes on.
 
+## FX-CLAIM (round 3)
+
+Reconcile (FX-CLAIM step 3): a session claim is the first source of `started`; other folder sessions → anomaly `duplicate-session`; a tombstone starts nothing; an invalid claim → anomaly `claim-invalid`; older attempts with a session claim and no transcript are reconciled too. `slotCount` gets `{root}`.
+
 ## FX-REDO: a missing ledger line after a death (FIX-fence section 5)
 
 The row is written before its line, so a death between the two leaves the row moved and the line missing. The mode's own repeat is the redo, from the row (the after-image): only at the exact post-state, inside the mode's hold, the missing line is appended with `data.redo: true` and the answer is exit 0 with `result.repeat` true and `result.redo` (true when a line was written; a dry run writes nothing). Elsewhere the old answer stands.

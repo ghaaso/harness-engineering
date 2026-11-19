@@ -122,3 +122,7 @@ old watcher and alarm, left alive, reach their next ce check and exit 64.
 - `briefLine(root, ce, tcbCommit, nonce = null)`: today's line, then `briefNoncePart(nonce, root, ce)` (FX-CGATE
   step 1) and `briefPathPart(root)` (FX-W3: the path of `tcb/briefs/coordinator.md`), both '' until
   filled, so the line is unchanged.
+
+## FX-CLAIM (round 3)
+
+`slotCount` gets `{root}` (FX-CLAIM step 7).

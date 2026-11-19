@@ -28,6 +28,15 @@ const row = (o) => ({
 });
 const att = (e, o = {}) => ({ epoch: e, folder: `wt/${T}-e${e}`, stop: 'none', ...o });
 
+// FX-CLAIM: an attempt's claim.json as the child hook makes it on a session's first tool call (or the fence,
+// a tombstone), by strict create (0b), in the folder `start` made. On the merge every row is as a run leaves
+// it: the claim comes before any bind (FIX-JOIN 2b rows 6-7), so a bound attempt holds its session's claim.
+function claimAt(root, e, v) {
+  const dir = path.join(root, 'wt', `${T}-e${e}`);
+  fs.mkdirSync(dir, { recursive: true });
+  lib.createExclusive(path.join(dir, 'claim.json'), v, { strict: true });
+}
+
 function makeRoot(rows, dirs) {
   const root = fs.mkdtempSync(path.join(TMP, 'redo-'));
   dirs.push(root);
@@ -42,6 +51,7 @@ function makeRoot(rows, dirs) {
   fs.writeFileSync(path.join(root, 'tcb', 'thresholds.json'), JSON.stringify(th, null, 2));
   fs.writeFileSync(path.join(root, 'run', 'coord.json'), JSON.stringify({ schema_version: 1, ce: 1, started_at: '2026-11-17T09:00:00.000Z', tcb_commit: '0'.repeat(40) }));
   fs.writeFileSync(path.join(root, 'run', 'tasks.json'), JSON.stringify({ schema_version: 1, rev: 1, tasks: rows }));
+  for (const r of rows) for (const a of r.attempts ?? []) if (a && a.session && a.bound_at) claimAt(root, a.epoch, lib.claimRecord(a.session));
   return root;
 }
 
@@ -159,6 +169,10 @@ test('FX-REDO: each repeat call completes a missing ledger line only at the exac
   await t.test('replace bind: the same session completes the line, another session is refused', () => {
     const B = makeRoot([row({ step: 'admitted', attempts: [att(1, { manifest: M0, settings_sha: Z64 })] })], dirs);
     const bind = (sid, kind = null) => run(B, 'replace', ['bind', '--root', B, '--ce', '1', '--now', NOW, '--task', T, '--epoch', '1', '--session', sid, '--boot', 'BOOT-B'], kind);
+    // FX-CLAIM step 4: bind needs the claim; the child hook makes it on SID1's first tool call
+    assert.equal(bind(SID1).exit, 6, 'no claim yet: not-claimed');
+    assert.equal(rowOf(B).step, 'admitted');
+    claimAt(B, 1, lib.claimRecord(SID1));
     assert.equal(bind(SID1, 'bind').exit, 70);
     assert.deepEqual([rowOf(B).step, rowOf(B).session], ['bound', SID1]);
     assert.ok(missing(B).includes(`${T}-e1:bind`));
@@ -207,5 +221,58 @@ test('FX-REDO: each repeat call completes a missing ledger line only at the exac
     assert.ok(!(j.result.reconciled ?? []).some((c) => c.redo === true));
     assert.equal(ofKind(D, 'started').length, 1);
     verifies(D);
+  });
+
+  // On the merge with FX-CLAIM: the line a repeat completes is the line the dead call wrote, claims in place.
+  await t.test('replace fence of an attempt no session claimed (FX-CLAIM N7): the repeat completes the no-start line, uncharged', () => {
+    const N = makeRoot([row({ step: 'admitted', attempts: [att(1, { manifest: M0, settings_sha: Z64 })] })], dirs);
+    fs.mkdirSync(path.join(N, 'wt', `${T}-e1`), { recursive: true }); // start made the folder; no session claimed it
+    const fence = (kind = null) => run(N, 'replace', ['fence', '--root', N, '--ce', '1', '--now', NOW, '--task', T, '--epoch', '1', '--reason', 'crash', '--tick', '3', '--boot', 'BOOT-A'], kind);
+    assert.equal(fence('fence').exit, 70);
+    const r = rowOf(N);
+    assert.deepEqual([r.epoch, r.step, r.restarts, r.nostart, r.fails.length], [2, 'fenced', 0, 1, 0], 'a no-start fence: uncharged, nostart counts it');
+    assert.equal(lib.readClaim(path.join(N, 'wt', `${T}-e1`)).kind, 'tombstone');
+    assert.ok(missing(N).includes(`${T}-e2:fence`));
+    const j = fence();
+    assert.deepEqual([j.exit, j.result.repeat, j.result.redo, j.result.restart_charged], [0, true, true, false]);
+    const f = ofKind(N, 'fence');
+    assert.deepEqual([f.length, f[0].data.restart_charged, f[0].data.host, f[0].data.limit, f[0].data.redo], [1, false, false, false, true]);
+    assert.deepEqual([rowOf(N).restarts, rowOf(N).nostart], [0, 1], 'the repeat charges and counts nothing');
+    verifies(N);
+  });
+
+  await t.test('stop request (FX-CLAIM step 6): the repeat names the claim holder, and every folder session after a tombstone', () => {
+    const fenced = (claim) => {
+      const S = makeRoot([row({ step: 'admitted', attempts: [att(1, { manifest: M0, settings_sha: Z64 })] })], dirs);
+      fs.mkdirSync(path.join(S, 'wt', `${T}-e1`), { recursive: true });
+      if (claim) claimAt(S, 1, claim);
+      assert.equal(run(S, 'replace', ['fence', '--root', S, '--ce', '1', '--now', NOW, '--task', T, '--epoch', '1', '--reason', 'crash', '--tick', '3', '--boot', 'BOOT-A']).exit, 0);
+      return S;
+    };
+    const request = (S, kind = null) => run(S, 'stop', ['request', '--root', S, '--ce', '1', '--now', NOW, '--task', T, '--epoch', '2'], kind);
+    // a session claim on an attempt fenced at admitted (no bind, no reconcile yet): the request names SID2
+    const S1 = fenced(lib.claimRecord(SID2));
+    assert.equal(rowOf(S1).attempts.find((a) => a.epoch === 1).session ?? null, null);
+    assert.equal(request(S1, 'stop-request').exit, 70);
+    assert.equal(rowOf(S1).step, 'stop-requested');
+    let j = request(S1);
+    assert.deepEqual([j.exit, j.result.repeat, j.result.redo], [0, true, true]);
+    let sr = ofKind(S1, 'stop-request');
+    assert.deepEqual([sr.length, sr[0].data.session, sr[0].data.sessions ?? null, sr[0].data.redo], [1, SID2, null, true]);
+    verifies(S1);
+    // a tombstone, a late session visible in the folder: the request names every folder session
+    const S2 = fenced(null);
+    const folder = path.join(S2, 'wt', `${T}-e1`);
+    assert.equal(lib.readClaim(folder).kind, 'tombstone');
+    const tf = path.join(S2, 'transcripts', lib.projectDirName(folder), `${SID1}.jsonl`);
+    fs.mkdirSync(path.dirname(tf), { recursive: true });
+    fs.writeFileSync(tf, JSON.stringify({ type: 'user', sessionId: SID1, cwd: folder, timestamp: NOW, uuid: 'u-0', message: { role: 'user', content: 'a late start' } }) + '\n');
+    assert.equal(request(S2, 'stop-request').exit, 70);
+    assert.equal(rowOf(S2).step, 'stop-requested');
+    j = request(S2);
+    assert.deepEqual([j.exit, j.result.repeat, j.result.redo], [0, true, true]);
+    sr = ofKind(S2, 'stop-request');
+    assert.deepEqual([sr.length, sr[0].data.session, sr[0].data.sessions, sr[0].data.redo], [1, SID1, [SID1], true]);
+    verifies(S2);
   });
 });

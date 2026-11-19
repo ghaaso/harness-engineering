@@ -607,7 +607,32 @@ function checkAccess(pass) {
 // create, 0b), after every read-only check of the call (point 9).
 
 // FX-CLAIM step 1: the attempt's claim.json on every task-role call, after the epoch gate (step 4).
-function stepClaim(pass) { // eslint-disable-line no-unused-vars
+// No lock: the strict create (0b) is atomic. No claim yet -> create {kind:'session', session_id};
+// created or identical -> go on. Another session's claim -> deny attempt-claimed; a tombstone (the
+// fence cancelled the attempt) -> deny attempt-cancelled. A malformed session_id -> deny bad-input.
+function stepClaim(pass) {
+  const { io, attempt, task, epoch } = pass;
+  // the session id's form: FX-CGATE's SESSION_ID_RE, a lowercase UUID (callerSession)
+  const sid = callerSession(pass);
+  if (!sid) throw new Deny('bad-input', 'session_id missing or not a UUID');
+  const file = W.join(attempt, 'claim.json');
+  const held = () => {
+    let v;
+    try {
+      v = io.readJson(file);
+    } catch (e) {
+      if (isTcbError(e) && e.code === 'missing') return null;
+      throw new Deny('claim-invalid', `${file}: ${errText(e)}`);
+    }
+    if (v && v.kind === 'tombstone') throw new Deny('attempt-cancelled', `${task} e${epoch}: the attempt was fenced before any session claimed it`);
+    if (!v || v.kind !== 'session' || typeof v.session_id !== 'string') throw new Deny('claim-invalid', file);
+    if (v.session_id !== sid) throw new Deny('attempt-claimed', `${task} e${epoch} is claimed by another session`);
+    return v;
+  };
+  if (held()) return;
+  const r = hookCreate(io, file, lib.claimRecord(sid));
+  // 'different': another writer took the name first; its claim decides (a tombstone or another session denies)
+  if (r === 'different' && !held()) throw new Deny('claim-invalid', file);
 }
 
 // FX-W1: the exec allow list, after the tcb-node grammar check (step 6).
@@ -622,7 +647,7 @@ function stepReadySlot(pass) { // eslint-disable-line no-unused-vars
 // A caller is named by the hook input's `session_id`, the CLI's id: a lowercase UUID (F-P1b). The app's
 // session tools name a session by the app's own id, `local_<uuid>` (CGATE M1): a close record is named
 // by that id only, so `self`, a CLI id or any other text is never a stop target (a CLI id given to the
-// archive tool answers "not found" while the session lives). Not `SID_RE`: FX-CLAIM may declare it.
+// archive tool answers "not found" while the session lives). FX-CLAIM's stepClaim checks the same form.
 const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const APP_SESSION_ID_RE = /^local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const NONCE_RE = /^[0-9a-f]{32}$/;

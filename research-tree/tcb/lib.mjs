@@ -1858,7 +1858,21 @@ export function fence(root, handle, o = {}) {
     const isHost = failure && reason !== 'tainted' && host === true;
     let limit = false;
     let charged = false;
-    if (failure) {
+    // FX-CLAIM step 2 (N7): for a failure reason, not host, the attempt's claim decides. A tombstone (no
+    // session ever passed a tool call) is a no-start fence: uncharged while nostart < H_nostart, and
+    // nostart counts it (capped at H_nostart); past that it is charged like a failure. A session claim
+    // resets nostart to 0. No claim (no manifest, rev 4 H1) leaves nostart and the charge as before.
+    let free = false;
+    if (failure && !isHost) {
+      const kind = fenceClaimKind(root, row, task, e);
+      const ns = Number.isInteger(row.nostart) ? row.nostart : 0;
+      const Hns = Number.isInteger(o.Hnostart) ? o.Hnostart : hNostart(root);
+      if (kind === 'tombstone') {
+        free = ns < Hns;
+        row.nostart = Math.min(Hns, ns + 1);
+      } else if (kind === 'session' && ns !== 0) row.nostart = 0;
+    }
+    if (failure && !free) {
       const restarts = Number.isInteger(row.restarts) ? row.restarts : 0;
       if (restarts >= Rmax) limit = true;
       else if (!isHost) {
@@ -3183,7 +3197,77 @@ export function slotCount(rows, procList, transcriptsRoot, opts = {}) {
       if (attemptHasTranscript(transcriptsRoot, a.session, folderAbs, folderAbs ? null : folderRel)) out.unknown++;
     }
   }
+  out.unconfirmed += folderSessionSlots(rows, procList, transcriptsRoot, root);
   return out;
+}
+
+/**
+ * FX-CLAIM step 7: one `unconfirmed` slot for every folder session (a transcript whose first `cwd` is
+ * an attempt folder, any row but planned, any attempt) that has no counting close-done record and is
+ * not its attempt's own session: the claim holder, or the recorded `session` when the attempt holds no
+ * session claim (counted by the attempt above while it is not stop-confirmed). A close-done record
+ * counts when its outcome is `stopped` or `owner`; a `no-such-session` counts only when this
+ * coordinator made the start (the attempt's start.json `session` equals the record's `by`) or the
+ * process list matches nothing for the folder or the session (rev 4, H3). Needs an absolute folder:
+ * a relative folder without `root` is not scanned.
+ */
+function folderSessionSlots(rows, procList, transcriptsRoot, root) {
+  let n = 0;
+  const seen = new Set();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row || row.state === 'planned') continue;
+    for (const a of Array.isArray(row.attempts) ? row.attempts : []) {
+      if (!a || !Number.isInteger(a.epoch)) continue;
+      const rel = typeof a.folder === 'string' && a.folder ? a.folder : `wt/${row.task}-e${a.epoch}`;
+      const abs = path.isAbsolute(rel) ? rel : root ? path.resolve(root, rel) : null;
+      if (!abs) continue;
+      let found = [];
+      try {
+        found = transcriptsForFolder(transcriptsRoot, abs) ?? [];
+      } catch {
+        found = [];
+      }
+      if (found.length === 0) continue;
+      let own = typeof a.session === 'string' ? a.session : null;
+      try {
+        const c = readClaim(abs);
+        if (c.kind === 'session') own = c.session_id;
+      } catch {
+        // an invalid claim (tamper) names no holder: every folder session but the recorded one counts
+      }
+      let start;
+      for (const f of found) {
+        const sid = f && typeof f.sessionId === 'string' ? f.sessionId : null;
+        if (!sid || sid === own || seen.has(sid)) continue;
+        seen.add(sid);
+        if (root) {
+          if (start === undefined) start = readJsonOrNull(path.join(abs, 'start.json'));
+          if (closeDoneCounts(root, sid, start, procList, abs)) continue;
+        }
+        n++;
+      }
+    }
+  }
+  return n;
+}
+
+function readJsonOrNull(p) {
+  try {
+    return readJson(p);
+  } catch {
+    return null;
+  }
+}
+
+// FX-CLAIM step 7 with rev 4's H3 rule: does the close-done record of session sid release its slot?
+function closeDoneCounts(root, sid, start, procList, folderAbs) {
+  const done = readJsonOrNull(path.join(path.resolve(root), 'run', 'close', 'done', `${sid}.json`));
+  if (!done || typeof done !== 'object' || done.kind !== 'close-done') return false;
+  if (done.outcome === 'stopped' || done.outcome === 'owner') return true;
+  if (done.outcome !== 'no-such-session') return false;
+  if (start && typeof start.session === 'string' && start.session !== '' && start.session === done.by) return true;
+  if (!Array.isArray(procList)) return false;
+  return attemptProcesses(procList, { folder: folderAbs, sessionId: sid }).matched.length === 0;
 }
 
 /** A transcript of an attempt: by session id, by the absolute folder, or (no root) by a folder suffix. */
@@ -3814,18 +3898,69 @@ export function outcomeAppend(attemptDir, slot, opts) { // eslint-disable-line n
  * readClaim(attemptDir) -> {kind: 'none'|'session'|'tombstone', session_id} (FX-CLAIM): the
  * attempt's `claim.json`; 'none' when it is absent; session_id is null unless kind is 'session'.
  */
-export function readClaim(attemptDir) { // eslint-disable-line no-unused-vars
-  throw notBuilt('readClaim', 'FX-CLAIM');
+export function readClaim(attemptDir) {
+  const file = path.join(attemptDir, 'claim.json');
+  let v;
+  try {
+    v = readJson(file);
+  } catch (e) {
+    if (e && e.code === 'missing') return { kind: 'none', session_id: null };
+    // made by strict create (0b), so never torn: bytes that do not parse are tamper
+    if (e && e.code === 'unparseable') throw err('claim-invalid', 3, { path: file });
+    throw e;
+  }
+  if (v && v.kind === 'session' && typeof v.session_id === 'string' && v.session_id !== '') {
+    return { kind: 'session', session_id: v.session_id };
+  }
+  if (v && v.kind === 'tombstone') {
+    return { kind: 'tombstone', session_id: null, task: v.task ?? null, epoch: v.epoch ?? null };
+  }
+  throw err('claim-invalid', 3, { path: file });
 }
 
 /** claimRecord(sessionId) -> {kind:'session', session_id}, the claim's bytes (FX-CLAIM, the hook). */
-export function claimRecord(sessionId) { // eslint-disable-line no-unused-vars
-  throw notBuilt('claimRecord', 'FX-CLAIM');
+export function claimRecord(sessionId) {
+  return { kind: 'session', session_id: sessionId };
 }
 
 /** tombstoneRecord(task, epoch) -> {kind:'tombstone', task, epoch} (FX-CLAIM, the fence). */
-export function tombstoneRecord(task, epoch) { // eslint-disable-line no-unused-vars
-  throw notBuilt('tombstoneRecord', 'FX-CLAIM');
+export function tombstoneRecord(task, epoch) {
+  return { kind: 'tombstone', task, epoch };
+}
+
+/**
+ * startLeaseExpired(start, ticksTotal, nowMs, lease) -> bool (FX-CLAIM, the lease N3; read by FX-PLAN).
+ * A start record `{tick, at}` expires only when both hold: `ticksTotal >= start.tick +
+ * start_lease_ticks` and `nowMs >= Date.parse(start.at) + start_lease_ms` (`at` is the hook's wall
+ * clock; a number is taken as epoch ms). A missing or unreadable part never expires the lease: a
+ * subject that advances the ticks alone, or a wall jump alone, cannot expire it.
+ */
+export function startLeaseExpired(start, ticksTotal, nowMs, lease = {}) {
+  if (!start || typeof start !== 'object') return false;
+  const lt = lease.start_lease_ticks;
+  const lm = lease.start_lease_ms;
+  if (!Number.isInteger(start.tick) || !Number.isInteger(ticksTotal) || !Number.isInteger(lt) || lt < 0) return false;
+  const at = typeof start.at === 'number' ? start.at : typeof start.at === 'string' ? Date.parse(start.at) : NaN;
+  if (!Number.isFinite(at) || typeof nowMs !== 'number' || !Number.isFinite(nowMs) || typeof lm !== 'number' || !(lm >= 0)) return false;
+  return ticksTotal >= start.tick + lt && nowMs >= at + lm;
+}
+
+// FX-CLAIM: the claim kind of attempt e of a row ('none' | 'session' | 'tombstone'), for lib.fence.
+function fenceClaimKind(root, row, task, e) {
+  const a = (Array.isArray(row.attempts) ? row.attempts : []).find((x) => x && x.epoch === e) ?? null;
+  const rel = a && typeof a.folder === 'string' && a.folder ? a.folder : `wt/${task}-e${e}`;
+  return readClaim(path.resolve(root, rel)).kind;
+}
+
+// FX-CLAIM: thresholds `H_nostart` (default 2 when the file or the entry is absent).
+function hNostart(root) {
+  try {
+    const th = thresholds(root);
+    const v = th.has('H_nostart') ? th.get('H_nostart') : null;
+    return Number.isInteger(v) && v >= 0 ? v : 2;
+  } catch {
+    return 2;
+  }
 }
 
 /**
