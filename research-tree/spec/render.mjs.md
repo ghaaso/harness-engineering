@@ -141,3 +141,7 @@ refusal); 2 `labels.json`, store, thresholds or ledger missing/unparseable (`not
 - Whether `quiet_gaps` separate real PC sleep from idle time (items 6, 8): the pilot's induced sleep decides.
 - Whether the owner page reads well on the owner's screen (the owner prefers a visual page; `measures.json` and
   `coverage.json` are the data a later HTML renderer would take).
+
+## FX-REDO: redone lines (FIX-fence section 5)
+
+The time measure starts at the first `bind` or `started` line of the set. When a line of the set carries `data.redo`, each task's start is its `bind` or `started` line of the lowest epoch (seq within it), and the set's start is the earliest of these; without one nothing changes. Render is the only reader of the kinds a redo writes. Test: T28.
