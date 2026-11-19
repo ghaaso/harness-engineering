@@ -458,6 +458,8 @@ async function modeFence(env, flags) {
       const table = lib.readTasks(root);
       const row = (table.tasks ?? []).find((r) => r && r.task === T);
       if (!row) throw tcbError('no-task', 1, { task: T });
+      const redone = fenceRedo(env, handle, row, T, E, reason); // FX-REDO: a repeat at the exact post-state
+      if (redone) return redone;
       if (reason === 'drop') {
         const { lines } = lib.readLedger(root);
         const own = lib.lastLine(lines ?? [], 'owner', (l) => l && l.data && l.data.act === 'drop' && l.data.subject === T);
@@ -546,6 +548,54 @@ function fenceOutcomeSteps(env, handle, hold) { // eslint-disable-line no-unused
 
 // FX-CLAIM (FX-OUT step 6): the attempt's tombstone claim, before lib.fence.
 function fenceTombstone(env, handle, hold) { // eslint-disable-line no-unused-vars
+}
+
+// ---------------------------------------------------------------------------------------------
+// FX-REDO (FIX-fence section 5): a missing ledger line after a death. Each mode writes the row and
+// then its line, so a death between the two leaves the row moved and the line missing. The mode's
+// own repeat is the redo (ARIES, from the after-image): only at the exact post-state, inside the
+// mode's hold, it appends the missing line rebuilt from the row, marked `data.redo: true`
+// (render orders by epoch where one is set; fsck warns about a line still missing). A dry run
+// reports `redo` and writes nothing.
+
+/** Appends kind for (T, epoch) with data and redo when no such line matches: true when it wrote (dry: would). */
+function redoLine(env, handle, kind, T, epoch, match, data) {
+  const { lines } = lib.readLedger(env.root);
+  if (lib.lastLine(lines ?? [], kind, (l) => l.task === T && l.epoch === epoch && match(l))) return false;
+  if (handle) append(env, handle, kind, T, epoch, { ...data, redo: true });
+  return true;
+}
+
+/**
+ * `fence --epoch E --reason r` repeated: null unless the row is at the exact post-state (epoch E+1,
+ * step fenced, reason r, attempts[E].cut set); then exit 0 `repeat`, the fence line completed. Any
+ * later step keeps the refusal of the fence (65), so a late repeat is never read as a fresh fence.
+ */
+function fenceRedo(env, handle, row, T, E, reason) {
+  const att = attemptOrNull(row, E);
+  if (!(row.epoch === E + 1 && row.step === 'fenced' && row.reason === reason && att && att.cut && typeof att.cut === 'object')) return null;
+  const failure = FAILURE.has(reason);
+  const fail = failure ? (row.fails ?? []).find((x) => x && x.epoch === E && x.class === reason) ?? null : null;
+  const host = !!(fail && fail.host === true);
+  const limit = row.limit === true;
+  const restartCharged = failure && !limit && !host;
+  const cutFiles = att.cut.files && typeof att.cut.files === 'object' ? Object.keys(att.cut.files).length : 0;
+  const data = { reason, from: E, to: E + 1, host, restart_charged: restartCharged, limit, cut_files: cutFiles };
+  const redo = redoLine(env, handle, 'fence', T, E + 1, (l) => !!l.data && l.data.from === E, data);
+  const result = { task: T, ...data, state: row.state, step: row.step, spend_at_fence: att.spend_at_fence ?? null, repeat: true, redo };
+  return { exit: 0, result, reasons: [] };
+}
+
+/** `start` repeated at its post-state (admitted at E with a manifest): the admit line. */
+function startRedo(env, handle, row, T, E) {
+  const data = { e_task: row.e_task, reservation: null, B: env.th.get('B_tokens', null), r: env.th.get('r_tokens', null), live: null, free_mb: null };
+  return redoLine(env, handle, 'admit', T, E, () => true, data);
+}
+
+/** `bind` repeated at its post-state (bound, the same session id): the bind line. */
+function bindRedo(env, handle, row, T, E, SID) {
+  const att = attemptOrNull(row, E);
+  return redoLine(env, handle, 'bind', T, E, () => true, { session: SID, boot: att ? att.boot ?? null : null });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -891,9 +941,10 @@ async function modeStart(env, flags) {
       if (row.epoch !== E) throw tcbError('stale-epoch', 65, { expected: E, actual: row.epoch });
       const att = attemptOrNull(row, E);
       if (row.step === 'admitted' && att && att.manifest) {
+        const redo = startRedo(env, handle, row, T, E); // FX-REDO
         return {
           exit: 0,
-          result: { task: T, epoch: E, folder: att.folder ?? null, manifest: att.manifest, settings_sha: att.settings_sha ?? null, repeat: true },
+          result: { task: T, epoch: E, folder: att.folder ?? null, manifest: att.manifest, settings_sha: att.settings_sha ?? null, repeat: true, redo },
           reasons: [],
         };
       }
@@ -1008,7 +1059,7 @@ async function modeBind(env, flags) {
       if (!row) throw tcbError('no-task', 1, { task: T });
       if (row.epoch !== E) throw tcbError('stale-epoch', 65, { expected: E, actual: row.epoch });
       if (row.state === 'active' && row.step === 'bound') {
-        if (row.session === SID) return { exit: 0, result: { task: T, epoch: E, session: SID, repeat: true }, reasons: [] };
+        if (row.session === SID) return { exit: 0, result: { task: T, epoch: E, session: SID, repeat: true, redo: bindRedo(env, handle, row, T, E, SID) }, reasons: [] };
         throw tcbError('session-differs', 1, { bound: row.session ?? null, session: SID });
       }
       if (row.state !== 'active' || (row.step !== 'admitted' && row.step !== 'started')) {
