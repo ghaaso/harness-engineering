@@ -132,7 +132,12 @@ function commitExists(root, task, step) {
 // M3: the act status.json's `next` names for this row (status.mjs nextOf), when it is an act the
 // coordinator can take now; null for `none`, `owner`, `audit`/`commit` (READY is class 11) and for
 // an act that can only defer (a start with no free slot, a verify before its sample is old enough).
-function rowAct(root, tr, row, { slotFree, blocked, tick, svd }) {
+function rowAct(root, tr, row, facts) {
+  // Round 3 (S0.5; FIX-JOIN point 11): 1 planAct (FX-PLAN); 2 `owner` or `none` gives null (FX-W5
+  // step 1); then today's filters (3) and the act as keyed today (4).
+  const planned = rowActPlanned(root, tr, row, facts);
+  if (ownerOrNone(planned)) return null;
+  const { slotFree, blocked, tick, svd } = facts;
   const { state, step } = row;
   const e = row.epoch;
   if (state === 'failed' || row.limit === true) return null; // the owner's
@@ -165,6 +170,17 @@ function rowAct(root, tr, row, { slotFree, blocked, tick, svd }) {
   }
   if (step === 'started') return 'bind';
   return null;
+}
+
+// FX-PLAN, rowAct step 1: planAct(row, facts) with the row's facts (claim, start.json, lease,
+// zombieOver, ...). Undefined until FX-PLAN, so today's body decides alone.
+function rowActPlanned(root, tr, row, facts) { // eslint-disable-line no-unused-vars
+  return undefined;
+}
+
+// FX-W5 step 1 (FX-PLAN step 2): an `owner` or `none` act raises no act due. False until filled.
+function ownerOrNone(planned) { // eslint-disable-line no-unused-vars
+  return false;
 }
 
 function lockOpts(th, ce, proc, now) {
@@ -561,6 +577,7 @@ async function evaluate(env, state, facts, counted) {
     rowActs += 1;
     conds.push({ cls: 17, task: row.task, epoch: row.epoch, act, detail: { act } });
   }
+  actDueIdleAgeCap(env, state, conds, { rows, tick });
   if (runFlags.draining === true && used === 0) conds.push({ cls: 17, act: 'handover', detail: { act: 'handover' } });
   if (rows.length > 0 && rowActs === 0 && rows.every((r) => TERMINAL.has(r.state))) {
     conds.push({ cls: 17, act: 'run-terminal', detail: { act: 'run-terminal' } });
@@ -606,6 +623,7 @@ async function evaluate(env, state, facts, counted) {
   }
   const eventSeq = new Map();
   for (const l of lines) if (l.kind === 'event' && l.data && typeof l.data.key === 'string') eventSeq.set(l.data.key, l.seq);
+  reraiseStuck(env, state, present, tick);
   const newActive = {};
   for (const c of present) {
     let key = Object.keys(state.active).find((k) => k.slice(0, k.lastIndexOf('|')) === c.ident);
@@ -666,6 +684,7 @@ async function evaluate(env, state, facts, counted) {
   state.last_tick_at = isoOf(facts.now);
   env.handle.assertHeld();
   lib.writeAtomic(fileOf(root, 'watcherJson'), JSON.stringify(state) + '\n');
+  adoptState(env, state);
 
   return {
     exit: classes.length ? classes[0] : 0,
@@ -767,31 +786,87 @@ async function runAlarm(ctx, root, flags) {
   // Read before alarm.json is written, so an endturn after this alarm registered always re-arms it.
   let token = armToken(root);
   const record = { schema_version: 1, pid: self.pid, start_time: self.start_time, ce, armed_at: isoOf(facts.now), sleep_ms: sleepMs };
+  // the alarm's registration, for the round-3 steps (S0.5): handle is set in the hold only
+  const reg = { root, ce, th, proc, flags, facts, self, record, handle: null };
   await lib.withRunLock(root, lockOpts(th, ce, proc, facts.now), async (handle) => {
     handle.assertHeld();
+    reg.handle = handle;
+    alarmSlotTurnSeq(reg);
+    alarmRegisterSlot(reg);
     lib.writeAtomic(fileOf(root, 'alarm'), JSON.stringify(record) + '\n');
   });
+  reg.handle = null;
   const result = { run: 'alarm', previous, armed: record, rearms: 0 };
-  for (;;) {
-    await sleep(sleepMs);
-    lib.checkCe(root, ce); // a newer ce -> 64
-    let cur = null;
-    try {
-      cur = lib.readJson(fileOf(root, 'alarm'));
-    } catch {
-      cur = null;
+  let out = null;
+  try {
+    for (;;) {
+      await sleep(sleepMs);
+      lib.checkCe(root, ce); // a newer ce -> 64
+      let cur = null;
+      try {
+        cur = lib.readJson(fileOf(root, 'alarm'));
+      } catch {
+        cur = null;
+      }
+      const mine = !!cur && Number(cur.pid) === Number(self.pid)
+        && (cur.start_time === self.start_time || lib.sameStartTime(cur.start_time, self.start_time));
+      if (!mine) {
+        out = { exit: 0, result: { ...result, superseded: true }, reasons: [{ code: 'superseded', detail: cur ? { pid: cur.pid ?? null } : null }] };
+        break;
+      }
+      const now = armToken(root);
+      if (now === token) break; // a whole period with no endturn: the long silence
+      token = now; // re-armed by an endturn: sleep one more period (nothing written, no clock read)
+      result.rearms += 1;
     }
-    const mine = !!cur && Number(cur.pid) === Number(self.pid)
-      && (cur.start_time === self.start_time || lib.sameStartTime(cur.start_time, self.start_time));
-    if (!mine) {
-      return { exit: 0, result: { ...result, superseded: true }, reasons: [{ code: 'superseded', detail: cur ? { pid: cur.pid ?? null } : null }] };
-    }
-    const now = armToken(root);
-    if (now === token) break; // a whole period with no endturn: the long silence
-    token = now; // re-armed by an endturn: sleep one more period (nothing written, no clock read)
-    result.rearms += 1;
+    if (!out) out = { exit: 30, result: { ...result, superseded: false }, reasons: [{ code: 'alarm', detail: { sleep_ms: sleepMs, rearms: result.rearms } }] };
+  } catch (e) {
+    alarmExit(reg, e && Number.isInteger(e.exit) ? e.exit : 70); // an error exit after registration
+    throw e;
   }
-  return { exit: 30, result: { ...result, superseded: false }, reasons: [{ code: 'alarm', detail: { sleep_ms: sleepMs, rearms: result.rearms } }] };
+  return alarmExit(reg, out);
+}
+
+// ---------------------------------------------------------------------------------------------
+// the round-3 steps of watch (S0.5; FIX-JOIN point 11): each is empty until its fix fills it.
+
+// FX-W3: the slot record's turn_seq_at_reg (turn.json's turn_seq), in the registration hold.
+function alarmSlotTurnSeq(reg) { // eslint-disable-line no-unused-vars
+}
+
+// FX-W2: the ensure's slot record run/arm/slot-<k>.json, in the registration hold.
+function alarmRegisterSlot(reg) { // eslint-disable-line no-unused-vars
+}
+
+// Every exit after registration passes here: `out` is the output of a normal exit (30, or 0
+// superseded) or the exit code of an error exit (64 included). Returns `out` unchanged.
+function alarmExit(reg, out) {
+  const exit = typeof out === 'number' ? out : out.exit;
+  if (exit === 30) alarmUnarmedRecord(reg);
+  alarmExitMarker(reg, exit);
+  return out;
+}
+
+// FX-W3: on exit 30, the unarmed record run/arm/unarmed-<pt>.json when turn.json's turn_seq has not moved.
+function alarmUnarmedRecord(reg) { // eslint-disable-line no-unused-vars
+}
+
+// FX-W1: the exit marker run/arm/exited-<pt>.json {ce, exit, at}, a lock-free strict create.
+function alarmExitMarker(reg, exit) { // eslint-disable-line no-unused-vars
+}
+
+// FX-W6: the act-due `idle-child` (idle_ticks) and `age-cap` (attempt_max_ticks) for the coordinator,
+// added to the act-due set after the row acts; they are not row acts.
+function actDueIdleAgeCap(env, state, conds, { rows, tick }) { // eslint-disable-line no-unused-vars
+}
+
+// FX-W5: the re-raise of an act still due at the capped interval and its `stuck` count (stuck_raises),
+// over the whole present set, before the active keys are renewed.
+function reraiseStuck(env, state, present, tick) { // eslint-disable-line no-unused-vars
+}
+
+// FX-W7: the tick's state is kept only when its hold succeeded (the copy `next`), after watcher.json.
+function adoptState(env, state) { // eslint-disable-line no-unused-vars
 }
 
 // The alarm's arm token: the sha256 of run/acked.json's bytes, null when it cannot be read.

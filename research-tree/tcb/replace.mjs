@@ -268,13 +268,17 @@ function noteIncident(env, handle, e, task, epoch) {
   }
 }
 
-/** Runs fn(handle) under run.lock with the ce check; dry-run checks ce without the lock and passes null. */
-async function underLock(env, fn, task = null, epoch = null) {
+/**
+ * Runs fn(handle) under run.lock with the ce check; dry-run checks ce without the lock and passes null.
+ * `requireArmed` (FX-W3) reaches withRunLock only when true.
+ */
+async function underLock(env, fn, task = null, epoch = null, { requireArmed } = {}) {
   if (env.dry) {
     lib.checkCe(env.root, env.ce);
     return fn(null);
   }
-  return await lib.withRunLock(env.root, { script: SCRIPT, ce: env.ce, proc: env.proc, now: env.now, retries: env.retries }, (handle) => {
+  const armed = requireArmed === true ? { requireArmed } : {};
+  return await lib.withRunLock(env.root, { script: SCRIPT, ce: env.ce, proc: env.proc, now: env.now, retries: env.retries, ...armed }, (handle) => {
     try {
       return fn(handle);
     } catch (e) {
@@ -466,6 +470,8 @@ async function modeFence(env, flags) {
       const cut = exists(dir) ? lib.stagingCut(dir) : {};
       const cutFiles = cut && cut.files ? Object.keys(cut.files).length : 0;
       const readyCheck = () => readyValid(root, dir, T, E);
+      const hold = { task: T, epoch: E, reason, failure, row, att, dir, cut, readyCheck };
+      fenceOutcomeSteps(env, handle, hold);
 
       // M6 (CONTRACT decision 40): a READY of the current epoch wins over every reason but `first`
       // and `tainted`, a planned hand-over, a park, a cut and a drop included. lib.fence re-checks
@@ -475,6 +481,7 @@ async function modeFence(env, flags) {
       if (running && reason !== 'first' && reason !== 'tainted' && readyCheck()) {
         throw tcbError('ready-wins', 5, { task: T, epoch: E, reason });
       }
+      fenceTombstone(env, handle, hold);
 
       let out;
       if (handle) {
@@ -519,7 +526,26 @@ async function modeFence(env, flags) {
     },
     T,
     E,
+    { requireArmed: armedFor('fence', reason) },
   );
+}
+
+// ---------------------------------------------------------------------------------------------
+// the round-3 steps of replace (S0.5; FIX-JOIN point 11, "One replace fence hold"): each is empty
+// until its fix fills it. The hold's order: withRunLock's requireArmed (FX-W3, reason `first` only),
+// FX-OUT steps 1-5, FX-CLAIM's tombstone, then lib.fence (its callback FX-OUT, its nostart FX-CLAIM).
+
+// FX-W3: does this act create work, so that its hold needs "armed"? (start, and fence `first`.)
+function armedFor(mode, reason) { // eslint-disable-line no-unused-vars
+  return false;
+}
+
+// FX-OUT steps 1-5 in the fence's hold: the refusals, the ready check, the fenced slot.
+function fenceOutcomeSteps(env, handle, hold) { // eslint-disable-line no-unused-vars
+}
+
+// FX-CLAIM (FX-OUT step 6): the attempt's tombstone claim, before lib.fence.
+function fenceTombstone(env, handle, hold) { // eslint-disable-line no-unused-vars
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -950,6 +976,7 @@ async function modeStart(env, flags) {
     },
     T,
     E,
+    { requireArmed: armedFor('start') },
   );
 }
 

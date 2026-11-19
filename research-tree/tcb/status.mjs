@@ -41,8 +41,12 @@ const COMMON = {
   boot: { type: 'string' },
   'dry-run': { type: 'bool' },
 };
+// The round-3 flags of the default mode (S0.5), each filled by its fix: FX-W2's `arm-nonces` (with
+// --reconcile) and FX-W4's `deadman`.
+const ARM_FLAGS = {};
+const DEADMAN_FLAGS = {};
 const FLAGS_BY_MODE = {
-  default: { ...COMMON, reconcile: { type: 'bool' }, endturn: { type: 'bool' }, 'acked-seq': { type: 'int' } },
+  default: { ...COMMON, reconcile: { type: 'bool' }, endturn: { type: 'bool' }, 'acked-seq': { type: 'int' }, ...ARM_FLAGS, ...DEADMAN_FLAGS },
   intent: { ...COMMON, key: { type: 'string' }, subject: { type: 'string' }, 'text-file': { type: 'string' } },
   owner: { ...COMMON, act: { type: 'string' }, subject: { type: 'string' }, 'quote-file': { type: 'string' } },
   meter: { ...COMMON, pct: { type: 'int' } },
@@ -568,7 +572,7 @@ async function runBuild(ctx, root, flags, reconcile, dry) {
     const status = await computeStatus(root, th, ce, pre, facts, table, anomalies);
     lib.checkFormat(root, 'status', status);
     const res = { exit: 0, result: { run: reconcile ? 'reconcile' : 'build', written: false, reconciled: changes, status } };
-    return reconcile ? armAtStart(root, ce, pre.procList, res) : res;
+    return reconcile ? armAtStart(root, ce, pre.procList, await reconcileHold2(root, ce, pre, res, dry)) : res;
   }
 
   let out = null;
@@ -583,7 +587,31 @@ async function runBuild(ctx, root, flags, reconcile, dry) {
     out = { run: reconcile ? 'reconcile' : 'build', written: true, reconciled: changes, status };
   });
   const res = { exit: 0, result: out };
-  return reconcile ? armAtStart(root, ce, pre.procList, res) : res;
+  return reconcile ? armAtStart(root, ce, pre.procList, await reconcileHold2(root, ce, pre, res, dry)) : res;
+}
+
+// Reconcile's hold 2 (S0.5): file-only and without the run lock, after the main hold and before
+// armAtStart, in both paths. FX-W2 step 7 counts the live slots and writes turn.json's arm; FX-W1
+// prunes the exit markers. A step that changes the output sets hold.res.
+async function reconcileHold2(root, ce, pre, res, dry) {
+  const hold = { root, ce, pre, res, dry };
+  await hold2ArmSlots(hold);
+  await hold2PruneMarkers(hold);
+  return hold.res;
+}
+
+// FX-W2 step 7: the live slots of this ce, then arm confirmed (n >= alarm_slots) or unconfirmed (exit 1).
+async function hold2ArmSlots(hold) { // eslint-disable-line no-unused-vars
+}
+
+// FX-W1: the exit markers of slots no longer in use are removed.
+async function hold2PruneMarkers(hold) { // eslint-disable-line no-unused-vars
+}
+
+// FX-W4: `status.mjs --deadman --root R` (read-only, no lock, no ce). Runs before the ce check and
+// returns its output, or null when the flag is absent. Empty until FX-W4.
+async function deadmanRun(ctx, flags, dry) { // eslint-disable-line no-unused-vars
+  return null;
 }
 
 // M2 (CONTRACT decision 40): reconcile is the first act of every turn, so it asks for the alarm
@@ -774,6 +802,8 @@ async function main(ctx) {
   const { flags } = lib.parseArgs(rest, { flags: FLAGS_BY_MODE[mode ?? 'default'] });
   const dry = flags['dry-run'] === true;
   ctx.dryRun = dry;
+  const dm = await deadmanRun(ctx, flags, dry);
+  if (dm) return { mode, dry_run: dry, reasons: [], ...dm };
   if (typeof flags.root !== 'string' || !path.isAbsolute(flags.root)) throw usage({ flag: 'root', expect: 'absolute path' });
   if (!Number.isInteger(flags.ce) || flags.ce < 1) throw usage({ flag: 'ce', expect: 'required, integer >= 1' });
   const root = path.resolve(flags.root);

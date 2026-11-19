@@ -348,9 +348,21 @@ export async function doRaise(ctx, root, flags, dry, hooks = {}) {
 
 // The successor runs the sibling status.mjs, found beside this file (import.meta.url); in the
 // flat layout that is <root>/tcb/status.mjs, as the spec's brief reads.
-function briefLine(root, ce, tcbCommit) {
+// Round 3 (S0.5): `nonce` and the two parts appended to the line, each empty until its fix fills it.
+function briefLine(root, ce, tcbCommit, nonce = null) {
   const status = path.join(path.dirname(fileURLToPath(import.meta.url)), 'status.mjs').replace(/\\/g, '/');
-  return `Coordinator ce ${ce} for run ${root}, tcb ${tcbCommit}: run node ${status} --root ${root} --ce ${ce} and act on run/status.json.`;
+  return `Coordinator ce ${ce} for run ${root}, tcb ${tcbCommit}: run node ${status} --root ${root} --ce ${ce} and act on run/status.json.`
+    + briefNoncePart(nonce) + briefPathPart(root);
+}
+
+// FX-CGATE step 1: the successor's bind nonce (`handover.mjs bind --ce <ce> --nonce <X>`) in the brief line.
+function briefNoncePart(nonce) { // eslint-disable-line no-unused-vars
+  return '';
+}
+
+// FX-W3: the path part of the brief line. Empty until FX-W3.
+function briefPathPart(root) { // eslint-disable-line no-unused-vars
+  return '';
 }
 
 // A refusal (exit 6) of raise: one `incident` line under the lock, unless dry-run.

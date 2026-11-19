@@ -551,6 +551,22 @@ export function paths(root) {
     wt: j('wt'),
     attempt: (task, e) => j('wt', `${task}-e${e}`),
     attemptRel: (task, e) => `wt/${task}-e${e}`,
+    // the round-3 runtime files (RUNTIME_FILES)
+    outcomeDir: (task, e) => j('wt', `${task}-e${e}`, 'outcome'),
+    outcomeSlot: (task, e, k) => j('wt', `${task}-e${e}`, 'outcome', `${k}.json`),
+    claim: (task, e) => j('wt', `${task}-e${e}`, 'claim.json'),
+    startRecord: (task, e) => j('wt', `${task}-e${e}`, 'start.json'),
+    coordSession: (ce) => j('run', `coord-session-${ce}.json`),
+    closeIntent: (sid) => j('run', 'close', 'intent', `${sid}.json`),
+    closeDone: (sid) => j('run', 'close', 'done', `${sid}.json`),
+    arm: j('run', 'arm'),
+    armSlot: (k) => j('run', 'arm', `slot-${k}.json`),
+    armNonce: (nonce) => j('run', 'arm', `${nonce}.json`),
+    armExited: (pid, startTime) => j('run', 'arm', `exited-${markerKey(pid, startTime)}.json`),
+    armUnarmed: (pid, startTime) => j('run', 'arm', `unarmed-${markerKey(pid, startTime)}.json`),
+    turn: j('run', 'turn.json'),
+    deadman: j('run', 'deadman.json'),
+    watcherBusy: j('run', 'watcher-busy.json'),
     tmp: j('tmp'),
     gitignore: j('.gitignore'),
     gitattributes: j('.gitattributes'),
@@ -1408,7 +1424,7 @@ export function acquireLock(root, name, opts = {}) {
       if (missing) {
         if (++spins < 1000) continue; // released between our create and read
       } else if (held && seen > judgeAfter && isStale(held)) {
-        const out = breakStale(file, held, heldBytes, nonce, bytes);
+        const out = breakStep(name, () => breakStale(file, held, heldBytes, nonce, bytes));
         if (out === 'held') return finish(held);
         if (++spins < 1000) continue;
       } else if (!held && heldBytes && retries >= LOCK_UNREADABLE_MIN_RETRIES && seen > retries) {
@@ -1503,12 +1519,16 @@ function logOrphans(root, handle, ctx, ce, now) {
   }
 }
 
-/** Acquire run.lock, check ce inside it (when given), run fn(handle), release in finally. */
+/**
+ * Acquire run.lock, check ce inside it (when given), run fn(handle), release in finally.
+ * `requireArmed: true` (FX-W3) runs armedCheck(root, handle) after the ce check, before fn.
+ */
 export async function withRunLock(root, opts, fn) {
   const o = opts || {};
   const handle = acquireLock(root, 'run.lock', o);
   try {
     if (o.ce !== undefined && o.ce !== null) checkCe(root, o.ce);
+    if (o.requireArmed === true) armedCheck(root, handle);
     return await fn(handle);
   } finally {
     handle.release();
@@ -2714,6 +2734,7 @@ export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
     }
   }
   closeRun(true);
+  hidden(res, 'kind', transcriptKind(res));
   return res;
 }
 
@@ -3100,7 +3121,8 @@ export function reservation(rows, spentOf) {
  * procList null (PowerShell failed) -> unknown; matched processes alive -> live; the current attempt
  * of a row active at step admitted, started or bound, or the last attempt of a committed row ->
  * unknown (always one slot); a transcript of the attempt exists -> unknown; else nothing.
- * `opts.root` (optional, not in the contract's signature) resolves a relative attempt folder; without
+ * Signature slotCount(rows, procList, transcriptsRoot, {root} = {}): `{root}` is part of it since
+ * round 3 (S0.5; FX-CLAIM's callers pass it). `root` (optional) resolves a relative attempt folder; without
  * it a relative folder is matched in command lines as written, and its transcripts are found by
  * session id or by a project folder whose first `cwd` ends with that relative folder.
  */
@@ -3651,4 +3673,200 @@ export function checkerVerdicts(parsed, itemIds) {
 /** sha256hex(canonicalize(readSet)) (section 3.16). */
 export function readSetSha(readSet) {
   return sha256hex(canonicalize(readSet));
+}
+
+// =============================================================================================
+// Round-3 skeleton (build unit S0.5): fixed signatures, runtime file formats, empty steps
+// =============================================================================================
+//
+// The round-3 fixes (model/as-built/FIX-fence.md, FIX-wake.md, joined in FIX-JOIN.md) share places in
+// the scripts. Each shared place is a named function, here or in its script, that exactly one fix
+// fills, so no two fixes edit the same lines. Until its fix lands, an API function below throws
+// `not-built` (exit 70, detail {fn, fix}) and an empty step returns its neutral value: behaviour is
+// unchanged. The order is FIX-JOIN point 11, "Build order across lib".
+
+const notBuilt = (fn, fix) => err('not-built', 70, { fn, fix });
+
+/**
+ * The 13 runtime files of the round-3 fixes. `path` is relative to the root (`<pt>` is
+ * markerKey(pid, start_time)); `helper` names its function in paths(root); `fix` the fix that
+ * writes it; `writer` the script step; `fields` its bytes. Every file is a strict create (0b) unless
+ * `rewritten` (an atomic rewrite). A reader checks that `kind` matches the folder and that a session
+ * file's `session` equals its name (FIX-fence.md, FX-CGATE "Name validation").
+ */
+export const RUNTIME_FILES = Object.freeze([
+  {
+    path: 'wt/<T>-e<E>/outcome/<j>.json', helper: 'outcomeSlot', fix: 'FX-OUT', rewritten: false,
+    writer: 'guard-hook stepReadySlot (ready); replace fence fenceOutcomeSteps (fenced); replace start makes the folder',
+    fields: "{kind:'ready', task, epoch, step} | {kind:'fenced', task, epoch, reason}",
+  },
+  {
+    path: 'wt/<T>-e<E>/claim.json', helper: 'claim', fix: 'FX-CLAIM', rewritten: false,
+    writer: 'guard-hook stepClaim (session); replace fence fenceTombstone (tombstone)',
+    fields: "{kind:'session', session_id} | {kind:'tombstone', task, epoch}",
+  },
+  {
+    path: 'wt/<T>-e<E>/start.json', helper: 'startRecord', fix: 'FX-CGATE', rewritten: false,
+    writer: 'guard-hook stepStartRecord (coordinator, CGATE step 4)',
+    fields: "{kind:'start', session, tool_use_id|null, tick, at}",
+  },
+  {
+    path: 'run/coord-session-<ce>.json', helper: 'coordSession', fix: 'FX-CGATE', rewritten: false,
+    writer: 'guard-hook stepBind (coordinator, CGATE step 2)',
+    fields: '{session_id}',
+  },
+  {
+    path: 'run/close/intent/<sid>.json', helper: 'closeIntent', fix: 'FX-CGATE', rewritten: false,
+    writer: 'guard-hook stepStopIntent (coordinator, PreToolUse, CGATE step 5)',
+    fields: "{kind:'close-intent', session, by, tool_use_id}",
+  },
+  {
+    path: 'run/close/done/<sid>.json', helper: 'closeDone', fix: 'FX-CGATE', rewritten: false,
+    writer: 'guard-hook, PostToolUse (coordinator, CGATE step 6)',
+    fields: "{kind:'close-done', session, outcome:'stopped'|'no-such-session'|'owner', by}",
+  },
+  {
+    path: 'run/arm/slot-<k>.json', helper: 'armSlot', fix: 'FX-W2', rewritten: true,
+    writer: 'watch --alarm --ensure, hold 1: alarmRegisterSlot (FX-W2), alarmSlotTurnSeq (FX-W3)',
+    fields: '{ce, pid, start_time, nonce, turn_seq_at_reg}',
+  },
+  {
+    path: 'run/arm/<nonce>.json', helper: 'armNonce', fix: 'FX-W2', rewritten: true,
+    writer: 'watch --alarm --ensure (started, registered, present); status --reconcile (abandoned)',
+    fields: "{state:'started'|'registered'|'present'|'abandoned', k?, pid?}",
+  },
+  {
+    path: 'run/arm/exited-<pt>.json', helper: 'armExited', fix: 'FX-W1', rewritten: false,
+    writer: 'watch --alarm alarmExitMarker (every exit after registration, no lock)',
+    fields: '{ce, exit, at}',
+  },
+  {
+    path: 'run/arm/unarmed-<pt>.json', helper: 'armUnarmed', fix: 'FX-W3', rewritten: false,
+    writer: 'watch --alarm alarmUnarmedRecord (exit 30 only)',
+    fields: '{ce, turn_seq}',
+  },
+  {
+    path: 'run/turn.json', helper: 'turn', fix: 'FX-W2, FX-W3', rewritten: true,
+    writer: 'status --reconcile (r8-r13 hold; hold 2: hold2ArmSlots); the endturn (arm spent)',
+    fields: "{ce, turn_seq, read_seq, arm:'unconfirmed'|'confirmed'|'spent', slots:[{k, pid, start_time}], unarmed_turns}",
+  },
+  {
+    path: 'run/deadman.json', helper: 'deadman', fix: 'FX-W4', rewritten: true,
+    writer: 'status --deadman deadmanRun (single writer, no lock)',
+    fields: '{runs_no_alarm, runs_no_watcher, list_hist[5], alerted:{cause, runs}}',
+  },
+  {
+    path: 'run/watcher-busy.json', helper: 'watcherBusy', fix: 'FX-W7', rewritten: true,
+    writer: 'watch, a tick whose hold found the run lock busy',
+    fields: '{ce, busy_ticks}',
+  },
+].map((f) => Object.freeze(f)));
+
+/**
+ * The file-name key of a process for the arm markers (`exited-<pt>`, `unarmed-<pt>`): `<pid>-<start>`,
+ * where <start> is the start time with every character but [0-9A-Za-z] removed (an ISO time holds
+ * ':', which Windows refuses in a file name). Writer and readers take the start time from the slot
+ * record, so both build the same key.
+ */
+export function markerKey(pid, startTime) {
+  return `${pid}-${String(startTime ?? '').replace(/[^0-9A-Za-z]/g, '')}`;
+}
+
+/**
+ * outcomeState(attemptDir, row) -> {fenced, slots, ready} (FX-OUT; FIX-fence.md "Reading rules" R-a
+ * to R-c). `fenced`: the reason of a fenced slot, else null; `slots`: the parsed slots in j order;
+ * `ready`: the steps of ready slots not in row.commits. Only regular files named `^\d+\.json$` are
+ * read; bytes that do not parse are tamper. The one reader for commit, fence, hook and planners.
+ */
+export function outcomeState(attemptDir, row) { // eslint-disable-line no-unused-vars
+  throw notBuilt('outcomeState', 'FX-OUT');
+}
+
+/**
+ * outcomeAppend(attemptDir, slot, opts): strict create (0b) of the first free `outcome/<j>.json`
+ * with the slot's bytes, a ready or a fenced slot (RUNTIME_FILES). The log has no gaps and nothing
+ * follows a fenced slot (FX-OUT).
+ */
+export function outcomeAppend(attemptDir, slot, opts) { // eslint-disable-line no-unused-vars
+  throw notBuilt('outcomeAppend', 'FX-OUT');
+}
+
+/**
+ * readClaim(attemptDir) -> {kind: 'none'|'session'|'tombstone', session_id} (FX-CLAIM): the
+ * attempt's `claim.json`; 'none' when it is absent; session_id is null unless kind is 'session'.
+ */
+export function readClaim(attemptDir) { // eslint-disable-line no-unused-vars
+  throw notBuilt('readClaim', 'FX-CLAIM');
+}
+
+/** claimRecord(sessionId) -> {kind:'session', session_id}, the claim's bytes (FX-CLAIM, the hook). */
+export function claimRecord(sessionId) { // eslint-disable-line no-unused-vars
+  throw notBuilt('claimRecord', 'FX-CLAIM');
+}
+
+/** tombstoneRecord(task, epoch) -> {kind:'tombstone', task, epoch} (FX-CLAIM, the fence). */
+export function tombstoneRecord(task, epoch) { // eslint-disable-line no-unused-vars
+  throw notBuilt('tombstoneRecord', 'FX-CLAIM');
+}
+
+/**
+ * planAct(row, facts) -> one act name, 'none' and 'owner' included (FX-PLAN; FIX-fence.md section 6,
+ * the total act table). A pure function of the row and its facts {claim, start, lease, zombieOver,
+ * readyPending, blocked, Q5a}; watch's rowAct and status's planner both call it (FIX-JOIN 10, 11).
+ */
+export function planAct(row, facts) { // eslint-disable-line no-unused-vars
+  throw notBuilt('planAct', 'FX-PLAN');
+}
+
+/**
+ * liveness(rec, proc, markers) -> 'alive' | 'dead' | 'unknown' (FX-W1; FIX-wake.md FX-W1 step 1):
+ * dead when an exit marker names (rec.pid, rec.start_time); otherwise proc.alive: true alive, false
+ * dead, null unknown. Never called inside a run-lock hold.
+ */
+export function liveness(rec, proc, markers) { // eslint-disable-line no-unused-vars
+  throw notBuilt('liveness', 'FX-W1');
+}
+
+/**
+ * armedCheck(root, handle): run by withRunLock inside the hold when `requireArmed` is true (FX-W3:
+ * "armed" is a confirmed turn.json of the caller's ce whose slots have no exit marker; otherwise
+ * exit 6 `not-armed`). Empty step until FX-W3.
+ */
+function armedCheck(root, handle) { // eslint-disable-line no-unused-vars
+}
+
+/**
+ * breakStep(name, doBreak) -> doBreak(): acquireLock's break of a lock judged stale (FX-W7 fills it:
+ * the break of watcher.lock under the run lock). The unreadable-lock break does not pass here.
+ */
+function breakStep(name, doBreak) { // eslint-disable-line no-unused-vars
+  return doBreak();
+}
+
+/**
+ * The 27 top-level record types seen in the transcripts, by count (facts/WH5-Wturn.md, measured
+ * 2026-11-19 over 68 project folders). parseTranscript reads assistant, user and attachment and
+ * skips the rest; kept for FX-W6's kind.
+ */
+export const TRANSCRIPT_RECORD_TYPES = Object.freeze([
+  'assistant', 'user', 'attachment', 'api-request', 'api-request-blob', 'custom-title', 'last-prompt',
+  'atis-latch', 'agent-name', 'queue-operation', 'mode', 'pr-link', 'relocated', 'api-request-shape',
+  'file-history-delta', 'system', 'started', 'result', 'tools-used', 'file-history-snapshot', 'frame-link',
+  'launched', 'cost-state', 'failed', 'artifact-autoreact-ledger', 'artifact-comment-monitor', 'session-owner',
+]);
+
+/**
+ * The kinds of the transcript tail (FX-W6, FIX-wake.md): `tool` (deadline: the declared timeout +
+ * tool_slack_ticks), `bg-wait` (bg_wait_ticks), `model` (model_ticks; also an unreadable transcript),
+ * `idle` (never a charged hang; act-due `idle-child` at idle_ticks).
+ */
+export const TRANSCRIPT_KINDS = Object.freeze(['tool', 'bg-wait', 'model', 'idle']);
+
+/**
+ * transcriptKind(res) -> one of TRANSCRIPT_KINDS, or null: the kind of the parse's tail (FX-W6).
+ * parseTranscript sets it as the non-enumerable `kind` of its result (absent from JSON and deep
+ * equality). Empty step: null until FX-W6.
+ */
+function transcriptKind(res) { // eslint-disable-line no-unused-vars
+  return null;
 }
