@@ -66,7 +66,9 @@ b. Per row active at step started|bound (current attempt e): parse its transcrip
      it is (new calls still reset it). This is the watcher's only use of a clock difference and it
      can only withhold a hang count; an unparseable or missing `last_tick_at` counts the tick.
    - `loopRun` of the main transcript's tool uses: run ≥ `loop_k` → 22; stored as `loop {sig, run}`.
-   - READY of epoch e: kind ready for a step without a commit record → 11; kind repair → 12. Either
+   - READY of epoch e (FX-OUT): an uncommitted ready slot in the outcome log (`lib.outcomeState`, R-b; a
+     fenced or unreadable log has none) → 11 (detail step: the latest such slot); else a repair marker in
+     `staging/READY.json` (it takes no slot) → 12. Either
      voids 20, 21, 22 for that epoch (R5, finding A4).
    - spend (current attempt) ≥ ⌊soft_frac·e_task⌋ → 13; ≥ ⌊hard_frac·e_task⌋ → 23.
    - window = `last_context`; `W_star_child` a gate and window ≥ it → 15.

@@ -27,7 +27,8 @@ pattern (CONTRACT §1.5); `--quote-file`/`--text-file` must resolve under `<root
 ## Reads
 `run/coord.json`, `run/tasks.json`, `run/ledger.jsonl`, `run/acked.json`, `run/watcher.json`,
 `run/watcher.lock`, `run/alarm.json`, `run/intents/`, `tcb/thresholds.json`, `store/commits/`,
-`store/status/card_status.jsonl`, `wt/*/staging/READY.json`, transcripts (spend, windows,
+`store/status/card_status.jsonl`, `wt/*/outcome/` (the READY of an epoch, FX-OUT; a bad log is anomaly
+`outcome-tamper`), `wt/*/staging/READY.json` (zombie-write telemetry only), transcripts (spend, windows,
 reconcile), the process list (slots, wake sources).
 
 ## Writes

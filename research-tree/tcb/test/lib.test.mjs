@@ -3127,7 +3127,7 @@ test('S0.5 round-3 skeleton: threshold keys marked guesses, stub signatures, not
     assert.ok(Number.isInteger(p.value), `${k} has an integer value`);
     assert.match(p.unit, /guess/, `${k}'s unit says it is a guess`);
   }
-  const stubs = { outcomeState: 2, outcomeAppend: 3, readClaim: 1, claimRecord: 1, tombstoneRecord: 2, planAct: 2, liveness: 3 };
+  const stubs = { readClaim: 1, claimRecord: 1, tombstoneRecord: 2, planAct: 2, liveness: 3 };
   // FX-CLAIM built readClaim, claimRecord, tombstoneRecord (their tests: T96z): the arity stays, not-built goes
   for (const [name, n] of [['readClaim', 1], ['claimRecord', 1], ['tombstoneRecord', 2]]) { assert.equal(lib[name].length, n, name); delete stubs[name]; }
   for (const [name, n] of Object.entries(stubs)) {

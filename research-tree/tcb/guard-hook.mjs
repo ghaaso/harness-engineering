@@ -639,8 +639,40 @@ function stepClaim(pass) {
 function stepAllowList(pass) { // eslint-disable-line no-unused-vars
 }
 
-// FX-OUT, child side: a task role's Write or Edit of READY becomes a ready slot, outcome/<j>.json.
-function stepReadySlot(pass) { // eslint-disable-line no-unused-vars
+// FX-OUT, child side (FIX-fence.md section 1, "Steps, child side" 2-4): a task role's Write of READY
+// becomes a ready slot, outcome/<j>.json, by the hook's test-and-set on the log; READY.json itself is
+// the copy the harness then writes, which no decision reads. Runs after the epoch gate (step 4), the
+// claim and steps 5-6, so every read-only check of the call came first (FIX-JOIN point 9).
+function stepReadySlot(pass) {
+  const { root, attempt, task, epoch, row, toolName, toolInput, cwd, io, access } = pass;
+  if (!attempt || !row) return;
+  // 2: is the target READY? (the same path key as steps 3-6: case, `..`, trailing dots and spaces)
+  const ready = pathKey(W.join(attempt, 'staging', 'READY.json'));
+  const raw = access && Array.isArray(access.paths) ? access.paths : [];
+  if (!raw.some((p) => { const r = resolveToolPath(p, cwd); return r !== null && pathKey(r) === ready; })) return;
+  if (toolName !== 'Write') throw new Deny('ready-write-only', toolName);
+  // 3: a valid READY of this task, epoch and one of its steps; a repair marker takes no slot
+  let v;
+  try {
+    if (typeof toolInput.content !== 'string') throw new Error('content is not a string');
+    v = JSON.parse(toolInput.content.replace(/^﻿/, ''));
+    lib.checkFormat(root, 'ready', v);
+  } catch (e) {
+    throw new Deny('ready-invalid', isTcbError(e) ? e.code : errText(e));
+  }
+  if (v.task !== task || v.epoch !== epoch) throw new Deny('ready-invalid', `task ${oneLine(v.task)} epoch ${oneLine(v.epoch)}, hook ${task} e${epoch}`);
+  if (v.kind === 'repair') return;
+  const steps = Array.isArray(row.steps) ? row.steps : [];
+  if (v.kind !== 'ready' || typeof v.step !== 'string' || !steps.includes(v.step)) throw new Deny('ready-invalid', `step ${oneLine(v.step)} not in ${steps.join(',')}`);
+  // 4: the log; fenced -> deny; the same ready slot -> allow; else the first free slot (0b's create)
+  let r;
+  try {
+    r = lib.outcomeAppend(attempt, { kind: 'ready', task, epoch, step: v.step }, { row, create: (file, bytes) => hookCreate(io, file, bytes) });
+  } catch (e) {
+    if (isTcbError(e)) throw new Deny(e.code, JSON.stringify(e.detail ?? null));
+    throw e;
+  }
+  if (r.result === 'fenced') throw new Deny('attempt-fenced', `${task} e${epoch}: ${r.state.fenced}`);
 }
 
 // ---- FX-CGATE (FIX-fence 3): the names, the session tools and the helpers of steps 2-6 ----------

@@ -86,8 +86,10 @@ Nothing under `.git`.
 ## Steps: record
 1-2. As intake 1-2 (zombie-write and 65 on a stale epoch). `--step` not in row `steps` → 1 `step-not-listed`.
 3. Run the intake pass; if it appended a line → exit 6 `intake-new` (fsck must see the new objects).
-4. `READY.json`: missing or unparseable → 2 `no-ready`; `kind` ≠ ready, `task`/`epoch` ≠ the call, or
-   `step` not `--step` nor a later entry of `steps` → 1 `ready-mismatch`.
+4. The outcome log (FX-OUT, CONTRACT §3.23; READY.json is not read): a fenced log → 1 `attempt-fenced`
+   {reason}; a bad log → 3 `outcome-tamper`; no ready slot → 2 `no-ready`; no ready slot for the step or a
+   later one → 1 `ready-mismatch` {ready: steps}. (Before FX-OUT: `READY.json`: missing or unparseable → 2 `no-ready`; `kind` ≠ ready, `task`/`epoch` ≠ the call, or
+   `step` not `--step` nor a later entry of `steps` → 1 `ready-mismatch`.)
 5. Every earlier entry of `steps` has a commit record → else 1 `step-order`.
 6. A passing `fsck` line newer than the last `intake` line of this task+epoch and newer than any failing
    `fsck` line → else 6 `fsck-stale` (R23, decision 18).

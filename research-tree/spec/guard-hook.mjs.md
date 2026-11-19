@@ -190,7 +190,12 @@ only through `hookCreate` (strict create, 0b), after every read-only check of th
 - Step 4, task roles, after the epoch gate: `stepClaim` (FX-CLAIM).
 - Step 6 is `checkAccess(pass)`, moved as it was; in its exec branch, after the tcb-node grammar check:
   `stepAllowList` (FX-W1).
-- Step 7, after step 6 allowed the call. Task roles, Write or Edit: `stepReadySlot` (FX-OUT). Coordinator:
+- Step 7, after step 6 allowed the call. Task roles, Write or Edit: `stepReadySlot` (FX-OUT, built: a target
+  whose path key is `{attempt}/staging/READY.json`: an Edit → deny `ready-write-only`; a Write whose `content`
+  does not parse, fails `checkFormat(ready)`, or names another task, epoch or a step not in the row → deny
+  `ready-invalid`; a repair marker → allow, no slot; else `lib.outcomeAppend` with `hookCreate` as its create:
+  a fenced log → deny `attempt-fenced`, the same ready slot or a new one → allow, a bad log → deny
+  `outcome-tamper`, no `outcome/` → deny `no-parent`). Coordinator:
   `coordinatorSteps`, in order `stepBind` (FX-CGATE 2), `stepCurrentSession` (FX-CGATE 3), `stepArmed`
   (FX-W3), `stepRowAtAdmitted` (FX-CGATE 4, read-only), `stepStartRecord` (FX-CGATE 4), `stepStopIntent`
   (FX-CGATE 5); a step that returns `'allow'` ends them.

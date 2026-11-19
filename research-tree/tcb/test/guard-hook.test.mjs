@@ -1005,6 +1005,113 @@ test('T15 the hook\'s one write (0b): a strict exclusive create inside its budge
 });
 
 // ---------------------------------------------------------------------------------------------
+// FX-OUT: the hook's test-and-set on the outcome log (FIX-fence.md section 1, child side; CONTRACT §3.23)
+// ---------------------------------------------------------------------------------------------
+// A slot's bytes: canonical JSON (sorted keys) of exactly its fields.
+const slotText = (o) => JSON.stringify(Object.fromEntries(Object.entries(o).sort(([x], [y]) => (x < y ? -1 : 1))));
+async function oneCase(w, c, nodeArgs = []) {
+  const r = nodeArgs.length ? await runHookWithNode(w, c, nodeArgs) : await runCase(w, c);
+  return judge(c, r);
+}
+// runCase with node options before the script (the clock test's late start).
+function runHookWithNode(w, c, nodeArgs) {
+  const { args, stdin } = buildInvocation(w, c);
+  return new Promise((resolve) => {
+    const p = spawn(process.execPath, [...nodeArgs, hookScript(), ...args], { cwd: w.root, windowsHide: true, shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    p.stdout.on('data', (d) => (stdout += d));
+    p.stderr.on('data', (d) => (stderr += d));
+    p.stdin.on('error', () => {});
+    const killer = setTimeout(() => { try { p.kill(); } catch { /* gone */ } }, 30000);
+    p.on('close', (status, signal) => { clearTimeout(killer); resolve({ status, signal, stdout, stderr }); });
+    p.on('error', (e) => { clearTimeout(killer); resolve({ status: -1, signal: null, stdout, stderr: String(e) }); });
+    p.stdin.end(stdin);
+  });
+}
+
+test('FX-OUT 1: a Write of READY becomes one ready slot; a repeat takes none; an Edit, a bad or foreign READY are denied; a repair marker takes no slot; no outcome/ is no-parent', async () => {
+  await withWorld({}, async (w) => {
+    const a = w.A('child');
+    const T = ROLES.child.task;
+    const out = path.join(a, 'outcome');
+    const READY = path.join(a, 'staging', 'READY.json');
+    const slots = () => (fs.existsSync(out) ? fs.readdirSync(out).sort() : null);
+    const wr = (n, content, expect, file = READY) => ({ n, tool: 'Write', input: { file_path: file, content: typeof content === 'string' ? content : JSON.stringify(content) }, expect });
+    const ok = { kind: 'ready', task: T, epoch: 1, step: 'pack' };
+    // no outcome/ (an attempt from before the fix): the strict create makes no folder
+    assert.equal(await oneCase(w, wr('no outcome folder', ok, 'no-parent')), null);
+    assert.equal(slots(), null, 'the hook made no folder');
+    fs.mkdirSync(out);
+    assert.equal(await oneCase(w, wr('valid READY', ok, 0)), null);
+    assert.deepEqual(slots(), ['0.json']);
+    assert.equal(fs.readFileSync(path.join(out, '0.json'), 'utf8'), slotText(ok), 'the slot holds the canonical ready bytes');
+    const cases = [
+      wr('the same READY again, other spacing and schema_version', `{ "schema_version": 1, "step": "pack", "epoch": 1, "task": "${T}", "kind": "ready" }`, 0),
+      wr('a step the row does not have', { ...ok, step: 'review' }, 'ready-invalid'),
+      wr('another epoch', { ...ok, epoch: 2 }, 'ready-invalid'),
+      wr('another task', { ...ok, task: 'f1-review' }, 'ready-invalid'),
+      wr('no step', { kind: 'ready', task: T, epoch: 1 }, 'ready-invalid'),
+      wr('not JSON', '{"kind":"ready","task"', 'ready-invalid'),
+      wr('schema-invalid', { ...ok, extra: 1 }, 'ready-invalid'),
+      wr('a bad READY through a .. path', { ...ok, step: 'review' }, 'ready-invalid', `${a}\\staging\\x\\..\\READY.json`),
+      wr('a bad READY with a trailing dot and another case', { ...ok, step: 'review' }, 'ready-invalid', path.join(a, 'staging', 'ready.JSON.')),
+      { n: 'Edit of READY', tool: 'Edit', input: { file_path: READY, old_string: 'pack', new_string: 'review' }, expect: 'ready-write-only' },
+      wr('a repair marker', { kind: 'repair', task: T, epoch: 1, question_ids: ['f1-a-01'], missing: 'source' }, 0),
+      wr('a repair marker of another epoch', { kind: 'repair', task: T, epoch: 3, missing: 'source' }, 'ready-invalid'),
+      wr('another staging file', { kind: 'ready', task: T, epoch: 1, step: 'pack' }, 0, path.join(a, 'staging', 'pack.json')),
+    ];
+    assert.deepEqual(await runCases(w, cases, 1), []);
+    assert.deepEqual(slots(), ['0.json'], 'one slot: no repeat, no denied READY and no repair took one');
+  });
+});
+
+test('FX-OUT 2: a fenced log denies a READY attempt-fenced and nothing follows the fenced slot; a bad log denies outcome-tamper', async () => {
+  await withWorld({}, async (w) => {
+    const a = w.A('child');
+    const T = ROLES.child.task;
+    const out = path.join(a, 'outcome');
+    fs.mkdirSync(out);
+    const READY = path.join(a, 'staging', 'READY.json');
+    const ok = { kind: 'ready', task: T, epoch: 1, step: 'pack' };
+    const wr = (n, expect) => ({ n, tool: 'Write', input: { file_path: READY, content: JSON.stringify(ok) }, expect });
+    // the fence won first: no ready slot can follow
+    fs.writeFileSync(path.join(out, '0.json'), slotText({ kind: 'fenced', task: T, epoch: 1, reason: 'hang' }));
+    assert.equal(await oneCase(w, wr('READY after a fenced slot', 'attempt-fenced')), null);
+    assert.deepEqual(fs.readdirSync(out).sort(), ['0.json']);
+    // a ready slot with the same bytes, then a tainted fence: fenced decides before identical
+    fs.writeFileSync(path.join(out, '0.json'), slotText(ok));
+    fs.writeFileSync(path.join(out, '1.json'), slotText({ kind: 'fenced', task: T, epoch: 1, reason: 'tainted' }));
+    assert.equal(await oneCase(w, wr('the same READY after a tainted fence', 'attempt-fenced')), null);
+    assert.deepEqual(fs.readdirSync(out).sort(), ['0.json', '1.json']);
+    // tamper (R-c): a slot that does not parse, a gap
+    fs.rmSync(path.join(out, '1.json'));
+    fs.writeFileSync(path.join(out, '0.json'), '{"kind":"ready",');
+    assert.equal(await oneCase(w, wr('an unparseable slot', 'outcome-tamper')), null);
+    fs.writeFileSync(path.join(out, '0.json'), slotText(ok));
+    fs.writeFileSync(path.join(out, '2.json'), slotText({ kind: 'fenced', task: T, epoch: 1, reason: 'hang' }));
+    assert.equal(await oneCase(w, wr('a gap', 'outcome-tamper')), null);
+    assert.deepEqual(fs.readdirSync(out).sort(), ['0.json', '2.json'], 'a denied READY wrote nothing');
+  });
+});
+
+test('FX-OUT hook clock: as a process the write budget counts from the process start (0b(c); S0.4 refuter M25): a hook that starts late is denied budget-spent with no slot, on time it writes', async () => {
+  await withWorld({ thr: { hook_deadline_ms: 1500 } }, async (w) => {
+    const a = w.A('child');
+    const out = path.join(a, 'outcome');
+    fs.mkdirSync(out);
+    const c = (expect) => ({ n: `READY, expect ${expect}`, tool: 'Write', input: { file_path: path.join(a, 'staging', 'READY.json'), content: JSON.stringify({ kind: 'ready', task: ROLES.child.task, epoch: 1, step: 'pack' }) }, expect });
+    // A preload blocks 2000 ms before the hook's own code runs, so the process is past its 1500 ms when
+    // main() starts; the hook's own timer (1500 ms from main) has not fired when it reaches the write.
+    const late = ['--import', 'data:text/javascript,Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,2000)'];
+    assert.equal(await oneCase(w, c('budget-spent'), late), null);
+    assert.deepEqual(fs.readdirSync(out), [], 'the late hook made nothing');
+    assert.equal(await oneCase(w, c(0)), null);
+    assert.deepEqual(fs.readdirSync(out), ['0.json']);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
 // FX-CGATE (FIX-fence 3): the coordinator gate. G1 bind by nonce, G2 the stale session, G3 forged
 // close targets and the close intent, G4 the start record, G5 the Post mode.
 // ---------------------------------------------------------------------------------------------

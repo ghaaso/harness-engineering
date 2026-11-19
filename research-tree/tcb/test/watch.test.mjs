@@ -239,8 +239,16 @@ function singleTask(ctx, { task = 'f1-research', e_task = 1000, qids = ['f1-a-01
   writeTranscript(file, { sessionId: session, cwd, calls });
   return { task, session, file, cwd, row: row(task, { session, e_task, question_ids: qids, step, ...extra }) };
 }
+// FX-OUT: a valid READY is also the ready slot the hook records in outcome/ (READY.json is the copy).
 function readyFile(ctx, task, epoch, body) {
-  w(path.join(ctx.root, 'wt', `${task}-e${epoch}`, 'staging', 'READY.json'), body ?? { kind: 'ready', task, epoch, step: 'pack' });
+  const v = body ?? { kind: 'ready', task, epoch, step: 'pack' };
+  w(path.join(ctx.root, 'wt', `${task}-e${epoch}`, 'staging', 'READY.json'), v);
+  if (v && v.kind === 'ready' && v.task === task && v.epoch === epoch && typeof v.step === 'string') {
+    const dir = path.join(ctx.root, 'wt', `${task}-e${epoch}`, 'outcome');
+    fs.mkdirSync(dir, { recursive: true });
+    const j = fs.readdirSync(dir).filter((n) => /^[0-9]+.json$/.test(n)).length;
+    fs.writeFileSync(path.join(dir, `${j}.json`), canon({ kind: 'ready', task, epoch, step: v.step }));
+  }
 }
 function putCard(root, { qids, field = 'f1' }) {
   const card = {

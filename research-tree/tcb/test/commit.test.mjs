@@ -437,7 +437,19 @@ function std(ctx, o = {}) {
 }
 const addFsck = (ctx, result = 'pass') => addLedger(ctx.root, 'fsck', { result, failing: result === 'pass' ? [] : [{ check: 'objects', id: 'c_0000000000000000', code: 'object-mismatch' }] }, { writer: 'fsck' });
 const addAudit = (ctx, label = 'clean') => addLedger(ctx.root, 'audit', { label, undeclared: label === 'clean' ? [] : ['x'], protected_writes: [], first_context: 0, notes_bad: [] }, { task: TASK, epoch: ctx.epoch, writer: 'audit' });
-const writeReady = (ctx, step = 'pack', over = {}) => ctx.stage('READY.json', { schema_version: 1, kind: 'ready', task: TASK, epoch: ctx.epoch, step, ...over });
+// FX-OUT: a READY is the ready slot the hook records in the attempt's outcome log (READY.json is the copy);
+// a READY of another task or epoch takes no slot (the hook denies it `ready-invalid`).
+const addSlot = (ctx, slot) => {
+  const dir = path.join(ctx.dir(), 'outcome');
+  fs.mkdirSync(dir, { recursive: true });
+  const j = fs.readdirSync(dir).filter((n) => /^[0-9]+.json$/.test(n)).length;
+  fs.writeFileSync(path.join(dir, `${j}.json`), canon(slot));
+};
+const writeReady = (ctx, step = 'pack', over = {}) => {
+  const v = { schema_version: 1, kind: 'ready', task: TASK, epoch: ctx.epoch, step, ...over };
+  ctx.stage('READY.json', v);
+  if (v.kind === 'ready' && v.task === TASK && v.epoch === ctx.epoch) addSlot(ctx, { kind: 'ready', task: TASK, epoch: ctx.epoch, step: v.step });
+};
 function statuses(ctx, ids, status = 'witnessed') {
   for (const id of ids) addStatus(ctx.root, objRef(ctx.root, id), status, { witness_seq: 1 });
 }
@@ -817,19 +829,32 @@ test('T14 record repeated: exit 0, no second commit line; a torn commit is compl
   ledgerOk(ctx.root);
 });
 
-test('T15 record with no READY exits 2 no-ready; a READY of epoch 1 in the epoch-2 folder exits 1 ready-mismatch; READY step review with --step pack is accepted', () => {
+test('T15 record with no READY exits 2 no-ready; a READY of epoch 1 in the epoch-2 folder takes no slot, exit 2 no-ready (FX-OUT); a ready slot of an earlier step only exits 1 ready-mismatch; READY step review with --step pack is accepted', () => {
   const noReady = prepared({ skipReady: true });
   assertFirstReason(doRecord(noReady.ctx, 2), 'no-ready');
   assert.ok(!exists(commitPath(noReady.ctx.root)));
 
   const wrongEpoch = prepared({ setup: { epoch: 2, twoEpochs: true }, readyOver: { epoch: 1 } });
-  assertFirstReason(doRecord(wrongEpoch.ctx, 1), 'ready-mismatch');
+  assertFirstReason(doRecord(wrongEpoch.ctx, 2), 'no-ready');
   assert.ok(!exists(commitPath(wrongEpoch.ctx.root)));
+
+  const earlier = prepared({ setup: { steps: ['pack', 'review'] }, review: true, readyStep: 'pack' });
+  assertFirstReason(doRecord(earlier.ctx, 1, 'review'), 'ready-mismatch');
+  assert.ok(!exists(commitPath(earlier.ctx.root, 'review')));
 
   const later = prepared({ setup: { steps: ['pack', 'review'] }, review: true, readyStep: 'review' });
   doRecord(later.ctx, 0, 'pack');
   assert.ok(exists(commitPath(later.ctx.root, 'pack')));
   ledgerOk(later.ctx.root);
+});
+
+test('FX-OUT 5 (F7): a torn tainted fence, its slot after the ready slot and the row still at the epoch: record exits 1 attempt-fenced and commits nothing', () => {
+  const { ctx } = prepared();
+  addSlot(ctx, { kind: 'fenced', task: TASK, epoch: ctx.epoch, reason: 'tainted' });
+  const j = doRecord(ctx, 1);
+  assertFirstReason(j, 'attempt-fenced');
+  assert.ok(!exists(commitPath(ctx.root)));
+  assert.deepEqual(readTable(ctx.root).tasks[0].commits, {});
 });
 
 test('T16 record --step review before pack is recorded: exit 1 step-order', () => {

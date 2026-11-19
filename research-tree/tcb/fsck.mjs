@@ -506,6 +506,30 @@ async function checkClaude(root, L, table) {
   return { n, failing: dedupe(failing), anomalies };
 }
 
+// ---------------------------------------------------------------- check 10: every attempt's outcome log (FX-OUT)
+
+// Each attempt's `outcome/` (CONTRACT §3.23) read by lib.outcomeState: every slot parses and belongs to
+// its attempt, the log has no gap, and nothing follows a fenced slot. A bad log fails as
+// `outcome-<why>` (gap, after-fenced, slot-unparseable, slot-shape, slot-owner, slot-name,
+// slot-not-file, not-a-folder). An attempt with no `outcome/` is not counted.
+function checkOutcome(L, table) {
+  const failing = [];
+  let n = 0;
+  for (const row of table.tasks || []) {
+    for (const a of row.attempts || []) {
+      if (!a || !Number.isInteger(a.epoch)) continue;
+      try {
+        if (lib.outcomeState(L.attempt(row.task, a.epoch), row).present) n++;
+      } catch (e) {
+        if (!(e && e.code === 'outcome-tamper')) throw e;
+        n++;
+        failing.push(item('outcome', `${row.task}-e${a.epoch}`, `outcome-${(e.detail && e.detail.why) || 'tamper'}`));
+      }
+    }
+  }
+  return { n, failing: dedupe(failing) };
+}
+
 // ---------------------------------------------------------------- check 9: frozen and cut files
 
 function checkFrozen(root, L, lines) {
@@ -600,6 +624,7 @@ async function main(ctx) {
   const tcb = checkTcb(root, coord);
   const claude = await checkClaude(root, L, table);
   const frozen = checkFrozen(root, L, led1.records);
+  const outcome = checkOutcome(L, table);
 
   const T = (() => {
     try {
@@ -649,6 +674,7 @@ async function main(ctx) {
       tcb: { result: tcb.result, reason: tcb.reason ?? null, failing: tcb.failing },
       claude: { n: claude.n, failing: claude.failing },
       frozen: { n: frozen.n, failing: frozen.failing },
+      outcome: { n: outcome.n, failing: outcome.failing },
     };
     const failing = dedupe(Object.values(checks).flatMap((c) => c.failing));
     const anomalies = [

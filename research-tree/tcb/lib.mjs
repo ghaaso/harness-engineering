@@ -3875,23 +3875,127 @@ export function markerKey(pid, startTime) {
   return `${pid}-${String(startTime ?? '').replace(/[^0-9A-Za-z]/g, '')}`;
 }
 
+// FX-OUT (FIX-fence.md section 1; CONTRACT §3.23): the outcome log of one attempt, one write-once
+// slot per file, `outcome/<j>.json`, j = 0, 1, 2 ...; every slot is a strict create (0b).
+const OUTCOME_NAME_RE = /^([0-9]+)\.json$/i;
+const OUTCOME_SLOT_RE = /^(?:0|[1-9][0-9]{0,8})\.json$/;
+const OUTCOME_TASK_RE = /^[a-z][a-z0-9-]{1,39}$/;
+const OUTCOME_STEP_RE = /^[a-z][a-z0-9-]{0,39}$/;
+const OUTCOME_APPEND_TRIES = 64;
+
+const outcomeTamper = (attemptDir, why, detail) => err('outcome-tamper', 3, { attempt: path.basename(String(attemptDir)), why, ...(detail || {}) });
+
 /**
- * outcomeState(attemptDir, row) -> {fenced, slots, ready} (FX-OUT; FIX-fence.md "Reading rules" R-a
- * to R-c). `fenced`: the reason of a fenced slot, else null; `slots`: the parsed slots in j order;
- * `ready`: the steps of ready slots not in row.commits. Only regular files named `^\d+\.json$` are
- * read; bytes that do not parse are tamper. The one reader for commit, fence, hook and planners.
+ * The bytes of a slot: the canonical JSON of its own fields only, so that a repeat READY of a step
+ * has identical bytes. Ready `{kind, task, epoch, step}`; fenced `{kind, task, epoch, reason}`.
  */
-export function outcomeState(attemptDir, row) { // eslint-disable-line no-unused-vars
-  throw notBuilt('outcomeState', 'FX-OUT');
+export function outcomeSlotBytes(slot) {
+  const s = slot !== null && typeof slot === 'object' && !Array.isArray(slot) ? slot : {};
+  const base = OUTCOME_TASK_RE.test(String(s.task)) && Number.isInteger(s.epoch) && s.epoch >= 1;
+  if (base && s.kind === 'ready' && typeof s.step === 'string' && OUTCOME_STEP_RE.test(s.step)) {
+    return canonicalize({ kind: 'ready', task: s.task, epoch: s.epoch, step: s.step });
+  }
+  if (base && s.kind === 'fenced' && REASONS.includes(s.reason)) {
+    return canonicalize({ kind: 'fenced', task: s.task, epoch: s.epoch, reason: s.reason });
+  }
+  throw err('usage', 66, { what: 'outcome slot', kind: s.kind ?? null });
 }
 
 /**
- * outcomeAppend(attemptDir, slot, opts): strict create (0b) of the first free `outcome/<j>.json`
- * with the slot's bytes, a ready or a fenced slot (RUNTIME_FILES). The log has no gaps and nothing
- * follows a fenced slot (FX-OUT).
+ * outcomeState(attemptDir, row) -> {present, fenced, slots, ready, next} (FX-OUT; FIX-fence.md
+ * "Reading rules" R-a to R-c). `present`: `outcome/` exists (an attempt started before the fix, or
+ * never admitted, has none: an empty log); `fenced`: the reason of the fenced slot, else null (R-a);
+ * `slots`: [{j, kind, task, epoch, step | reason}] in j order; `ready`: the steps of ready slots whose
+ * step is not in row.commits (R-b), in j order; `next`: the first free j. Only names `<j>.json` are
+ * slots (a create's temp file is not); a slot must be a regular file (lstat) whose bytes parse to a
+ * slot of this folder's task and epoch (R-c). Anything else is tamper, `outcome-tamper` 3: a slot that
+ * is not a file or does not parse, a name with leading zeros, a gap, a slot after the fenced one, a
+ * slot of another task or epoch, and an `outcome` that is not a real folder. The one reader for
+ * commit, the fence, the hook, the planners and fsck.
  */
-export function outcomeAppend(attemptDir, slot, opts) { // eslint-disable-line no-unused-vars
-  throw notBuilt('outcomeAppend', 'FX-OUT');
+export function outcomeState(attemptDir, row) {
+  const dir = path.join(String(attemptDir), 'outcome');
+  const own = /^(.+)-e([1-9][0-9]*)$/.exec(path.basename(path.resolve(String(attemptDir))));
+  const task = own ? own[1] : row && typeof row.task === 'string' ? row.task : null;
+  const epoch = own ? Number(own[2]) : null;
+  const empty = { present: false, fenced: null, slots: [], ready: [], next: 0 };
+  let st;
+  try {
+    st = fsRetry(() => FS.lstatSync(dir));
+  } catch (e) {
+    if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return empty;
+    throw e;
+  }
+  if (st.isSymbolicLink() || !st.isDirectory()) throw outcomeTamper(attemptDir, 'not-a-folder');
+  const byJ = new Map();
+  for (const name of fsRetry(() => FS.readdirSync(dir))) {
+    const m = OUTCOME_NAME_RE.exec(name);
+    if (!m) continue;
+    if (!OUTCOME_SLOT_RE.test(name)) throw outcomeTamper(attemptDir, 'slot-name', { name });
+    const file = path.join(dir, name);
+    const fst = fsRetry(() => FS.lstatSync(file));
+    if (fst.isSymbolicLink() || !fst.isFile()) throw outcomeTamper(attemptDir, 'slot-not-file', { name });
+    let v;
+    try {
+      v = JSON.parse(stripBom(readBytes(file)).toString('utf8'));
+    } catch (e) {
+      if (e && e.code === 'budget-spent') throw e;
+      throw outcomeTamper(attemptDir, 'slot-unparseable', { name });
+    }
+    let bytes = null;
+    try {
+      bytes = outcomeSlotBytes(v);
+    } catch {
+      bytes = null;
+    }
+    if (bytes === null || canonicalize(v) !== bytes) throw outcomeTamper(attemptDir, 'slot-shape', { name });
+    if ((task !== null && v.task !== task) || (epoch !== null && v.epoch !== epoch)) {
+      throw outcomeTamper(attemptDir, 'slot-owner', { name, task: v.task, epoch: v.epoch });
+    }
+    byJ.set(Number(m[1]), v);
+  }
+  const slots = [];
+  let fenced = null;
+  for (let j = 0; j < byJ.size; j++) {
+    const v = byJ.get(j);
+    if (!v) throw outcomeTamper(attemptDir, 'gap', { missing: j });
+    if (fenced !== null) throw outcomeTamper(attemptDir, 'after-fenced', { j });
+    if (slots.length && v.epoch !== slots[0].epoch) throw outcomeTamper(attemptDir, 'slot-owner', { j, epoch: v.epoch });
+    slots.push({ j, ...v });
+    if (v.kind === 'fenced') fenced = v.reason;
+  }
+  const commits = row && row.commits && typeof row.commits === 'object' ? row.commits : {};
+  const ready = slots.filter((s) => s.kind === 'ready' && !Object.prototype.hasOwnProperty.call(commits, s.step)).map((s) => s.step);
+  return { present: true, fenced, slots, ready, next: slots.length };
+}
+
+/**
+ * outcomeAppend(attemptDir, slot, opts) -> {result: 'created'|'identical'|'fenced', j, state}: the
+ * test-and-set on the log (FX-OUT). Reads the log (outcomeState); a fenced log takes nothing more
+ * (`fenced`, j null); `opts.check(state)` runs on every read before any write and may throw (the
+ * fence's ready check); a slot with the same bytes already there is `identical`; otherwise the slot is
+ * created at the first free j by `opts.create(file, bytes)` -> 'created'|'identical'|'different'
+ * (default: the strict create of 0b, no budget; the hook passes its own, inside its deadline). A name
+ * another writer took first (`different`) reads the log again. `opts.row` is passed to outcomeState.
+ */
+export function outcomeAppend(attemptDir, slot, opts) {
+  const o = opts !== null && typeof opts === 'object' ? opts : {};
+  const bytes = outcomeSlotBytes(slot);
+  const create = typeof o.create === 'function' ? o.create : (file, data) => exclusiveWrite(file, toBuffer(data), FS, { strict: true });
+  for (let i = 0; i < OUTCOME_APPEND_TRIES; i++) {
+    const state = outcomeState(attemptDir, o.row ?? null);
+    if (state.fenced !== null) return { result: 'fenced', j: null, state };
+    if (typeof o.check === 'function') o.check(state);
+    const same = state.slots.find((s) => {
+      const { j, ...fields } = s; // eslint-disable-line no-unused-vars
+      return outcomeSlotBytes(fields) === bytes;
+    });
+    if (same) return { result: 'identical', j: same.j, state };
+    const r = create(path.join(String(attemptDir), 'outcome', `${state.next}.json`), bytes);
+    if (r === 'created' || r === 'identical') return { result: r, j: state.next, state };
+    if (r !== 'different') throw err('internal', 70, { what: 'outcome create', result: String(r) });
+  }
+  throw err('internal', 70, { what: 'outcome append', tries: OUTCOME_APPEND_TRIES });
 }
 
 /**

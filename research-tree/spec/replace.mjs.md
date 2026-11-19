@@ -223,8 +223,20 @@ a real session's transcript `cwd` equals the folder named in `bind` (item 7).
   `armedFor(mode, reason)` (false until FX-W3: `start`, and `fence` with reason `first`) gives it for
   `modeStart` and `modeFence`.
 - `modeFence`'s hold, in order (FIX-JOIN point 11): `fenceOutcomeSteps(env, handle, hold)` (FX-OUT steps
-  1-5) before the M6 block; `fenceTombstone(env, handle, hold)` (FX-CLAIM) after it; then `lib.fence`,
-  unchanged. `hold` = {task, epoch, reason, failure, row, att, dir, cut, readyCheck}.
+  1-5, built; the M6 block is gone into it, Q6 b); `fenceTombstone(env, handle, hold)` (FX-CLAIM); then
+  `lib.fence` with `readyCheck` = an uncommitted ready slot in a log that is not fenced. `hold` = {task,
+  epoch, reason, failure, row, att, dir, cut, readyCheck}. fenceOutcomeSteps: 1 `outcomeState` of attempt E
+  (`outcome-tamper` 3); 2 a log fenced with another reason → 65 `fence-pending` {reason}; 3 `predictFence`'s
+  refusals (`stale-epoch`, `wrong-step`, `hmax`) before any write; no slot when the fence does not move the
+  row to E+1 (`first`, a cut or drop with no attempt), when attempt E has no manifest (rev 4 H1) or on the
+  retry; 4 an uncommitted ready slot → 5 `ready-wins` for every reason but `tainted`; 5 (not in a dry run,
+  not without `outcome/`) the fenced slot by `outcomeAppend`, its check re-running step 4 (a ready slot that
+  took the name first → 5; `tainted` appends after it). `start` makes `outcome/` beside `staging/`.
+- FX-OUT tests (replace.test.mjs): a refused fence (`stale-epoch`, `wrong-step`, `hmax`) writes no slot; a
+  fence of a parked row writes no slot and no tombstone (schedule F1); T5 and T5b put the READY as a ready slot.
+  FX-OUT 3 with FX-REDO: a fence writes one fenced slot, then the CAS; with its line lost after the CAS, a fence
+  of another reason gets 65 `fence-pending` and writes nothing, and the same fence is the repeat that completes
+  the line, with no second slot.
 
 ## FX-CLAIM (round 3)
 

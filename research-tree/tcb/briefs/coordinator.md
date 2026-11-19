@@ -47,7 +47,13 @@ step 4; point 9).
 
 ### 5a. `replace fence`, any reason but `first`: the refusals, the ready check, the fenced slot; `commit` refuses a fenced log (FX-OUT)
 
-(empty until FX-OUT)
+An attempt's outcome is its log `wt/<task>-e<e>/outcome/<j>.json`, never `staging/READY.json` (a copy).
+`replace fence` makes every refusal before it writes: exit 65 `stale-epoch` or `wrong-step`, or exit 1
+`hmax`, leaves no slot. Exit 5 `ready-wins`: an uncommitted ready slot wins over every reason but `first`
+and `tainted`; do not fence again for it, audit and commit the step instead. Exit 65 `fence-pending`
+(detail `reason`): a fence with that reason wrote its slot and did not finish; call `replace fence` again
+with exactly that reason, never another. `commit record` exits 1 `attempt-fenced` on a fenced log: the
+fence won; finish that fence first. Exit 3 `outcome-tamper`: stop and report it.
 
 ### 5b. The tombstone, in the same fence hold before `lib.fence`; `--if-unclaimed` (FX-CLAIM)
 
