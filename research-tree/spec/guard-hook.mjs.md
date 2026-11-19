@@ -182,3 +182,16 @@ the exit code is 0 or 2, stdout is empty, and on 2 stderr starts `[guard-hook] d
 - needs-app 2: user-level denies bind every session; the `//` absolute form works on Windows.
 - needs-app 3: a session in `wt/<task>-e<e>/` obeys that folder's settings and agent files and no
   ancestor's (the coordinator's hook must not apply to children).
+
+## Round-3 skeleton (S0.5): the steps of the decision
+One context `pass` = {hook, root, role, task, epoch, attempt, toolName, toolInput, cwd, io, profile, row,
+access}. Each step is empty until its fix fills it. A step denies by throwing; a step that writes does so
+only through `hookCreate` (strict create, 0b), after every read-only check of the call (FIX-JOIN point 9).
+- Step 4, task roles, after the epoch gate: `stepClaim` (FX-CLAIM).
+- Step 6 is `checkAccess(pass)`, moved as it was; in its exec branch, after the tcb-node grammar check:
+  `stepAllowList` (FX-W1).
+- Step 7, after step 6 allowed the call. Task roles, Write or Edit: `stepReadySlot` (FX-OUT). Coordinator:
+  `coordinatorSteps`, in order `stepBind` (FX-CGATE 2), `stepCurrentSession` (FX-CGATE 3), `stepArmed`
+  (FX-W3), `stepRowAtAdmitted` (FX-CGATE 4, read-only), `stepStartRecord` (FX-CGATE 4), `stepStopIntent`
+  (FX-CGATE 5); a step that returns `'allow'` ends them.
+- FX-CGATE step 6 (PostToolUse) has no step: the hook takes PreToolUse only; FX-CGATE adds it.

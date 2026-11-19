@@ -3070,3 +3070,44 @@ dt('T98 fakeTranscript output parses into exactly the calls and tool uses given'
   assert.ok(!p.torn);
   assert.equal(countOf(p.badLines), 0);
 });
+
+// ------------------------------------------------------------------ S0.5: the round-3 skeleton
+// spec/lib.md "Round-3 skeleton": the 17 threshold keys of the round-3 fixes exist, non-null, each
+// marked a guess; the API stubs keep their fixed signatures and throw not-built (exit 70) until their
+// fix fills them; the runtime file table, its path helpers and the transcript kind are in place.
+test('S0.5 round-3 skeleton: threshold keys marked guesses, stub signatures, not-built, formats', () => {
+  const th = JSON.parse(fs.readFileSync(path.join(HERE, '..', 'thresholds.json'), 'utf8').replace(/^\uFEFF/, ''));
+  const keys = ['H_nostart', 'start_lease_ticks', 'start_lease_ms', 'stop_verify_ms', 'ensure_query_ms', 'release_ms',
+    'arm_confirm_ms', 'alarm_slots', 'realert_runs', 'stuck_raises', 'idle_ticks', 'attempt_max_ticks',
+    'tool_slack_ticks', 'bg_wait_ticks', 'model_ticks', 'watcher_lock_try_ms', 'busy_alert_ticks'];
+  for (const k of keys) {
+    const p = th.params[k];
+    assert.ok(p, `${k} exists`);
+    assert.equal(p.source, 'guess', `${k} is marked a guess`);
+    assert.ok(Number.isInteger(p.value), `${k} has an integer value`);
+    assert.match(p.unit, /guess/, `${k}'s unit says it is a guess`);
+  }
+  const stubs = { outcomeState: 2, outcomeAppend: 3, readClaim: 1, claimRecord: 1, tombstoneRecord: 2, planAct: 2, liveness: 3 };
+  for (const [name, n] of Object.entries(stubs)) {
+    assert.equal(typeof lib[name], 'function', name);
+    assert.equal(lib[name].length, n, `${name} takes ${n} arguments`);
+    assert.throws(() => lib[name](), (e) => e instanceof lib.TcbError && e.code === 'not-built' && e.exit === 70 && e.detail.fn === name);
+  }
+  assert.equal(lib.RUNTIME_FILES.length, 13);
+  assert.deepEqual(lib.TRANSCRIPT_KINDS, ['tool', 'bg-wait', 'model', 'idle']);
+  assert.equal(new Set(lib.TRANSCRIPT_RECORD_TYPES).size, 27);
+  const P = lib.paths(path.join(os.tmpdir(), 's05-root'));
+  for (const f of lib.RUNTIME_FILES) assert.equal(typeof P[f.helper], f.path.includes('<') ? 'function' : 'string', f.helper);
+  assert.doesNotMatch(path.basename(P.armExited(12, '2026-11-19T10:00:00.1234567Z')), /:/);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 's05-'));
+  try {
+    const f = path.join(dir, 't.jsonl');
+    fs.writeFileSync(f, JSON.stringify({ type: 'user', message: { content: 'hi' } }) + '\n');
+    const res = lib.parseTranscript(f);
+    const d = Object.getOwnPropertyDescriptor(res, 'kind');
+    assert.ok(d && d.enumerable === false && d.value === null, 'kind: non-enumerable, null until FX-W6');
+    assert.ok(!('kind' in JSON.parse(JSON.stringify(res))));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

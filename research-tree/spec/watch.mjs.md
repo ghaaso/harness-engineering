@@ -224,3 +224,13 @@ All with `--once` or `--interval-ms 50` and `--no-intake` unless stated; fake tr
 A background command's exit reaching the coordinator's turn, also during sleep or after a ce
 change (§7 item 5); Node timers and the PC across suspend (item 6: one sleep of Δ = one tick);
 real transcripts matching the parser (item 7); a real session's window in its transcript.
+
+## Round-3 skeleton (S0.5)
+- `rowAct`: 1 `rowActPlanned(root, tr, row, facts)` (FX-PLAN; undefined); 2 `ownerOrNone(planned)` gives
+  null (FX-W5 step 1; false); then today's filters and act (FIX-JOIN point 11).
+- `evaluate`: `actDueIdleAgeCap(env, state, conds, {rows, tick})` after the row acts (FX-W6);
+  `reraiseStuck(env, state, present, tick)` before the active keys are renewed (FX-W5); `adoptState(env,
+  state)` after watcher.json is written (FX-W7).
+- The alarm: in the registration hold, before alarm.json, `alarmSlotTurnSeq(reg)` (FX-W3), then
+  `alarmRegisterSlot(reg)` (FX-W2). Every exit after registration passes `alarmExit(reg, out or exit
+  code)`: `alarmUnarmedRecord` (FX-W3, exit 30 only), then `alarmExitMarker` (FX-W1); an error is rethrown.

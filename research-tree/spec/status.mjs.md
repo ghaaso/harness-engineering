@@ -153,3 +153,11 @@ state), R20 (a view, rebuilt), R40 (`not_run`), R58; decisions 3, 4, 5, 17, 25, 
 ## Cannot be tested without the app
 That a real session's transcript appears in `projectDirName(folder)` with that `cwd` soon after
 start (§7 item 7); that the watcher's and alarm's exits reach the coordinator (item 5).
+
+## Round-3 skeleton (S0.5)
+- Reconcile's hold 2: `reconcileHold2(root, ce, pre, res, dry)`, file-only and without the lock, in both
+  paths before `armAtStart`: `hold2ArmSlots` (FX-W2 step 7), then `hold2PruneMarkers` (FX-W1); returns
+  `hold.res`.
+- Flags of the default mode: `ARM_FLAGS` (FX-W2, `arm-nonces`) and `DEADMAN_FLAGS` (FX-W4, `deadman`), empty.
+- `deadmanRun(ctx, flags, dry)` (FX-W4) runs right after the dry-run flag is read, before the ce check;
+  null goes on.

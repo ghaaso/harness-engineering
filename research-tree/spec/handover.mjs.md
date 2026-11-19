@@ -109,3 +109,8 @@ this ce exists and no slot is used, which is this script's quiescence over the t
 That the old coordinator, woken by any late exit after the raise, is refused by every writing
 script and ends its turn (§7 item 5); that the owner starts the successor from the brief; that the
 old watcher and alarm, left alive, reach their next ce check and exit 64.
+
+## Round-3 skeleton (S0.5)
+- `briefLine(root, ce, tcbCommit, nonce = null)`: today's line, then `briefNoncePart(nonce)` (FX-CGATE
+  step 1) and `briefPathPart(root)` (FX-W3: the path of `tcb/briefs/coordinator.md`), both '' until
+  filled, so the line is unchanged.

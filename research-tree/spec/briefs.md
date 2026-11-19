@@ -55,3 +55,8 @@ Shape per CONTRACT §3.20 (`schema_version`, `params`; each param `{value, unit,
 ## Cannot be tested without the app
 - Whether a real reader or checker obeys its brief when a page or item contains an instruction (the J4 fault); that a real reader returns exact quotes when the fetch tool returns a summary; that a scorer's guesses and a reviewer's findings are honest. These are measured by the pilot (the checker's J4 detection, the plants, the guess rate), not tested here.
 - That the harness gives the helper only its brief and start message, and that the brief renders unchanged into `in/brief.md` (replace.mjs's tests).
+
+## Round-3 skeleton (S0.5): the coordinator's brief
+`tcb/briefs/coordinator.md` holds the acts (0) to (9) of one coordinator turn (FIX-JOIN part 2b) as
+headings, each naming the fix that fills it, with "(empty until <fix>)". It has no agent file and no
+placeholder: replace renders the briefs of task roles only.

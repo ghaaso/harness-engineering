@@ -360,7 +360,7 @@ function briefNoncePart(nonce) { // eslint-disable-line no-unused-vars
   return '';
 }
 
-// FX-W3: the path part of the brief line. Empty until FX-W3.
+// FX-W3: the path of the coordinator's brief, tcb/briefs/coordinator.md, in the brief line (FIX-JOIN 2c).
 function briefPathPart(root) { // eslint-disable-line no-unused-vars
   return '';
 }
