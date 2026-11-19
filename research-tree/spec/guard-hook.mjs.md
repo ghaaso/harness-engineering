@@ -194,4 +194,26 @@ only through `hookCreate` (strict create, 0b), after every read-only check of th
   `coordinatorSteps`, in order `stepBind` (FX-CGATE 2), `stepCurrentSession` (FX-CGATE 3), `stepArmed`
   (FX-W3), `stepRowAtAdmitted` (FX-CGATE 4, read-only), `stepStartRecord` (FX-CGATE 4), `stepStopIntent`
   (FX-CGATE 5); a step that returns `'allow'` ends them.
-- FX-CGATE step 6 (PostToolUse) has no step: the hook takes PreToolUse only; FX-CGATE adds it.
+- FX-CGATE as built. Names: a caller is the hook input's `session_id`, a lowercase UUID (`SESSION_ID_RE`); a stop
+  target is an app id `local_<uuid>` (`APP_SESSION_ID_RE`); anything else (`self`, a CLI id, a path) is `bad-target`
+  and nothing is written. Step 2 `stepBind`: an exec call `node <root>/tcb/handover.mjs bind` with exactly the pairs
+  `--root <this root>`, `--ce <coord.json ce>`, `--nonce <coord.json successor_nonce>` (any order), a UUID caller
+  that no `run/coord-session-<k>.json` with k < ce names (an unreadable one disqualifies) strict-creates
+  `run/coord-session-<ce>.json` {session_id} and is allowed; another session already there → `bound-elsewhere`; a
+  call that does not qualify goes on. Step 3 `stepCurrentSession`: the read kind passes; any other call of a
+  caller other than the session of `coord-session-<ce>.json` (ce from coord.json) → `stale-coordinator`, also when
+  either file cannot be read. Step 4 (the profile's `session_tools.start`): `cwd` absolute and exactly
+  `<root>\wt\<T>-e<E>`, `use_worktree: false`, `context` absent or `fresh`, `target` absent or `local`, `host`,
+  `preset`, `environment`, `repository`, `proposal_id`, `source_branch`, `branch_name` absent, else `bad-target`;
+  the row (no lock) active/admitted at E, else `wrong-step` (`table-unreadable`); then `wt/<T>-e<E>/start.json`
+  {kind:'start', session, tool_use_id|null, tick (watcher.json ticks_total or null), at}; a record already there
+  is allowed only for the same session and the same non-null tool_use_id, else `start-issued`. Step 5
+  (`session_tools.stop`): `run/close/intent/<target>.json` {kind:'close-intent', session, by, tool_use_id|null};
+  a record already there passes when it is a close-intent of that target (a retried close), else `record-tamper`.
+  Step 6, the Post mode: `PostToolUse` and `PostToolUseFailure` are taken for the coordinator's stop tools only
+  (any other role or tool → `bad-input`); steps 4-7 do not run. The text (`tool_response` as a string, the joined
+  `text` of a content array or of {content}, and `error`): `Archived session <t>` then ` (` or `.`, or `Session <t>
+  is already archived.` → `stopped`; `Session <t> not found.` → `no-such-session`; any other text writes nothing
+  (exit 0). The record `run/close/done/<t>.json` {kind:'close-done', session, outcome, by}; a record already there
+  passes when it is a close-done of that target (the first stands), else `record-tamper`. The profile shape check
+  takes the optional `session_tools` (CONTRACT 3.21).

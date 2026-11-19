@@ -14,6 +14,9 @@ node tcb/status.mjs --endturn --acked-seq K --root R --ce N [--now ISO] [--dry-r
 node tcb/status.mjs intent open --key KEY --subject S [--text-file P] --root R --ce N
 node tcb/status.mjs intent done --key KEY --root R --ce N
 node tcb/status.mjs owner --act approve|accept|resume|drop|ruling --subject S --quote-file P --root R --ce N
+node tcb/status.mjs owner --act closed --subject SID --quote-file P --root R --ce N   (FX-CGATE: SID the CLI
+  session id, a lowercase UUID, else 66; in the hold the owner line, then run/close/done/<SID>.json {kind:
+  'close-done', session, outcome: 'owner', by: null} by an exclusive create, a record already there kept)
 node tcb/status.mjs meter --pct P --root R --ce N
 ```
 Modes `intent` (sub-mode `open|done`), `owner`, `meter`; the default and the two flags otherwise.
