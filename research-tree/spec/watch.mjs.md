@@ -50,7 +50,17 @@ b. Per row active at step started|bound (current attempt e): parse its transcrip
    `lib.variant(root, row, {f5Given})`.V.
    - V null (design-check) → no stall counter. Else V < V_min → V_min = V, stall_calls = 0; else
      stall_calls += new calls. ≥ `stall_calls` → 20.
-   - new calls = 0 on a counted tick → hang_ticks += 1, else 0. ≥ `hang_ticks` → 21. **Pause
+   - **Hang by per-kind deadlines in ticks (FX-W6, branch B1).** The first tick of an epoch counts
+     nothing (step 1; `ticks_total` still advances). After it, a new conversation record in any transcript
+     of the attempt (a new call, a tool result, a prompt: the transcript's `tail.n` grew, or it was
+     re-parsed) sets hang_ticks to 0; else a counted tick adds 1. The kind is the main transcript's tail
+     (`lib.parseTranscript` `kind`, kept in its parse-state with `tail`; none read counts as `model`);
+     its deadline: `tool` = ⌈largest declared timeout of the pending tool uses / Δ⌉ + `tool_slack_ticks`;
+     `bg-wait` = `bg_wait_ticks`; `model` = `model_ticks`; `idle` = none. hang_ticks ≥ the deadline → 21
+     `{hang_ticks, kind, deadline}`, charged as before. An `idle` child is never a hang: at hang_ticks ≥
+     `idle_ticks` step j raises act-due `idle-child`. `age_ticks` adds 1 on every counted tick at step
+     bound after the first (a paused one too); age_ticks − age_base ≥ `attempt_max_ticks` → act-due
+     `age-cap` (step j). `hang_ticks` (the threshold) is read no more. **Pause
      discount (M5, CONTRACT §1.2):** a counted tick whose gap `now − last_tick_at` (the stored
      value of the previous evaluation, any watcher) exceeds 2Δ is *paused*: hang_ticks is left as
      it is (new calls still reset it). This is the watcher's only use of a clock difference and it
@@ -90,7 +100,11 @@ j. **Act due → 17 (M3, CONTRACT decision 40): the planner's own predicate**, s
    unconfirmed; with a sample → `stop-verify@<sample.tick>` only once ticks_total ≥ sample.tick +
    `stop_verify_deltas` (earlier the verify can only defer); admitted → `start-session`, or `bind`
    when the attempt folder already has a transcript (the reconcile at the next turn start will make
-   it started). Failed rows, `limit` rows and rows whose `next` is `owner`, `none`, `audit` or
+   it started). After the row acts (FX-W6, not row acts, uncharged, no fence): per row at started|bound
+   without a READY of the epoch (class 11 or 12), `<task>:idle-child` while its kind is `idle` and
+   hang_ticks ≥ `idle_ticks`, and `<task>:age-cap` while age_ticks − age_base ≥ `attempt_max_ticks`. The
+   coordinator's acknowledgement of the age-cap event line (seq ≤ acked_seq) lets the attempt
+   continue: age_base = age_ticks, so the cap asks again after another `attempt_max_ticks`. Failed rows, `limit` rows and rows whose `next` is `owner`, `none`, `audit` or
    `commit` raise nothing here (READY is class 11). Run level: a `drain` line of this ce with no
    slot used → `-:handover`; a non-empty table whose rows are all committed|cut|failed|dropped and
    none has a row act → `-:run-terminal`; an `event` line with seq > acked_seq whose key is not in
@@ -216,7 +230,18 @@ All with `--once` or `--interval-ms 50` and `--no-intake` unless stated; fake tr
   `stop-verify@<tick>`. An admitted row → `start-session`; its folder gaining a transcript → a new
   key `bind` and a new exit. A `drain` line of this ce and no slot used → `handover`. An `event`
   line above acked_seq whose condition has cleared → `events`. A row at `failed` or `limit` → none.
-- M5 pause discount: hang_ticks 2; tick 1 at T, tick 2 at T + 10 min (Δ 60 s) → no exit 21,
+- W6a per-kind deadline: a pending Bash tool use with timeout 120000 (Δ 60 s, tool_slack_ticks 1) →
+  deadline 3, hang_ticks 0 after the first tick; no 21 at 2 ticks (model_ticks 2); 21 `{kind: tool,
+  deadline: 3}` at 3; its tool result restarts the count, kind `model`. In process: `parseTranscript`
+  kinds `model` (a prompt; a call with stop_reason null), `tool`, `bg-wait` (a background launch, then
+  end_turn; system and api-request records change nothing), `idle` after its task notification, after
+  a TaskStop of a Monitor task, after an interrupt; an incremental parse with the carried `tail` equals
+  the whole parse.
+- W6b idle child: end_turn, idle_ticks 2, model_ticks 1 → no 21; act-due `idle-child` at 2 ticks; a
+  user message (the answer) → kind `model`, hang_ticks 0, the key gone.
+- W6c age cap: attempt_max_ticks 2 → act-due `age-cap` at age 2, no 21; acknowledged → age_base 3, quiet;
+  asked again at age 5 with a second event line.
+- M5 pause discount (after the epoch's first tick): model_ticks 2; tick 1 at T, tick 2 at T + 10 min (Δ 60 s) → no exit 21,
   hang_ticks still 1, `result.paused` true; tick 3 at T + 11 min → exit 21. Without the discount
   tick 2 exits 21.
 

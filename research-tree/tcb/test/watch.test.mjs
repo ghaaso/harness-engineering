@@ -403,10 +403,12 @@ test('T2 stall: with V falling during those calls there is no stall', async () =
   });
 });
 
-test('T3 hang: two --once ticks without a new call exit 21 on the second', async () => {
-  await withRoot({ thr: { hang_ticks: 2 } }, async (ctx) => {
+test('T3 hang: after the first tick of the epoch, two --once ticks without a new call exit 21 on the second', async () => {
+  await withRoot({ thr: { model_ticks: 2 } }, async (ctx) => {
     const t = singleTask(ctx);
     setTasks(ctx, [t.row]);
+    assertLine(tick(ctx), 0);
+    assert.equal(watcherJson(ctx).tasks[t.task].hang_ticks, 0, 'FX-W6 step 1: the first tick of an epoch counts nothing');
     assertLine(tick(ctx), 0);
     assert.equal(watcherJson(ctx).tasks[t.task].hang_ticks, 1);
     assertLine(tick(ctx), 21);
@@ -415,9 +417,10 @@ test('T3 hang: two --once ticks without a new call exit 21 on the second', async
 });
 
 test('T3 hang: a call in between resets the count', async () => {
-  await withRoot({ thr: { hang_ticks: 2 } }, async (ctx) => {
+  await withRoot({ thr: { model_ticks: 2 } }, async (ctx) => {
     const t = singleTask(ctx);
     setTasks(ctx, [t.row]);
+    assertLine(tick(ctx), 0);
     assertLine(tick(ctx), 0);
     assert.equal(watcherJson(ctx).tasks[t.task].hang_ticks, 1);
     appendCalls(t.file, { sessionId: t.session, cwd: t.cwd, calls: CALLS(1) });
@@ -430,7 +433,7 @@ test('T3 hang: a call in between resets the count', async () => {
 });
 
 test('T3 hang: the start evaluation of a default-mode watcher does not count a hang tick', async () => {
-  await withRoot({ thr: { hang_ticks: 2 } }, async (ctx) => {
+  await withRoot({ thr: { model_ticks: 2 } }, async (ctx) => {
     const t = singleTask(ctx);
     setTasks(ctx, [t.row]);
     const r = run(ctx.root, 'watch', [...baseArgs(ctx), '--interval-ms', '50', '--no-intake'], { timeout: 60000 });
@@ -1322,30 +1325,129 @@ test('M3 act due: an event line above acked_seq whose condition has cleared wake
 });
 
 test('M5 pause discount: a tick more than 2 delta after the last one does not count toward hang', async () => {
-  await withRoot({ thr: { hang_ticks: 2, delta_ms: 60000 } }, async (ctx) => {
+  await withRoot({ thr: { model_ticks: 2, delta_ms: 60000 } }, async (ctx) => {
     const t = singleTask(ctx);
     setTasks(ctx, [t.row]);
     const T0 = Date.parse(NOW);
     const at = (min) => new Date(T0 + min * 60000).toISOString();
+    assertLine(tick(ctx, [], { now: at(-1) }), 0); // the first tick of the epoch counts nothing (FX-W6)
     assertLine(tick(ctx, [], { now: at(0) }), 0);
     assert.equal(watcherJson(ctx).tasks[t.task].hang_ticks, 1);
     const j = assertLine(tick(ctx, [], { now: at(10) }), 0); // the PC slept: without M5 this exits 21
     assert.equal(j.result.paused, true);
     assert.equal(watcherJson(ctx).tasks[t.task].hang_ticks, 1, 'a paused tick leaves the count');
-    assert.equal(watcherJson(ctx).ticks_total, 2, 'it still is a tick');
+    assert.equal(watcherJson(ctx).ticks_total, 3, 'it still is a tick');
     const j3 = assertLine(tick(ctx, [], { now: at(11) }), 21); // one delta later: counted
     assert.equal(j3.result.paused, false);
   });
 });
 
 test('M5 pause discount is one-sided: a clock that went back counts the tick', async () => {
-  await withRoot({ thr: { hang_ticks: 2, delta_ms: 60000 } }, async (ctx) => {
+  await withRoot({ thr: { model_ticks: 2, delta_ms: 60000 } }, async (ctx) => {
     const t = singleTask(ctx);
     setTasks(ctx, [t.row]);
     const T0 = Date.parse(NOW);
+    assertLine(tick(ctx, [], { now: new Date(T0 - 60000).toISOString() }), 0); // the first tick of the epoch counts nothing (FX-W6)
     assertLine(tick(ctx, [], { now: new Date(T0).toISOString() }), 0);
     const j = assertLine(tick(ctx, [], { now: new Date(T0 - 3600000).toISOString() }), 21);
     assert.equal(j.result.paused, false);
+  });
+});
+
+// ---------------------------------------------------------------- FX-W6: hang by per-kind deadlines in ticks
+// Records shaped as the harness writes them (build/facts/WH5-Wturn.md; stop_reason, toolUseResult and the
+// task notification as measured over the local transcripts, departures/W6.md).
+const rec6 = (t, type, extra) => ({ type, uuid: crypto.randomUUID(), parentUuid: null, isSidechain: false, sessionId: t.session, cwd: t.cwd, timestamp: isoTs(), ...extra });
+const asst6 = (t, id, blocks, stop) => rec6(t, 'assistant', { message: { id, type: 'message', role: 'assistant', model: 'claude-test-1', content: blocks, stop_reason: stop, usage: usage({ input: 10 }) } });
+const user6 = (t, content, extra = {}) => rec6(t, 'user', { message: { role: 'user', content }, ...extra });
+const put6 = (file, recs) => fs.appendFileSync(file, recs.map((r) => JSON.stringify(r)).join('\n') + '\n');
+
+test('FX-W6 per-kind deadline: a pending tool call waits its declared timeout + slack; the tail kinds as parsed', async () => {
+  await withRoot({ thr: { model_ticks: 2, tool_slack_ticks: 1, delta_ms: 60000 } }, async (ctx) => {
+    const t = singleTask(ctx);
+    setTasks(ctx, [t.row]);
+    put6(t.file, [asst6(t, 'msg_tool', [{ type: 'tool_use', id: 'toolu_slow', name: 'Bash', input: { command: 'x', timeout: 120000 } }], 'tool_use')]);
+    assertLine(tick(ctx), 0);
+    const ts0 = watcherJson(ctx).tasks[t.task];
+    assert.deepEqual([ts0.kind, ts0.deadline, ts0.hang_ticks], ['tool', 3, 0], 'tool: 2 ticks of timeout + 1; the first tick counts nothing');
+    assertLine(tick(ctx), 0);
+    assertLine(tick(ctx), 0); // 2 ticks: a model call (model_ticks 2) would be a hang here
+    const j = assertLine(tick(ctx), 21);
+    const r = j.reasons.find((x) => x.code === 'hang');
+    assert.deepEqual([r.detail.kind, r.detail.deadline, r.detail.hang_ticks], ['tool', 3, 3]);
+    put6(t.file, [user6(t, [{ type: 'tool_result', tool_use_id: 'toolu_slow', content: 'ok' }])]);
+    tick(ctx); // the result is a new record: the count restarts, the model is now called
+    const ts1 = watcherJson(ctx).tasks[t.task];
+    assert.deepEqual([ts1.kind, ts1.deadline, ts1.hang_ticks], ['model', 2, 0]);
+
+    // The kinds of lib.parseTranscript, in process; neutral record types change nothing.
+    const f = path.join(ctx.root, 'kinds.jsonl');
+    const kind = () => LIB.parseTranscript(f).kind;
+    put6(f, [user6(t, 'go')]);
+    assert.equal(kind(), 'model');
+    put6(f, [asst6(t, 'm1', [{ type: 'text', text: 'streaming' }], null)]);
+    assert.equal(kind(), 'model', 'a call whose stop_reason is still null');
+    put6(f, [asst6(t, 'm1', [{ type: 'tool_use', id: 'toolu_bg', name: 'Bash', input: { command: 's', run_in_background: true } }], 'tool_use')]);
+    assert.equal(kind(), 'tool');
+    put6(f, [user6(t, [{ type: 'tool_result', tool_use_id: 'toolu_bg', content: 'started' }], { toolUseResult: { backgroundTaskId: 'b1' } })]);
+    put6(f, [asst6(t, 'm2', [{ type: 'text', text: 'waiting' }], 'end_turn'), { type: 'system', subtype: 'stop_hook_summary' }, { type: 'api-request' }]);
+    assert.equal(kind(), 'bg-wait');
+    const mid = LIB.parseTranscript(f);
+    put6(f, [user6(t, '<task-notification>\n<task-id>b1</task-id>\n<tool-use-id>toolu_bg</tool-use-id>\n<status>completed</status>\n</task-notification>')]);
+    assert.equal(kind(), 'model');
+    put6(f, [asst6(t, 'm3', [{ type: 'text', text: 'done' }], 'end_turn')]);
+    assert.equal(kind(), 'idle');
+    const inc = LIB.parseTranscript(f, { fromByte: mid.endByte, tail: mid.tail });
+    assert.equal(inc.kind, 'idle', 'an incremental parse carries the tail');
+    assert.deepEqual(inc.tail, LIB.parseTranscript(f).tail);
+    assert.ok(!('tail' in JSON.parse(JSON.stringify(inc))), 'tail is non-enumerable');
+    put6(f, [asst6(t, 'm4', [{ type: 'tool_use', id: 'toolu_mon', name: 'Monitor', input: { command: 'w', timeout_ms: 600000 } }], 'tool_use'),
+      user6(t, [{ type: 'tool_result', tool_use_id: 'toolu_mon', content: 'started' }], { toolUseResult: { taskId: 'mon1', timeoutMs: 600000 } }),
+      asst6(t, 'm5', [{ type: 'tool_use', id: 'toolu_stop', name: 'TaskStop', input: { task_id: 'mon1' } }], 'tool_use'),
+      user6(t, [{ type: 'tool_result', tool_use_id: 'toolu_stop', content: 'stopped' }]),
+      asst6(t, 'm6', [{ type: 'text', text: 'ok' }], 'end_turn')]);
+    assert.equal(kind(), 'idle', 'a TaskStop naming the task id ends it');
+    put6(f, [user6(t, 'next'), user6(t, [{ type: 'text', text: '[Request interrupted by user]' }])]);
+    assert.equal(kind(), 'idle', 'an interrupt ends the turn');
+  });
+});
+
+test('FX-W6 idle child: act-due idle-child at idle_ticks, never a charged hang; an answer clears it', async () => {
+  await withRoot({ thr: { model_ticks: 1, idle_ticks: 2, coalesce_ticks: 0 } }, async (ctx) => {
+    const t = singleTask(ctx);
+    setTasks(ctx, [t.row]);
+    put6(t.file, [asst6(t, 'msg_q', [{ type: 'text', text: 'A question for the coordinator.' }], 'end_turn')]);
+    assertLine(tick(ctx), 0);
+    assertLine(tick(ctx), 0); // idle 1: a model call (model_ticks 1) would be a hang here
+    const j = assertLine(tick(ctx), 17);
+    assert.ok(j.reasons.some((x) => x.code === 'act-due' && x.detail.act === 'idle-child' && x.detail.task === t.task && x.detail.idle_ticks === 2));
+    assert.equal(eventsOf(ctx.root, 'hang', 21).length, 0);
+    put6(t.file, [user6(t, 'The answer.')]);
+    tick(ctx);
+    const ts = watcherJson(ctx).tasks[t.task];
+    assert.deepEqual([ts.kind, ts.hang_ticks], ['model', 0]);
+    assert.ok(!Object.keys(watcherJson(ctx).active).some((k) => k.includes(':idle-child|')));
+    assert.equal(eventsOf(ctx.root, 'hang', 21).length, 0);
+  });
+});
+
+test('FX-W6 age cap: act-due age-cap at attempt_max_ticks, uncharged; acknowledged, it re-arms for another cap', async () => {
+  await withRoot({ thr: { attempt_max_ticks: 2, coalesce_ticks: 0 } }, async (ctx) => {
+    const t = singleTask(ctx);
+    setTasks(ctx, [t.row]);
+    assertLine(tick(ctx), 0);
+    assertLine(tick(ctx), 0);
+    const j = assertLine(tick(ctx), 17);
+    assert.ok(j.reasons.some((x) => x.detail.act === 'age-cap' && x.detail.age_ticks === 2));
+    const caps = () => ledgerLines(ctx.root, 'event').filter((l) => l.data.detail && l.data.detail.act === 'age-cap');
+    assert.equal(caps().length, 1);
+    w(path.join(ctx.root, 'run', 'acked.json'), { schema_version: 1, ce: 1, acked_seq: caps()[0].seq, at: NOW });
+    assertLine(tick(ctx), 0); // the acknowledgement lets the attempt continue: re-armed
+    assert.equal(watcherJson(ctx).tasks[t.task].age_base, 3);
+    assertLine(tick(ctx), 0);
+    assertLine(tick(ctx), 17); // another attempt_max_ticks: asked again with a new event line
+    assert.equal(caps().length, 2);
+    assert.equal(eventsOf(ctx.root, 'hang', 21).length, 0, 'never a charged hang');
   });
 });
 
