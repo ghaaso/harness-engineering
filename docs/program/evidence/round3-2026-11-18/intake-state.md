@@ -40,10 +40,10 @@ extractor file, lines 8, 16, 24 ... `id@line` and `id@file:line`.
 | Step | State | Output |
 |---|---|---|
 | 1 sample checks, 4 Sonnet `read` | done (w1, a1 helpers first skipped the extractor lines; sent back, now complete) | `R:intake-sample-<p>.md` |
-| 2 corrections packets, 2 Opus `analyse` | running | `R:intake-corrections-c1-a1.md`, `R:intake-corrections-w1-t1.md` |
+| 2 corrections packets, 2 Opus `analyse` | done | `R:intake-corrections-c1-a1.md`, `R:intake-corrections-w1-t1.md` |
 | 3 draft board, 1 Opus `analyse` | done: 218 lines, 15 look-up rows, all 320 ids checked to exist | `library/INDEX-draft.md` |
-| 4 recall test, Sonnet `test` then Opus `analyse` | test running (week 58 %) | `library/tests/recall-test-4.md` |
-| 5 checks, usage, commit, push | pending | |
+| 4 recall test, Sonnet `test` then Opus `analyse` | done | `library/tests/recall-test-4.md` |
+| 5 checks, usage, commit, push | done: 8 files present, INDEX.md and journal untouched, week 58 % | |
 
 ## Step 1 results (week 57 % after the step)
 
@@ -62,4 +62,15 @@ c1 x32-0337, c1-0331, x33-0303, x33-0304; t1 and a1 none (their unlabelled compa
 - w1/t1 packet: 24 open records (w1 13, t1 11; extractor files none); 7 proposed corrections, 6 right, 1 right in
   part (w1-0511: CAID put worktrees above one agent, 59.1 against 53.1 %); replacement ids r57-0310..0314,
   r57-0410..0411 provisional (may clash with the c1/a1 packet).
-- c1/a1 packet: running.
+- c1/a1 packet: 35 open records (c1 16, a1 19); 23 proposed corrections, 18 right, 5 right in part (c1-0503, a1-0511, a1-0514, a1-0515, a1-0518), 0 wrong; 20 replacement records, ids continue after the w1/t1 packet.
+
+## Step 4 results
+
+Recall test 4 on `library/INDEX-draft.md`: 14 questions; 11 sure and right, 1 partly, 0 wrong, 2 rightly not recorded
+(Q12, Q13). Q3 (sure) and Q13 repeat a refuted claim (C64, "best batch 2 to 4"; c1-0201) from the draft's list of
+refuted claims in their original wording. Changes the scorer ranks first: (1) state refuted claims on the board as
+what is now true, marked refuted; (2) mark in `lookup.sh` the records with a correction waiting, narrowed wording first;
+(3) move what only the board holds into records (sign-in papers; c1's measurements; "not recorded" look-up rows for
+our batch size and our conflict rate).
+
+Context passed 130,000 tokens before step 4's scoring; state committed then (60e946b2).
