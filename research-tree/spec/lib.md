@@ -381,3 +381,11 @@ empty step returns its neutral value, so behaviour is unchanged (FIX-JOIN point 
 ## FX-CLAIM (round 3)
 
 `readClaim`, `claimRecord`, `tombstoneRecord`, `startLeaseExpired` (CONTRACT 4.10); `fence` reads the claim of attempt E for `nostart` (failure reasons, not host); `slotCount` step 7. Tests: lib T96x (step 7 and H3), T96y (the lease), T96z (claims).
+
+## FX-PLAN (round 3)
+- `planAct(row, facts)` -> one act string, first match (CONTRACT "FX-PLAN (round 3)"); pure.
+- `planFacts(root, row, ctx)` -> its facts: claim, start.json, lease (`startLeaseExpired`), the outcome log's
+  fenced reason, ready slots and tamper, the stop sample, `closesMissing`, the row's step-7 sessions; ctx gives
+  ticksTotal, nowMs, lease, procList, counted, Hmax, zombieOver, blocked, audited.
+- `slotCount`'s `opts.counted` (an array) receives `{task, epoch, session, claim, done}` per counted step-7 session.
+- Tests: lib FX-PLAN T1 (the total table; committed at started is a todo until FX-CLOSE step 3), T2, T3.

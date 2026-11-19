@@ -3197,7 +3197,7 @@ export function slotCount(rows, procList, transcriptsRoot, opts = {}) {
       if (attemptHasTranscript(transcriptsRoot, a.session, folderAbs, folderAbs ? null : folderRel)) out.unknown++;
     }
   }
-  out.unconfirmed += folderSessionSlots(rows, procList, transcriptsRoot, root);
+  out.unconfirmed += folderSessionSlots(rows, procList, transcriptsRoot, root, opts && Array.isArray(opts.counted) ? opts.counted : null);
   return out;
 }
 
@@ -3211,7 +3211,9 @@ export function slotCount(rows, procList, transcriptsRoot, opts = {}) {
  * process list matches nothing for the folder or the session (rev 4, H3). Needs an absolute folder:
  * a relative folder without `root` is not scanned.
  */
-function folderSessionSlots(rows, procList, transcriptsRoot, root) {
+// FX-PLAN: `counted` (optional, slotCount's opts.counted) receives one entry per counted session,
+// {task, epoch, session, claim: the attempt's claim kind, done: 'none' | 'uncounted'}, for planFacts.
+function folderSessionSlots(rows, procList, transcriptsRoot, root, counted = null) {
   let n = 0;
   const seen = new Set();
   for (const row of Array.isArray(rows) ? rows : []) {
@@ -3229,11 +3231,14 @@ function folderSessionSlots(rows, procList, transcriptsRoot, root) {
       }
       if (found.length === 0) continue;
       let own = typeof a.session === 'string' ? a.session : null;
+      let ck = 'none';
       try {
         const c = readClaim(abs);
+        ck = c.kind;
         if (c.kind === 'session') own = c.session_id;
       } catch {
         // an invalid claim (tamper) names no holder: every folder session but the recorded one counts
+        ck = 'invalid';
       }
       let start;
       for (const f of found) {
@@ -3245,6 +3250,10 @@ function folderSessionSlots(rows, procList, transcriptsRoot, root) {
           if (closeDoneCounts(root, sid, start, procList, abs)) continue;
         }
         n++;
+        if (counted) {
+          const done = root ? readJsonOrNull(path.join(path.resolve(root), 'run', 'close', 'done', `${sid}.json`)) : null;
+          counted.push({ task: row.task, epoch: a.epoch, session: sid, claim: ck, done: done ? 'uncounted' : 'none' });
+        }
       }
     }
   }
@@ -4068,12 +4077,156 @@ function hNostart(root) {
 }
 
 /**
- * planAct(row, facts) -> one act name, 'none' and 'owner' included (FX-PLAN; FIX-fence.md section 6,
- * the total act table). A pure function of the row and its facts {claim, start, lease, zombieOver,
- * readyPending, blocked, Q5a}; watch's rowAct and status's planner both call it (FIX-JOIN 10, 11).
+ * planAct(row, facts) -> one act, 'none' and 'owner' included (FX-PLAN; FIX-fence.md section 6 with
+ * rev 4 P1, P2 and rev 5 points 1, 2; branches rows 1 (Q5a acts only) and 16). A pure function of the
+ * row and its facts (`planFacts`); watch's rowAct and status's nextOf both call it (FIX-JOIN 10, 11).
+ * First match wins. An act with arguments carries them as the script's words: `replace-fence --reason
+ * <r>` (a torn fence), `replace-fence --reason crash --if-unclaimed` (the start lease), `close-session
+ * <sid>` (a counted folder session no stop is closing). Bare `replace-fence` is the first fence.
  */
-export function planAct(row, facts) { // eslint-disable-line no-unused-vars
-  throw notBuilt('planAct', 'FX-PLAN');
+export function planAct(row, facts) {
+  const f = facts && typeof facts === 'object' ? facts : {};
+  const { state, step } = row;
+  const e = row.epoch;
+  // 0. The owner's: today's conditions, a tampered log, and verify_rounds >= 3 while a close that
+  //    verify needs is not recorded (rev 4 P1: the rule ends once every needed close counts).
+  if (state === 'failed' || row.limit === true || f.zombieOver === true || f.tamper === true) return 'owner';
+  if ((Number.isInteger(row.verify_rounds) ? row.verify_rounds : 0) >= 3 && f.closesMissing === true) return 'owner';
+  // 1. A torn fence: attempt E's log is fenced and the row is still at E (FX-OUT). Its retry, with the
+  //    log's reason, or `owner` where the retry would be refused (N1 rest).
+  if (typeof f.fenced === 'string') return fenceRetryRefused(row, f.fenced, f.Hmax) ? 'owner' : `replace-fence --reason ${f.fenced}`;
+  const orphan = () => orphanAct(row, f.sessions);
+  // 2. Today's first fence and restart (the orphan's close first: it frees the slot a start needs).
+  if (state === 'planned') return step === 'none' ? (f.blocked ? 'none' : 'replace-fence') : 'owner';
+  if ((state === 'active' || state === 'parked') && step === 'stopped') return orphan() ?? (f.blocked ? 'none' : 'replace-start');
+  // 3. Fenced, or committed at started or bound -> stop-request (b).
+  if (step === 'fenced') return state === 'active' || state === 'parked' ? 'stop-request' : 'owner';
+  if (state === 'committed' && (step === 'started' || step === 'bound')) return 'stop-request';
+  // 4. Today's stop-requested block (Q5a: stop-session, never owner).
+  if (step === 'stop-requested') {
+    if (state !== 'active' && state !== 'parked' && state !== 'committed') return 'owner';
+    const k = state === 'committed' ? e : e - 1;
+    const a = (Array.isArray(row.attempts) ? row.attempts : []).find((x) => x && x.epoch === k) ?? null;
+    const stop = a && a.stop ? a.stop : 'none';
+    if (stop === 'unconfirmed' || f.sample === true) return 'stop-verify';
+    return stop === 'none' || stop === 'requested' ? 'stop-session' : 'stop-verify';
+  }
+  if (step === 'stopped') return orphan() ?? 'none'; // committed, cut, dropped: ended rows
+  if (state !== 'active') return 'owner'; // no script moves it (a pair no script makes)
+  // 5, 6. Admitted, or started with no claim (rev 4 P2): a claim -> bind; start.json -> wait while the
+  //    lease runs, then the lease act (rev 5 point 2); no start.json -> start-session (admitted, Q5a)
+  //    or owner (started: a hand start or a lost record). A tombstone with no fenced log, or a claim
+  //    that does not parse, -> owner.
+  if (step === 'admitted' || step === 'started') {
+    if (f.claim === 'session') return 'bind';
+    if (f.claim !== 'none' && f.claim !== undefined) return 'owner';
+    if (f.start) return f.leaseExpired === true ? 'replace-fence --reason crash --if-unclaimed' : 'none';
+    return step === 'admitted' ? orphan() ?? 'start-session' : 'owner';
+  }
+  // 7. Today's bound rule.
+  if (step === 'bound') {
+    if (f.readyPending === true) return f.audited === true ? 'commit' : 'audit';
+    return orphan() ?? 'none';
+  }
+  return 'owner'; // active at none
+}
+
+// FX-PLAN step 1: would the retry of a torn fence be refused? predictFence's and lib.fence's refusals
+// for a row still at its epoch: wrong-step, and hmax for handover and memory.
+function fenceRetryRefused(row, reason, Hmax) {
+  if (!REASONS.includes(reason) || reason === 'first') return true;
+  const st = row.state;
+  const ok = (st === 'active' && ['bound', 'started', 'admitted'].includes(row.step)) || (st === 'parked' && row.step === 'stopped');
+  if (!ok) return true;
+  const n = (Number.isInteger(row.handovers) ? row.handovers : 0) + (Number.isInteger(row.parks) ? row.parks : 0);
+  return (reason === 'handover' || reason === 'memory') && n >= (Number.isInteger(Hmax) ? Hmax : 2);
+}
+
+// FX-PLAN rev 5 point 1: `close-session <sid>` for the first counted folder session (step 7) of this
+// row that no stop is closing; skipped: an attempt whose stop is requested or unconfirmed, and the
+// current attempt while it waits for its claim (admitted or started, the lease decides). A session
+// whose done record does not count (H3) is the owner's; `owner` only when no other can be closed.
+function orphanAct(row, sessions) {
+  const atts = Array.isArray(row.attempts) ? row.attempts : [];
+  let owner = false;
+  for (const s of Array.isArray(sessions) ? sessions : []) {
+    if (!s || typeof s.session !== 'string' || !s.session) continue;
+    const a = atts.find((x) => x && x.epoch === s.epoch);
+    if (!a || a.stop === 'requested' || a.stop === 'unconfirmed') continue;
+    const waiting = s.epoch === row.epoch && row.state === 'active' && (row.step === 'admitted' || row.step === 'started');
+    if (waiting && s.claim !== 'session') continue;
+    if (s.done === 'uncounted') owner = true;
+    else return `close-session ${s.session}`;
+  }
+  return owner ? 'owner' : null;
+}
+
+/**
+ * planFacts(root, row, ctx) -> planAct's facts for one row (FX-PLAN), one reader for status and the
+ * watcher. From the attempt folder of the row's epoch: claim ('none' | 'session' | 'tombstone' |
+ * 'invalid'), start (start.json present; one that does not parse counts as present, so it never
+ * orders a second start), leaseExpired (`startLeaseExpired` with ctx.ticksTotal, ctx.nowMs,
+ * ctx.lease), fenced and readyPending (the outcome log; tamper on a bad log); from run/: sample (the
+ * stop sample of the target attempt), closesMissing (stop-requested: the claim holder or another
+ * folder session of the target attempt has no counting done record, H3 with ctx.procList); sessions:
+ * this row's entries of ctx.counted (slotCount's step-7 sessions, `{counted}`). Copied from ctx:
+ * zombieOver, blocked, audited, Hmax.
+ */
+export function planFacts(root, row, ctx = {}) {
+  const c = ctx && typeof ctx === 'object' ? ctx : {};
+  const atts = Array.isArray(row.attempts) ? row.attempts : [];
+  const dirOf = (k) => {
+    const a = atts.find((x) => x && x.epoch === k) ?? null;
+    const rel = a && typeof a.folder === 'string' && a.folder ? a.folder : `wt/${row.task}-e${k}`;
+    return { a, dir: path.resolve(root, rel) };
+  };
+  const claimOf = (dir) => {
+    try {
+      return readClaim(dir);
+    } catch (x) {
+      if (x && x.exit === 3) return { kind: 'invalid', session_id: null };
+      throw x;
+    }
+  };
+  const e = row.epoch;
+  const { dir } = dirOf(e);
+  const out = {
+    zombieOver: c.zombieOver === true, blocked: c.blocked === true, audited: c.audited === true, Hmax: c.Hmax,
+    claim: 'none', start: false, leaseExpired: false, fenced: null, tamper: false, readyPending: false,
+    sample: false, closesMissing: false, sessions: [],
+  };
+  if (Number.isInteger(e) && e >= 1) {
+    out.claim = claimOf(dir).kind;
+    let start = null;
+    try {
+      start = readJson(path.join(dir, 'start.json'));
+      out.start = true;
+    } catch (x) {
+      if (!(x && x.code === 'missing')) out.start = true;
+    }
+    out.leaseExpired = out.start && startLeaseExpired(start, c.ticksTotal, c.nowMs, c.lease ?? {});
+    try {
+      const log = outcomeState(dir, row);
+      out.fenced = typeof log.fenced === 'string' ? log.fenced : null;
+      out.readyPending = log.fenced === null && log.ready.length > 0;
+    } catch (x) {
+      if (x && x.exit === 3) out.tamper = true;
+      else throw x;
+    }
+  }
+  const mine = (Array.isArray(c.counted) ? c.counted : []).filter((s) => s && s.task === row.task);
+  out.sessions = mine.slice().sort((x, y) => x.epoch - y.epoch || (x.session < y.session ? -1 : x.session > y.session ? 1 : 0));
+  if (row.step === 'stop-requested') {
+    const k = row.state === 'committed' ? e : e - 1;
+    out.sample = fs.existsSync(path.join(path.resolve(root), 'run', 'stop-sample', `${row.task}-e${k}.json`));
+    const t = dirOf(k);
+    const cl = claimOf(t.dir);
+    const holder = cl.kind === 'session' ? cl.session_id : cl.kind === 'none' && t.a && typeof t.a.session === 'string' ? t.a.session : null;
+    const startK = readJsonOrNull(path.join(t.dir, 'start.json'));
+    const holderMissing = holder !== null && !closeDoneCounts(root, holder, startK, c.procList ?? null, t.dir);
+    out.closesMissing = holderMissing || mine.some((s) => s.epoch === k);
+  }
+  return out;
 }
 
 /**

@@ -315,3 +315,12 @@ real transcripts matching the parser (item 7); a real session's window in its tr
   code)`: `alarmUnarmedRecord` (FX-W3, exit 30 only), then `alarmExitMarker` (FX-W1); an error is rethrown.
   FX-W1 built: `alarmExitMarker` (alarm step 6); `reg.registered` is set after the `alarm.json` write, so
   a registration hold that throws after it (a 75 at the release) also passes `alarmExit`.
+
+## FX-PLAN (round 3): the planner
+`next` (status) and the row act (watch) are `lib.planAct` over `lib.planFacts` (CONTRACT, "FX-PLAN (round 3)"):
+the transcript-visible branch is gone (the claim decides); acts with arguments are strings
+(`replace-fence --reason <r>`, `replace-fence --reason crash --if-unclaimed`, `close-session <sid>`). The watcher
+keeps its filters: the first fence and `replace-start` wait for a free slot and neither halted nor draining;
+`audit`/`commit` are class 11's; `stop-verify` waits for its sample's age; `owner`/`none` raise nothing. Its
+facts: its tick, wall time, an empty process list, the step-7 sessions of its own slotCount, and the rows of class
+25 as zombie-over. Tests: status T3; watch "FX-PLAN act due", "FX-PLAN: a zombie-over row"; lib FX-PLAN T1-T3.
