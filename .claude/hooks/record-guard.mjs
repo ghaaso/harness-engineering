@@ -1,36 +1,44 @@
-// Record guard (version 1, 2026-11-19, unit P0 of research-tree/ORCHESTRATION.md section 9). PreToolUse hook for
+// Record guard (version 2, 2026-11-19: unit P0 of research-tree/ORCHESTRATION.md section 9, then unit FIX-GUARD for
+// findings 1-4 and 8 of research-tree/build/refute/P0-GATE.md). PreToolUse hook for
 // Write, Edit, MultiEdit, NotebookEdit, AskUserQuestion, Bash and PowerShell.
 // Enforces, for tool calls in sessions started in this repository (and the helpers inside them), in its main checkout
 // and in every git worktree of it, inside .claude/worktrees/ or anywhere else:
-//   1. Archived evidence is never changed (CLAUDE.md rule 1, AGENTS.md): a file under recovered/, or one listed in
-//      migration/source-manifest.json or migration/clinic-manifest.json, may not be edited, overwritten, renamed or
-//      deleted. New files anywhere are allowed ("new work goes in new files").
+//   1. Archived evidence is never changed (CLAUDE.md rule 1, AGENTS.md): a file under recovered/, one listed in
+//      migration/source-manifest.json or migration/clinic-manifest.json, or one under docs/program/evidence/ that the
+//      checkout's own HEAD holds, may not be edited, overwritten, renamed or deleted. New files anywhere are allowed
+//      ("new work goes in new files"); a file under docs/program/evidence/ is new until it is committed.
 //   2. The library journal is only added to (library/README.md rule 1): a write of an existing
-//      library/journal/**.jsonl file must keep every existing byte and add after the end.
+//      library/journal/**.jsonl file must keep every existing byte and add after the end; an Edit's added text starts
+//      on a new line. git forms that drop working-tree changes (reset --hard, checkout -f, switch -f or
+//      --discard-changes, stash, restore, checkout -- <path>) are refused while the journal has uncommitted lines.
 //   3. No design questions to the owner (r57-0001, CLAUDE.md rule 7): every question of AskUserQuestion
 //      starts with the kind of word it asks for and a colon: "approve:" (his go for a run, install,
 //      download, spend, publish or commit), "cap:" (a token cap, CLAUDE.md rule 5) or "fact:" (a fact
 //      only he can read, such as a setting on his screen).
 // Paths. Every form is brought to one real path before it is judged: the \\?\ and //?/ prefixes, Git Bash's /c/,
-// 8.3 short names, junctions and links, letter case, the trailing dots and spaces Windows drops, and an NTFS stream
-// (name:stream). A path inside a worktree of this repository (a folder whose .git file points into the main
+// 8.3 short names, junctions and links, letter case, the trailing dots and spaces Windows drops, an NTFS stream
+// (name:stream), an admin share (\\host\c$\..., //host/c$/..., \\?\UNC\host\c$\...: read as c:\...) and a volume or
+// device path (\\?\Volume{...}\..., \\.\GLOBALROOT\...: resolved by the file system). A path on another share of this
+// PC, or a device path the file system cannot resolve, is refused: where it lands cannot be told.
+// A path inside a worktree of this repository (a folder whose .git file points into the main
 // checkout's .git/worktrees/, or any folder under .claude/worktrees/) is judged by its place in that worktree,
 // against the manifests of the main checkout.
 // Shell commands (Bash, PowerShell). The guard reads which files a command would write: redirections, rm, mv, cp,
-// ln, tee, truncate, dd, sed -i, perl -i, git rm/mv/checkout/restore/reset --hard/clean, find -delete or -exec,
+// ln, tee, truncate, dd, sed -i, perl -i, git rm/mv/checkout (and -f)/switch -f/stash/restore/reset --hard/clean, find -delete or -exec,
 // xargs, PowerShell's *-Content, *-Item, Out-File and Tee-Object, .NET file calls, and literal paths given to
 // file calls in inline node, python, perl or ruby code; it follows cd, git -C, sh -c, cmd /c, powershell -Command
 // and heredocs. Appending to a journal (>>, tee -a, Add-Content, appendFile) is allowed; restoring an archived file
 // from git's index or HEAD is allowed (it is the repair). What it cannot see: a path held in a variable it cannot
 // read, or written by a script file; a question asked in plain text; a design question given the wrong kind.
 // tools/check-commit.mjs catches changed records at commit.
-// Failure. A manifest that cannot be read refuses every change of an existing file in a checkout (fails closed). An
+// Failure. A manifest that cannot be read refuses every change of an existing file in a checkout (fails closed); so
+// does a HEAD that cannot be read, for files under docs/program/evidence/. An
 // unreadable hook input, or an error of the guard itself, lets the call through and is logged.
 // Every refusal is logged to ../logs/record-guard.jsonl.
 import { readFileSync, existsSync, appendFileSync, mkdirSync, statSync, realpathSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, relative, isAbsolute, join, basename, sep } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, hostname, networkInterfaces } from 'node:os';
 import { execFileSync } from 'node:child_process';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -68,22 +76,64 @@ function real(p) {
   }
   return p;
 }
+// trailing dots and spaces cut off, in linear time (a regex such as /[. ]+$/ takes quadratic time on a long run of spaces)
+function trimDotsSpaces(x) { let e = x.length; while (e > 0 && (x[e - 1] === '.' || x[e - 1] === ' ')) e--; return x.slice(0, e); }
+// Host names that reach this PC in a UNC path: localhost, 127.x.x.x, ::1, its own name (alone or with a domain), its addresses.
+let selfNames = null;
+function isSelf(host) {
+  const h = trimDotsSpaces(String(host).toLowerCase());
+  if (!selfNames) {
+    selfNames = new Set(['localhost', '::1', '[::1]', '0--1.ipv6-literal.net']);
+    let hn = '';
+    try { hn = hostname(); } catch {}
+    for (const x of [process.env.COMPUTERNAME, hn]) if (x) selfNames.add(String(x).toLowerCase());
+    try { for (const xs of Object.values(networkInterfaces())) for (const x of xs || []) if (x && x.address) selfNames.add(String(x.address).toLowerCase()); } catch {}
+  }
+  if (selfNames.has(h) || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  for (const x of selfNames) if (/^[a-z]/.test(x) && h.startsWith(x + '.')) return true;
+  return false;
+}
+// device names that are no file of a checkout (\\.\nul, \\.\pipe\x and the like)
+const BENIGN_DEVICE = /^(nul|con|prn|aux|com\d|lpt\d|conin\$|conout\$|pipe|mailslot)$/i;
+const cannotTell = (p, what) => new Refusal(String(p).slice(0, 200), `record guard (CLAUDE.md rule 1): ${String(p).slice(0, 200)} is ${what}, which the guard ` +
+  'cannot bring to a local path, so whether it is archived evidence or the journal cannot be told. Use the local path (C:\\...).');
+// The Windows forms of one path brought to one: \??\x and \\?\x and \\.\x and //?/x (a drive path stays a drive path;
+// a volume or other device path is kept whole, with its prefix, for the file system to resolve), \\?\UNC\h\s\x is
+// \\h\s\x, and an admin share \\h\c$\x (of any host: on another PC the same local path is no checkout of this one) is c:\x.
+function winForm(s) {
+  s = s.replace(/^\\\?\?\\/, '\\\\?\\').replace(/^[\\/]{2}[?.][\\/]UNC[\\/]/i, '\\\\');
+  if (/^[\\/]{2}[?.][\\/]/.test(s)) {
+    const rest = s.slice(4);
+    return /^[a-zA-Z]:(?:[\\/]|$)/.test(rest) ? rest : '\\\\?\\' + rest.replace(/\//g, '\\');
+  }
+  const u = /^[\\/]{2}([^\\/]+)[\\/]([^\\/]+)/.exec(s);
+  if (u && /^[a-zA-Z]\$$/.test(u[2])) return u[2][0] + ':\\' + s.slice(u[0].length).replace(/^[\\/]+/, '');
+  if (u && isSelf(u[1])) throw cannotTell(s, `on the share ${u[2]} of this PC`);
+  return s;
+}
 function canonical(p, cwd) {
   let s = String(p == null ? '' : p);
   if (!s || s.includes('\0')) return null;
   if (WIN) {
-    s = s.replace(/^[\\/]{2}[?.][\\/]UNC[\\/]/i, '\\\\').replace(/^[\\/]{2}[?.][\\/]/, '').replace(/^\\\?\?\\/, '');
+    s = winForm(s);
     const m = /^\/(?:cygdrive\/|mnt\/)?([a-zA-Z])(?=\/|$)/.exec(s);
     if (m) s = m[1] + ':\\' + s.slice(m[0].length).replace(/^\//, '');
     const d = /^(?:[a-zA-Z]:|[\\/]{2}[^\\/]+[\\/][^\\/]+)/.exec(s);
     const head = d ? d[0] : '';
     s = head + s.slice(head.length).split(/[\\/]/).map((c) => {
       let x = c.includes(':') ? c.slice(0, c.indexOf(':')) : c; // an NTFS stream belongs to its file
-      if (!/^\.+$/.test(x)) x = x.replace(/[. ]+$/, ''); // Windows drops trailing dots and spaces
+      if (!/^\.+$/.test(x)) x = trimDotsSpaces(x); // Windows drops trailing dots and spaces
       return x;
     }).join('\\');
   }
-  return real(isAbsolute(s) ? resolve(s) : resolve(cwd, s));
+  let r = real(isAbsolute(s) ? resolve(s) : resolve(cwd, s));
+  if (WIN) {
+    // a drive letter mapped to a share comes back from the file system as \\host\share\...: brought once more
+    if (/^[\\/]{2}[^\\/?.]/.test(r)) { const t = winForm(r); if (t !== r) r = real(resolve(t)); }
+    const dv = /^[\\/]{2}[?.][\\/]([^\\/]*)/.exec(r);
+    if (dv && !BENIGN_DEVICE.test(dv[1])) throw cannotTell(p, 'a device path the file system does not resolve');
+  }
+  return r;
 }
 const inside = (p, dir) => { const r = relative(dir, p); return r === '' || !(r === '..' || r.startsWith('..' + sep) || isAbsolute(r)); };
 function gitdirOf(d) {
@@ -148,24 +198,56 @@ function readManifests(rel) {
       'checkout of this repository is changed until they read again (restore them from git); new files are allowed.');
   }
 }
-function archivedBy(rel) {
-  const low = rel.toLowerCase();
-  if (low === 'recovered' || low.startsWith('recovered/')) return 'recovered/';
+// The files under docs/program/evidence/ that the HEAD of the checkout at top holds (lower case; a worktree's own
+// HEAD), read once per checkout. When that cannot be read, a file there is refused (fails closed).
+const EVIDENCE = 'docs/program/evidence';
+const headCache = new Map();
+function headEvidence(top, rel) {
+  let r = headCache.get(top);
+  if (!r) {
+    const g = (...a) => execFileSync('git', ['-C', top, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15000, windowsHide: true, maxBuffer: 1 << 28 });
+    try {
+      const tl = g('rev-parse', '--show-toplevel').trim();
+      if (relative(real(resolve(tl)), top) !== '') throw new Error(`git places it in the checkout ${tl}`);
+      let out;
+      try { out = g('ls-tree', '-r', '-z', '--name-only', 'HEAD', '--', EVIDENCE); } catch (e) {
+        let born = true;
+        try { g('rev-parse', '--verify', '-q', 'HEAD'); } catch { born = false; }
+        if (born) throw e;
+        out = ''; // no commit yet: HEAD holds nothing
+      }
+      r = { set: new Set(out.split('\0').filter(Boolean).map((x) => x.toLowerCase())) };
+    } catch (e) { r = { err: String(e && e.message || e).split('\n')[0].slice(0, 160) }; }
+    headCache.set(top, r);
+  }
+  if (r.err) {
+    throw new Refusal(rel, `record guard (CLAUDE.md rule 1, fails closed): what HEAD holds under ${EVIDENCE}/ in ${top} cannot be read (${r.err}), ` +
+      `so whether ${rel} is archived evidence cannot be told. Files there are not changed until git reads again; new files are allowed.`);
+  }
+  return r.set;
+}
+function archivedBy(at) { // why the file at is archived evidence, or null
+  const rel = at.rel, low = rel.toLowerCase();
+  if (low === 'recovered' || low.startsWith('recovered/')) return 'under recovered/';
   const m = readManifests(rel);
-  if (m.src.has(low)) return 'migration/source-manifest.json';
-  if (m.clinic.has(low)) return 'migration/clinic-manifest.json';
+  if (m.src.has(low)) return 'listed by migration/source-manifest.json';
+  if (m.clinic.has(low)) return 'listed by migration/clinic-manifest.json';
+  if (low.startsWith(EVIDENCE + '/') && headEvidence(at.top, rel).has(low)) return `committed under ${EVIDENCE}/, which CLAUDE.md rule 1 names`;
   return null;
 }
 const isJournal = (rel) => /^library\/journal\/.+\.jsonl$/i.test(rel);
 const JOURNAL_FIX = 'A correction is a new record whose "supersedes" names the old one.';
 
 // ---- Write, Edit, MultiEdit, NotebookEdit ----
-function appendEdit(text, e) { // the text after an Edit that only appends at the end, or null
+function appendEdit(text, e) { // the text after an Edit that only appends at the end, on a new line, or null
   const o = String(e.old_string ?? ''), n = String(e.new_string ?? '');
   const atEnd = o.length > 0 && (text.endsWith(o) || text.endsWith(o + '\n') || text.endsWith(o + '\r\n'));
   if (e.replace_all || !atEnd || !n.startsWith(o) || text.indexOf(o) !== text.lastIndexOf(o)) return null;
-  const k = text.lastIndexOf(o);
-  return text.slice(0, k) + n + text.slice(k + o.length);
+  const k = text.lastIndexOf(o), tail = text.slice(k + o.length), add = n.slice(o.length);
+  // what the Edit adds starts a new line, so nothing of the last line changes: it begins with a newline, unless
+  // old_string itself ends the file with one
+  if (add && !/^\r?\n/.test(add) && !(tail === '' && o.endsWith('\n'))) return null;
+  return text.slice(0, k) + n + tail;
 }
 function checkFileTool() {
   const p = ti.file_path || ti.notebook_path;
@@ -174,9 +256,9 @@ function checkFileTool() {
   const at = abs && locate(abs);
   if (!at || !at.rel) return;
   if (!existsSync(abs)) return; // a new file is always allowed
-  const src = archivedBy(at.rel);
+  const src = archivedBy(at);
   if (src) {
-    throw new Refusal(at.rel, `record guard (CLAUDE.md rule 1): ${named(at)} is archived evidence (listed by ${src}); it is never edited, renamed or normalised. ` +
+    throw new Refusal(at.rel, `record guard (CLAUDE.md rule 1): ${named(at)} is archived evidence (${src}); it is never edited, renamed or normalised. ` +
       'Put new work in a new file.');
   }
   if (!isJournal(at.rel)) return;
@@ -211,17 +293,21 @@ function holds(at, mode) { // what a folder (or the files a pattern names in it)
   const journal = r === '' || 'library/journal/'.startsWith(r + '/') || r === 'library/journal' || r.startsWith('library/journal/');
   if (r === 'recovered' || r.startsWith('recovered/') || has('recovered/x')) return 'archived evidence (recovered/)';
   if (readManifests(at.rel).all.some(has)) return 'archived evidence listed by the manifests';
+  if ((r === 'docs' || r === 'docs/program' || r === EVIDENCE || r.startsWith(EVIDENCE + '/')) && [...headEvidence(at.top, at.rel)].some(has)) {
+    return `archived evidence committed under ${EVIDENCE}/`;
+  }
   if (journal && mode !== 'append') return 'journal files';
   return null;
 }
 // whether journal files under rel (a file or folder of the checkout at top) have changes git has not committed
-function journalDirty(top, rel) {
+// (untracked: new journal files count too)
+function journalDirty(top, rel, untracked) {
   try {
-    const out = execFileSync('git', ['-C', top, 'status', '--porcelain', '--untracked-files=no', '--', rel], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15000, windowsHide: true });
+    const out = execFileSync('git', ['-C', top, 'status', '--porcelain', `--untracked-files=${untracked ? 'all' : 'no'}`, '--', rel], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15000, windowsHide: true });
     return out.trim().length > 0;
   } catch { return true; } // cannot tell: treat as changed
 }
-function hit(w, mode, cwd, verb) {
+function hit(w, mode, cwd, verb, opt = {}) {
   if (!w || w.dyn || !w.v) return;
   let v = w.v;
   if (/^(\/dev\/(null|stdout|stderr|tty)|nul|\$null|con)$/i.test(v)) return;
@@ -242,7 +328,7 @@ function hit(w, mode, cwd, verb) {
     if (!isDir) jp = isJournal(at.rel) ? at.rel : null;
     else if (r === '' || r === 'library' || r === 'library/journal') jp = 'library/journal';
     else if (r.startsWith('library/journal/')) jp = at.rel;
-    if (jp && journalDirty(at.top, jp)) {
+    if (jp && journalDirty(at.top, jp, opt.untracked)) {
       throw new Refusal(at.rel, `record guard (library/README.md rule 1): this command would ${verb} ${named(at) || at.top}, dropping journal lines ` +
         `added since the last commit (git status shows changes under ${jp}); the journal is only added to. Commit the new lines first, or name other files. ` + JOURNAL_FIX);
     }
@@ -257,9 +343,9 @@ function hit(w, mode, cwd, verb) {
     }
     return;
   }
-  const src = archivedBy(at.rel);
+  const src = archivedBy(at);
   if (src) {
-    throw new Refusal(at.rel, `record guard (CLAUDE.md rule 1): this command would ${verb} ${named(at)}, archived evidence (listed by ${src}); ` +
+    throw new Refusal(at.rel, `record guard (CLAUDE.md rule 1): this command would ${verb} ${named(at)}, archived evidence (${src}); ` +
       'it is never edited, renamed, deleted or normalised. Put new work in a new file.');
   }
   if (isJournal(at.rel) && mode !== 'append') {
@@ -268,7 +354,7 @@ function hit(w, mode, cwd, verb) {
   }
 }
 const word = (v) => ({ v, dyn: false, glob: false, q: false });
-const hitPath = (p, mode, cwd, verb) => hit(word(p), mode, cwd, verb);
+const hitPath = (p, mode, cwd, verb, opt) => hit(word(p), mode, cwd, verb, opt);
 
 // Lexer: simple commands with their words, redirections, heredoc bodies and command substitutions.
 // mode 'sh' (Bash), 'ps' (PowerShell), 'cmd' (cmd.exe). Variables become \u0001NAME\u0001, filled in when judged.
@@ -692,6 +778,18 @@ function findCmd(args, cwd) {
   if (harmful) for (const s of starts.length ? starts : [word('.')]) hit(s, 'delete', cwd, 'change files under (find)');
 }
 
+// whether the short option or cluster o (-f, -qf) holds the letter ch before any letter of `valued` (whose value follows)
+function shortHas(o, ch, valued) {
+  if (!/^-[a-zA-Z0-9]+$/.test(o)) return false;
+  for (const c of o.slice(1)) { if (c === ch) return true; if (valued.includes(c)) return false; }
+  return false;
+}
+// whether the word names something that exists (a path, not a branch)
+function isPath(w, cwd) {
+  if (w.dyn) return false;
+  const p = canonical(w.v, cwd);
+  try { return !!p && !!statSync(p); } catch { return false; }
+}
 function gitCmd(args, cwd) {
   let k = 0, gcwd = cwd;
   while (k < args.length && args[k].v.startsWith('-')) {
@@ -702,6 +800,8 @@ function gitCmd(args, cwd) {
   }
   const sub = args[k] ? args[k].v : '', rest = args.slice(k + 1);
   const opts = optionsOf(rest);
+  // the whole working tree of the checkout set back, its local changes thrown away or put away
+  const whole = (verb, untracked) => { const at = locate(gcwd); if (at) hitPath(at.top, 'restore', gcwd, verb, { untracked }); };
   if (sub === 'rm') { for (const t of operands(rest, ['--pathspec-from-file'])) hit(t, 'delete', gcwd, 'remove (git rm)'); return; }
   if (sub === 'mv') {
     const o = operands(rest);
@@ -710,6 +810,13 @@ function gitCmd(args, cwd) {
     return;
   }
   if (sub === 'checkout') {
+    // -f with a branch or commit, or with nothing: the working tree is set to it and local changes are thrown away
+    // (untracked files the target holds are overwritten too)
+    if (opts.some((o) => o === '--force' || shortHas(o, 'f', 'bB'))) {
+      const dd = rest.findIndex((a) => a.v === '--');
+      const o = operands(rest, ['--conflict', '--pathspec-from-file', '-b', '-B', '--orphan']);
+      if (dd < 0 && o.length <= 1 && !(o[0] && isPath(o[0], gcwd))) { whole('set back, throwing away local changes (git checkout -f),', true); return; }
+    }
     if (opts.some((o) => ['-b', '-B', '--orphan'].includes(o))) return;
     const valued = ['--conflict', '--pathspec-from-file'];
     const dd = rest.findIndex((a) => a.v === '--');
@@ -735,6 +842,21 @@ function gitCmd(args, cwd) {
   if (sub === 'reset' && opts.some((o) => o === '--hard' || o === '--merge' || o === '--keep')) {
     const at = locate(gcwd);
     if (at) hitPath(at.top, 'restore', gcwd, 'reset (git reset --hard)');
+    return;
+  }
+  if (sub === 'switch') {
+    if (opts.some((o) => o === '--force' || o === '--discard-changes' || shortHas(o, 'f', 'cC'))) whole('set back, throwing away local changes (git switch --discard-changes),', true);
+    return;
+  }
+  if (sub === 'stash') { // git stash, stash push, stash save (and their options): the changes are put away and the working tree set back
+    let s2 = 'push', a2 = rest;
+    if (rest.length && !rest[0].v.startsWith('-')) { s2 = rest[0].v; a2 = rest.slice(1); }
+    if (s2 !== 'push' && s2 !== 'save') return; // list, show, pop, apply, drop, clear, branch, create, store
+    const o2 = optionsOf(a2);
+    const untracked = o2.some((o) => o === '--include-untracked' || o === '--all' || shortHas(o, 'u', 'm') || shortHas(o, 'a', 'm'));
+    const paths = s2 === 'push' && !o2.some((o) => o.startsWith('--pathspec-from-file')) ? operands(a2, ['-m', '--message']) : [];
+    if (paths.length) for (const t of paths) hit(t, 'restore', gcwd, 'put away (git stash)', { untracked });
+    else whole('put away the changes of (git stash)', untracked);
     return;
   }
   if (sub === 'clean' && !opts.some((o) => o === '--dry-run' || /^-[a-zA-Z]*n/.test(o))) {
@@ -821,7 +943,8 @@ const CALLS = {
   '::appendalltext': [[0, 'append']], '::appendalllines': [[0, 'append']], '::delete': [[0, 'delete']],
   '::move': [[0, 'delete'], [1, 'overwrite']], '::copy': [[1, 'overwrite']], '::replace': [[0, 'delete'], [1, 'overwrite']],
 };
-const CALL_RE = /(?<![\w$])(os\.(?:remove|unlink|rmdir|removedirs|rename|replace|truncate)|shutil\.(?:rmtree|move|copy2|copyfile|copytree|copy)|writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|truncateSync|truncate|rmSync|rmdirSync|rmdir|rm|unlinkSync|unlink|renameSync|rename|copyFileSync|copyFile|cpSync|cp|symlinkSync|symlink|openSync|open)\s*\(|(::(?:WriteAllText|WriteAllLines|WriteAllBytes|AppendAllText|AppendAllLines|Delete|Move|Copy|Replace))\s*\(|Path\(\s*([^()]*?)\s*\)\.(write_text|write_bytes|unlink|rmdir|rename|replace)\s*\(/gi;
+const CALL_RE = /(?<![\w$])(os\.(?:remove|unlink|rmdir|removedirs|rename|replace|truncate)|shutil\.(?:rmtree|move|copy2|copyfile|copytree|copy)|writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|truncateSync|truncate|rmSync|rmdirSync|rmdir|rm|unlinkSync|unlink|renameSync|rename|copyFileSync|copyFile|cpSync|cp|symlinkSync|symlink|openSync|open)\s*\(|(::(?:WriteAllText|WriteAllLines|WriteAllBytes|AppendAllText|AppendAllLines|Delete|Move|Copy|Replace))\s*\(|Path\(([^()]*)\)\.(write_text|write_bytes|unlink|rmdir|rename|replace)\s*\(/gi;
+// (Path's argument is taken whole and trimmed by evalArg: `\(\s*([^()]*?)\s*\)` took cubic time on a long run of spaces.)
 function splitArgs(code, k) { // k just after '('; returns [args text list, index after ')']
   const out = [];
   let depth = 0, q = null, start = k;

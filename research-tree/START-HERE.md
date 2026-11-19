@@ -32,7 +32,7 @@ For how to run helpers: the method is `docs/ORCHESTRATION-DESIGN-2026-10.md` (se
 
 ## Next
 
-The orchestration document (`research-tree/ORCHESTRATION.md`, r57-0517) is final and the owner gave his go for the build on 2026-11-19. One root session (Fable) runs the build and follows it. P0 and the plan gate (`.claude/hooks/plan-gate.mjs`, being built) come first; then slice 0 of `research-tree/BUILD-PLAN.md`.
+The orchestration document (`research-tree/ORCHESTRATION.md`, r57-0517) is final and the owner gave his go for the build on 2026-11-19. One root session (Opus, r57-0418) runs the build from `research-tree/build/ROOT-START.md` and follows it; section 13 of the orchestration document holds where it differs, and the root's state is in `research-tree/build/STATE.md`. P0 and the plan gate (`.claude/hooks/plan-gate.mjs`) are built, reviewed and fixed (section 13, rows 8 to 10); the build works through `research-tree/BUILD-PLAN.md` from slice 0.
 How many sessions run at once is computed (r57-0414; ORCHESTRATION section 6), not guessed here.
 
 ## Do not use

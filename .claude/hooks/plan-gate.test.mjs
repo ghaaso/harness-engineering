@@ -1,8 +1,10 @@
-// Tests of plan-gate.mjs (2026-11-19, unit GATE). Run: node --test .claude/hooks/plan-gate.test.mjs
+// Tests of plan-gate.mjs (2026-11-19, units GATE and FIX-GATE). Run: node --test .claude/hooks/plan-gate.test.mjs
 // Each case copies the hook into a temporary folder with its own git repository, plan.json (the real one unless a
 // case says otherwise) and log, feeds it made-up hook inputs on stdin and checks its exit code (0 allow, 2 refuse)
 // and message. Nothing in the repository is written. One failing case for each refusal, one passing case for each
-// allowed start; then the real plan.json is checked against the tier routes and its own references.
+// allowed start; then the real plan.json is checked against the tier routes and its own references. The cases
+// marked "finding 5" and "finding 6" are the review's breaking findings (research-tree/build/refute/P0-GATE.md);
+// the SendMessage results are shaped as the app returned them in this repository's transcripts of 2026-11-18 and 19.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
@@ -83,6 +85,24 @@ function started(dir, description, model, agent) {
   return i;
 }
 function readyForB11(dir) { finish(dir, 'B0a'); finish(dir, 'PROBE'); finish(dir, 'B0b'); }
+// SendMessage: to an ended helper the call returns "Resuming agent" with its id; to a running one, "queued".
+const sendPre = (to) => ({ hook_event_name: 'PreToolUse', session_id: 'plan-gate-test', tool_name: 'SendMessage',
+  tool_use_id: `toolu_test${++seq}`, tool_input: { to, summary: 'go on', message: 'Go on from your checkpoint.' } });
+const sendPost = (input, revived) => ({ hook_event_name: 'PostToolUse', session_id: 'plan-gate-test', tool_name: 'SendMessage',
+  tool_use_id: input.tool_use_id, tool_input: input.tool_input, duration_ms: 110,
+  tool_response: revived
+    ? { success: true, message: `Resuming agent ${revived.slice(0, 7)}`, resumedAgentId: revived, revivedAgentId: revived, pin: { id: revived, name: revived, ref: 'f92e3d' } }
+    : { success: true, message: `Message queued for delivery to ${input.tool_input.to} at its next tool round.`, pin: { id: input.tool_input.to, name: input.tool_input.to, ref: 'eb7aa9' } } });
+const runStart = (agent) => ({ hook_event_name: 'SubagentStart', session_id: 'plan-gate-test', agent_id: agent, agent_type: 'general-purpose' });
+function resumed(dir, agent) { // the root continues an ended helper: the gate admits it, the call resumes it
+  const i = sendPre(agent);
+  allows(run(dir, i));
+  assert.equal(run(dir, sendPost(i, agent)).status, 0);
+  return i;
+}
+const endBy = (dir, id, why) => spawnSync(process.execPath, [join(dir, '.claude', 'hooks', 'plan-gate.mjs'), '--end', id, why], { encoding: 'utf8' });
+const backdate = (dir, pick, ms) => writeFileSync(logPath(dir), logLines(dir).map((o) => JSON.stringify(pick(o) ? { ...o, t: o.t - ms } : o)).join('\n') + '\n');
+const startB11 = (dir, a) => [['W1', a + '1'], ['OUT', a + '2'], ['CLAIM', a + '3']].forEach(([u, id]) => started(dir, `build-invariant: ${u} x`, 'opus', id));
 
 // ---- inactive, and descriptions naming no planned unit ----
 
@@ -91,6 +111,10 @@ test('no plan.json: every start passes and nothing is logged', () => {
   allows(run(dir, pre('build-invariant: W1 fence', 'sonnet')));
   allows(run(dir, post(pre('build-invariant: W1', 'opus'), 'a1')));
   allows(run(dir, stop('a1')));
+  const s = sendPre('a1');
+  allows(run(dir, s));
+  allows(run(dir, sendPost(s, 'a1')));
+  allows(run(dir, runStart('a1')));
   assert.equal(existsSync(logPath(dir)), false);
 });
 
@@ -177,6 +201,44 @@ test('refused, failing closed: a done form the gate cannot check', () => {
   refuses(run(dir, pre('build-invariant: S0.5 skeleton', 'opus')), /could not check what S0\.5 depends on \(unknown done form/);
 });
 
+// ---- finding 5: a unit or review is not done while a helper for it runs, whatever its file or branch says ----
+
+test('finding 5: a fact file written while its helper runs is not done (S0.3 after S0.1d), nor S0.3 for its refuter', () => {
+  const dir = fixture();
+  for (const f of ['FP1b-FP2', 'FP12', 'WH5-Wturn']) touch(dir, `research-tree/build/facts/${f}.md`);
+  started(dir, 'read: S0.1d allow list', 'sonnet', 'a5d01');
+  touch(dir, 'research-tree/build/facts/Wallow.md'); // written; its helper has not ended
+  refuses(run(dir, pre('analyse: S0.3 branches', 'opus')), /S0\.3 \(batch B0a\) waits for S0\.1d \(a helper for it still runs: agent a5d01\).*--end a5d01/);
+  allows(run(dir, stop('a5d01')));
+  started(dir, 'analyse: S0.3 branches', 'opus', 'a5d03');
+  touch(dir, 'research-tree/build/branches.md');
+  refuses(run(dir, pre('refute: S0.3 branches', 'opus')), /the review of S0\.3 \(batch B0a\) waits for S0\.3's builder \(a helper for it still runs: agent a5d03\)/);
+  allows(run(dir, stop('a5d03')));
+  allows(run(dir, pre('refute: S0.3 branches', 'opus')));
+});
+test('finding 5: a batch waits while a review of a batch it comes after runs, though its verdict exists', () => {
+  const dir = fixture(); finish(dir, 'B0a');
+  started(dir, 'refute: S0.3 second look', 'opus', 'a5b01'); // refute/S0.3.md exists; a review of S0.3 runs again
+  refuses(run(dir, pre('build-invariant: S0.4 contracts', 'opus')), /S0\.4 \(batch B0b\) waits for the review of S0\.3 of batch B0a \(a helper for it still runs: agent a5b01\)/);
+  allows(run(dir, stop('a5b01')));
+  allows(run(dir, pre('build-invariant: S0.4 contracts', 'opus')));
+});
+test('finding 5: a landed dependency whose builder still runs is not done (W2 after W1); nor while its start is pending', () => {
+  const dir = fixture(); readyForB11(dir); finish(dir, 'B1-1');
+  started(dir, 'build-invariant: W1 rework', 'opus', 'a5l01'); // u/W1 has landed; a builder for W1 runs again
+  refuses(run(dir, pre('build-invariant: W2 fence', 'opus')), /W2 \(batch B1-2\) waits for W1 \(a helper for it still runs: agent a5l01\)/);
+  allows(run(dir, stop('a5l01')));
+  allows(run(dir, pre('build-invariant: W2 fence', 'opus')));
+  allows(run(dir, pre('build-invariant: OUT rework', 'opus'))); // its Agent call has not returned yet
+  refuses(run(dir, pre('build-invariant: PLAN plan', 'opus')), /PLAN \(batch B1-2\) waits for OUT \(a helper for it still runs: its Agent call has not returned\)/);
+});
+test('finding 5: count_running false turns the running check off with checks 3 and 4', () => {
+  const plan = structuredClone(REAL); plan.gate.count_running = false;
+  const dir = fixture(plan); readyForB11(dir); finish(dir, 'B1-1', plan);
+  started(dir, 'build-invariant: W1 rework', 'opus', 'a5f01');
+  allows(run(dir, pre('build-invariant: W2 fence', 'opus')));
+});
+
 // ---- refusal 3: a helper for the same unit and role is still running ----
 
 test('refused: a second builder while the first runs; allowed once it has ended (a LIMIT successor)', () => {
@@ -201,10 +263,13 @@ test('allowed: a call that returned with its helper finished (foreground) is not
   allows(run(dir, post(i, 'aw1fg', 'completed')));
   allows(run(dir, pre('build-invariant: W1 next', 'opus')));
 });
-test('allowed: the refuter beside its running builder (another role); a second refuter is refused', () => {
+// Version 1 allowed the refuter beside its running builder; finding 5 makes it wait for the builder's end.
+test('finding 5: a refuter waits while its builder runs, though the result file exists; then one refuter per unit', () => {
   const dir = fixture(); readyForB11(dir);
   started(dir, 'build-invariant: W1 liveness', 'opus', 'aw1b');
   touch(dir, 'research-tree/build/units/W1/result.md');
+  refuses(run(dir, pre('refute: W1 liveness', 'opus')), /the review of W1 \(batch B1-1\) waits for W1's builder \(a helper for it still runs: agent aw1b\).*--end aw1b/);
+  allows(run(dir, stop('aw1b')));
   started(dir, 'refute: W1 liveness', 'opus', 'aw1r');
   refuses(run(dir, pre('refute: W1 again', 'opus')), /a helper for the review of W1 is still running/);
 });
@@ -282,6 +347,89 @@ test('count_running false (SubagentStop not seen): checks 3 and 4 are off, 1 and
   allows(run(dir, pre('build-invariant: W1 y', 'opus')));
   refuses(run(dir, pre('build-invariant: W2 y', 'opus')), /waits for W1/);
 });
+test('allowed: after the root logs a start ended by its tool_use_id (--end toolu_...), pending or with no agent id', () => {
+  const dir = fixture(); readyForB11(dir);
+  const i = pre('build-invariant: W1 liveness', 'opus');
+  allows(run(dir, i)); // allowed, and its Agent call failed after the allow
+  refuses(run(dir, pre('build-invariant: W1 again', 'opus')), /its Agent call has not returned/);
+  assert.equal(endBy(dir, i.tool_use_id, 'the Agent call failed after the allow').status, 0);
+  allows(run(dir, pre('build-invariant: W1 again', 'opus')));
+  const k = pre('build-invariant: OUT x', 'opus');
+  allows(run(dir, k));
+  allows(run(dir, { ...post(k, 'unused'), tool_response: { isAsync: true, status: 'async_launched' } })); // no agent id in the result
+  refuses(run(dir, pre('build-invariant: OUT again', 'opus')), new RegExp(`a helper for OUT is still running \\(call ${k.tool_use_id}.*--end ${k.tool_use_id}`));
+  assert.equal(endBy(dir, k.tool_use_id, 'gone').status, 0);
+  allows(run(dir, pre('build-invariant: OUT again', 'opus')));
+});
+
+// ---- finding 6: a helper continued with SendMessage after its end runs again ----
+
+test('finding 6: a helper continued with SendMessage after its end counts until its next end (width and one helper)', () => {
+  const dir = fixture(); readyForB11(dir);
+  startB11(dir, 'a6c0');            // W1, OUT, CLAIM: B1-1 at its width 3
+  allows(run(dir, stop('a6c01')));  // W1 returns LIMIT
+  resumed(dir, 'a6c01');            // the root continues it (ORCHESTRATION section 3)
+  refuses(run(dir, pre('build-invariant: CGATE d', 'opus')), /batch B1-1 already runs 3 of its width 3 \(OUT, CLAIM, W1;/);
+  refuses(run(dir, pre('build-invariant: W1 successor', 'opus')), /a helper for W1 is still running \(agent a6c01/);
+  assert.ok(logLines(dir).some((o) => o.ev === 'allow' && o.cont && o.agent === 'a6c01' && o.unit === 'W1' && o.batch === 'B1-1'), 'the continuation is logged as an allow naming the agent');
+  allows(run(dir, stop('a6c01')));  // its next end
+  allows(run(dir, pre('build-invariant: CGATE d', 'opus')));
+});
+test('finding 6: SendMessage that would resume an ended helper is refused while its batch is full or its unit has a helper', () => {
+  const dir = fixture(); readyForB11(dir);
+  startB11(dir, 'a6s0');
+  const n = logLines(dir).length;
+  allows(run(dir, sendPre('a6s02')));  // OUT still runs: a message, not a start
+  allows(run(dir, sendPre('main')));   // not a helper the gate admitted
+  allows(run(dir, sendPre('a6s99 [3fa9c1]')));
+  assert.equal(logLines(dir).length, n, 'nothing logged');
+  allows(run(dir, stop('a6s01')));
+  started(dir, 'build-invariant: CGATE d', 'opus', 'a6s04'); // takes the slot W1 left
+  refuses(run(dir, sendPre('a6s01')), /SendMessage to agent a6s01 \(W1\) would resume it, which counts as a start: batch B1-1 already runs 3 of its width 3 \(OUT, CLAIM, CGATE;/);
+  allows(run(dir, stop('a6s04')));
+  started(dir, 'build-invariant: W1 successor', 'opus', 'a6s05');
+  refuses(run(dir, sendPre('agent-a6s01')), /would resume it.*a helper for W1 is still running \(agent a6s05.*this one resumes/);
+  allows(run(dir, stop('a6s05')));
+  resumed(dir, 'a6s01');
+});
+test('finding 6: a continuation whose call has not returned counts for pending_s; one that resumed nothing ends', () => {
+  const dir = fixture(); readyForB11(dir);
+  startB11(dir, 'a6p0');
+  allows(run(dir, stop('a6p01')));
+  allows(run(dir, sendPre('a6p01')));
+  refuses(run(dir, pre('build-invariant: CGATE d', 'opus')), /runs 3 of its width 3 \(OUT, CLAIM, W1;/);
+  refuses(run(dir, pre('build-invariant: W1 again', 'opus')), /its SendMessage call has not returned/);
+  backdate(dir, (o) => o.ev === 'allow' && o.cont, 1000 * (REAL.gate.pending_s + 1));
+  allows(run(dir, pre('build-invariant: W1 again', 'opus')));
+  const dir2 = fixture(); readyForB11(dir2);
+  startB11(dir2, 'a6q0');
+  allows(run(dir2, stop('a6q01')));
+  const k = sendPre('a6q01');
+  allows(run(dir2, k));
+  allows(run(dir2, sendPost(k, null))); // queued, not resumed: the helper had woken meanwhile
+  allows(run(dir2, pre('build-invariant: CGATE d', 'opus')));
+});
+test('finding 6: a run after the end with no SendMessage seen (SubagentStart), or a resume seen only in the result, counts', () => {
+  const dir = fixture(); readyForB11(dir);
+  startB11(dir, 'a6r0');
+  allows(run(dir, runStart('a6r01')));  // a run before its end changes nothing
+  allows(run(dir, stop('a6r01')));
+  allows(run(dir, runStart('a6r01')));  // the app resumed W1 with a message queued before it ended
+  allows(run(dir, runStart('a6r77')));  // an agent the gate never admitted
+  refuses(run(dir, pre('build-invariant: CGATE d', 'opus')), /runs 3 of its width 3 \(OUT, CLAIM, W1;/);
+  refuses(run(dir, pre('build-invariant: W1 again', 'opus')), /a helper for W1 is still running \(agent a6r01, running again since/);
+  allows(run(dir, stop('a6r01')));
+  allows(run(dir, pre('build-invariant: CGATE d', 'opus')));
+  const dir2 = fixture(); readyForB11(dir2);
+  startB11(dir2, 'a6m0');
+  allows(run(dir2, stop('a6m01')));
+  const i = sendPre('the-w1-builder');   // a name the gate cannot match: not checked
+  allows(run(dir2, i));
+  allows(run(dir2, sendPost(i, 'a6m01'))); // the result names the agent it revived
+  refuses(run(dir2, pre('build-invariant: CGATE d', 'opus')), /\(OUT, CLAIM, W1;/);
+  allows(run(dir2, stop('a6m01')));
+  allows(run(dir2, pre('build-invariant: CGATE d', 'opus')));
+});
 
 // ---- plan.json present but unreadable: fail closed for the build, open for everything else ----
 
@@ -315,6 +463,22 @@ test('PostToolUse and SubagentStop always exit 0 silently and log start and end'
   assert.equal(l[0].tu, i.tool_use_id);
   assert.equal(l.find((o) => o.ev === 'start' && o.agent === 'aStringShape77') !== undefined, true);
   assert.equal(l.filter((o) => o.ev === 'end')[0].agent, 'a0123456789abcdef');
+});
+test('SubagentStart, SendMessage results and odd SendMessage inputs exit 0 silently and log run and resume', () => {
+  const dir = fixture();
+  const s = sendPre('a0123456789abcdef');
+  for (const input of [runStart('agent-a0123456789abcdef'), sendPost(s, 'a0123456789abcdef'), sendPost(sendPre('main'), null),
+    { hook_event_name: 'SubagentStart' }, { hook_event_name: 'PostToolUse', tool_name: 'SendMessage' },
+    { hook_event_name: 'PostToolUse', tool_name: 'SendMessage', tool_response: [{ type: 'text', text: '{"success":true,"resumedAgentId":"aStringShape99"}' }] },
+    { hook_event_name: 'PreToolUse', tool_name: 'SendMessage' }, { hook_event_name: 'PreToolUse', tool_name: 'SendMessage', tool_input: { to: 7 } }, s]) {
+    const r = run(dir, input);
+    assert.equal(r.status, 0); assert.equal(r.stdout, ''); assert.equal(r.stderr, '');
+  }
+  const l = logLines(dir);
+  assert.deepEqual(l.filter((o) => o.ev === 'run').map((o) => o.agent), ['a0123456789abcdef', null]);
+  assert.deepEqual(l.filter((o) => o.ev === 'resume').map((o) => o.agent), ['a0123456789abcdef', null, null, 'aStringShape99']);
+  assert.deepEqual(l.filter((o) => o.ev === 'resume').map((o) => o.to), ['a0123456789abcdef', 'main', null, null]);
+  assert.equal(l.length, 6, 'the PreToolUse inputs log nothing');
 });
 
 // ---- the real plan ----

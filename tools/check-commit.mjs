@@ -1,10 +1,12 @@
-// Commit check (version 1, 2026-11-19). Run by tools/git-hooks/pre-commit (core.hooksPath = the absolute path of
+// Commit check (version 2, 2026-11-19; version 2 adds docs/program/evidence/, finding 1 of
+// research-tree/build/refute/P0-GATE.md). Run by tools/git-hooks/pre-commit (core.hooksPath = the absolute path of
 // tools/git-hooks, so every worktree runs the main checkout's copy). It reads the index of the checkout or worktree
 // being committed and the manifests of that worktree, with the main checkout's as well (a worktree cut from an old
 // base may have none); when neither copy of a manifest can be read it refuses the commit (fails closed).
 // Refuses a commit that
-//   1. changes, renames or deletes archived evidence: a file under recovered/, or one listed in
-//      migration/source-manifest.json or migration/clinic-manifest.json (CLAUDE.md rule 1, AGENTS.md);
+//   1. changes, renames or deletes archived evidence: a file under recovered/ or docs/program/evidence/, or one listed
+//      in migration/source-manifest.json or migration/clinic-manifest.json (CLAUDE.md rule 1, AGENTS.md). What is
+//      changed, renamed or deleted is always a file the HEAD of the checkout being committed holds; added files commit;
 //   2. changes or drops a line of a library journal file, or renames or deletes one (library/README.md rule 1);
 //   3. adds a journal line that is not a valid record: one JSON object; id, kind, status and claim present;
 //      kind and status from library/README.md; fields in the README's order; an id whose writer prefix
@@ -33,7 +35,7 @@ for (const [file, pick] of [['source-manifest.json', (m) => m], ['clinic-manifes
   }
   if (!read) errors.push(`migration/${file} cannot be read in ${root}${mainRoot !== root ? ` or in ${mainRoot}` : ''}, so archived evidence cannot be told; the commit is refused (fails closed). Restore the manifest from git.`);
 }
-const isArchived = (p) => { const l = p.toLowerCase(); return l.startsWith('recovered/') || archivedSet.has(l); };
+const isArchived = (p) => { const l = p.toLowerCase(); return l.startsWith('recovered/') || l.startsWith('docs/program/evidence/') || archivedSet.has(l); };
 const isJournal = (p) => /^library\/journal\/.+\.jsonl$/i.test(p);
 
 const ORDER = ['id', 'kind', 'status', 'claim', 'when', 'quote', 'evidence', 'see', 'note', 'handles', 'footprint', 'supersedes', 'date', 'by'];
