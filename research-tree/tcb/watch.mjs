@@ -178,9 +178,11 @@ function rowActPlanned(root, tr, row, facts) { // eslint-disable-line no-unused-
   return undefined;
 }
 
-// FX-W5 step 1 (FX-PLAN step 2): an `owner` or `none` act raises no act due. False until filled.
-function ownerOrNone(planned) { // eslint-disable-line no-unused-vars
-  return false;
+// FX-W5 step 1 (FX-PLAN step 2): an `owner` or `none` act raises no act due, so it is never raised
+// again nor counted `stuck` (FIX-JOIN point 11; zombie-over arrives as `owner` through planAct's facts).
+// Until FX-PLAN fills rowActPlanned, `planned` is undefined and today's filters decide.
+function ownerOrNone(planned) {
+  return planned === 'owner' || planned === 'none';
 }
 
 function lockOpts(th, ce, proc, now) {
@@ -658,7 +660,7 @@ async function evaluate(env, state, facts, counted) {
   }
   const eventSeq = new Map();
   for (const l of lines) if (l.kind === 'event' && l.data && typeof l.data.key === 'string') eventSeq.set(l.data.key, l.seq);
-  reraiseStuck(env, state, present, tick);
+  reraiseStuck(env, state, present, tick, { eventSeq, ackedSeq });
   const newActive = {};
   for (const c of present) {
     let key = Object.keys(state.active).find((k) => k.slice(0, k.lastIndexOf('|')) === c.ident);
@@ -926,7 +928,64 @@ function actDueIdleAgeCap(env, state, conds, { rows, lines = [], ackedSeq = 0 })
 
 // FX-W5: the re-raise of an act still due at the capped interval and its `stuck` count (stuck_raises),
 // over the whole present set, before the active keys are renewed.
-function reraiseStuck(env, state, present, tick) { // eslint-disable-line no-unused-vars
+//
+// FIX-wake.md FX-W5 steps 2-3, branch R1 (build/branches.md row 6). Raised again: every act-due (17)
+// but `run-terminal` (its condition never clears), and stall, hang and loop (20-22), the set the model
+// checked R1 with (ABLATION-wake.md:234-235). The interval before raise n + 1 after n raises is
+// min(RERAISE_BASE_TICKS x 2^b, RERAISE_CAP_TICKS) ticks, b = min(n, RERAISE_B_MAX): 15, 30, 60, 60.
+// Both tick counts are marked guesses kept here (slice 1 writes no thresholds.json key).
+const RERAISE_CLASSES = new Set([17, 20, 21, 22]);
+const RERAISE_BASE_TICKS = 15; // a guess (FIX-wake.md FX-W5 step 2)
+const RERAISE_CAP_TICKS = 60; // a guess (FIX-wake.md FX-W5 step 2)
+const RERAISE_B_MAX = 2;
+const STUCK_RAISES_DEFAULT = 3; // the design's stuck_raises, used when thresholds.json lacks a valid one
+
+const reraiseInterval = (n) => Math.min(RERAISE_BASE_TICKS * 2 ** Math.min(n, RERAISE_B_MAX), RERAISE_CAP_TICKS);
+
+// stuck_count after n raises: one per raise made once b was at its cap, i.e. after the raises at 15,
+// 30 and 60 ticks (FIX-wake.md:54: 15 + 30 + 60, then 3 x 60 = 285 ticks, about 4.75 h at delta 60 s).
+const stuckCount = (n) => Math.max(0, n - (RERAISE_B_MAX + 1));
+
+// Threshold stuck_raises; missing, or not a positive integer, falls back to the design's 3.
+function stuckRaisesOf(th) {
+  let v;
+  try {
+    v = th.get('stuck_raises');
+  } catch (x) {
+    if (x && x.code === 'param-missing') return STUCK_RAISES_DEFAULT;
+    throw x;
+  }
+  return Number.isInteger(v) && v >= 1 ? v : STUCK_RAISES_DEFAULT;
+}
+
+// A present ident of those classes whose key's event line is acknowledged (seq <= acked_seq) and whose
+// last raise (the key's tick) is at least the interval old is raised again: its key leaves `active`, so
+// the keying below gives it a new key <ident>|<tick> and one new event line with detail.reraise = n + 1.
+// An unacknowledged key is due anyway. `reraise` {ident: n >= 1} and `stuck` [ident] are rebuilt from
+// the present idents each evaluation: an ident leaving the active set leaves both (step 3).
+function reraiseStuck(env, state, present, tick, { eventSeq, ackedSeq }) {
+  const limit = stuckRaisesOf(env.th);
+  const prev = state.reraise && typeof state.reraise === 'object' ? state.reraise : {};
+  const reraise = {};
+  const stuck = [];
+  for (const c of present) {
+    if (!RERAISE_CLASSES.has(c.cls) || (c.cls === 17 && c.act === 'run-terminal')) continue;
+    const key = Object.keys(state.active).find((k) => k.slice(0, k.lastIndexOf('|')) === c.ident);
+    if (!key) continue; // a new onset: the keying below raises it
+    let n = Number.isInteger(prev[c.ident]) && prev[c.ident] > 0 ? prev[c.ident] : 0;
+    const seq = eventSeq.get(key);
+    let last = Number.isInteger(state.active[key]) ? state.active[key] : Number(key.slice(key.lastIndexOf('|') + 1));
+    if (!Number.isFinite(last)) last = -Infinity;
+    if (seq !== undefined && seq <= ackedSeq && tick - last >= reraiseInterval(n)) {
+      delete state.active[key];
+      n += 1;
+      c.detail = { ...(c.detail ?? {}), reraise: n };
+    }
+    if (n > 0) reraise[c.ident] = n;
+    if (stuckCount(n) >= limit) stuck.push(c.ident);
+  }
+  state.reraise = reraise;
+  state.stuck = stuck.sort();
 }
 
 // FX-W7: the tick's state is kept only when its hold succeeded (the copy `next`), after watcher.json.
