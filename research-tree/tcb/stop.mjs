@@ -247,6 +247,53 @@ function overflowIfCut(env, handle, row, T, E, tokens) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// FX-REDO (FIX-fence section 5): a missing ledger line after a death. Each mode writes the row and
+// then its line; the mode's own repeat completes a line a death left missing, only at the exact
+// post-state and inside the mode's hold, rebuilt from the row and marked `data.redo: true`:
+// `stop-request` at stop-requested, the confirmed `stop` at stopped (written by verify or by a
+// request confirmed at once). A dry run reports `redo` and writes nothing.
+
+/** Appends kind for (T, E) with data and redo when no such line matches: true when it wrote (dry: would). */
+function redoLine(env, handle, kind, T, E, match, data) {
+  const { lines } = lib.readLedger(env.root);
+  if (lib.lastLine(lines ?? [], kind, (l) => l.task === T && l.epoch === E && match(l))) return false;
+  if (handle) append(env, handle, kind, T, E, { ...data, redo: true });
+  return true;
+}
+const confirmedStop = (l) => !!l.data && l.data.confirmed === true;
+
+/** The line of the stop that a death left missing, from the row (the after-image); false when none is due. */
+function stopRedo(env, handle, row, T, E, pre) {
+  const k = targetEpoch(row);
+  const att = safe(() => lib.attemptOf(row, k), null);
+  if (row.step === 'stop-requested') {
+    const session = (att && att.session) ?? (pre && pre.k === k ? pre.tt.folderSessions[0] : null) ?? null;
+    return redoLine(env, handle, 'stop-request', T, E, () => true, { session });
+  }
+  if (row.step !== 'stopped' || !att || att.stop !== 'confirmed') return false;
+  const data = { session: att.session ?? null, confirmed: true, grew: [], survivors: [], zombie_tokens: row.state === 'committed' ? 0 : null };
+  return redoLine(env, handle, 'stop', T, E, confirmedStop, data);
+}
+
+/** verify repeated at stopped: exit 0 repeat; the lock is taken only when the confirmed stop line looks missing. */
+async function verifyRepeat(env, T, E, row0) {
+  const answer = (row, redo) => ({ exit: 0, result: { task: T, epoch: E, step: 'stopped', state: row.state, repeat: true, redo }, reasons: [] });
+  const { lines } = lib.readLedger(env.root);
+  if (lib.lastLine(lines ?? [], 'stop', (l) => l.task === T && l.epoch === E && confirmedStop(l))) return answer(row0, false);
+  return await underLock(
+    env,
+    (handle) => {
+      const row = findRow(lib.readTasks(env.root), T);
+      if (row.epoch !== E) throw tcbError('stale-epoch', 65, { expected: E, actual: row.epoch });
+      if (row.step !== 'stopped') throw tcbError('wrong-step', 65, { state: row.state, step: row.step });
+      return answer(row, stopRedo(env, handle, row, T, E, null));
+    },
+    T,
+    E,
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
 // request
 
 async function modeRequest(env, T, E) {
@@ -272,7 +319,8 @@ async function modeRequest(env, T, E) {
       const row = findRow(table, T);
       if (row.epoch !== E) throw tcbError('stale-epoch', 65, { expected: E, actual: row.epoch });
       if (row.step === 'stop-requested' || row.step === 'stopped') {
-        return { exit: 0, result: { task: T, epoch: E, step: row.step, state: row.state, repeat: true }, reasons: [] };
+        const redo = stopRedo(env, handle, row, T, E, pre); // FX-REDO
+        return { exit: 0, result: { task: T, epoch: E, step: row.step, state: row.state, repeat: true, redo }, reasons: [] };
       }
       const fenced = row.step === 'fenced' && (row.state === 'active' || row.state === 'parked');
       const committedBound = row.state === 'committed' && row.step === 'bound';
@@ -346,9 +394,7 @@ async function modeVerify(env, T, E) {
     );
   }
   if (row0.epoch !== E) throw tcbError('stale-epoch', 65, { expected: E, actual: row0.epoch });
-  if (row0.step === 'stopped') {
-    return { exit: 0, result: { task: T, epoch: E, step: 'stopped', state: row0.state, repeat: true }, reasons: [] };
-  }
+  if (row0.step === 'stopped') return await verifyRepeat(env, T, E, row0); // FX-REDO
   if (row0.step !== 'stop-requested') throw tcbError('wrong-step', 65, { state: row0.state, step: row0.step });
   const committed = row0.state === 'committed';
   const k = targetEpoch(row0);

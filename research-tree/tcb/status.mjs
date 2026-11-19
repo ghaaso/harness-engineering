@@ -317,7 +317,27 @@ async function applyReconcile(ctx, root, handle, pre, ce, facts, anomalies, dryT
       throw e;
     }
   }
+  await reconcileRedo(ctx, root, handle, ce, facts, dryTable, changes); // FX-REDO
   return changes;
+}
+
+// FX-REDO (FIX-fence section 5): the reconcile repeated at its exact post-state. A row at started
+// whose `started` line a death left missing gets it from the row (the attempt's session, the same
+// as the row's when that is set), marked `data.redo: true`, in this hold; rows this call moved are
+// skipped. A dry run lists it and writes nothing.
+async function reconcileRedo(ctx, root, handle, ce, facts, dryTable, changes) {
+  const table = dryTable ?? lib.readTasks(root);
+  const { lines } = lib.readLedger(root);
+  for (const row of table.tasks ?? []) {
+    if (row.state !== 'active' || row.step !== 'started') continue;
+    if (changes.some((c) => c.task === row.task && c.epoch === row.epoch)) continue;
+    const att = (row.attempts ?? []).find((a) => a && a.epoch === row.epoch);
+    const sid = att && typeof att.session === 'string' ? att.session : null;
+    if (!sid || (row.session && row.session !== sid)) continue;
+    if (lib.lastLine(lines ?? [], 'started', (l) => l.task === row.task && l.epoch === row.epoch)) continue;
+    if (handle) await lib.appendLedger(root, handle, { ctx, ce, kind: 'started', task: row.task, epoch: row.epoch, data: { session: sid, redo: true }, now: facts.now });
+    changes.push({ task: row.task, epoch: row.epoch, session: sid, step: 'started', redo: true });
+  }
 }
 
 function setSession(row, e, sid) {

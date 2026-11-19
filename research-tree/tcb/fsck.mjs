@@ -324,7 +324,42 @@ function checkUnlogged(objs, lines, table) {
     else if (p === 'x' && !certs.has(id)) anomalies.push({ code: 'object-unlogged', id });
     else if (p === 'm' && !manifests.has(id)) anomalies.push({ code: 'object-unlogged', id });
   }
-  return anomalies;
+  return [...anomalies, ...missingLines(lines, table)];
+}
+
+// FX-REDO (FIX-fence section 5): a row move whose ledger line is still missing (a death between the
+// row and its line, and no repeat since) is a warning, `ledger-line-missing` with id
+// `<task>-e<epoch>:<kind>`. What the row shows for good: a cut attempt E -> the fence to E+1; a
+// bound_at -> the bind; a confirmed stop of attempt k -> the confirmed stop line (epoch k+1, or k for
+// the last attempt of a committed row). What only the current step shows: admitted (with a
+// manifest) -> admit; active at started -> started; stop-requested -> stop-request.
+function missingLines(lines, table) {
+  const have = new Set();
+  for (const l of lines) {
+    if (!l || typeof l.task !== 'string' || !Number.isInteger(l.epoch)) continue;
+    if (l.kind === 'fence' && l.data && Number.isInteger(l.data.from)) have.add(`${l.task}|${l.epoch}|fence|${l.data.from}`);
+    else if (l.kind === 'stop') { if (l.data && l.data.confirmed === true) have.add(`${l.task}|${l.epoch}|stop`); }
+    else have.add(`${l.task}|${l.epoch}|${l.kind}`);
+  }
+  const out = [];
+  const need = (task, e, kind, key) => {
+    if (!have.has(key ?? `${task}|${e}|${kind}`)) out.push({ code: 'ledger-line-missing', id: `${task}-e${e}:${kind}` });
+  };
+  for (const row of table.tasks || []) {
+    if (!row || typeof row.task !== 'string') continue;
+    const T = row.task;
+    for (const a of row.attempts || []) {
+      if (!a || !Number.isInteger(a.epoch)) continue;
+      if (a.cut && typeof a.cut === 'object') need(T, a.epoch + 1, 'fence', `${T}|${a.epoch + 1}|fence|${a.epoch}`);
+      if (typeof a.bound_at === 'string') need(T, a.epoch, 'bind');
+      if (a.stop === 'confirmed') need(T, row.state === 'committed' && a.epoch === row.epoch ? a.epoch : a.epoch + 1, 'stop');
+    }
+    const cur = (row.attempts || []).find((a) => a && a.epoch === row.epoch);
+    if (row.step === 'admitted' && cur && cur.manifest) need(T, row.epoch, 'admit');
+    if (row.state === 'active' && row.step === 'started') need(T, row.epoch, 'started');
+    if (row.step === 'stop-requested') need(T, row.epoch, 'stop-request');
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------- check 7: tcb against the owner's commit
