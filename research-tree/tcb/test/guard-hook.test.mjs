@@ -1148,10 +1148,13 @@ test('G1 bind by nonce: the first binder at ce strict-creates coord-session-<ce>
       cgCall(w, 'wrong nonce', 'Bash', bind(`--root ${rootF} --ce 2 --nonce ${'cd'.repeat(16)}`), 'stale-coordinator', { session: NEW_SESSION }),
       cgCall(w, 'wrong ce', 'Bash', bind(`--root ${rootF} --ce 1 --nonce ${CG_NONCE}`), 'stale-coordinator', { session: NEW_SESSION }),
       cgCall(w, 'another root', 'Bash', bind(`--root C:/other --ce 2 --nonce ${CG_NONCE}`), 'stale-coordinator', { session: NEW_SESSION }),
-      cgCall(w, 'an extra flag', 'Bash', bind(`${good} --now x`), 'stale-coordinator', { session: NEW_SESSION }),
+      // FX-W1's allow list (step 6, exec) runs before stepBind and stepCurrentSession (FIX-JOIN 2b rows 1-2): a test
+      // seam or a mode the script lacks is bash-pattern there; an extra flag the bind form admits reaches stepBind
+      cgCall(w, 'an extra flag', 'Bash', bind(`${good} --now x`), 'bash-pattern', { session: NEW_SESSION }),
+      cgCall(w, 'an extra flag the bind form admits', 'Bash', bind(`${good} --dry-run`), 'stale-coordinator', { session: NEW_SESSION }),
       cgCall(w, 'the session bound at ce 1 with the right nonce', 'Bash', bind(good), 'stale-coordinator'),
       cgCall(w, 'a caller id that is not a UUID', 'Bash', bind(good), 'stale-coordinator', { session: 's-fixture' }),
-      cgCall(w, 'status.mjs with the bind flags', 'Bash', { command: `node tcb/status.mjs bind ${good}` }, 'stale-coordinator', { session: NEW_SESSION }),
+      cgCall(w, 'status.mjs with the bind flags', 'Bash', { command: `node tcb/status.mjs bind ${good}` }, 'bash-pattern', { session: NEW_SESSION }),
     ];
     assert.deepEqual(await runCases(w, before, 1), []);
     assert.equal(fs.existsSync(file), false, 'no call above may bind');
