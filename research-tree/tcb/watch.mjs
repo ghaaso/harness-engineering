@@ -990,8 +990,11 @@ async function runAlarm(ctx, root, flags) {
 // ---------------------------------------------------------------------------------------------
 // the round-3 steps of watch (S0.5; FIX-JOIN point 11): each is empty until its fix fills it.
 
-// FX-W3: the slot record's turn_seq_at_reg (turn.json's turn_seq), in the registration hold.
-function alarmSlotTurnSeq(reg) { // eslint-disable-line no-unused-vars
+// FX-W3 (the alarm's own record, step 1): the slot record's turn_seq_at_reg, turn.json's turn_seq as
+// ensureHold1 read it in this same registration hold (0 when turn.json is absent or unreadable).
+function alarmSlotTurnSeq(reg) {
+  reg.handle.assertHeld();
+  reg.slot.record = { ...reg.slot.record, turn_seq_at_reg: reg.turnSeq };
 }
 
 // FX-W2: the ensure's slot record run/arm/slot-<k>.json, in the registration hold: reg.slot.record
@@ -1135,8 +1138,22 @@ function alarmExit(reg, out) {
   return out;
 }
 
-// FX-W3: on exit 30, the unarmed record run/arm/unarmed-<pt>.json when turn.json's turn_seq has not moved.
-function alarmUnarmedRecord(reg) { // eslint-disable-line no-unused-vars
+// FX-W3 (the alarm's own record, step 2): on exit 30, before the exit marker and without a lock, read
+// turn.json's turn_seq; still the turn_seq_at_reg of this alarm's slot record means no reconcile ran
+// in a whole alarm period, so create run/arm/unarmed-<pt>.json {ce, turn_seq} (a strict create; FX-W4's
+// dead-man alerts on two of the current ce with one turn_seq). A failure costs one stderr line and
+// leaves the exit as it was, like the marker.
+function alarmUnarmedRecord(reg) {
+  try {
+    if (!reg.slot || !reg.slot.record) return;
+    const atReg = reg.slot.record.turn_seq_at_reg;
+    const now = turnSeqOf(reg.root);
+    if (!Number.isInteger(atReg) || now !== atReg) return;
+    const file = lib.paths(reg.root).armUnarmed(reg.self.pid, reg.self.start_time);
+    lib.createExclusive(file, JSON.stringify({ ce: reg.ce, turn_seq: now }) + '\n');
+  } catch (e) {
+    process.stderr.write(`watch --alarm: unarmed record not written: ${(e && (e.code || e.message)) || e}\n`);
+  }
 }
 
 // FX-W1: the exit marker run/arm/exited-<pt>.json {ce, exit, at}, a lock-free strict create.

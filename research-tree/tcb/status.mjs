@@ -944,26 +944,38 @@ async function runEndturn(ctx, root, flags, dry) {
   const facts = lib.edgeFacts(flags);
   const proc = lib.realProc({ exe: th.get('proc_exe') });
 
+  // Step 1 (FX-W3 A3: K is the turn's read_seq, with the ce checked; FIX-JOIN part 2b row 9), under the
+  // lock: run/turn.json must be of this ce (absent, corrupt or of another ce: exit 1 turn-stale, nothing
+  // written: no reconcile of this ce showed a status to acknowledge). K above the ledger head, or above
+  // turn.json's read_seq (the head the turn's status showed), is acked-ahead; K below the stored
+  // acked_seq is acked-backwards; otherwise acked.json (the M1 arm token). The turn is spent in every
+  // case once turn.json is of this ce (arm 'spent'): between turns nothing is armed (FIX-JOIN point 10),
+  // and a second endturn with the same K is accepted.
   const step1 = (handle) => {
     const { lines } = lib.readLedger(root);
     const head = lines.length ? lines[lines.length - 1].seq : 0;
     const acked = readState(fileOf(root, 'acked'), 'acked.json');
     const stored = acked && Number.isInteger(acked.acked_seq) ? acked.acked_seq : 0;
-    if (K > head) return { exit: 1, code: 'acked-ahead', detail: { acked_seq: K, head } };
-    if (K < stored) return { exit: 1, code: 'acked-backwards', detail: { acked_seq: K, stored } };
+    const turn = readTurn(root);
+    if (!turn || turn.ce !== ce) return { exit: 1, code: 'turn-stale', detail: { ce, turn_ce: turn ? turn.ce : null } };
+    const readSeq = Number.isInteger(turn.read_seq) ? turn.read_seq : null;
+    let refusal = null;
+    if (K > head) refusal = { exit: 1, code: 'acked-ahead', detail: { acked_seq: K, head } };
+    else if (readSeq === null || K > readSeq) refusal = { exit: 1, code: 'acked-ahead', detail: { acked_seq: K, read_seq: readSeq } };
+    else if (K < stored) refusal = { exit: 1, code: 'acked-backwards', detail: { acked_seq: K, stored } };
     if (handle) {
       handle.assertHeld();
-      lib.writeAtomic(fileOf(root, 'acked'), serialize({ schema_version: 1, ce, acked_seq: K, at: isoOf(facts.now) }));
+      if (turn.arm !== 'spent') lib.writeAtomic(lib.paths(root).turn, serialize({ ...turn, arm: 'spent' }));
+      if (!refusal) lib.writeAtomic(fileOf(root, 'acked'), serialize({ schema_version: 1, ce, acked_seq: K, at: isoOf(facts.now) }));
     }
-    return null;
+    return refusal;
   };
 
   let refusal = null;
   if (dry) refusal = step1(null);
   else await lib.withRunLock(root, lockOpts(th, ce, proc, facts.now), async (handle) => { refusal = step1(handle); });
-  if (refusal) {
-    return { exit: 1, result: { acked_seq: null, written: false }, reasons: [{ code: refusal.code, detail: refusal.detail }] };
-  }
+  // A refusal of step 1 still gets step 2's report (FX-W3, N2): endturn is every turn's last call, and
+  // its report of a dead source is what the coordinator acts on once before it ends the turn.
 
   // Step 2 (FX-W1 step 3): the two wake sources, each alive, dead or unknown; checked, never started
   // or killed. The records are read first (corrupt counts as absent, not 67), then the process list
@@ -985,16 +997,16 @@ async function runEndturn(ctx, root, flags, dry) {
     watcher: wFiles ? lib.liveness(watcher, listProc(procList), markers) : 'dead',
     alarm: aFiles ? lib.liveness(alarm, listProc(procList), markers) : 'dead',
   };
-  const result = { acked_seq: K, written: !dry, watcher: sources.watcher === 'alive', alarm: sources.alarm === 'alive', sources };
+  const result = { acked_seq: refusal ? null : K, written: !dry && !refusal, watcher: sources.watcher === 'alive', alarm: sources.alarm === 'alive', sources };
   const missing = (rec) => ({ ce: rec && typeof rec === 'object' ? rec.ce ?? null : null, pid: rec && typeof rec === 'object' ? rec.pid ?? null : null, state: 'dead' });
-  const reasons = [];
+  const reasons = refusal ? [{ code: refusal.code, detail: refusal.detail }] : [];
   if (sources.watcher === 'dead') reasons.push({ code: 'watcher-missing', detail: missing(watcher) });
   if (sources.alarm === 'dead') reasons.push({ code: 'alarm-missing', detail: missing(alarm) });
   const unknown = ['watcher', 'alarm'].filter((k) => sources[k] === 'unknown');
   // exit 1 when any source is dead; 2 only when none is dead and some is unknown; else 0.
   if (unknown.length) reasons.push({ code: 'proc-unavailable', detail: { unknown } });
   const anyDead = sources.watcher === 'dead' || sources.alarm === 'dead';
-  return { exit: anyDead ? 1 : unknown.length ? 2 : 0, result, reasons };
+  return { exit: refusal || anyDead ? 1 : unknown.length ? 2 : 0, result, reasons };
 }
 
 // ---------------------------------------------------------------- intent, owner, meter
