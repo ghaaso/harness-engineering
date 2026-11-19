@@ -225,3 +225,12 @@ a real session's transcript `cwd` equals the folder named in `bind` (item 7).
 - `modeFence`'s hold, in order (FIX-JOIN point 11): `fenceOutcomeSteps(env, handle, hold)` (FX-OUT steps
   1-5) before the M6 block; `fenceTombstone(env, handle, hold)` (FX-CLAIM) after it; then `lib.fence`,
   unchanged. `hold` = {task, epoch, reason, failure, row, att, dir, cut, readyCheck}.
+
+## FX-REDO: a missing ledger line after a death (FIX-fence section 5)
+
+The row is written before its line, so a death between the two leaves the row moved and the line missing. The mode's own repeat is the redo, from the row (the after-image): only at the exact post-state, inside the mode's hold, the missing line is appended with `data.redo: true` and the answer is exit 0 with `result.repeat` true and `result.redo` (true when a line was written; a dry run writes nothing). Elsewhere the old answer stands.
+
+- `fence --epoch E --reason r`: post-state row at E+1, step `fenced`, `reason` r, `attempts[E].cut` set; the `fence` line (epoch E+1, `from` E) is rebuilt from the row (`host` from `fails`, `restart_charged`, `limit`, `cut_files`). Checked first in the hold, before every refusal; any later step keeps 65, so a late repeat is never read as a fresh fence. Two identical fences at once: the second answers 0 `repeat`.
+- `start`: post-state admitted at E with a manifest; the `admit` line (`reservation`, `live`, `free_mb` null).
+- `bind`: post-state bound with the same session; the `bind` line (`boot` from the attempt).
+- Test: `tcb/test/redo.test.mjs` (the death made through the fs seam).

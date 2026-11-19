@@ -345,7 +345,15 @@ empty step returns its neutral value, so behaviour is unchanged (FIX-JOIN point 
   an unreadable lock does not pass there (LR-4 kept). Test W7a: a busy run lock → `lock-busy` 75 and
   both locks untouched; a holder that writes `watcher.json` during its judgement → not broken, the run
   lock taken and released; run lock free and `watcher.json` unchanged → broken under the run lock.
-- `parseTranscript`: the result's non-enumerable `kind` is `transcriptKind(res)`, null: FX-W6.
+- `parseTranscript` (FX-W6): option `tail` and the result's non-enumerable `tail` and `kind`. The tail
+  state `{n, last, msg, pending, bg}` (lib.mjs `tailState`) is moved only by `assistant` and `user`
+  records; attachment and the 24 skipped types of `TRANSCRIPT_RECORD_TYPES` (and unknown types) are
+  neutral, not unreadable; an attachment's `queued_command` prompt is read for task notifications.
+  `transcriptKind`: nothing read → `model`; a pending tool use of the last call → `tool`; the turn ended
+  (a stop_reason other than null, tool_use, pause_turn; or an interrupt notice) → `bg-wait` while a
+  background task (toolUseResult `backgroundTaskId`, `taskId`, or `isAsync` with `agentId`) has no
+  task notification and no TaskStop/KillShell/KillBash naming it, else `idle`; else → `model`. Tested
+  in `tcb/test/watch.test.mjs` (W6a).
   `TRANSCRIPT_KINDS` = tool, bg-wait, model, idle; `TRANSCRIPT_RECORD_TYPES` = the 27 record types
   measured in `build/facts/WH5-Wturn.md`.
 - `slotCount(rows, procList, transcriptsRoot, {root} = {})`: `{root}` is part of the signature; FX-CLAIM's

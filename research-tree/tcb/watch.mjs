@@ -213,9 +213,15 @@ function advanceFile(abs, prev) {
     return { ps: prev ?? freshParseState(), newCalls: 0, missing: true };
   }
   let ps = prev ? { ...prev, loop: { ...(prev.loop ?? { sig: null, run: 0 }) } } : freshParseState();
-  if (size < num(ps.end_byte)) ps = freshParseState();
-  if (size === num(ps.end_byte) && ps.end_byte > 0) return { ps, newCalls: 0 };
-  const parsed = lib.parseTranscript(abs, { fromByte: num(ps.end_byte), lastCall: ps.last_call ?? null });
+  const shrunk = size < num(ps.end_byte);
+  if (shrunk) ps = freshParseState();
+  if (size === num(ps.end_byte) && ps.end_byte > 0) return { ps, newCalls: 0, moved: false };
+  // FX-W6: the tail state continues from the stored one; `moved` = a new conversation record (or a re-parse).
+  const prevN = ps.tail && Number.isInteger(ps.tail.n) ? ps.tail.n : 0;
+  const parsed = lib.parseTranscript(abs, { fromByte: num(ps.end_byte), lastCall: ps.last_call ?? null, tail: ps.tail ?? null });
+  const moved = shrunk || parsed.reset === true || (parsed.tail ? parsed.tail.n : 0) > prevN;
+  ps.tail = parsed.tail ?? null;
+  ps.kind = parsed.kind ?? null;
   let newCalls = 0;
   for (const c of parsed.calls ?? []) {
     const u = usageOf(c.usage);
@@ -239,7 +245,7 @@ function advanceFile(abs, prev) {
     else ps.loop = { sig: lr.sig ?? null, run: num(lr.run) };
   }
   if (Number.isInteger(parsed.endByte) && parsed.endByte >= 0) ps.end_byte = parsed.endByte;
-  return { ps, newCalls };
+  return { ps, newCalls, moved };
 }
 
 function spendOfState(ps) {
@@ -303,7 +309,35 @@ function freshTaskState(epoch) {
   return {
     epoch, calls: 0, stall_calls: 0, hang_ticks: 0, V: null, V_min: null, loop: { sig: null, run: 0 },
     spend: 0, window: null, zombie_tokens: 0, files: {},
+    kind: null, deadline: null, age_ticks: 0, age_base: 0, // FX-W6
   };
+}
+
+// FX-W6 steps 1-3 and 5's count. `hang_ticks` counts the counted, unpaused ticks since the attempt's
+// last new conversation record in any of its transcripts (an operation's start), so a new record of
+// any kind restarts it; the first tick of an epoch counts nothing (not ticks_total, FIX-JOIN 2c).
+// The kind is the main transcript's tail; one that cannot be read counts as `model`. `age_ticks`
+// counts the counted ticks at step bound (a paused tick too, M5).
+function opCount(env, ts, row, { fresh, moved, counted, paused, kind, tail }) {
+  ts.kind = lib.TRANSCRIPT_KINDS.includes(kind) ? kind : 'model';
+  if (fresh) { /* step 1: nothing is counted */ } else if (moved) ts.hang_ticks = 0;
+  else if (counted && !paused) ts.hang_ticks = num(ts.hang_ticks) + 1;
+  if (!fresh && counted && row.step === 'bound') ts.age_ticks = num(ts.age_ticks) + 1;
+  ts.deadline = kindDeadline(ts.kind, tail, env.th, env.delta);
+}
+
+// The deadline in counted ticks (branch B1, marked guesses): tool = the largest declared timeout of
+// its pending tool uses in ticks of delta + tool_slack_ticks; bg-wait = bg_wait_ticks; model =
+// model_ticks; idle = none (never a charged hang, step 4).
+function kindDeadline(kind, tail, th, delta) {
+  if (kind === 'idle') return null;
+  if (kind === 'bg-wait') return th.get('bg_wait_ticks');
+  if (kind === 'tool') {
+    const ms = Math.max(0, ...Object.values((tail && tail.pending) || {}).filter((v) => typeof v === 'number' && Number.isFinite(v)));
+    const d = Number.isFinite(delta) && delta > 0 ? delta : th.get('delta_ms');
+    return Math.ceil(ms / d) + th.get('tool_slack_ticks');
+  }
+  return th.get('model_ticks');
 }
 
 function loadWatcherState(root) {
@@ -413,7 +447,6 @@ async function evaluate(env, state, facts, counted) {
   const activeRows = (table.tasks ?? []).filter((r) => r.state === 'active' && (r.step === 'started' || r.step === 'bound'));
   const f5Given = th.get('f5_given') === true;
   const stallMax = th.get('stall_calls');
-  const hangMax = th.get('hang_ticks');
   const loopK = th.get('loop_k');
   const softFrac = th.get('soft_frac');
   const hardFrac = th.get('hard_frac');
@@ -441,9 +474,12 @@ async function evaluate(env, state, facts, counted) {
     const set = transcriptSet(root, tr, row, att);
     const files = {};
     let mainState = null;
+    let moved = false; // FX-W6: a new conversation record in any transcript of the attempt
     for (const abs of [set.main, ...set.helpers].filter(Boolean)) {
       const rel = lib.relPosix(tr, abs);
-      const { ps } = advanceFile(abs, ts.files[rel]);
+      const adv = advanceFile(abs, ts.files[rel]);
+      const { ps } = adv;
+      if (adv.moved) moved = true;
       files[rel] = ps;
       if (abs === set.main) mainState = ps;
     }
@@ -479,8 +515,7 @@ async function evaluate(env, state, facts, counted) {
         ts.stall_calls = num(ts.stall_calls) + newCalls;
       }
     }
-    if (newCalls > 0) ts.hang_ticks = 0;
-    else if (counted && !paused) ts.hang_ticks = num(ts.hang_ticks) + 1;
+    opCount(env, ts, row, { fresh, moved: moved || newCalls > 0, counted, paused, kind: mainState ? mainState.kind : null, tail: mainState ? mainState.tail : null });
 
     const ready = readReady(root, row, e);
     let readyCls = null;
@@ -501,7 +536,7 @@ async function evaluate(env, state, facts, counted) {
     else {
       // A READY of this epoch voids stall, hang and loop (R5, finding A4).
       if (V !== null && ts.stall_calls >= stallMax) conds.push({ ...base, cls: 20, detail: { stall_calls: ts.stall_calls, V, V_min: ts.V_min } });
-      if (ts.hang_ticks >= hangMax) conds.push({ ...base, cls: 21, detail: { hang_ticks: ts.hang_ticks } });
+      if (ts.deadline !== null && ts.hang_ticks >= ts.deadline) conds.push({ ...base, cls: 21, detail: { hang_ticks: ts.hang_ticks, kind: ts.kind, deadline: ts.deadline } });
       if (num(ts.loop.run) >= loopK) conds.push({ ...base, cls: 22, detail: { sig: ts.loop.sig, run: ts.loop.run } });
     }
     const eTask = num(row.e_task);
@@ -645,7 +680,7 @@ async function evaluate(env, state, facts, counted) {
     rowActs += 1;
     conds.push({ cls: 17, task: row.task, epoch: row.epoch, act, detail: { act } });
   }
-  actDueIdleAgeCap(env, state, conds, { rows, tick });
+  actDueIdleAgeCap(env, state, conds, { rows, tick, lines, ackedSeq });
   if (runFlags.draining === true && used === 0) conds.push({ cls: 17, act: 'handover', detail: { act: 'handover' } });
   if (rows.length > 0 && rowActs === 0 && rows.every((r) => TERMINAL.has(r.state))) {
     conds.push({ cls: 17, act: 'run-terminal', detail: { act: 'run-terminal' } });
@@ -936,8 +971,37 @@ function alarmExitMarker(reg, exit) { // eslint-disable-line no-unused-vars
 }
 
 // FX-W6: the act-due `idle-child` (idle_ticks) and `age-cap` (attempt_max_ticks) for the coordinator,
-// added to the act-due set after the row acts; they are not row acts.
-function actDueIdleAgeCap(env, state, conds, { rows, tick }) { // eslint-disable-line no-unused-vars
+// added to the act-due set after the row acts; they are not row acts. Both are uncharged and fence
+// nothing. idle-child: the main transcript's kind is `idle` for idle_ticks counted ticks (step 4).
+// age-cap: age_ticks - age_base >= attempt_max_ticks (step 5); the coordinator's acknowledgement of
+// its event line (seq <= acked_seq, the endturn) lets the attempt continue and re-arms the cap
+// (age_base = age_ticks). A READY of the current epoch (class 11 or 12) voids both, as it voids hang.
+function actDueIdleAgeCap(env, state, conds, { rows, lines = [], ackedSeq = 0 }) {
+  let idleMax;
+  let ageMax;
+  for (const row of rows) {
+    if (row.state !== 'active' || (row.step !== 'started' && row.step !== 'bound')) continue;
+    const ts = state.tasks[row.task];
+    const e = row.epoch;
+    if (!ts || ts.epoch !== e) continue;
+    if (conds.some((c) => (c.cls === 11 || c.cls === 12) && c.task === row.task && c.epoch === e)) continue;
+    idleMax ??= env.th.get('idle_ticks');
+    ageMax ??= env.th.get('attempt_max_ticks');
+    const base = { cls: 17, task: row.task, epoch: e };
+    if (ts.kind === 'idle' && num(ts.hang_ticks) >= idleMax) {
+      conds.push({ ...base, act: 'idle-child', detail: { act: 'idle-child', idle_ticks: ts.hang_ticks } });
+    }
+    const ident = `17|${row.task}:age-cap|${e}`;
+    const key = Object.keys(state.active ?? {}).find((k) => k.slice(0, k.lastIndexOf('|')) === ident);
+    if (key) {
+      let seq;
+      for (const l of lines) if (l.kind === 'event' && l.data && l.data.key === key) seq = l.seq;
+      if (Number.isInteger(seq) && seq <= ackedSeq) ts.age_base = num(ts.age_ticks);
+    }
+    if (num(ts.age_ticks) - num(ts.age_base) >= ageMax) {
+      conds.push({ ...base, act: 'age-cap', detail: { act: 'age-cap', age_ticks: ts.age_ticks, attempt_max_ticks: ageMax } });
+    }
+  }
 }
 
 // FX-W5: the re-raise of an act still due at the capped interval and its `stuck` count (stuck_raises),

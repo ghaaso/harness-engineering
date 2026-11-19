@@ -3145,7 +3145,7 @@ test('S0.5 round-3 skeleton: threshold keys marked guesses, stub signatures, not
     fs.writeFileSync(f, JSON.stringify({ type: 'user', message: { content: 'hi' } }) + '\n');
     const res = lib.parseTranscript(f);
     const d = Object.getOwnPropertyDescriptor(res, 'kind');
-    assert.ok(d && d.enumerable === false && d.value === null, 'kind: non-enumerable, null until FX-W6');
+    assert.ok(d && d.enumerable === false && d.value === 'model', 'kind: non-enumerable; a prompt awaiting the model (FX-W6)');
     assert.ok(!('kind' in JSON.parse(JSON.stringify(res))));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
