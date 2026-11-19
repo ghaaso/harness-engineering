@@ -638,9 +638,9 @@ function stepClaim(pass) {
 // FX-W1 step 5 (rev 4; FIX-wake.md FX-W1): the coordinator's production calls, per script, as forms
 // [mode (null: none), required flags, other allowed flags], from each spec's "## Command line" with
 // the round-3 forms added (handover bind --nonce, replace fence --if-unclaimed, watch --alarm
-// --ensure --nonce, status --reconcile --arm-nonces, status --deadman). Departure W1-2: the alarm
-// form also admits a bare --alarm (as built, M2) until FX-W2 makes --ensure required. A script
-// with no form (the hook itself) is refused.
+// --ensure --nonce, status --reconcile --arm-nonces, status --deadman). FX-W2: the alarm form needs
+// --ensure and --nonce (watch.mjs refuses a bare --alarm; departure W1-2 closed). A script with no
+// form (the hook itself) is refused.
 const RC = ['root', 'ce'];
 export const EXEC_FORMS = Object.freeze({
   admit: [['check', [], ['root', 'task']]],
@@ -692,7 +692,7 @@ export const EXEC_FORMS = Object.freeze({
   ],
   stop: [['request', [], [...RC, 'task', 'epoch', 'dry-run']], ['verify', [], [...RC, 'task', 'epoch', 'dry-run']]],
   tms: [[null, [], [...RC, 'target', 'dry-run']]],
-  watch: [[null, [], [...RC]], [null, ['alarm'], [...RC, 'ensure', 'nonce']], [null, ['intake'], [...RC]]],
+  watch: [[null, [], [...RC]], [null, ['alarm', 'ensure', 'nonce'], [...RC]], [null, ['intake'], [...RC]]],
   witness: [[null, [], [...RC, 'card', 'dry-run']]],
 });
 // The test seams, refused for every script: the eight of FX-W1 step 5, and rng-seed and

@@ -1591,7 +1591,6 @@ test('FX-W1 allow list: production forms allowed, test seams refused for every s
     `tms.mjs ${R} --target f1-plan.s1 --target f1-plan.s2 --dry-run`,
     `watch.mjs ${R}`,
     `watch.mjs --alarm --ensure --nonce ${'d'.repeat(32)} ${R}`,
-    `watch.mjs --alarm ${R}`,
     `watch.mjs --intake ${R}`,
     `witness.mjs ${R} --card c_0123456789abcdef --dry-run`,
     `status.mjs --root=C:/r --ce=1`,
@@ -1625,6 +1624,9 @@ test('FX-W1 allow list: production forms allowed, test seams refused for every s
     }
     // a flag that belongs to another mode's form
     want(`node tcb/watch.mjs --ensure --nonce ${'d'.repeat(32)} ${R}`, false, 'flag not allowed: watch without --alarm');
+    // FX-W2: an alarm starts only as the ensure; the bare --alarm form is gone (departure W1-2 closed)
+    want(`node tcb/watch.mjs --alarm ${R}`, false, 'flag not allowed: watch without --ensure');
+    want(`node tcb/watch.mjs --alarm --ensure ${R}`, false, 'flag not allowed: watch without --nonce');
     want(`node tcb/status.mjs --arm-nonces ${'c'.repeat(32)} ${R}`, false, 'flag not allowed: status without --reconcile');
     want(`node tcb/status.mjs --reconcile --endturn --acked-seq 1 ${R}`, false, 'flag not allowed: status');
     want(`node tcb/watch.mjs --alarm --intake ${R}`, false, 'flag not allowed: watch');
