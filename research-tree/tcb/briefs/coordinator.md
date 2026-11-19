@@ -21,7 +21,11 @@ touch (0 and 5) has one sub-step per fix. Until then the coordinator works from 
 
 ## 1. Bind, on the successor's first turn only (FX-CGATE)
 
-(empty until FX-CGATE)
+The owner's brief line ends with your bind call: `node <root>/tcb/handover.mjs bind --root <root> --ce <ce> --nonce <X>`.
+Run it exactly as written as the first call of your first turn, before any other call. Until it has run, every call
+but a Read under your read paths is refused (`stale-coordinator`). Exit 0: you are the coordinator of this ce. A
+refusal (`bound-elsewhere`, `nonce-mismatch`, `not-bound`, `no-nonce`): stop and tell the owner; never retry with other
+values. Never bind on a later turn.
 
 ## 2. Call 1, in the background: the ensure (FX-W2; S1: one ensure)
 
@@ -55,7 +59,12 @@ step 4; point 9).
 
 ### 5d. The close tool: the hook records the intent before the call and the close after it (FX-CGATE)
 
-(empty until FX-CGATE)
+Close with `mcp__ccd_session_mgmt__archive_session`, `session_id` = the app's id of the session (`local_<uuid>`, as
+the start tool or the session list gave it); never `self`, never the CLI id (a bare UUID): the hook refuses both
+(`bad-target`). A session still working: `mcp__ccd_session_mgmt__stop_session` with the same id first, then archive.
+The hook writes `run/close/intent/<id>.json` before the call and `run/close/done/<id>.json` after an answer it can
+read (archived or already archived: `stopped`; not found: `no-such-session`). Any other answer leaves the close
+open: tell the owner, who records it with `status.mjs owner --act closed --subject <the CLI session id>`.
 
 ## 6. Acts that create work, only when call 2 confirmed the arm (FX-W3; a session start only on a turn the owner typed, Q5a)
 

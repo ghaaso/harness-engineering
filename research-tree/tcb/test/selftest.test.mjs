@@ -240,6 +240,8 @@ function makeRoot({ fixtures = true, canary = false, extra = [] } = {}) {
   for (const s of SCRIPTS) fs.writeFileSync(R.p('tcb', s + '.mjs'), STUB.replace('__SCRIPT__', s));
   fs.writeFileSync(R.p('run', 'coord.json'), JSON.stringify({ schema_version: 1, ce: 1, started_at: NOW, tcb_commit: '0'.repeat(40) }));
   fs.writeFileSync(R.p('run', 'tasks.json'), JSON.stringify({ schema_version: 1, rev: 0, tasks: [] }));
+  // FX-CGATE: the folders of the hook's close records (handover init makes them; static check close-folders)
+  for (const d of ['intent', 'done']) fs.mkdirSync(R.p('run', 'close', d), { recursive: true });
   if (fixtures) defaultFixtures(R, extra);
   if (canary) {
     fs.mkdirSync(R.p('tcb', 'fixtures', 'selftest'), { recursive: true });
@@ -811,6 +813,17 @@ test('T11 allow_loopback true in the live thresholds is loopback-on; a profile w
     const r = await runSt(R, 'run');
     assertLine(r, { exit: 1, mode: 'run' });
     assert.ok(reasonCodes(r).includes('role-files'), `reasons: ${JSON.stringify(r.json.reasons)}`);
+  });
+  // FX-CGATE: run/close/done that is not a folder fails close-folders, and no case runs
+  await withRoot({}, async (R) => {
+    fs.rmSync(R.p('run', 'close', 'done'), { recursive: true });
+    fs.writeFileSync(R.p('run', 'close', 'done'), 'x');
+    const r = await runSt(R, 'run');
+    assertLine(r, { exit: 1, mode: 'run' });
+    const cf = (r.json.reasons || []).find((x) => x.code === 'close-folders');
+    assert.ok(cf && JSON.stringify(cf.detail).includes('run/close/done/: not a folder'), `reasons: ${JSON.stringify(r.json.reasons)}`);
+    assert.ok(!JSON.stringify(cf.detail).includes('run/close/intent/'), 'only done fails');
+    assert.deepEqual(ran(R), [], 'no case runs after a failed check');
   });
 });
 
