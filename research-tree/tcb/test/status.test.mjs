@@ -879,6 +879,33 @@ test('FX-W2 reconcile confirms the arm only by a live slot of this ce: none, a d
   });
 });
 
+// FX-W2: each --arm-nonces value becomes a file name, run/arm/<nonce>.json (path.join keeps `..`); the hook checks no
+// value, so this check is the only guard on those names (W2's blind review, mutation row 17).
+test('FX-W2 --arm-nonces refuses a value holding .. or a path separator: exit 66 usage before any write, also when one value of the list is bad', async () => {
+  await withRoot({}, async (ctx) => {
+    meterLine(ctx.root);
+    const ok = crypto.randomBytes(16).toString('hex');
+    const bad = ['..', '../x', '..\\x', 'a/b', 'a\\b', `/${ok}`, `../../${ok}`, `..\\..\\${ok}`,
+      `${'0'.repeat(30)}..`, `${'0'.repeat(31)}/`, `${'0'.repeat(31)}\\`, `${ok},../${ok}`, `${ok},${'0'.repeat(30)}..`];
+    const read = (f) => (fs.existsSync(f) ? fs.readFileSync(f) : null);
+    const armDir = path.join(ctx.root, 'run', 'arm');
+    const snap = () => ({ status: read(statusPath(ctx)), turn: read(turnPath(ctx)), arm: fs.existsSync(armDir) ? fs.readdirSync(armDir).sort() : [] });
+    const was = snap();
+    const lines = ledgerLines(ctx.root).length;
+    for (const v of bad) {
+      const j = assertLine(reconcile(ctx, ['--arm-nonces', v]), 66);
+      assert.ok(j.reasons.some((r) => r.code === 'usage' && r.detail && r.detail.flag === 'arm-nonces' && /hex/.test(String(r.detail.expect))),
+        `the value check refuses ${JSON.stringify(v)}`);
+      assert.deepEqual(snap(), was, `nothing written for ${JSON.stringify(v)}`);
+    }
+    assert.deepEqual(was.arm, [], 'no nonce file was made');
+    for (const f of [path.join(ctx.root, 'x.json'), path.join(ctx.root, 'run', 'x.json'), path.join(ctx.root, `${ok}.json`), path.join(ctx.root, 'run', `${ok}.json`)]) {
+      assert.ok(!fs.existsSync(f), `${f} not written`);
+    }
+    assert.equal(ledgerLines(ctx.root).length, lines, 'no line appended');
+  });
+});
+
 test('M1 endturn re-arms a live alarm by writing the token (acked.json); alarm.json untouched, the alarm alive', async () => {
   await withRoot({}, async (ctx) => {
     meterLine(ctx.root);

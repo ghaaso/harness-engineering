@@ -1807,3 +1807,39 @@ test('FX-W2 the confirm deadline: shipped arm_confirm_ms covers query, lock wait
     assert.deepEqual([...LIB.exitMarkers(ctx.root)], [], 'never registered: no exit marker');
   });
 });
+
+// FX-W2, the coordinator's order (brief places 2 and 3; from W2's blind review): the ensure in the background
+// and reconcile at once; the run lock held so that reconcile's r1 reads the slot before the ensure can register.
+test('FX-W2 the coordinator\'s order: an ensure that registers after reconcile r1 has read the slot confirms the arm in that reconcile', async () => {
+  await withRoot({}, async (ctx) => {
+    const dead = deadRecord();
+    w(slotFile(ctx), { ce: 1, pid: dead.pid, start_time: dead.start_time, nonce: newNonce() });
+    const before = fs.readFileSync(slotFile(ctx));
+    const lockFile = path.join(ctx.root, 'run', 'run.lock');
+    w(lockFile, JSON.stringify(lockRec({ pid: process.pid, start_time: psStart(process.pid) })));
+    const x = newNonce();
+    let e = null;
+    let rc = null;
+    try {
+      e = startScript(ctx.root, 'watch', alarmArgs(ctx, 60000, 1, x));
+      await waitFor(() => fs.existsSync(nonceFile(ctx, x)));
+      rc = startScript(ctx.root, 'status', ['--reconcile', '--root', ctx.root, '--ce', '1', '--now', NOW, '--free-mb', '100000', '--arm-nonces', x]);
+      await sleep(6000);
+      assert.ok(before.equals(fs.readFileSync(slotFile(ctx))), 'nothing registered while the lock is held');
+      assert.equal(J(nonceFile(ctx, x)).state, 'started');
+    } finally {
+      fs.rmSync(lockFile, { force: true });
+    }
+    try {
+      const j = assertLine(await rc.done, 0, 'status');
+      assert.equal(j.result.arm, 'confirmed');
+      assert.equal(j.result.slots.length, 1);
+      assert.equal(j.result.slots[0].pid, e.child.pid);
+      assert.equal(J(nonceFile(ctx, x)).state, 'registered');
+      assert.equal(J(path.join(ctx.root, 'run', 'turn.json')).arm, 'confirmed');
+    } finally {
+      e.child.kill();
+      await e.done;
+    }
+  });
+});
