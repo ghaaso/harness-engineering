@@ -3,7 +3,9 @@
 // Speaks the harness's PreToolUse hook protocol, not CONTRACT §1.3: exit 0 with an empty stdout is
 // "no objection", exit 2 with one stderr line `[guard-hook] deny <code>: <detail>` is a deny. Every
 // failure of its own (usage, unreadable files, an exception, its deadline) is a deny, because any
-// other exit code lets the call through. It reads files only and writes nothing (CONTRACT §8.20).
+// other exit code lets the call through. It takes no lock and writes only through `hookCreate`: a
+// strict exclusive create inside the time left until its deadline (CONTRACT §8.20, FIX-fence §0b).
+// No step writes yet: the writes come with FX-OUT, FX-CLAIM and FX-CGATE.
 //
 // Exports `decide(input, args, io)`; importing the module has no side effect (the library is loaded
 // with a guarded dynamic import so that a broken lib.mjs is a deny, never a crash with exit 1).
@@ -352,14 +354,62 @@ function checkTcbNode(command, cwd, root, io) {
   return null;
 }
 
-function defaultIo() {
+// 0b(c): the time the hook's own work may still take. As a process the hook counts from its own
+// start (performance.now() is the time since the process began) to `hook_deadline_ms`, which main()
+// reads; in-process (an import: the tests) a call counts from its own start to the fallback deadline.
+let processDeadlineMs = null;
+function budgetClock(callStart) {
+  if (processDeadlineMs !== null) {
+    const d = processDeadlineMs;
+    return () => d - performance.now();
+  }
+  return () => FALLBACK_DEADLINE_MS - (performance.now() - callStart);
+}
+
+function defaultIo(clock) {
   return {
     readJson: (p) => lib.readJson(p),
     readJsonl: (p) => lib.readJsonl(p),
     readTasks: (root) => lib.readTasks(root),
     exists: (p) => fs.existsSync(p),
     thresholds: (root) => lib.thresholds(root),
+    create: (p, data, opts) => lib.createExclusive(p, data, opts),
+    budgetMs: clock,
   };
+}
+
+// Pick each function by name: a caller's io may be a Proxy or a function whose keys do not spread.
+function buildIo(io, callStart) {
+  const base = defaultIo(budgetClock(callStart));
+  const given = io !== null && (typeof io === 'object' || typeof io === 'function') ? io : null;
+  const fullIo = {};
+  for (const k of Object.keys(base)) {
+    const f = given ? given[k] : undefined;
+    fullIo[k] = typeof f === 'function' ? (...xs) => f.apply(given, xs) : base[k];
+  }
+  return fullIo;
+}
+
+// 0b: the hook's one way to write. A strict exclusive create (no fallback, no folder made) inside the
+// time left until its deadline; never a lock, and the caller names a file no script writes. Returns
+// 'created' | 'identical' | 'different' (another writer's bytes hold the name; the caller reads them).
+// Every failure is a deny, and a denied write has made nothing at the name: `budget-spent` (the time
+// ran out before or during the create), `no-parent`, `no-hardlink`, `write-failed` (any other error).
+function hookCreate(io, file, data) {
+  const left = io.budgetMs();
+  if (typeof left !== 'number' || !(left > 0)) throw new Deny('budget-spent', `${file}: no time left`);
+  let r;
+  try {
+    r = io.create(file, data, { strict: true, budget: left });
+  } catch (e) {
+    if (isTcbError(e)) {
+      if (e.code === 'exists-different') return 'different';
+      throw new Deny(e.code, `${file}: ${JSON.stringify(e.detail ?? null)}`);
+    }
+    throw new Deny('write-failed', `${file}: ${errText(e)}`);
+  }
+  if (r !== 'created' && r !== 'identical') throw new Deny('internal', `create gave ${oneLine(r)}`);
+  return r;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -535,25 +585,36 @@ function decideInner(input, args, io) {
  * Decide one hook call.
  * @param input the hook's stdin: the parsed object, or its raw text / Buffer
  * @param args {root, role, task?, epoch?} or the argv array (`--root ... --role ...`)
- * @param io optional file readers {readJson, readJsonl, readTasks, exists, thresholds}; missing ones default to lib
+ * @param io optional {readJson, readJsonl, readTasks, exists, thresholds, create, budgetMs}; missing ones default to lib
+ *   and to the hook's clock (0b)
  * @returns {{allow: boolean, decision: 'allow'|'deny', exit: 0|2, code: string|null, detail: string}}
  */
 export function decide(input, args, io) {
+  const callStart = performance.now();
   try {
     if (!lib) throw new Deny('internal', `lib.mjs not loaded: ${errText(libError)}`);
-    // Pick each reader by name: a caller's io may be a Proxy or a function whose keys do not spread.
-    const base = defaultIo();
-    const given = io !== null && (typeof io === 'object' || typeof io === 'function') ? io : null;
-    const fullIo = {};
-    for (const k of Object.keys(base)) {
-      const f = given ? given[k] : undefined;
-      fullIo[k] = typeof f === 'function' ? (...xs) => f.apply(given, xs) : base[k];
-    }
-    decideInner(input, args, fullIo);
+    decideInner(input, args, buildIo(io, callStart));
     return { allow: true, decision: 'allow', exit: 0, code: null, detail: '' };
   } catch (e) {
     const d = e instanceof Deny ? e : new Deny('internal', errText(e));
     return { allow: false, decision: 'deny', exit: 2, code: d.code, detail: oneLine(d.detail) };
+  }
+}
+
+/**
+ * The hook's write (0b) of one file outside a decision, so that a test can drive it: the steps that
+ * write call `hookCreate` inside decide(). `io` as in decide(). Returns decide()'s shape plus
+ * `result` ('created' | 'identical' | 'different', null on a deny).
+ */
+export function hookWrite(file, data, io) {
+  const callStart = performance.now();
+  try {
+    if (!lib) throw new Deny('internal', `lib.mjs not loaded: ${errText(libError)}`);
+    const result = hookCreate(buildIo(io, callStart), file, data);
+    return { allow: true, decision: 'allow', exit: 0, code: null, detail: '', result };
+  } catch (e) {
+    const d = e instanceof Deny ? e : new Deny('internal', errText(e));
+    return { allow: false, decision: 'deny', exit: 2, code: d.code, detail: oneLine(d.detail), result: null };
   }
 }
 
@@ -617,6 +678,7 @@ async function main() {
     else return emitDeny('internal', `thresholds: ${errText(e)}`);
   }
   if (typeof deadline !== 'number' || !Number.isFinite(deadline) || deadline <= 0) return emitDeny('internal', 'hook_deadline_ms');
+  processDeadlineMs = deadline; // 0b(c): a write's budget counts from the process's start
   clearTimeout(fallbackTimer);
   fallbackTimer = setTimeout(() => emitDeny('internal', 'deadline'), Math.min(deadline, 2 ** 31 - 1));
   const raw = await readStdin();

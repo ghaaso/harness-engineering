@@ -554,6 +554,59 @@ function staticChecks(root, cases, only) {
   return checks;
 }
 
+// 0b(a) (FIX-fence §0b; fact F-P12): every hook write is a strict exclusive create (a temp file, then a
+// hard link to the name, never a fallback), so where a hard link cannot be made every hook write is
+// refused. One probe in each of `run/` and `wt/` (both made by `handover init`; neither is made here):
+// write a file, hard-link it to a second name, and require one file under the two names (`nlink` 2 on
+// both, the same `dev` and `ino`, the bytes read back); both names are removed at once. Fails closed:
+// a missing folder, any error or any mismatch is a problem `<folder>/: <why>`.
+const LINK_DIRS = ['run', 'wt'];
+
+function linkProblem(dir) {
+  const stem = path.join(dir, `selftest-link.${process.pid}.${crypto.randomBytes(4).toString('hex')}`);
+  const a = `${stem}.a`;
+  const b = `${stem}.b`;
+  const bytes = Buffer.from(`hard-link probe ${path.basename(stem)}\n`, 'utf8');
+  const made = [];
+  try {
+    const fd = lib.fsRetry(() => fs.openSync(a, 'wx'));
+    made.push(a);
+    try {
+      fs.writeSync(fd, bytes);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    lib.fsRetry(() => fs.linkSync(a, b));
+    made.push(b);
+    const sa = fs.lstatSync(a, { bigint: true });
+    const sb = fs.lstatSync(b, { bigint: true });
+    if (sa.nlink !== 2n || sb.nlink !== 2n) return `nlink ${sa.nlink} and ${sb.nlink}, not 2`;
+    if (sa.ino !== sb.ino || sa.dev !== sb.dev) return 'two files, not one';
+    if (!fs.readFileSync(b).equals(bytes)) return 'bytes differ';
+    return null;
+  } catch (e) {
+    return e && e.code ? String(e.code) : `error ${String(e)}`;
+  } finally {
+    for (const p of made.reverse()) {
+      try {
+        lib.removeFile(p);
+      } catch {
+        // a probe file left behind is harmless (no script reads these names)
+      }
+    }
+  }
+}
+
+function hardLinkProblems(root) {
+  const out = [];
+  for (const name of LINK_DIRS) {
+    const why = linkProblem(path.join(root, name));
+    if (why) out.push(`${name}/: ${why}`);
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------------------------
 // one case
 
@@ -960,6 +1013,11 @@ async function runMode(ctx, flags, root, ce) {
 
   const all = collectCases(root);
   const checks = staticChecks(root, all, only);
+  // 0b(a): only the run that certifies the tree probes (a dry run writes nothing, --only certifies nothing)
+  if (!dryRun && only.length === 0) {
+    const problems = hardLinkProblems(root);
+    checks.push({ check: 'hard-links', pass: problems.length === 0, detail: problems });
+  }
   const staticOk = checks.every((c) => c.pass);
   const selected = all.filter((c) => (only.length ? only.includes(c.script) : true));
   const failedChecks = checks.filter((c) => !c.pass).map((c) => c.check);

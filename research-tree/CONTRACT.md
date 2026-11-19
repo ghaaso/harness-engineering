@@ -36,7 +36,7 @@ node <root>/tcb/<name>.mjs [<mode>] --root <dir> [--ce <n>] [--task <id> --epoch
 - `--ce <n>` is required by every script that writes anything under the run root, the ledger
   included. It is compared with `run/coord.json` `ce` **inside the run lock**, before the first write;
   a difference exits **64** and writes nothing. Read-only modes take no `--ce`. Exceptions:
-  `guard-hook.mjs` (writes nothing) and `handover.mjs init` (creates the first `ce`).
+  `guard-hook.mjs` (no lock; writes only by strict exclusive create, decision 20) and `handover.mjs init` (creates the first `ce`).
 - `--task <id> --epoch <e>`: every call that acts on one attempt names both. `e` is compared by
   equality with the row's `epoch` inside the lock; a difference exits **65** (`stale-epoch`).
   Scripts that move the step machine also name the step they expect (§3.6) and exit 65 on a mismatch.
@@ -700,7 +700,11 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
   indexer or an editor may hold the file without delete sharing; a `wx` create of a lock that keeps
   failing with EPERM counts as busy (a delete-pending lock). `readJson`/`readJsonl` retry EPERM,
   EACCES and ENOENT-during-rename up to 5 times, 20 ms apart. A transient error is never surfaced.
-- `createExclusive(path, data) → 'created'|'identical'`; different bytes → `exists-different` 1.
+- `createExclusive(path, data, {strict, budget}?) → 'created'|'identical'`; different bytes → `exists-different` 1.
+  `strict` (0b, every hook write): no parent folder is made (`no-parent` 2) and no `wx` fallback where hard links
+  are unsupported (`no-hardlink` 3), so the name never exists without its bytes. `budget` (ms left): spent before
+  the write or the link → `budget-spent` 2 and nothing made. `fsRetry(op, budget?)`: the sharing retry above; with
+  a budget it tries once at least and retries only while the sleep ends inside it, else `budget-spent` 2.
 - `readJson(path)`: strips one leading BOM; missing → `missing` 2, unparseable (UTF-16 included) →
   `unparseable` 2.
   `readJsonl(path) → {records, torn: Buffer|null, badLines: int[]}`: trailing bytes after the last
@@ -1091,7 +1095,9 @@ Settled here where the sources leave it open or disagree (D = the design, L = a 
     seed's `makeSeed` (same unit). No other script imports another; what two units share
     (reservation, slot count, variant, current design, run flags, intake candidates, flag clearing,
     checker verdicts) is in lib.
-20. guard-hook writes nothing; its refusals are read from transcripts by audit. Reason: a hook that
+20. guard-hook takes no lock and writes only by strict exclusive create (`createExclusive` with `strict` and the time
+    left until `hook_deadline_ms` from its start; FIX-fence §0b), never a path a script writes (amended by 0b; the
+    writes come with FX-OUT, FX-CLAIM, FX-CGATE); its refusals are read from transcripts by audit. Reason: a hook that
     takes the run lock would stall every tool call.
 21. The owner's tcb commit is recorded by `handover init --tcb-commit` in `coord.json` and copied at
     each raise; fsck compares `tcb/` with it by git. Reason: R28 needs a script-readable value.
