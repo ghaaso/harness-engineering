@@ -431,6 +431,16 @@ too: `17|<task or ->:<act>|<epoch or ->|<onset_tick>` (acts: `replace-fence`, `r
 last_context, peak_context, loop: {sig, run}}`: each tick parses only from `end_byte`
 (`parseTranscript(..., {fromByte, lastCall})`); a file shorter than `end_byte` is re-parsed from 0.
 Lock record (run.lock and watcher.lock): `{pid, start_time, nonce: 32 hex, script, ce?, acquired_at}`.
+**FX-W7 (lock fencing).** Each evaluation runs on a copy of the state. It takes the run lock with a
+short wait (`watcher_lock_try_ms`) and, inside that one hold, runs `assertHeld` of watcher.lock, its
+appends and the `watcher.json` write; only then is the copy kept. On a busy run lock the copy is
+dropped: nothing is written, the tick does not count, transcripts are read again from the kept
+`end_byte`, and the watcher does not exit (it exits 75 only on a lost watcher.lock; `--once` exits 75
+`lock-busy`). `run/watcher-busy.json` `{ce, busy_ticks}`: the busy ticks in a row, rewritten without
+the run lock by its one writer, the holder of watcher.lock; a held tick resets it to 0; FX-W4 alerts
+at `busy_alert_ticks`. An unparseable `watcher.json` is quarantined: renamed as found to
+`watcher.json.<pid>.<nonce8>.corrupt` (named in `result.quarantined`), and the watcher starts from
+fresh counters instead of exiting 67.
 
 ### 3.11 Commit record [commit-record] — `store/commits/<task>.<step>.json`
 `{schema_version, task, step, epoch, step_key: 64 hex, outputs: [{id, kind, sha256}] (sorted by id), outputs_sha}`
@@ -754,6 +764,11 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
     `fs.linkSync(renamed, lock)` (fails rather than replace) and unlink the renamed file; if the link
     fails because a lock exists, keep the file as `<name>.<nonce>.orphan` and log an `incident`
     at the next acquisition. Then start over.
+  - watcher.lock (FX-W7): the waiter judges the holder outside every lock (unknown is never broken)
+    and reads `watcher.json`'s bytes before the judgement. A holder judged dead is broken only under
+    the run lock (taken with the caller's retries; busy → `lock-busy` 75): the waiter re-reads the
+    lock and `watcher.json` and breaks only when both are byte-for-byte unchanged. A changed
+    `watcher.json` means the holder wrote: its verdict is dropped and it is judged again later.
   - Unreadable (empty, or no lock record; e.g. a reset between the `wx` create and the write): never
     judged by `proc`. When `retries` ≥ `LOCK_UNREADABLE_MIN_RETRIES` (50) and the lock's bytes stay
     unchanged for the whole budget, it is broken with the same rename / re-read / create protocol,

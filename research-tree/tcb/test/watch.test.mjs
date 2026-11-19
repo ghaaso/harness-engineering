@@ -830,15 +830,57 @@ test('T16 a watcher.lock whose holder is dead is broken and the watcher runs', a
   });
 });
 
-test('T17 unparseable watcher.json exits 67; unparseable tasks.json exits 67', async () => {
+test('T17 unparseable watcher.json is quarantined (FX-W7 step 3) and the tick runs from fresh counters; unparseable tasks.json exits 67', async () => {
   await withRoot({}, async (ctx) => {
     w(path.join(ctx.root, 'run', 'watcher.json'), '{ not json');
-    assertLine(tick(ctx), 67);
-    assert.equal(hasWatcherLock(ctx), false, 'the lock is released on exit 67');
+    const j = assertLine(tick(ctx), 0);
+    const aside = fs.readdirSync(path.join(ctx.root, 'run')).filter((n) => /^watcher\.json\.\d+\.[0-9a-f]+\.corrupt$/.test(n));
+    assert.deepEqual(aside, [j.result.quarantined], 'one quarantined file, named in the result');
+    assert.equal(fs.readFileSync(path.join(ctx.root, 'run', aside[0]), 'utf8'), '{ not json', 'kept as found');
+    assert.equal(watcherJson(ctx).ticks_total, 1, 'fresh counters');
+    assert.equal(hasWatcherLock(ctx), false, 'the lock is released');
   });
   await withRoot({}, async (ctx) => {
     w(path.join(ctx.root, 'run', 'tasks.json'), '{ not json');
     assertLine(tick(ctx), 67);
+  });
+});
+
+test('W7b FX-W7 step 2: a busy run lock drops the tick (nothing written, not counted, busy_ticks), the loop does not exit, the next held tick appends once', async () => {
+  await withRoot({ thr: { watcher_lock_try_ms: 200 } }, async (ctx) => {
+    const runLock = path.join(ctx.root, 'run', 'run.lock');
+    const busyFile = path.join(ctx.root, 'run', 'watcher-busy.json');
+    const wjPath = path.join(ctx.root, 'run', 'watcher.json');
+    const mem = () => eventsOf(ctx.root, 'memory', 24).length;
+    w(runLock, JSON.stringify(lockRec(ctx.sleeper(), { script: 'other' }))); // a live holder is never broken
+    for (const n of [1, 2]) {
+      assertLine(tick(ctx, [], { free: 100 }), 75); // class 24 is present, but the tick cannot be held
+      assert.deepEqual(J(busyFile), { ce: 1, busy_ticks: n });
+      assert.equal(fs.existsSync(wjPath), false, 'no watcher.json written');
+      assert.equal(mem(), 0, 'no event line appended');
+    }
+    const { child, done } = startScript(ctx.root, 'watch', [...baseArgs(ctx, { free: 100 }), '--interval-ms', '50', '--no-intake']);
+    let res = null;
+    try {
+      await waitFor(() => { try { return J(busyFile).busy_ticks >= 5; } catch { return false; } }, { timeout: 60000 });
+      assert.equal(child.exitCode, null, 'the watcher does not exit on busy ticks');
+      assert.equal(mem(), 0);
+      fs.rmSync(runLock);
+      res = await Promise.race([done, sleep(30000).then(() => null)]);
+      assert.ok(res, 'the watcher did not end within 30 s of the release');
+      assertLine(res, 24);
+    } finally {
+      if (!res) {
+        try { child.kill(); } catch { /* gone */ }
+        await done;
+      }
+    }
+    assert.equal(mem(), 1, 'one event line');
+    assert.equal(watcherJson(ctx).ticks_total, 0, 'the dropped evaluations counted no tick (the held one is the start evaluation)');
+    assert.equal(J(busyFile).busy_ticks, 0, 'a held tick resets the count');
+    assertLine(tick(ctx, [], { free: 100 }), 24); // still present and unacknowledged: due, same key
+    assert.equal(mem(), 1, 'no second line for the same key');
+    assert.equal(watcherJson(ctx).ticks_total, 1);
   });
 });
 

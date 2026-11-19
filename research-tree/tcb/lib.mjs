@@ -1353,6 +1353,10 @@ export function acquireLock(root, name, opts = {}) {
   record.acquired_at = now === undefined ? null : now instanceof Date ? now.toISOString() : now;
   const bytes = Buffer.from(JSON.stringify(record), 'utf8');
   const judged = new Map(); // nonce -> alive verdict, so one holder costs one process query
+  // FX-W7 step 1: watcher.json as it was when the watcher.lock holder was judged (read before the
+  // judgement), so the break under the run lock can see whether the holder wrote since.
+  const stateFile = name === 'watcher.lock' ? path.join(runDir, 'watcher.json') : null;
+  const judgedState = new Map(); // nonce -> stateSnapshot(stateFile)
 
   const tryCreate = () => {
     let fd;
@@ -1376,6 +1380,7 @@ export function acquireLock(root, name, opts = {}) {
     if (!proc || typeof proc.alive !== 'function' || !held || !Number.isInteger(held.pid)) return false;
     const key = String(held.nonce);
     if (!judged.has(key)) {
+      if (stateFile) judgedState.set(key, stateSnapshot(stateFile));
       let a = null;
       try {
         a = proc.alive(held.pid, held.start_time ?? null);
@@ -1424,9 +1429,16 @@ export function acquireLock(root, name, opts = {}) {
       if (missing) {
         if (++spins < 1000) continue; // released between our create and read
       } else if (held && seen > judgeAfter && isStale(held)) {
-        const out = breakStep(name, () => breakStale(file, held, heldBytes, nonce, bytes));
+        const key = String(held.nonce);
+        const out = breakStep({ root: R, name, file, heldBytes, stateFile, state: judgedState.get(key), lockOpts: { script, ce, proc, now, retries, retryMs, ctx } },
+          () => breakStale(file, held, heldBytes, nonce, bytes));
         if (out === 'held') return finish(held);
-        if (++spins < 1000) continue;
+        if (out === 'progress') {
+          // The holder wrote watcher.json after it was judged dead: judge it again after a new run of sightings.
+          judged.delete(key);
+          lastSeen = null;
+          seen = 0;
+        } else if (++spins < 1000) continue;
       } else if (!held && heldBytes && retries >= LOCK_UNREADABLE_MIN_RETRIES && seen > retries) {
         // Unchanged and unreadable for the whole retry budget: no holder ever finished writing it.
         const out = breakStale(file, null, heldBytes, nonce, bytes);
@@ -3843,11 +3855,44 @@ function armedCheck(root, handle) { // eslint-disable-line no-unused-vars
 }
 
 /**
- * breakStep(name, doBreak) -> doBreak(): acquireLock's break of a lock judged stale (FX-W7 fills it:
- * the break of watcher.lock under the run lock). The unreadable-lock break does not pass here.
+ * breakStep(c, doBreak) -> doBreak() or 'gone' | 'changed' | 'progress': acquireLock's break of a lock
+ * judged stale. run.lock: doBreak() at once. watcher.lock (FX-W7 step 1, lock fencing): the holder was
+ * judged dead outside every lock; the waiter now takes run.lock (c.lockOpts: the caller's retries, so
+ * a busy run lock ends in lock-busy 75), re-reads watcher.lock and watcher.json, and breaks only when
+ * both are byte-for-byte as they were at the judgement (c.heldBytes, c.state). A watcher writes
+ * watcher.json only inside a run-lock hold after its assertHeld, so a holder broken here cannot write
+ * again. 'progress': watcher.json changed, the holder is judged again. The unreadable-lock break
+ * (LR-4) does not pass here and keeps its rule.
  */
-function breakStep(name, doBreak) { // eslint-disable-line no-unused-vars
-  return doBreak();
+function breakStep(c, doBreak) {
+  if (c.name !== 'watcher.lock') return doBreak();
+  const run = acquireLock(c.root, 'run.lock', c.lockOpts);
+  try {
+    const cur = readLockRecord(c.file);
+    if (cur.missing) return 'gone';
+    if (!cur.bytes || !c.heldBytes || !cur.bytes.equals(c.heldBytes)) return 'changed';
+    if (!sameSnapshot(c.state, stateSnapshot(c.stateFile))) return 'progress';
+    run.assertHeld();
+    return doBreak();
+  } finally {
+    run.release();
+  }
+}
+
+/** {ok: true, bytes: Buffer | null (absent)} of a file, or {ok: false} when it cannot be read. */
+function stateSnapshot(file) {
+  try {
+    return { ok: true, bytes: readBytes(file) };
+  } catch (e) {
+    return e && e.code === 'ENOENT' ? { ok: true, bytes: null } : { ok: false };
+  }
+}
+
+/** Two snapshots are the same only when both were read and hold the same bytes (or both absent). */
+function sameSnapshot(a, b) {
+  if (!a || !b || !a.ok || !b.ok) return false;
+  if (a.bytes === null || b.bytes === null) return a.bytes === b.bytes;
+  return a.bytes.equals(b.bytes);
 }
 
 /**

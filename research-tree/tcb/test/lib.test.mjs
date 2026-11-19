@@ -1154,6 +1154,46 @@ rt('T30 a lock whose holder is dead is broken, no .stale file is left and a lock
   await w.release();
   assert.equal((await ledger(root)).length, n);
 });
+rt('W7a FX-W7 step 1: a dead watcher.lock holder is broken only under the run lock and only while watcher.json is unchanged', async (root) => {
+  const wl = lockFile(root, 'watcher.lock');
+  const wj = P(root, 'run', 'watcher.json');
+  fs.writeFileSync(wj, '{"ticks_total":1}\n');
+  const dead = putLock(root, mkRec({ script: 'watch' }), 'watcher.lock');
+  const before = fs.readFileSync(wl);
+  const alive = (pid) => pid !== dead.pid;
+  const runCreates = () => failing('openSync', (args) => argHas('/run/run.lock')(args) && JSON.stringify(args.slice(1)).includes('wx'), []);
+  // 1. The run lock is held by a live holder: the waiter cannot take it, so nothing is broken.
+  putLock(root, mkRec({ pid: 999002, script: 'other' }));
+  const runBefore = fs.readFileSync(lockFile(root));
+  await throwsTcb(() => lib.acquireLock(root, 'watcher.lock', lo({ proc: fproc({ alive }), retries: 2, retryMs: 1 })), 'lock-busy', 75);
+  assert.deepEqual(fs.readFileSync(wl), before, 'watcher.lock untouched');
+  assert.deepEqual(fs.readFileSync(lockFile(root)), runBefore, 'the run lock untouched');
+  fs.rmSync(lockFile(root));
+  // 2. The holder writes watcher.json after the waiter read it and while it judges the holder: under
+  // the run lock the waiter sees the change (progress) and breaks nothing.
+  const writer = fproc({ alive: (pid) => { if (pid === dead.pid) fs.writeFileSync(wj, `{"ticks_total":${Date.now()}}\n`); return alive(pid); } });
+  const spy2 = runCreates();
+  try {
+    await throwsTcb(() => lib.acquireLock(root, 'watcher.lock', lo({ proc: writer, retries: 5, retryMs: 1 })), 'lock-busy', 75);
+  } finally {
+    spy2.restore();
+  }
+  assert.ok(spy2.state.matched >= 1, 'the waiter took the run lock to check');
+  assert.deepEqual(fs.readFileSync(wl), before, 'watcher.lock untouched after progress');
+  assert.equal(fs.existsSync(lockFile(root)), false, 'the run lock released');
+  // 3. Run lock free and watcher.json unchanged since the judgement: broken under the run lock.
+  const spy3 = runCreates();
+  let h;
+  try {
+    h = await lib.acquireLock(root, 'watcher.lock', lo({ proc: fproc({ alive }), retries: 5, retryMs: 1 }));
+  } finally {
+    spy3.restore();
+  }
+  assert.ok(spy3.state.matched >= 1, 'the break ran under the run lock');
+  assert.equal(JSON.parse(fs.readFileSync(wl, 'utf8')).nonce, h.nonce);
+  assert.equal(fs.existsSync(lockFile(root)), false, 'the run lock released');
+  await h.release();
+});
 rt('T31 a lock whose pid is alive with another start time is stale and is broken', async (root) => {
   const stale = putLock(root, mkRec({ pid: process.pid, start_time: '2000-01-01T00:00:00.0000000Z' }));
   const p = fproc({ alive: (pid, st) => pid === process.pid && lib.sameStartTime(st, OWN_START()) });
