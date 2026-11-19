@@ -346,12 +346,29 @@ empty step returns its neutral value, so behaviour is unchanged (FIX-JOIN point 
 - `realProc({timeoutMs, exe})`: unchanged; FX-W2 passes `timeoutMs: ensure_query_ms`.
 - `withRunLock(root, {requireArmed})`: `requireArmed: true` runs the empty step `armedCheck(root, handle)`
   after the ce check: FX-W3 (exit 6 `not-armed`).
-- `acquireLock`: the break of a lock judged stale passes `breakStep(name, doBreak)`, which returns
-  `doBreak()`: FX-W7 (watcher.lock). The break of an unreadable lock does not pass there.
-- `parseTranscript`: the result's non-enumerable `kind` is `transcriptKind(res)`, null: FX-W6.
+- `acquireLock`: the break of a lock judged stale passes `breakStep(c, doBreak)`. For run.lock it
+  returns `doBreak()`. For watcher.lock (FX-W7 step 1, built) it takes run.lock with the caller's
+  retries, re-reads watcher.lock and `watcher.json`, and breaks only when both are as they were at the
+  judgement (`watcher.json` is read before the judgement); `progress` drops the verdict. The break of
+  an unreadable lock does not pass there (LR-4 kept). Test W7a: a busy run lock → `lock-busy` 75 and
+  both locks untouched; a holder that writes `watcher.json` during its judgement → not broken, the run
+  lock taken and released; run lock free and `watcher.json` unchanged → broken under the run lock.
+- `parseTranscript` (FX-W6): option `tail` and the result's non-enumerable `tail` and `kind`. The tail
+  state `{n, last, msg, pending, bg}` (lib.mjs `tailState`) is moved only by `assistant` and `user`
+  records; attachment and the 24 skipped types of `TRANSCRIPT_RECORD_TYPES` (and unknown types) are
+  neutral, not unreadable; an attachment's `queued_command` prompt is read for task notifications.
+  `transcriptKind`: nothing read → `model`; a pending tool use of the last call → `tool`; the turn ended
+  (a stop_reason other than null, tool_use, pause_turn; or an interrupt notice) → `bg-wait` while a
+  background task (toolUseResult `backgroundTaskId`, `taskId`, or `isAsync` with `agentId`) has no
+  task notification and no TaskStop/KillShell/KillBash naming it, else `idle`; else → `model`. Tested
+  in `tcb/test/watch.test.mjs` (W6a).
   `TRANSCRIPT_KINDS` = tool, bg-wait, model, idle; `TRANSCRIPT_RECORD_TYPES` = the 27 record types
   measured in `build/facts/WH5-Wturn.md`.
 - `slotCount(rows, procList, transcriptsRoot, {root} = {})`: `{root}` is part of the signature; FX-CLAIM's
   callers pass it.
 - `RUNTIME_FILES`: the 13 runtime files of the round-3 fixes (path, helper of `paths(root)`, fix, writer,
   fields, rewritten); `markerKey(pid, start_time)` names the arm markers `exited-<pt>`, `unarmed-<pt>`.
+
+## FX-CLAIM (round 3)
+
+`readClaim`, `claimRecord`, `tombstoneRecord`, `startLeaseExpired` (CONTRACT 4.10); `fence` reads the claim of attempt E for `nostart` (failure reasons, not host); `slotCount` step 7. Tests: lib T96x (step 7 and H3), T96y (the lease), T96z (claims).

@@ -234,3 +234,20 @@ a real session's transcript `cwd` equals the folder named in `bind` (item 7).
   took the name first → 5; `tainted` appends after it). `start` makes `outcome/` beside `staging/`.
 - FX-OUT tests (replace.test.mjs): a refused fence (`stale-epoch`, `wrong-step`, `hmax`) writes no slot; a
   fence of a parked row writes no slot and no tombstone (schedule F1); T5 and T5b put the READY as a ready slot.
+
+## FX-CLAIM (round 3)
+
+`fence --if-unclaimed` (fence only): a session claim → exit 5 `claimed-late` before any write (`fenceIfUnclaimed`, ahead of FX-OUT's steps); `fenceTombstone` (FX-OUT step 6) for an attempt with a manifest; `bind` → exit 6 `not-claimed`, exit 1 `not-claim-holder` before today's checks (the claim replaces the round-2 started-session check). Tests: T7b, T7c, T22b; T21 and T22 make the claim.
+
+## FX-REDO: a missing ledger line after a death (FIX-fence section 5)
+
+The row is written before its line, so a death between the two leaves the row moved and the line missing. The mode's own repeat is the redo, from the row (the after-image): only at the exact post-state, inside the mode's hold, the missing line is appended with `data.redo: true` and the answer is exit 0 with `result.repeat` true and `result.redo` (true when a line was written; a dry run writes nothing). Elsewhere the old answer stands.
+
+- `fence --epoch E --reason r`: post-state row at E+1, step `fenced`, `reason` r, `attempts[E].cut` set; the `fence` line (epoch E+1, `from` E) is rebuilt from the row (`host` from `fails`, `restart_charged`, `limit`, `cut_files`). Checked first in the hold, before every refusal; any later step keeps 65, so a late repeat is never read as a fresh fence. Two identical fences at once: the second answers 0 `repeat`.
+- `start`: post-state admitted at E with a manifest; the `admit` line (`reservation`, `live`, `free_mb` null).
+- `bind`: post-state bound with the same session; the `bind` line (`boot` from the attempt).
+- Test: `tcb/test/redo.test.mjs` (the death made through the fs seam).
+
+## FX-CLAIM with FX-REDO (CLAIM fix round, the merge)
+
+`fence` repeated at its post-state rebuilds a no-start fence's line as `lib.fence` wrote it: a failure reason with no `fails` entry of epoch E was a no-start fence under `H_nostart` (FX-CLAIM N7), so `host`, `restart_charged` and `limit` are false. Test: redo.test.mjs, the no-start subtest.

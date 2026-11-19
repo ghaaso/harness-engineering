@@ -1353,6 +1353,10 @@ export function acquireLock(root, name, opts = {}) {
   record.acquired_at = now === undefined ? null : now instanceof Date ? now.toISOString() : now;
   const bytes = Buffer.from(JSON.stringify(record), 'utf8');
   const judged = new Map(); // nonce -> alive verdict, so one holder costs one process query
+  // FX-W7 step 1: watcher.json as it was when the watcher.lock holder was judged (read before the
+  // judgement), so the break under the run lock can see whether the holder wrote since.
+  const stateFile = name === 'watcher.lock' ? path.join(runDir, 'watcher.json') : null;
+  const judgedState = new Map(); // nonce -> stateSnapshot(stateFile)
 
   const tryCreate = () => {
     let fd;
@@ -1376,6 +1380,7 @@ export function acquireLock(root, name, opts = {}) {
     if (!proc || typeof proc.alive !== 'function' || !held || !Number.isInteger(held.pid)) return false;
     const key = String(held.nonce);
     if (!judged.has(key)) {
+      if (stateFile) judgedState.set(key, stateSnapshot(stateFile));
       let a = null;
       try {
         a = proc.alive(held.pid, held.start_time ?? null);
@@ -1424,9 +1429,16 @@ export function acquireLock(root, name, opts = {}) {
       if (missing) {
         if (++spins < 1000) continue; // released between our create and read
       } else if (held && seen > judgeAfter && isStale(held)) {
-        const out = breakStep(name, () => breakStale(file, held, heldBytes, nonce, bytes));
+        const key = String(held.nonce);
+        const out = breakStep({ root: R, name, file, heldBytes, stateFile, state: judgedState.get(key), lockOpts: { script, ce, proc, now, retries, retryMs, ctx } },
+          () => breakStale(file, held, heldBytes, nonce, bytes));
         if (out === 'held') return finish(held);
-        if (++spins < 1000) continue;
+        if (out === 'progress') {
+          // The holder wrote watcher.json after it was judged dead: judge it again after a new run of sightings.
+          judged.delete(key);
+          lastSeen = null;
+          seen = 0;
+        } else if (++spins < 1000) continue;
       } else if (!held && heldBytes && retries >= LOCK_UNREADABLE_MIN_RETRIES && seen > retries) {
         // Unchanged and unreadable for the whole retry budget: no holder ever finished writing it.
         const out = breakStale(file, null, heldBytes, nonce, bytes);
@@ -1846,7 +1858,21 @@ export function fence(root, handle, o = {}) {
     const isHost = failure && reason !== 'tainted' && host === true;
     let limit = false;
     let charged = false;
-    if (failure) {
+    // FX-CLAIM step 2 (N7): for a failure reason, not host, the attempt's claim decides. A tombstone (no
+    // session ever passed a tool call) is a no-start fence: uncharged while nostart < H_nostart, and
+    // nostart counts it (capped at H_nostart); past that it is charged like a failure. A session claim
+    // resets nostart to 0. No claim (no manifest, rev 4 H1) leaves nostart and the charge as before.
+    let free = false;
+    if (failure && !isHost) {
+      const kind = fenceClaimKind(root, row, task, e);
+      const ns = Number.isInteger(row.nostart) ? row.nostart : 0;
+      const Hns = Number.isInteger(o.Hnostart) ? o.Hnostart : hNostart(root);
+      if (kind === 'tombstone') {
+        free = ns < Hns;
+        row.nostart = Math.min(Hns, ns + 1);
+      } else if (kind === 'session' && ns !== 0) row.nostart = 0;
+    }
+    if (failure && !free) {
       const restarts = Number.isInteger(row.restarts) ? row.restarts : 0;
       if (restarts >= Rmax) limit = true;
       else if (!isHost) {
@@ -2552,9 +2578,11 @@ function hidden(obj, key, value) {
  * Entries keep the contract's shapes; two extras are non-enumerable (absent from JSON and deep
  * equality): `line` on every tool use, tool result and structured entry (the 1-based line of the
  * parse, the file's line when fromByte is 0; harvest's `source.line`), and `open: true` on a turn end
- * that the end of the file closed rather than a user record.
+ * that the end of the file closed rather than a user record. Two more are non-enumerable (FX-W6):
+ * `tail`, the tail state (tailState), continued from the option `tail` when the parse resumes at
+ * fromByte without a reset, and `kind`, the kind of the tail (transcriptKind).
  */
-export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
+export function parseTranscript(file, { fromByte = 0, lastCall = null, tail = null } = {}) {
   let start = Number.isInteger(fromByte) && fromByte > 0 ? fromByte : 0;
   let reset = false;
   try {
@@ -2579,6 +2607,7 @@ export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
   let firstCall = true;
   let lineNo = 0; // 1-based line of the parse (the file's line number when fromByte is 0)
   const prevId = start > 0 && lastCall && typeof lastCall.id === 'string' ? lastCall.id : null;
+  const tl = tailState(start > 0 ? tail : null); // FX-W6: continued only when the parse resumes
 
   const closeRun = (open) => {
     if (!run) return;
@@ -2651,6 +2680,7 @@ export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
         }
         firstCall = false;
       }
+      tailOnAssistant(tl, id, msg, content);
       const key = id ?? `line:${lineNo}`;
       if (!run) run = { lastId: key, ts, texts: [] };
       if (run.lastId !== key) {
@@ -2682,11 +2712,13 @@ export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
           }
         }
       }
+      tailOnUser(tl, rec, msg.content);
       if (!isToolResult) closeRun(false);
       return;
     }
     if (rec.type === 'attachment') {
       const a = rec.attachment;
+      tailOnAttachment(tl, a);
       if (a && typeof a === 'object' && a.type === 'structured_output') {
         const item = { data: a.data === undefined ? null : a.data };
         const tid = a.toolUseID ?? a.toolUseId ?? a.tool_use_id;
@@ -2734,6 +2766,7 @@ export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
     }
   }
   closeRun(true);
+  hidden(res, 'tail', tl);
   hidden(res, 'kind', transcriptKind(res));
   return res;
 }
@@ -3164,7 +3197,77 @@ export function slotCount(rows, procList, transcriptsRoot, opts = {}) {
       if (attemptHasTranscript(transcriptsRoot, a.session, folderAbs, folderAbs ? null : folderRel)) out.unknown++;
     }
   }
+  out.unconfirmed += folderSessionSlots(rows, procList, transcriptsRoot, root);
   return out;
+}
+
+/**
+ * FX-CLAIM step 7: one `unconfirmed` slot for every folder session (a transcript whose first `cwd` is
+ * an attempt folder, any row but planned, any attempt) that has no counting close-done record and is
+ * not its attempt's own session: the claim holder, or the recorded `session` when the attempt holds no
+ * session claim (counted by the attempt above while it is not stop-confirmed). A close-done record
+ * counts when its outcome is `stopped` or `owner`; a `no-such-session` counts only when this
+ * coordinator made the start (the attempt's start.json `session` equals the record's `by`) or the
+ * process list matches nothing for the folder or the session (rev 4, H3). Needs an absolute folder:
+ * a relative folder without `root` is not scanned.
+ */
+function folderSessionSlots(rows, procList, transcriptsRoot, root) {
+  let n = 0;
+  const seen = new Set();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row || row.state === 'planned') continue;
+    for (const a of Array.isArray(row.attempts) ? row.attempts : []) {
+      if (!a || !Number.isInteger(a.epoch)) continue;
+      const rel = typeof a.folder === 'string' && a.folder ? a.folder : `wt/${row.task}-e${a.epoch}`;
+      const abs = path.isAbsolute(rel) ? rel : root ? path.resolve(root, rel) : null;
+      if (!abs) continue;
+      let found = [];
+      try {
+        found = transcriptsForFolder(transcriptsRoot, abs) ?? [];
+      } catch {
+        found = [];
+      }
+      if (found.length === 0) continue;
+      let own = typeof a.session === 'string' ? a.session : null;
+      try {
+        const c = readClaim(abs);
+        if (c.kind === 'session') own = c.session_id;
+      } catch {
+        // an invalid claim (tamper) names no holder: every folder session but the recorded one counts
+      }
+      let start;
+      for (const f of found) {
+        const sid = f && typeof f.sessionId === 'string' ? f.sessionId : null;
+        if (!sid || sid === own || seen.has(sid)) continue;
+        seen.add(sid);
+        if (root) {
+          if (start === undefined) start = readJsonOrNull(path.join(abs, 'start.json'));
+          if (closeDoneCounts(root, sid, start, procList, abs)) continue;
+        }
+        n++;
+      }
+    }
+  }
+  return n;
+}
+
+function readJsonOrNull(p) {
+  try {
+    return readJson(p);
+  } catch {
+    return null;
+  }
+}
+
+// FX-CLAIM step 7 with rev 4's H3 rule: does the close-done record of session sid release its slot?
+function closeDoneCounts(root, sid, start, procList, folderAbs) {
+  const done = readJsonOrNull(path.join(path.resolve(root), 'run', 'close', 'done', `${sid}.json`));
+  if (!done || typeof done !== 'object' || done.kind !== 'close-done') return false;
+  if (done.outcome === 'stopped' || done.outcome === 'owner') return true;
+  if (done.outcome !== 'no-such-session') return false;
+  if (start && typeof start.session === 'string' && start.session !== '' && start.session === done.by) return true;
+  if (!Array.isArray(procList)) return false;
+  return attemptProcesses(procList, { folder: folderAbs, sessionId: sid }).matched.length === 0;
 }
 
 /** A transcript of an attempt: by session id, by the absolute folder, or (no root) by a folder suffix. */
@@ -3899,18 +4002,69 @@ export function outcomeAppend(attemptDir, slot, opts) {
  * readClaim(attemptDir) -> {kind: 'none'|'session'|'tombstone', session_id} (FX-CLAIM): the
  * attempt's `claim.json`; 'none' when it is absent; session_id is null unless kind is 'session'.
  */
-export function readClaim(attemptDir) { // eslint-disable-line no-unused-vars
-  throw notBuilt('readClaim', 'FX-CLAIM');
+export function readClaim(attemptDir) {
+  const file = path.join(attemptDir, 'claim.json');
+  let v;
+  try {
+    v = readJson(file);
+  } catch (e) {
+    if (e && e.code === 'missing') return { kind: 'none', session_id: null };
+    // made by strict create (0b), so never torn: bytes that do not parse are tamper
+    if (e && e.code === 'unparseable') throw err('claim-invalid', 3, { path: file });
+    throw e;
+  }
+  if (v && v.kind === 'session' && typeof v.session_id === 'string' && v.session_id !== '') {
+    return { kind: 'session', session_id: v.session_id };
+  }
+  if (v && v.kind === 'tombstone') {
+    return { kind: 'tombstone', session_id: null, task: v.task ?? null, epoch: v.epoch ?? null };
+  }
+  throw err('claim-invalid', 3, { path: file });
 }
 
 /** claimRecord(sessionId) -> {kind:'session', session_id}, the claim's bytes (FX-CLAIM, the hook). */
-export function claimRecord(sessionId) { // eslint-disable-line no-unused-vars
-  throw notBuilt('claimRecord', 'FX-CLAIM');
+export function claimRecord(sessionId) {
+  return { kind: 'session', session_id: sessionId };
 }
 
 /** tombstoneRecord(task, epoch) -> {kind:'tombstone', task, epoch} (FX-CLAIM, the fence). */
-export function tombstoneRecord(task, epoch) { // eslint-disable-line no-unused-vars
-  throw notBuilt('tombstoneRecord', 'FX-CLAIM');
+export function tombstoneRecord(task, epoch) {
+  return { kind: 'tombstone', task, epoch };
+}
+
+/**
+ * startLeaseExpired(start, ticksTotal, nowMs, lease) -> bool (FX-CLAIM, the lease N3; read by FX-PLAN).
+ * A start record `{tick, at}` expires only when both hold: `ticksTotal >= start.tick +
+ * start_lease_ticks` and `nowMs >= Date.parse(start.at) + start_lease_ms` (`at` is the hook's wall
+ * clock; a number is taken as epoch ms). A missing or unreadable part never expires the lease: a
+ * subject that advances the ticks alone, or a wall jump alone, cannot expire it.
+ */
+export function startLeaseExpired(start, ticksTotal, nowMs, lease = {}) {
+  if (!start || typeof start !== 'object') return false;
+  const lt = lease.start_lease_ticks;
+  const lm = lease.start_lease_ms;
+  if (!Number.isInteger(start.tick) || !Number.isInteger(ticksTotal) || !Number.isInteger(lt) || lt < 0) return false;
+  const at = typeof start.at === 'number' ? start.at : typeof start.at === 'string' ? Date.parse(start.at) : NaN;
+  if (!Number.isFinite(at) || typeof nowMs !== 'number' || !Number.isFinite(nowMs) || typeof lm !== 'number' || !(lm >= 0)) return false;
+  return ticksTotal >= start.tick + lt && nowMs >= at + lm;
+}
+
+// FX-CLAIM: the claim kind of attempt e of a row ('none' | 'session' | 'tombstone'), for lib.fence.
+function fenceClaimKind(root, row, task, e) {
+  const a = (Array.isArray(row.attempts) ? row.attempts : []).find((x) => x && x.epoch === e) ?? null;
+  const rel = a && typeof a.folder === 'string' && a.folder ? a.folder : `wt/${task}-e${e}`;
+  return readClaim(path.resolve(root, rel)).kind;
+}
+
+// FX-CLAIM: thresholds `H_nostart` (default 2 when the file or the entry is absent).
+function hNostart(root) {
+  try {
+    const th = thresholds(root);
+    const v = th.has('H_nostart') ? th.get('H_nostart') : null;
+    return Number.isInteger(v) && v >= 0 ? v : 2;
+  } catch {
+    return 2;
+  }
 }
 
 /**
@@ -3940,11 +4094,44 @@ function armedCheck(root, handle) { // eslint-disable-line no-unused-vars
 }
 
 /**
- * breakStep(name, doBreak) -> doBreak(): acquireLock's break of a lock judged stale (FX-W7 fills it:
- * the break of watcher.lock under the run lock). The unreadable-lock break does not pass here.
+ * breakStep(c, doBreak) -> doBreak() or 'gone' | 'changed' | 'progress': acquireLock's break of a lock
+ * judged stale. run.lock: doBreak() at once. watcher.lock (FX-W7 step 1, lock fencing): the holder was
+ * judged dead outside every lock; the waiter now takes run.lock (c.lockOpts: the caller's retries, so
+ * a busy run lock ends in lock-busy 75), re-reads watcher.lock and watcher.json, and breaks only when
+ * both are byte-for-byte as they were at the judgement (c.heldBytes, c.state). A watcher writes
+ * watcher.json only inside a run-lock hold after its assertHeld, so a holder broken here cannot write
+ * again. 'progress': watcher.json changed, the holder is judged again. The unreadable-lock break
+ * (LR-4) does not pass here and keeps its rule.
  */
-function breakStep(name, doBreak) { // eslint-disable-line no-unused-vars
-  return doBreak();
+function breakStep(c, doBreak) {
+  if (c.name !== 'watcher.lock') return doBreak();
+  const run = acquireLock(c.root, 'run.lock', c.lockOpts);
+  try {
+    const cur = readLockRecord(c.file);
+    if (cur.missing) return 'gone';
+    if (!cur.bytes || !c.heldBytes || !cur.bytes.equals(c.heldBytes)) return 'changed';
+    if (!sameSnapshot(c.state, stateSnapshot(c.stateFile))) return 'progress';
+    run.assertHeld();
+    return doBreak();
+  } finally {
+    run.release();
+  }
+}
+
+/** {ok: true, bytes: Buffer | null (absent)} of a file, or {ok: false} when it cannot be read. */
+function stateSnapshot(file) {
+  try {
+    return { ok: true, bytes: readBytes(file) };
+  } catch (e) {
+    return e && e.code === 'ENOENT' ? { ok: true, bytes: null } : { ok: false };
+  }
+}
+
+/** Two snapshots are the same only when both were read and hold the same bytes (or both absent). */
+function sameSnapshot(a, b) {
+  if (!a || !b || !a.ok || !b.ok) return false;
+  if (a.bytes === null || b.bytes === null) return a.bytes === b.bytes;
+  return a.bytes.equals(b.bytes);
 }
 
 /**
@@ -3967,10 +4154,118 @@ export const TRANSCRIPT_RECORD_TYPES = Object.freeze([
 export const TRANSCRIPT_KINDS = Object.freeze(['tool', 'bg-wait', 'model', 'idle']);
 
 /**
- * transcriptKind(res) -> one of TRANSCRIPT_KINDS, or null: the kind of the parse's tail (FX-W6).
- * parseTranscript sets it as the non-enumerable `kind` of its result (absent from JSON and deep
- * equality). Empty step: null until FX-W6.
+ * transcriptKind(res) -> one of TRANSCRIPT_KINDS: the kind of the parse's tail (FX-W6), read from
+ * `res.tail`. parseTranscript sets it as the non-enumerable `kind` of its result (absent from JSON
+ * and deep equality). In order: no conversation record read (an empty or unreadable transcript) ->
+ * `model`; a tool use of the last call without its result -> `tool`; the turn ended -> `bg-wait`
+ * while a background task it launched has not ended, else `idle`; anything else (a prompt, a
+ * notification or a tool result awaiting the model, a call still streaming) -> `model`.
  */
-function transcriptKind(res) { // eslint-disable-line no-unused-vars
-  return null;
+function transcriptKind(res) {
+  const t = res && res.tail;
+  if (!t || !(t.n > 0)) return 'model';
+  if (Object.keys(t.pending).length) return 'tool';
+  if (t.last === 'end') return Object.keys(t.bg).length ? 'bg-wait' : 'idle';
+  return 'model';
+}
+
+/**
+ * The tail state of a transcript (FX-W6), a plain JSON object the watcher stores in each file's
+ * parse-state: {n, last, msg, pending, bg}. Only the conversation records move it: `assistant` and
+ * `user` (each adds 1 to `n`). The other 25 known record types (attachment and the 24 that
+ * parseTranscript skips: TRANSCRIPT_RECORD_TYPES), and any unknown type, never change `n`, `last`
+ * or `pending`; they are not "unreadable". Only an attachment's `queued_command` prompt is read, for
+ * the task notifications it delivers (bg).
+ * - `last`: `call` (an assistant record whose stop_reason is null, tool_use or pause_turn), `end`
+ *   (an assistant record with any other stop_reason, or a user record that is only an interrupt
+ *   notice "[Request interrupted by user..."), `input` (any other user record), or null.
+ * - `msg`: the message id of the last call; a new id ends the last call's tool uses.
+ * - `pending`: {<tool_use id>: declared timeout in ms, 0 when none}: tool uses of the last call
+ *   without a tool_result. The declared timeout is the input's `timeout`, else `timeout_ms`.
+ * - `bg`: {<tool_use id>: task id}: background tasks launched (a tool result whose record's
+ *   toolUseResult has a string `backgroundTaskId` or `taskId`, or `isAsync` true with `agentId`)
+ *   that have not ended. A task ends at a `<task-notification>` naming its tool use id or its task id
+ *   (in a user record or an attachment's `queued_command` prompt), or at a TaskStop, KillShell or
+ *   KillBash tool use whose input names its task id.
+ */
+function tailState(prev) {
+  const ok = !!prev && typeof prev === 'object';
+  const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? { ...v } : {});
+  return {
+    n: ok && Number.isInteger(prev.n) && prev.n >= 0 ? prev.n : 0,
+    last: ok && ['call', 'end', 'input'].includes(prev.last) ? prev.last : null,
+    msg: ok && typeof prev.msg === 'string' ? prev.msg : null,
+    pending: ok ? obj(prev.pending) : {},
+    bg: ok ? obj(prev.bg) : {},
+  };
+}
+
+const TURN_GOES_ON = new Set(['tool_use', 'pause_turn']);
+const STOP_TOOLS = new Set(['TaskStop', 'KillShell', 'KillBash']);
+const INTERRUPT_RE = /^\[Request interrupted by user/;
+const NOTIFIED_RE = /<(tool-use-id|task-id)>([^<\s]{1,200})<\/\1>/g;
+
+function declaredTimeoutMs(input) {
+  for (const k of ['timeout', 'timeout_ms']) {
+    const v = input[k];
+    if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v;
+  }
+  return 0;
+}
+
+function notifiedIds(s) {
+  if (typeof s !== 'string' || !s.includes('<task-notification>')) return [];
+  return [...s.matchAll(NOTIFIED_RE)].map((m) => m[2]);
+}
+
+function endBackground(tl, ids) {
+  if (!ids.length) return;
+  const set = new Set(ids);
+  for (const [k, v] of Object.entries(tl.bg)) if (set.has(k) || (typeof v === 'string' && v && set.has(v))) delete tl.bg[k];
+}
+
+function textsOf(content) {
+  if (typeof content === 'string') return [content];
+  if (!Array.isArray(content)) return [];
+  return content.filter((b) => b && b.type === 'text' && typeof b.text === 'string').map((b) => b.text);
+}
+
+function tailOnAssistant(tl, id, msg, content) {
+  tl.n += 1;
+  if (id !== null && id !== tl.msg) {
+    tl.pending = {};
+    tl.msg = id;
+  }
+  for (const b of content) {
+    if (!b || b.type !== 'tool_use' || typeof b.id !== 'string') continue;
+    const input = b.input && typeof b.input === 'object' ? b.input : {};
+    tl.pending[b.id] = declaredTimeoutMs(input);
+    if (STOP_TOOLS.has(b.name)) endBackground(tl, Object.values(input).filter((v) => typeof v === 'string'));
+  }
+  const sr = msg.stop_reason;
+  tl.last = typeof sr === 'string' && sr !== '' && !TURN_GOES_ON.has(sr) ? 'end' : 'call';
+}
+
+function tailOnUser(tl, rec, content) {
+  tl.n += 1;
+  const texts = textsOf(content);
+  for (const s of texts) endBackground(tl, notifiedIds(s));
+  let results = 0;
+  for (const b of Array.isArray(content) ? content : []) {
+    if (!b || b.type !== 'tool_result' || typeof b.tool_use_id !== 'string') continue;
+    results += 1;
+    delete tl.pending[b.tool_use_id];
+    const r = rec.toolUseResult;
+    if (!r || typeof r !== 'object' || Array.isArray(r)) continue;
+    let task = null;
+    if (typeof r.backgroundTaskId === 'string') task = r.backgroundTaskId;
+    else if (typeof r.taskId === 'string') task = r.taskId;
+    else if (r.isAsync === true) task = typeof r.agentId === 'string' ? r.agentId : '';
+    if (task !== null) tl.bg[b.tool_use_id] = task;
+  }
+  tl.last = results === 0 && texts.length > 0 && texts.every((s) => INTERRUPT_RE.test(s)) ? 'end' : 'input';
+}
+
+function tailOnAttachment(tl, a) {
+  if (a && typeof a === 'object' && a.type === 'queued_command') for (const s of textsOf(a.prompt)) endBackground(tl, notifiedIds(s));
 }

@@ -42,3 +42,5 @@ When a step's files are complete and valid, write `staging/READY.json` last: `{"
 If `in/reader-brief.md` is not in your folder, you have no readers: you start none (no Agent calls) and work with the tools you have, in the same forms, until the coordinator tells you to stop.
 
 Your last line of every turn is exactly `TURN-END {{field}}`, and nothing follows it: no other note, summary or request, in that line or after it.
+
+If every tool call is denied `attempt-claimed` or `attempt-cancelled`, another session holds this attempt or it was cancelled: end your turn (FX-CLAIM).

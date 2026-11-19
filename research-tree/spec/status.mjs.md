@@ -14,6 +14,9 @@ node tcb/status.mjs --endturn --acked-seq K --root R --ce N [--now ISO] [--dry-r
 node tcb/status.mjs intent open --key KEY --subject S [--text-file P] --root R --ce N
 node tcb/status.mjs intent done --key KEY --root R --ce N
 node tcb/status.mjs owner --act approve|accept|resume|drop|ruling --subject S --quote-file P --root R --ce N
+node tcb/status.mjs owner --act closed --subject SID --quote-file P --root R --ce N   (FX-CGATE: SID the CLI
+  session id, a lowercase UUID, else 66; in the hold the owner line, then run/close/done/<SID>.json {kind:
+  'close-done', session, outcome: 'owner', by: null} by an exclusive create, a record already there kept)
 node tcb/status.mjs meter --pct P --root R --ce N
 ```
 Modes `intent` (sub-mode `open|done`), `owner`, `meter`; the default and the two flags otherwise.
@@ -167,3 +170,14 @@ start (§7 item 7); that the watcher's and alarm's exits reach the coordinator (
 - Flags of the default mode: `ARM_FLAGS` (FX-W2, `arm-nonces`) and `DEADMAN_FLAGS` (FX-W4, `deadman`), empty.
 - `deadmanRun(ctx, flags, dry)` (FX-W4) runs right after the dry-run flag is read, before the ce check;
   null goes on.
+
+## FX-CLAIM (round 3)
+
+Reconcile (FX-CLAIM step 3): a session claim is the first source of `started`; other folder sessions → anomaly `duplicate-session`; a tombstone starts nothing; an invalid claim → anomaly `claim-invalid`; older attempts with a session claim and no transcript are reconciled too. `slotCount` gets `{root}`.
+
+## FX-REDO: a missing ledger line after a death (FIX-fence section 5)
+
+The row is written before its line, so a death between the two leaves the row moved and the line missing. The mode's own repeat is the redo, from the row (the after-image): only at the exact post-state, inside the mode's hold, the missing line is appended with `data.redo: true` and the answer is exit 0 with `result.repeat` true and `result.redo` (true when a line was written; a dry run writes nothing). Elsewhere the old answer stands.
+
+- `--reconcile`: an active row at started whose attempt has a session (equal to the row's when that is set) and no `started` line gets one, at the end of the reconcile hold; rows this call moved are skipped; `reconciled` lists it with `redo: true`.
+- Test: `tcb/test/redo.test.mjs`.

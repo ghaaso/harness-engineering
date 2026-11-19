@@ -128,3 +128,7 @@ claude, frozen}, failing, anomalies: [{code, id}], head_checked: {seq, hash}}.
 ## Needs the app
 - None: every check reads files and runs git inside the temp root. (Whether a real session obeys the
   settings fsck guards is §7 item 3, owned by selftest.)
+
+## FX-REDO: missing ledger lines (FIX-fence section 5)
+
+An anomaly (a warning, not a failing item) `ledger-line-missing`, id `<task>-e<epoch>:<kind>`, for each row move whose line the ledger lacks. Shown for good by the row: a cut attempt E -> the `fence` to E+1 (`from` E); `bound_at` -> `bind`; a confirmed stop of attempt k -> a confirmed `stop` at k+1 (k for the last attempt of a committed row). Shown only by the current step: admitted with a manifest -> `admit`; active at started -> `started`; stop-requested -> `stop-request`. A first fence and a cut or drop with no attempt leave no mark and are not checked. Test: `tcb/test/redo.test.mjs`.

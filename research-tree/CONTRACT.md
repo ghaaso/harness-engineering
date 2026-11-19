@@ -416,7 +416,8 @@ does not apply); `not_run` lists (check, subject) whose last `check` line is not
 `watcher.json`: `{ce, pid, start_time, ticks_total, last_tick_at, intake: {pid, start_time}?,
 active: {<key>: onset_tick}, pending: [{key, class, task?, first_tick}] (non-urgent, coalescing),
 tasks: {<task>: {epoch, calls, stall_calls, hang_ticks, V, V_min, loop: {sig, run}, spend, window,
-zombie_tokens, files: {<path relative to transcripts_root>: parse-state}}}, coord_file:
+zombie_tokens, kind, deadline, age_ticks, age_base (FX-W6), files: {<path relative to transcripts_root>:
+parse-state, which also keeps the transcript's `tail` and `kind` (FX-W6, §4.8)}}}, coord_file:
 {<relpath>: parse-state}?}`. Counters are continued by any later watcher; a new epoch resets that
 task's counters. A class instance's **key** is `<class>|<task or ->|<epoch or ->|<onset_tick>`:
 `onset_tick` is the tick at which the condition became present after being absent (kept in
@@ -430,6 +431,16 @@ too: `17|<task or ->:<act>|<epoch or ->|<onset_tick>` (acts: `replace-fence`, `r
 last_context, peak_context, loop: {sig, run}}`: each tick parses only from `end_byte`
 (`parseTranscript(..., {fromByte, lastCall})`); a file shorter than `end_byte` is re-parsed from 0.
 Lock record (run.lock and watcher.lock): `{pid, start_time, nonce: 32 hex, script, ce?, acquired_at}`.
+**FX-W7 (lock fencing).** Each evaluation runs on a copy of the state. It takes the run lock with a
+short wait (`watcher_lock_try_ms`) and, inside that one hold, runs `assertHeld` of watcher.lock, its
+appends and the `watcher.json` write; only then is the copy kept. On a busy run lock the copy is
+dropped: nothing is written, the tick does not count, transcripts are read again from the kept
+`end_byte`, and the watcher does not exit (it exits 75 only on a lost watcher.lock; `--once` exits 75
+`lock-busy`). `run/watcher-busy.json` `{ce, busy_ticks}`: the busy ticks in a row, rewritten without
+the run lock by its one writer, the holder of watcher.lock; a held tick resets it to 0; FX-W4 alerts
+at `busy_alert_ticks`. An unparseable `watcher.json` is quarantined: renamed as found to
+`watcher.json.<pid>.<nonce8>.corrupt` (named in `result.quarantined`), and the watcher starts from
+fresh counters instead of exiting 67.
 
 ### 3.11 Commit record [commit-record] — `store/commits/<task>.<step>.json`
 `{schema_version, task, step, epoch, step_key: 64 hex, outputs: [{id, kind, sha256}] (sorted by id), outputs_sha}`
@@ -552,7 +563,9 @@ value `tcb/thresholds.json` ships:
 | Name | Default | Source | Name | Default | Source |
 |---|---|---|---|---|---|
 | delta_ms | 60000 | mapping D1-02 | coalesce_ticks | 2 | guess (δ = 2 min) |
-| stall_calls (c) | 30 | guess | hang_ticks (h) | 10 | guess |
+| stall_calls (c) | 30 | guess | hang_ticks (h) | 10 | guess; read by no script since FX-W6 (the kind deadlines below) |
+| model_ticks / tool_slack_ticks | 10 / 12 | guess, branch B1 (FX-W6 step 3: a model call; a tool call waits its declared timeout in ticks of Δ + this slack) | bg_wait_ticks | 60 | guess, branch B1 (FX-W6 step 3: a wait on a background task) |
+| idle_ticks | 30 | guess (FX-W6 step 4: act-due `idle-child`, never a hang) | attempt_max_ticks | 240 | guess, a placeholder (FX-W6 step 5: act-due `age-cap`, uncharged) |
 | loop_k | 3 | mapping D3-06 | W_cc_ticks | 30 | mapping D1-09 |
 | R | 1 | design R8 | H_max | 2 | guess |
 | Z_frac | 0.1 | guess | stop_verify_deltas | 2 (ticks) | guess (R9's 2Δ) |
@@ -592,6 +605,15 @@ audit flags a checker that read more than one batch). Profiles exist for every r
   \"{root}\" --role <role> --task {task} --epoch {epoch}", timeout: 30}]}` under `PreToolUse`. The
   owner installs `tcb/settings/coordinator.json` (no task, no epoch) and merges `user-deny.json` into
   his user settings. guard-hook and audit enforce the same profile.
+- **Session tools (FX-CGATE).** The coordinator's profile alone has `session_tools: {start: string[], stop:
+  string[]}`: the app's session tools by exact name (no prefix rule), each also in `tools_allow`, start and stop
+  disjoint (shipped: start `mcp__ccd_session__start_session`; stop `mcp__ccd_session_mgmt__archive_session`,
+  `mcp__ccd_session_mgmt__stop_session`). `tcb/settings/coordinator.json` keeps its one `PreToolUse` entry and adds
+  `PostToolUse` and `PostToolUseFailure` entries, matcher = the stop tools joined by `|`, the same command and
+  timeout. Those events carry `tool_use_id` and `tool_response` (Post) or `error` (PostToolUseFailure); the hook
+  writes the close records from them (`spec/guard-hook.mjs.md`, FX-CGATE). A session is named by the CLI id
+  (`session_id` of the hook input, a lowercase UUID) and by the app id (`local_<uuid>`, the session tools' input):
+  `coord-session-<ce>.json` and `start.json` hold CLI ids, the close records are named by app ids.
 - **Agent files.** `tcb/agents/<type>.md` (U3b: front matter `name`, `description`, `tools`; body =
   the verbatim `tcb/briefs/<type>.md`). replace copies the file of every type in the profile's
   `agent_types` into `.claude/agents/`; the manifest lists them (`agents`); fsck accepts exactly those.
@@ -775,6 +797,11 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
     `fs.linkSync(renamed, lock)` (fails rather than replace) and unlink the renamed file; if the link
     fails because a lock exists, keep the file as `<name>.<nonce>.orphan` and log an `incident`
     at the next acquisition. Then start over.
+  - watcher.lock (FX-W7): the waiter judges the holder outside every lock (unknown is never broken)
+    and reads `watcher.json`'s bytes before the judgement. A holder judged dead is broken only under
+    the run lock (taken with the caller's retries; busy → `lock-busy` 75): the waiter re-reads the
+    lock and `watcher.json` and breaks only when both are byte-for-byte unchanged. A changed
+    `watcher.json` means the holder wrote: its verdict is dropped and it is judged again later.
   - Unreadable (empty, or no lock record; e.g. a reset between the `wx` create and the write): never
     judged by `proc`. When `retries` ≥ `LOCK_UNREADABLE_MIN_RETRIES` (50) and the lock's bytes stay
     unchanged for the whole budget, it is broken with the same rename / re-read / create protocol,
@@ -855,8 +882,11 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
   `<root>/<projectDirName(folder)>/` whose first record carrying `cwd` names the folder (case-folded).
   If that folder is absent, every `<root>/*/` whose name starts with the first 100 characters of
   `projectDirName(folder)` is scanned the same way (the harness is believed to shorten long names).
-- `parseTranscript(path, {fromByte=0, lastCall=null}) → {sessionId, cwd, calls, toolUses,
-  toolResults, structured, turnEnds, endByte, torn, badLines}`; reads the file in 1 MiB chunks
+- `parseTranscript(path, {fromByte=0, lastCall=null, tail=null}) → {sessionId, cwd, calls, toolUses,
+  toolResults, structured, turnEnds, endByte, torn, badLines}` plus the non-enumerable `tail` (the
+  tail state, continued from the option `tail` when the parse resumes at fromByte) and `kind` (`tool`,
+  `bg-wait`, `model` or `idle`; an unreadable transcript is `model`) of FX-W6, as `spec/lib.md` defines
+  them; reads the file in 1 MiB chunks
   (`fs.readSync`), never as one string:
   - a **model call** is one distinct `message.id` among `type:"assistant"` records whose
     `message.model` is not `<synthetic>`; its usage is taken from the last record of that id (the
@@ -945,6 +975,26 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
   unknown (never zero, so back-to-back starts cannot all pass); else a transcript exists → unknown.
   A `procList` of null (PowerShell failed) makes every such attempt unknown. Admission uses `live +
   unknown + unconfirmed < N_max` (R10; fail-safe). Shared by admit, status and handover.
+  **FX-CLAIM step 7** (`opts.root`, passed by admit, status, handover and watch): plus one `unconfirmed`
+  for every folder session (a transcript whose first `cwd` is an attempt folder; any row but planned,
+  any attempt) that is not its attempt's own session (the claim holder, else the recorded `session`)
+  and has no counting `run/close/done/<sid>.json`: `stopped` and `owner` count; `no-such-session`
+  counts only when the attempt's `start.json` `session` equals the record's `by`, or the process list
+  matches nothing for the folder or the session (rev 4, H3). There is no fixed ceiling of 3: the cap is
+  `min(N_max, N_ceiling)` (ORCHESTRATION 9 row 5).
+- FX-CLAIM claims (`model/as-built/FIX-fence.md` section 2, rev 5): `readClaim(dir) → {kind: none |
+  session | tombstone, session_id}` (`wt/<T>-e<E>/claim.json`; bytes that do not parse are tamper,
+  `claim-invalid` 3); `claimRecord(sid)`, `tombstoneRecord(task, epoch)`, both made by strict create
+  (0b) and never deleted while the attempt lives. The child hook claims on every task-role call after
+  the epoch gate (deny `bad-input`, `attempt-claimed`, `attempt-cancelled`, `claim-invalid`). `fence`
+  tombstones an attempt with a manifest; for a failure reason, not host, a tombstone is a no-start
+  fence, uncharged while `nostart < H_nostart` (then `nostart + 1`, capped at H_nostart, and no `fails`
+  entry, so no R8 fail), charged like a failure past it; a session claim resets `nostart` to 0.
+  `--if-unclaimed`: a session claim → exit 5 `claimed-late`, checked before any write. `bind` needs
+  the claim (exit 6 `not-claimed`, exit 1 `not-claim-holder`). Reconcile takes `started` from the
+  claim first, transcripts second; another folder session is the anomaly `duplicate-session`. `stop
+  request` on a tombstone confirms at once only with no folder session visible. `startLeaseExpired(start,
+  ticks_total, now_ms, {start_lease_ticks, start_lease_ms})`: both bounds passed (N3).
 - `variant(root, row, {f5Given}) → {V, covered: key[], uncovered: key[]}` (R5), used by replace
   (todo), stop and replace (overflow ids), watch (stall) and status: **research** and **control**:
   `covered` = `row.question_ids` carried by a card of this task (named by an `intake` line of the

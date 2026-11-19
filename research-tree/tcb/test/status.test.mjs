@@ -732,6 +732,32 @@ test('T14 owner: drop of an unknown task exits 1 no-task', async () => {
   });
 });
 
+test('S1 FX-CGATE owner closed: the CLI session id only; the owner line and run/close/done/<sid>.json outcome owner; a record already there is kept; a dry run writes nothing', async () => {
+  await withRoot({}, async (ctx) => {
+    const q = notes(ctx, 'closed.txt', 'that session is gone, I closed it');
+    const sid = '0a1b2c3d-0000-4000-8000-0000000000c1';
+    const done = (s) => path.join(ctx.root, 'run', 'close', 'done', `${s}.json`);
+    const closed = (s, more = []) => owner(ctx, ['--act', 'closed', '--subject', s, '--quote-file', q, ...more]);
+    for (const bad of ['self', `local_${sid}`, sid.toUpperCase(), 'f1-research']) assertLine(closed(bad), 66);
+    assert.equal(fs.existsSync(path.join(ctx.root, 'run', 'close')), false, 'a refused act writes nothing');
+    const dry = assertLine(closed(sid, ['--dry-run']), 0);
+    assert.equal(dry.dry_run, true);
+    assert.equal(fs.existsSync(done(sid)), false, 'a dry run writes nothing');
+    const j = assertLine(closed(sid), 0);
+    assert.equal(j.result.done, 'created');
+    assert.deepEqual(J(done(sid)), { kind: 'close-done', session: sid, outcome: 'owner', by: null });
+    const lines = ledgerLines(ctx.root, 'owner');
+    assert.equal(lines.length, 1);
+    assert.deepEqual(lines[0].data, { act: 'closed', subject: sid, quote: 'that session is gone, I closed it' });
+    // a hook's record already at the name stands
+    const other = '0a1b2c3d-0000-4000-8000-0000000000c2';
+    w(done(other), { kind: 'close-done', session: other, outcome: 'stopped', by: sid });
+    assert.equal(assertLine(closed(other), 0).result.done, 'kept');
+    assert.equal(J(done(other)).outcome, 'stopped');
+    assert.equal(ledgerLines(ctx.root, 'owner').length, 2);
+  });
+});
+
 test('T14 owner: a UTF-8 BOM at the start of the quote file is not part of the quote', async () => {
   await withRoot({}, async (ctx) => {
     const p = path.join(ctx.root, 'plan', 'notes', 'bom.txt');

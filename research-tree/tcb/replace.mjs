@@ -38,6 +38,7 @@ const SPEC = {
     task: { type: 'string', required: ['fence', 'start', 'bind'] },
     epoch: { type: 'int', required: ['fence', 'start', 'bind'] },
     reason: { type: 'string', required: ['fence'] },
+    'if-unclaimed': { type: 'bool' },
     tick: { type: 'int' },
     session: { type: 'string', required: ['bind'] },
     now: { type: 'string' },
@@ -417,6 +418,8 @@ async function modeFence(env, flags) {
       const table = lib.readTasks(root);
       const row = (table.tasks ?? []).find((r) => r && r.task === T);
       if (!row) throw tcbError('no-task', 1, { task: T });
+      const redone = fenceRedo(env, handle, row, T, E, reason); // FX-REDO: a repeat at the exact post-state
+      if (redone) return redone;
       if (reason === 'drop') {
         const { lines } = lib.readLedger(root);
         const own = lib.lastLine(lines ?? [], 'owner', (l) => l && l.data && l.data.act === 'drop' && l.data.subject === T);
@@ -430,6 +433,7 @@ async function modeFence(env, flags) {
       const cutFiles = cut && cut.files ? Object.keys(cut.files).length : 0;
       const readyCheck = () => readyInLog(dir, row);
       const hold = { task: T, epoch: E, reason, failure, row, att, dir, cut, readyCheck };
+      fenceIfUnclaimed(hold, !!flags['if-unclaimed']);
       fenceOutcomeSteps(env, handle, hold);
       fenceTombstone(env, handle, hold);
 
@@ -517,8 +521,81 @@ function fenceOutcomeSteps(env, handle, hold) {
   if (r.result === 'fenced' && r.state.fenced !== reason) throw tcbError('fence-pending', 65, { task: T, epoch: E, reason: r.state.fenced });
 }
 
-// FX-CLAIM (FX-OUT step 6): the attempt's tombstone claim, before lib.fence.
-function fenceTombstone(env, handle, hold) { // eslint-disable-line no-unused-vars
+// FX-CLAIM (FX-OUT step 6): the attempt's tombstone claim, before lib.fence. Only for an attempt with a
+// manifest (rev 4 H1: an attempt never admitted has nothing live to cancel). Strict create: `created`
+// means no session ever passed a tool call (a no-start fence; lib.fence reads the claim for nostart),
+// `identical` is the retry of a torn fence, and a session claim holding the name means the attempt
+// started (the fence goes on; lib.fence resets nostart). Nothing is written in a dry run.
+function fenceTombstone(env, handle, hold) {
+  const { att, dir, task, epoch } = hold;
+  if (!handle || !att || !att.manifest) return;
+  try {
+    lib.createExclusive(path.join(dir, 'claim.json'), lib.tombstoneRecord(task, epoch), { strict: true });
+  } catch (e) {
+    if (!e || e.code !== 'exists-different') throw e;
+    lib.readClaim(dir); // a session claim (or an earlier tombstone's bytes) holds the name; tamper throws 3
+  }
+}
+
+// FX-CLAIM rev 5 point 2: `--if-unclaimed` (the lease act). Before any write of the hold, so before
+// FX-OUT's fenced slot: a session claim on attempt E -> exit 5 `claimed-late`, nothing written; the
+// planner then orders bind. A claim made after this read meets the tombstone step, and the fence goes
+// on (FX-OUT: no refusal once the hold has written).
+function fenceIfUnclaimed(hold, ifUnclaimed) {
+  if (!ifUnclaimed) return;
+  const c = lib.readClaim(hold.dir);
+  if (c.kind === 'session') throw tcbError('claimed-late', 5, { task: hold.task, epoch: hold.epoch, session: c.session_id });
+}
+
+// ---------------------------------------------------------------------------------------------
+// FX-REDO (FIX-fence section 5): a missing ledger line after a death. Each mode writes the row and
+// then its line, so a death between the two leaves the row moved and the line missing. The mode's
+// own repeat is the redo (ARIES, from the after-image): only at the exact post-state, inside the
+// mode's hold, it appends the missing line rebuilt from the row, marked `data.redo: true`
+// (render orders by epoch where one is set; fsck warns about a line still missing). A dry run
+// reports `redo` and writes nothing.
+
+/** Appends kind for (T, epoch) with data and redo when no such line matches: true when it wrote (dry: would). */
+function redoLine(env, handle, kind, T, epoch, match, data) {
+  const { lines } = lib.readLedger(env.root);
+  if (lib.lastLine(lines ?? [], kind, (l) => l.task === T && l.epoch === epoch && match(l))) return false;
+  if (handle) append(env, handle, kind, T, epoch, { ...data, redo: true });
+  return true;
+}
+
+/**
+ * `fence --epoch E --reason r` repeated: null unless the row is at the exact post-state (epoch E+1,
+ * step fenced, reason r, attempts[E].cut set); then exit 0 `repeat`, the fence line completed. Any
+ * later step keeps the refusal of the fence (65), so a late repeat is never read as a fresh fence.
+ */
+function fenceRedo(env, handle, row, T, E, reason) {
+  const att = attemptOrNull(row, E);
+  if (!(row.epoch === E + 1 && row.step === 'fenced' && row.reason === reason && att && att.cut && typeof att.cut === 'object')) return null;
+  const failure = FAILURE.has(reason);
+  const fail = failure ? (row.fails ?? []).find((x) => x && x.epoch === E && x.class === reason) ?? null : null;
+  // FX-CLAIM N7 on the merge: lib.fence pushes no `fails` entry for a no-start fence under H_nostart (a
+  // tombstone) and charges nothing, so a failure reason with no fail of epoch E was that fence.
+  const free = failure && !fail;
+  const host = !!(fail && fail.host === true);
+  const limit = !free && row.limit === true;
+  const restartCharged = failure && !free && !limit && !host;
+  const cutFiles = att.cut.files && typeof att.cut.files === 'object' ? Object.keys(att.cut.files).length : 0;
+  const data = { reason, from: E, to: E + 1, host, restart_charged: restartCharged, limit, cut_files: cutFiles };
+  const redo = redoLine(env, handle, 'fence', T, E + 1, (l) => !!l.data && l.data.from === E, data);
+  const result = { task: T, ...data, state: row.state, step: row.step, spend_at_fence: att.spend_at_fence ?? null, repeat: true, redo };
+  return { exit: 0, result, reasons: [] };
+}
+
+/** `start` repeated at its post-state (admitted at E with a manifest): the admit line. */
+function startRedo(env, handle, row, T, E) {
+  const data = { e_task: row.e_task, reservation: null, B: env.th.get('B_tokens', null), r: env.th.get('r_tokens', null), live: null, free_mb: null };
+  return redoLine(env, handle, 'admit', T, E, () => true, data);
+}
+
+/** `bind` repeated at its post-state (bound, the same session id): the bind line. */
+function bindRedo(env, handle, row, T, E, SID) {
+  const att = attemptOrNull(row, E);
+  return redoLine(env, handle, 'bind', T, E, () => true, { session: SID, boot: att ? att.boot ?? null : null });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -865,9 +942,10 @@ async function modeStart(env, flags) {
       if (row.epoch !== E) throw tcbError('stale-epoch', 65, { expected: E, actual: row.epoch });
       const att = attemptOrNull(row, E);
       if (row.step === 'admitted' && att && att.manifest) {
+        const redo = startRedo(env, handle, row, T, E); // FX-REDO
         return {
           exit: 0,
-          result: { task: T, epoch: E, folder: att.folder ?? null, manifest: att.manifest, settings_sha: att.settings_sha ?? null, repeat: true },
+          result: { task: T, epoch: E, folder: att.folder ?? null, manifest: att.manifest, settings_sha: att.settings_sha ?? null, repeat: true, redo },
           reasons: [],
         };
       }
@@ -982,7 +1060,7 @@ async function modeBind(env, flags) {
       if (!row) throw tcbError('no-task', 1, { task: T });
       if (row.epoch !== E) throw tcbError('stale-epoch', 65, { expected: E, actual: row.epoch });
       if (row.state === 'active' && row.step === 'bound') {
-        if (row.session === SID) return { exit: 0, result: { task: T, epoch: E, session: SID, repeat: true }, reasons: [] };
+        if (row.session === SID) return { exit: 0, result: { task: T, epoch: E, session: SID, repeat: true, redo: bindRedo(env, handle, row, T, E, SID) }, reasons: [] };
         throw tcbError('session-differs', 1, { bound: row.session ?? null, session: SID });
       }
       if (row.state !== 'active' || (row.step !== 'admitted' && row.step !== 'started')) {
@@ -992,11 +1070,16 @@ async function modeBind(env, flags) {
       // (epoch 0, no attempts) is a wrong step (65), not a missing attempt (2).
       const att = lib.attemptOf(row, E);
       const dir = attemptDir(root, T, E, att);
-      if (cwd !== null && !samePath(cwd, dir)) throw tcbError('wrong-folder', 1, { cwd: posix(cwd), folder: posix(dir) });
-      if (row.step === 'started') {
-        const known = att.session ?? row.session ?? null;
-        if (known && known !== SID) throw tcbError('session-differs', 1, { started: known, session: SID });
+      // FX-CLAIM step 4: bind by claim, before today's checks. No claim yet -> exit 6 `not-claimed` (no
+      // tool call has passed; retry later); a tombstone or another session's claim -> exit 1
+      // `not-claim-holder`. The claim also settles a `started` row: reconcile takes `started` from it
+      // first, so the started-session check of round 2 is this one.
+      const claim = lib.readClaim(dir);
+      if (claim.kind === 'none') throw tcbError('not-claimed', 6, { task: T, epoch: E, session: SID });
+      if (claim.kind !== 'session' || claim.session_id !== SID) {
+        throw tcbError('not-claim-holder', 1, { claim: claim.kind, holder: claim.session_id, session: SID });
       }
+      if (cwd !== null && !samePath(cwd, dir)) throw tcbError('wrong-folder', 1, { cwd: posix(cwd), folder: posix(dir) });
       if (handle) {
         lib.updateRow(root, handle, { task: T, epoch: E, steps: ['admitted', 'started'], states: ['active'] }, (copy) => {
           const i = attemptIndex(copy, E);
@@ -1037,6 +1120,7 @@ async function main(ctx) {
     if (!Number.isInteger(flags.epoch) || flags.epoch < 0) throw usage({ flag: 'epoch' });
   }
   if (mode === 'fence' && !REASONS.includes(flags.reason)) throw usage({ flag: 'reason', value: flags.reason ?? null });
+  if (flags['if-unclaimed'] && mode !== 'fence') throw usage({ flag: 'if-unclaimed' });
   if (mode === 'bind' && (typeof flags.session !== 'string' || !SESSION_RE.test(flags.session))) throw usage({ flag: 'session' });
   if (flags.tick !== undefined && flags.tick !== null && (!Number.isInteger(flags.tick) || flags.tick < 0)) throw usage({ flag: 'tick' });
   if (flags['free-mb'] !== undefined && flags['free-mb'] !== null && flags['free-mb'] < 0) throw usage({ flag: 'free-mb' });

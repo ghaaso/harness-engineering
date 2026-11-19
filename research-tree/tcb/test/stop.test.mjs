@@ -404,6 +404,45 @@ test('T3 request on a fenced row with no session but a folder transcript: stop-r
   assert.ok(Object.keys(sample.sizes).includes(rel), `the sample covers the folder transcript: ${JSON.stringify(sample.sizes)}`);
 });
 
+test('T3b FX-CLAIM step 6 (rev 5 point 1): a tombstone with no folder session confirms at once; with one visible the stop is requested naming every folder session; a session claim is named', { concurrency: false }, async (t) => {
+  const claimAt = (root, v) => {
+    fs.mkdirSync(folderAbs(root, T, 1), { recursive: true });
+    fs.writeFileSync(path.join(folderAbs(root, T, 1), 'claim.json'), JSON.stringify(v));
+  };
+  await t.test('tombstone, nothing visible: confirmed at once', async (t2) => {
+    const w = mk();
+    t2.after(w.cleanup);
+    const { root } = w;
+    table(root, [noSession()]);
+    claimAt(root, { kind: 'tombstone', task: T, epoch: 1 });
+    expectExit(run(root, 'request'), 0);
+    const r = getRow(root);
+    assert.equal(r.step, 'stopped');
+    assert.equal(attemptOf(r, 1).stop, 'confirmed');
+  });
+  await t.test('tombstone, a folder session visible: stop-requested', async (t2) => {
+    const w = mk();
+    t2.after(w.cleanup);
+    const { root } = w;
+    table(root, [noSession()]);
+    claimAt(root, { kind: 'tombstone', task: T, epoch: 1 });
+    fakeT(root, SID2, folderAbs(root, T, 1), [u(100, 0, 0, 10)], `${lib.projectDirName(folderAbs(root, T, 1))}/${SID2}.jsonl`);
+    expectExit(run(root, 'request'), 0);
+    assert.equal(getRow(root).step, 'stop-requested');
+    assert.deepEqual(ofKind(root, 'stop-request')[0].data.sessions, [SID2]);
+  });
+  await t.test('a session claim: the request names the claim holder', async (t2) => {
+    const w = mk();
+    t2.after(w.cleanup);
+    const { root } = w;
+    table(root, [noSession()]);
+    claimAt(root, { kind: 'session', session_id: SID1 });
+    expectExit(run(root, 'request'), 0);
+    assert.equal(getRow(root).step, 'stop-requested');
+    assert.equal(ofKind(root, 'stop-request')[0].data.session, SID1);
+  });
+});
+
 test('T4 request on a row at step bound that is not committed -> exit 65, nothing written', async (t) => {
   const w = mk();
   t.after(w.cleanup);

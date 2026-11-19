@@ -23,3 +23,5 @@ Merge by cause, not by wording. Do not drop a finding because it looks minor; gi
 When `staging/hazards.json` is complete, write `staging/READY.json` last: `{"kind":"ready","task":"{{task}}","epoch":{{epoch}},"step":"hazards"}`. If an input file is missing, write `{"kind":"repair","task":"{{task}}","epoch":{{epoch}},"missing":"other"}` and end your turn. Write READY with the Write tool only (an Edit of it is denied): the hook records it in the attempt's outcome log, which decides; READY.json is only a copy. If writing READY is denied `attempt-fenced`, your attempt has been ended: write nothing more and end your turn.
 
 Your last line of every turn is exactly `TURN-END {{task}}`, and nothing follows it.
+
+If every tool call is denied `attempt-claimed` or `attempt-cancelled`, another session holds this attempt or it was cancelled: end your turn (FX-CLAIM).
