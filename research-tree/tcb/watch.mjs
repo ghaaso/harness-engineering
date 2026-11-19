@@ -1,7 +1,7 @@
 // watch.mjs (unit U1b): the coordinator's event loop (R4-R6, R8, R10-R12, R50).
 //   (watcher) --root R --ce N [--interval-ms MS] [--no-intake] [--now ISO] [--free-mb M]
 //   --once    --root R --ce N [--no-intake] [--now ISO] [--free-mb M]
-//   --alarm   --root R --ce N [--sleep-ms MS] [--now ISO]
+//   --alarm --ensure --nonce X --root R --ce N [--sleep-ms MS] [--now ISO]   (FX-W2: the ensure)
 //   --intake  --root R --ce N
 // Source of truth: CONTRACT.md (sections 1.2, 1.4, 2.1, 3.10, 4) and spec/watch.mjs.md.
 // Reads, decides and exits with the most urgent class. Counts model calls and ticks; the one clock
@@ -45,7 +45,13 @@ const FLAGS = {
   now: { type: 'string' },
   'free-mb': { type: 'int' },
   boot: { type: 'string' },
+  ensure: { type: 'bool' },
+  nonce: { type: 'string' },
 };
+// FX-W2: the ensure's nonce, a new one each turn; hex only, so it never names a slot or a marker file.
+const NONCE_RE = /^[0-9a-f]{32}$/;
+// FX-W2 step 8: an abandoned ensure that found no free slot reads turn.json this often.
+const ABANDONED_POLL_MS = 2000;
 
 // ---------------------------------------------------------------- small local helpers
 
@@ -895,6 +901,13 @@ async function runWatcher(ctx, root, flags, once) {
 
 // ---------------------------------------------------------------- --alarm
 
+// FX-W2 (FIX-wake.md FX-W2, branch S1): the alarm is started only as the ensure. Step 2: checkCe (64),
+// then the exclusive create of run/arm/<nonce>.json {started}; a nonce already there: exit 0
+// nonce-reused, nothing else written. Step 3 (ensureSlots), outside every lock: the slot records, then
+// one process query cut at ensure_query_ms. Hold 1 (ensureHold1): a free slot registers this process
+// (alarmSlotTurnSeq, alarmRegisterSlot, then alarm.json as built) and it sleeps as the alarm; none:
+// exit 0 present. Step 8: an ensure whose nonce file reconcile marked `abandoned` registers if a slot is
+// free, else waits for the next turn (ensureAbandoned).
 async function runAlarm(ctx, root, flags) {
   const ce = flags.ce;
   lib.checkCe(root, ce);
@@ -902,6 +915,12 @@ async function runAlarm(ctx, root, flags) {
   const proc = lib.realProc({ exe: th.get('proc_exe') });
   const sleepMs = Number.isInteger(flags['sleep-ms']) ? flags['sleep-ms'] : th.get('alarm_ms');
   const facts = lib.edgeFacts(flags);
+  const nonce = flags.nonce;
+  const me = lib.selfInfo(proc);
+  if (!ensureStarted(root, nonce, me)) {
+    return { exit: 0, result: { run: 'alarm', ensure: 'nonce-reused', nonce }, reasons: [{ code: 'nonce-reused', detail: { nonce } }] };
+  }
+  const seen = await ensureSlots(root, th, ce);
   let previous = null;
   try {
     previous = lib.readJson(fileOf(root, 'alarm'));
@@ -914,24 +933,33 @@ async function runAlarm(ctx, root, flags) {
   let token = armToken(root);
   const record = { schema_version: 1, pid: self.pid, start_time: self.start_time, ce, armed_at: isoOf(facts.now), sleep_ms: sleepMs };
   // the alarm's registration, for the round-3 steps (S0.5): handle is set in the hold only
-  const reg = { root, ce, th, proc, flags, facts, self, record, handle: null, registered: false };
+  // FX-W2: nonce, the step-3 verdicts (seen), the slot chosen in hold 1 (slot: {k, record}), the
+  // outcome without one (present | abandoned) and turn.json's turn_seq read in hold 1 (turnSeq).
+  const reg = { root, ce, th, proc, flags, facts, self, record, handle: null, registered: false, nonce, seen, slot: null, outcome: null, turnSeq: 0 };
   try {
     await lib.withRunLock(root, lockOpts(th, ce, proc, facts.now), async (handle) => {
       handle.assertHeld();
       reg.handle = handle;
+      ensureHold1(reg);
+      if (!reg.slot) return;
       alarmSlotTurnSeq(reg);
-      alarmRegisterSlot(reg);
+      alarmRegisterSlot(reg); // sets reg.registered once the slot names this alarm
       lib.writeAtomic(fileOf(root, 'alarm'), JSON.stringify(record) + '\n');
-      reg.registered = true;
     });
   } catch (e) {
     reg.handle = null;
-    // FX-W1: alarm.json written, then the hold failed (its lock lost at the release, 75): an exit after registration
+    // FX-W1: registered (the slot written), then the hold failed (alarm.json, or the lock lost at the release, 75)
     if (reg.registered) alarmExit(reg, e && Number.isInteger(e.exit) ? e.exit : 70);
     throw e;
   }
   reg.handle = null;
-  const result = { run: 'alarm', previous, armed: record, rearms: 0 };
+  if (!reg.registered) {
+    if (reg.outcome === 'present') {
+      return { exit: 0, result: { run: 'alarm', ensure: 'present', nonce, slots: seen.map(({ k, state }) => ({ k, state })) }, reasons: [{ code: 'present', detail: { nonce } }] };
+    }
+    return ensureAbandoned(reg, sleepMs);
+  }
+  const result = { run: 'alarm', ensure: 'registered', nonce, k: reg.slot.k, previous, armed: record, rearms: 0 };
   let out = null;
   try {
     for (;;) {
@@ -969,8 +997,136 @@ async function runAlarm(ctx, root, flags) {
 function alarmSlotTurnSeq(reg) { // eslint-disable-line no-unused-vars
 }
 
-// FX-W2: the ensure's slot record run/arm/slot-<k>.json, in the registration hold.
-function alarmRegisterSlot(reg) { // eslint-disable-line no-unused-vars
+// FX-W2: the ensure's slot record run/arm/slot-<k>.json, in the registration hold: reg.slot.record
+// {ce, pid, start_time, nonce} (FX-W3's alarmSlotTurnSeq adds turn_seq_at_reg to it first). From the slot
+// write on this process is registered (every later exit leaves its FX-W1 marker); then the outcome
+// run/arm/<nonce>.json {state: 'registered', k, pid}, which reconcile's hold 2 reads.
+function alarmRegisterSlot(reg) {
+  reg.handle.assertHeld();
+  const P = lib.paths(reg.root);
+  lib.writeAtomic(P.armSlot(reg.slot.k), JSON.stringify(reg.slot.record) + '\n');
+  reg.registered = true;
+  lib.writeAtomic(P.armNonce(reg.nonce), JSON.stringify({ state: 'registered', k: reg.slot.k, pid: reg.self.pid }) + '\n');
+}
+
+// FX-W2 step 2: run/arm/<nonce>.json {state: 'started', pid} by exclusive create (it makes run/arm/).
+// false: the name exists (a reused nonce, or reconcile abandoned it first): nothing else is written.
+function ensureStarted(root, nonce, me) {
+  try {
+    return lib.createExclusive(lib.paths(root).armNonce(nonce), JSON.stringify({ state: 'started', pid: me.pid }) + '\n') === 'created';
+  } catch (e) {
+    if (e && e.code === 'exists-different') return false;
+    throw e;
+  }
+}
+
+// alarm_slots (FX-W2, branch S1: 1), an integer >= 1.
+function slotCountOf(th) {
+  const n = th.get('alarm_slots');
+  if (!Number.isInteger(n) || n < 1) throw err('param-invalid', 2, { name: 'alarm_slots', value: n ?? null });
+  return n;
+}
+
+// A slot file's bytes and record; rec null when absent, unreadable, not JSON or naming no process.
+function slotSource(file) {
+  let bytes = null;
+  try {
+    bytes = fs.readFileSync(file);
+  } catch {
+    return { bytes: null, rec: null };
+  }
+  let rec = null;
+  try {
+    rec = JSON.parse(bytes.toString('utf8').replace(/^﻿/, ''));
+  } catch {
+    rec = null;
+  }
+  const ok = !!rec && typeof rec === 'object' && Number.isInteger(rec.pid) && rec.pid > 0 && typeof rec.start_time === 'string';
+  return { bytes, rec: ok ? rec : null };
+}
+
+// FX-W2 step 3, outside every lock: each slot's bytes (read first), then the markers, then one process
+// query cut at ensure_query_ms, only when a slot of this ce has no marker. A failed or timed-out query
+// is unknown (lib.liveness), never dead. -> [{k, bytes, state}]
+async function ensureSlots(root, th, ce) {
+  const P = lib.paths(root);
+  const slots = [];
+  for (let k = 1; k <= slotCountOf(th); k += 1) slots.push({ k, ...slotSource(P.armSlot(k)) });
+  const markers = lib.exitMarkers(root);
+  let list = null;
+  if (slots.some((s) => s.rec && s.rec.ce === ce && !markers.has(lib.markerKey(s.rec.pid, s.rec.start_time)))) {
+    try {
+      list = lib.realProc({ timeoutMs: th.get('ensure_query_ms'), exe: th.get('proc_exe') }).list();
+      if (!Array.isArray(list)) list = null;
+    } catch {
+      list = null;
+    }
+  }
+  const alive = (pid, st) => (Array.isArray(list)
+    ? list.some((p) => Number(p.pid) === Number(pid) && typeof st === 'string' && typeof p.start_time === 'string' && lib.aliveFromQuery(p.start_time, st) === true)
+    : null);
+  return slots.map((s) => ({ k: s.k, bytes: s.bytes, state: s.rec && s.rec.ce === ce ? lib.liveness(s.rec, { alive }, markers) : 'dead' }));
+}
+
+// turn.json's turn_seq (FX-W2 step 5), 0 when absent or unreadable.
+function turnSeqOf(root) {
+  try {
+    const t = lib.readJson(lib.paths(root).turn);
+    return t && Number.isInteger(t.turn_seq) ? t.turn_seq : 0;
+  } catch {
+    return 0;
+  }
+}
+
+// FX-W2 step 4 (and 8), in hold 1: is the nonce abandoned; a slot is free when absent, corrupt, of
+// another ce, marked as exited, or judged dead in step 3 with unchanged bytes; the first free one is
+// reg.slot. None: present (written to the nonce file) or, when abandoned, the wait of step 8.
+function ensureHold1(reg) {
+  reg.handle.assertHeld();
+  const P = lib.paths(reg.root);
+  let cur = null;
+  try {
+    cur = lib.readJson(P.armNonce(reg.nonce));
+  } catch {
+    cur = null;
+  }
+  const abandoned = !!cur && cur.state === 'abandoned';
+  reg.turnSeq = turnSeqOf(reg.root);
+  const markers = lib.exitMarkers(reg.root);
+  for (let k = 1; k <= slotCountOf(reg.th); k += 1) {
+    const s = slotSource(P.armSlot(k));
+    const v = reg.seen.find((x) => x.k === k);
+    const free = !s.rec || s.rec.ce !== reg.ce || markers.has(lib.markerKey(s.rec.pid, s.rec.start_time))
+      || (!!v && v.state === 'dead' && !!v.bytes && !!s.bytes && s.bytes.equals(v.bytes));
+    if (free) {
+      reg.slot = { k, record: { ce: reg.ce, pid: reg.self.pid, start_time: reg.self.start_time, nonce: reg.nonce } };
+      return;
+    }
+  }
+  if (abandoned) {
+    reg.outcome = 'abandoned';
+    return;
+  }
+  lib.writeAtomic(P.armNonce(reg.nonce), JSON.stringify({ state: 'present', pid: reg.self.pid }) + '\n');
+  reg.outcome = 'present';
+}
+
+// FX-W2 step 8, after hold 1, nothing registered: read turn.json every 2 s; exit 0 abandoned once its
+// turn_seq has grown past the one read in hold 1 (the next turn's reconcile ran, so this exit arrives
+// inside that turn), or after the alarm period. A newer ce: 64. No marker: no slot names this process.
+async function ensureAbandoned(reg, sleepMs) {
+  const t0 = performance.now();
+  for (;;) {
+    const left = sleepMs - (performance.now() - t0);
+    await sleep(Math.max(0, Math.min(ABANDONED_POLL_MS, left)));
+    lib.checkCe(reg.root, reg.ce);
+    const now = turnSeqOf(reg.root);
+    const grown = now > reg.turnSeq;
+    if (grown || performance.now() - t0 >= sleepMs) {
+      const detail = { nonce: reg.nonce, turn_seq_seen: reg.turnSeq, turn_seq: now, why: grown ? 'turn' : 'alarm_ms' };
+      return { exit: 0, result: { run: 'alarm', ensure: 'abandoned', ...detail }, reasons: [{ code: 'abandoned', detail }] };
+    }
+  }
 }
 
 // Every exit after registration passes here: `out` is the output of a normal exit (30, or 0
@@ -1185,6 +1341,12 @@ async function main(ctx) {
   if (!Number.isInteger(flags.ce) || flags.ce < 1) throw err('usage', 66, { flag: 'ce', expect: 'integer >= 1' });
   for (const f of ['interval-ms', 'sleep-ms']) {
     if (flags[f] !== undefined && (!Number.isInteger(flags[f]) || flags[f] < 0)) throw err('usage', 66, { flag: f });
+  }
+  // FX-W2: an alarm starts only as the ensure (`--alarm --ensure --nonce X`); a bare --alarm is refused.
+  if (picked[0] === 'alarm' || flags.ensure === true || flags.nonce !== undefined) {
+    if (picked[0] !== 'alarm') throw err('usage', 66, { flag: flags.ensure === true ? 'ensure' : 'nonce', expect: 'with --alarm' });
+    if (flags.ensure !== true) throw err('usage', 66, { flag: 'ensure', expect: 'required with --alarm (FX-W2)' });
+    if (typeof flags.nonce !== 'string' || !NONCE_RE.test(flags.nonce)) throw err('usage', 66, { flag: 'nonce', expect: '32 lowercase hex' });
   }
   const root = path.resolve(flags.root);
 
