@@ -212,3 +212,12 @@ The row is written before its line, so a death between the two leaves the row mo
 
 - `--reconcile`: an active row at started whose attempt has a session (equal to the row's when that is set) and no `started` line gets one, at the end of the reconcile hold; rows this call moved are skipped; `reconciled` lists it with `redo: true`.
 - Test: `tcb/test/redo.test.mjs`.
+
+## FX-PLAN (round 3): the planner
+`next` (status) and the row act (watch) are `lib.planAct` over `lib.planFacts` (CONTRACT, "FX-PLAN (round 3)"):
+the transcript-visible branch is gone (the claim decides); acts with arguments are strings
+(`replace-fence --reason <r>`, `replace-fence --reason crash --if-unclaimed`, `close-session <sid>`). The watcher
+keeps its filters: the first fence and `replace-start` wait for a free slot and neither halted nor draining;
+`audit`/`commit` are class 11's; `stop-verify` waits for its sample's age; `owner`/`none` raise nothing. Its
+facts: its tick, wall time, an empty process list, the step-7 sessions of its own slotCount, and the rows of class
+25 as zombie-over. Tests: status T3; watch "FX-PLAN act due", "FX-PLAN: a zombie-over row"; lib FX-PLAN T1-T3.

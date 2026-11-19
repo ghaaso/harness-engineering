@@ -88,7 +88,13 @@ open: tell the owner, who records it with `status.mjs owner --act closed --subje
 
 ## 7a. Close a session (FX-PLAN)
 
-(empty until FX-PLAN)
+A row's `next` (status.json) or act-due `close-session <sid>` names a session (CLI id) counted against the slots that
+no stop is closing: a late or duplicate session of an attempt. Close it with the close tool as in 5d, by its app id
+(`local_<uuid>`, from the session list); if you cannot find it, tell the owner, who records `status.mjs owner --act
+closed --subject <sid>`. `next` `owner` for such a row means its close was recorded but does not count. Other acts
+with arguments are run with exactly those words: `replace-fence --reason <r>` (a fence that wrote its slot and did
+not finish) and `replace-fence --reason crash --if-unclaimed` (a start lease that ran out; exit 5 `claimed-late`:
+the next act is `bind`).
 
 ## 8. Any script exits 75: end the turn, retry nothing (FX-W3)
 
