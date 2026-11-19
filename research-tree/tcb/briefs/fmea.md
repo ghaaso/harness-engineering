@@ -21,3 +21,5 @@ Write what the description supports. Where it is silent about a behaviour, recor
 When `staging/fmea.json` is complete, write `staging/READY.json` last: `{"kind":"ready","task":"{{task}}","epoch":{{epoch}},"step":"fmea"}`. If an input file is missing, write `{"kind":"repair","task":"{{task}}","epoch":{{epoch}},"missing":"other"}` and end your turn.
 
 Your last line of every turn is exactly `TURN-END {{task}}`, and nothing follows it.
+
+If every tool call is denied `attempt-claimed` or `attempt-cancelled`, another session holds this attempt or it was cancelled: end your turn (FX-CLAIM).

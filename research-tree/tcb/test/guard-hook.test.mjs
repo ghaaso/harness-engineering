@@ -776,6 +776,51 @@ test('T10 stale epoch: every tool is stale-epoch for a fenced or replaced attemp
   });
 });
 
+test('T10b FX-CLAIM step 1: the first session claims the attempt; the same session goes on, another is attempt-claimed, a tombstone is attempt-cancelled, a malformed session_id is bad-input', async () => {
+  await withWorld({ tasks: false }, async (w) => {
+    const rows = [row('child', { task: 'c-claim', epoch: 1 }), row('child', { task: 'c-tomb', epoch: 1 }), row('child', { task: 'c-stale', epoch: 2 })];
+    for (const t of ['c-claim', 'c-tomb', 'c-stale']) mkAttempt(w.root, t, 1);
+    writeTable(w.root, rows);
+    const OTHER = '0a1b2c3d-0000-4000-8000-00000000ffff';
+    const call = (task, sid, extra = {}) => {
+      const a = w.att(task, 1);
+      const input = { file_path: path.join(a, 'in', 'brief.md') };
+      const stdin = { hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: input, cwd: a, transcript_path: w.P('transcripts', 'x.jsonl') };
+      if (sid !== undefined) stdin.session_id = sid;
+      return { task, epoch: 1, tool: 'Read', input, stdin, ...extra };
+    };
+    const claim = (task) => path.join(w.att(task, 1), 'claim.json');
+    // a malformed or missing session_id, and a stale epoch: denied, and nothing is claimed
+    assert.deepEqual(await runCases(w, [
+      { n: 'malformed session_id', ...call('c-claim', 's'), expect: 'bad-input' },
+      { n: 'no session_id', ...call('c-claim', undefined), expect: 'bad-input' },
+      { n: 'stale epoch first', ...call('c-stale', SESSION), expect: 'stale-epoch' },
+    ]), []);
+    assert.equal(fs.existsSync(claim('c-claim')), false);
+    assert.equal(fs.existsSync(claim('c-stale')), false);
+    // the first call claims; the same session goes on; another session is denied; the claim is unchanged
+    assert.deepEqual(await runCases(w, [{ n: 'first call claims', ...call('c-claim', SESSION), expect: 0 }]), []);
+    assert.deepEqual(JSON.parse(fs.readFileSync(claim('c-claim'), 'utf8')), { kind: 'session', session_id: SESSION });
+    const bytes = fs.readFileSync(claim('c-claim'));
+    assert.deepEqual(await runCases(w, [
+      { n: 'the same session again', ...call('c-claim', SESSION), expect: 0 },
+      { n: 'another session', ...call('c-claim', OTHER), expect: 'attempt-claimed' },
+    ]), []);
+    assert.ok(bytes.equals(fs.readFileSync(claim('c-claim'))), 'the claim is made once and kept');
+    // a tombstone (the fence cancelled the attempt before any claim): every session is denied
+    fs.writeFileSync(claim('c-tomb'), JSON.stringify({ kind: 'tombstone', task: 'c-tomb', epoch: 1 }));
+    const tomb = fs.readFileSync(claim('c-tomb'));
+    assert.deepEqual(await runCases(w, [
+      { n: 'tombstone, this session', ...call('c-tomb', SESSION), expect: 'attempt-cancelled' },
+      { n: 'tombstone, another session', ...call('c-tomb', OTHER), expect: 'attempt-cancelled' },
+    ]), []);
+    assert.ok(tomb.equals(fs.readFileSync(claim('c-tomb'))));
+    // a claim that does not parse is tamper: denied
+    fs.writeFileSync(claim('c-tomb'), '{ not json');
+    assert.deepEqual(await runCases(w, [{ n: 'unparseable claim', ...call('c-tomb', SESSION), expect: 'claim-invalid' }]), []);
+  });
+});
+
 test('T11 fail-safe: every kind of bad invocation or bad input is exit 2', async () => {
   await withWorld({}, async (w) => {
     const a = w.A('child');
@@ -875,6 +920,11 @@ test('T13 the hook writes nothing: the tree, the lock folder and the ledger are 
     const picked = [];
     for (let i = 0; picked.length < 50; i++) picked.push(all[(i * step) % all.length]);
     assert.ok(picked.some((c) => c.expect === 0) && picked.some((c) => c.expect !== 0), 'the mix must hold allowed and denied calls');
+    // FX-CLAIM step 1: a session's first task-role call claims its attempt (the hook's one write, 0b);
+    // this session's claims are made before the count, so the calls below write nothing
+    for (const d of fs.readdirSync(w.P('wt'))) {
+      if (fs.statSync(w.P('wt', d)).isDirectory()) fs.writeFileSync(w.P('wt', d, 'claim.json'), JSON.stringify({ kind: 'session', session_id: SESSION }));
+    }
     const ledgerBefore = fs.readFileSync(w.P('run', 'ledger.jsonl'));
     const before = treeHash(w.root);
     assert.deepEqual(await runCases(w, picked), []);

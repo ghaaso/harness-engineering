@@ -181,6 +181,7 @@ function argv(root, mode, o = {}) {
   if (o.task) a.push('--task', o.task);
   if (o.epoch !== undefined) a.push('--epoch', String(o.epoch));
   if (o.reason) a.push('--reason', o.reason);
+  if (o.ifUnclaimed) a.push('--if-unclaimed');
   if (o.session) a.push('--session', o.session);
   if (o.tick !== undefined) a.push('--tick', String(o.tick));
   if (o.boot) a.push('--boot', o.boot);
@@ -262,7 +263,15 @@ const row = (task, o = {}) => ({
   state: 'planned', step: 'none', epoch: 0, reason: null, session: null, restarts: 0, handovers: 0, parks: 0, limit: false, fails: [], attempts: [], commits: {}, updated_rev: 1, ...o,
 });
 const att = (task, e, o = {}) => ({ epoch: e, folder: `wt/${task}-e${e}`, stop: 'none', ...o });
-const table = (root, rows, rev = 1) => putJ(root, 'run/tasks.json', { schema_version: 1, rev, tasks: rows });
+const table = (root, rows, rev = 1) => {
+  // FX-CLAIM: a bound attempt holds its session's claim (bind requires one)
+  for (const r of rows) {
+    for (const a of r.attempts ?? []) {
+      if (a && a.session && a.bound_at && a.folder && !has(root, `${a.folder}/claim.json`)) putJ(root, `${a.folder}/claim.json`, { kind: 'session', session_id: a.session });
+    }
+  }
+  return putJ(root, 'run/tasks.json', { schema_version: 1, rev, tasks: rows });
+};
 const getTable = (root) => readJ(root, 'run/tasks.json');
 const getRow = (root, task) => getTable(root).tasks.find((r) => r.task === task);
 const attemptOf = (r, e) => r.attempts.find((a) => a.epoch === e);
@@ -699,6 +708,52 @@ test('T7 fence stall at restarts = R: fence applied, limit true, exit 1 limit, f
   assert.equal(f.length, 1);
   assert.equal(f[0].data.limit, true);
   await assertLedgerVerifies(root);
+});
+
+// FX-CLAIM: an admitted attempt (a manifest, its folder) and one fence of it, in a world of its own
+const admittedAt = (o = {}) => row(RES, { state: 'active', step: 'admitted', epoch: 1, reason: 'first', attempts: [att(RES, 1, { manifest: M0, settings_sha: Z64 })], ...o });
+function fenceOnce(t, rowObj, reason, claim, o = {}) {
+  const w = mk();
+  t.after(w.cleanup);
+  const { root } = w;
+  table(root, [rowObj]);
+  fs.mkdirSync(folderAbs(root, RES, 1), { recursive: true });
+  if (claim) putJ(root, `wt/${RES}-e1/claim.json`, claim);
+  const before = { tasks: read(root, 'run/tasks.json'), files: fs.readdirSync(folderAbs(root, RES, 1)).sort(), lines: ledgerLines(root).length };
+  const j = run(root, 'fence', { task: RES, epoch: 1, reason, tick: 9, boot: BOOT_A, ...o });
+  const c = has(root, `wt/${RES}-e1/claim.json`) ? readJ(root, `wt/${RES}-e1/claim.json`) : null;
+  return { root, j, before, r: getRow(root, RES), claim: c, f: ofKind(root, 'fence')[0] ?? null };
+}
+
+test('T7b FX-CLAIM no-start fences (N7): a tombstone is uncharged while nostart < H_nostart and is no R8 fail; past the cap it is charged; a session claim resets nostart; a planned reason leaves nostart', async (t) => {
+  let x = fenceOnce(t, admittedAt(), 'crash');
+  expectExit(x.j, 0);
+  assert.deepEqual(x.claim, { kind: 'tombstone', task: RES, epoch: 1 }, 'the fence tombstones an attempt no session claimed');
+  assert.deepEqual([x.r.epoch, x.r.step, x.r.restarts, x.r.nostart, x.r.fails.length], [2, 'fenced', 0, 1, 0]);
+  assert.equal(x.f.data.restart_charged, false);
+  x = fenceOnce(t, admittedAt({ nostart: 1 }), 'stall');
+  assert.deepEqual([x.r.restarts, x.r.nostart, x.r.fails.length], [0, 2, 0]);
+  x = fenceOnce(t, admittedAt({ nostart: 2, restarts: 0 }), 'crash');
+  assert.deepEqual([x.r.restarts, x.r.nostart, x.r.fails.length, x.f.data.restart_charged], [1, 2, 1, true], 'past H_nostart: charged like a failure');
+  x = fenceOnce(t, admittedAt({ nostart: 1 }), 'handover');
+  assert.deepEqual([x.r.restarts, x.r.nostart, x.r.handovers], [0, 1, 1], 'a planned hand-over: uncharged, nostart untouched');
+  x = fenceOnce(t, admittedAt({ nostart: 2 }), 'crash', { kind: 'session', session_id: SID1 });
+  assert.deepEqual([x.r.restarts, x.r.nostart, x.r.fails.length], [1, 0, 1], 'a session claim: charged, nostart reset');
+  assert.deepEqual(x.claim, { kind: 'session', session_id: SID1 }, 'the session claim is kept');
+});
+
+test('T7c FX-CLAIM --if-unclaimed (the lease act): a session claim -> exit 5 claimed-late with nothing written; no claim -> the fence goes on; another mode -> usage', async (t) => {
+  let x = fenceOnce(t, admittedAt(), 'crash', { kind: 'session', session_id: SID1 }, { ifUnclaimed: true });
+  expectExit(x.j, 5, 'claimed-late');
+  assert.ok(x.before.tasks.equals(read(x.root, 'run/tasks.json')), 'the row is unchanged');
+  assert.deepEqual(fs.readdirSync(folderAbs(x.root, RES, 1)).sort(), x.before.files, 'no slot and no tombstone');
+  assert.equal(x.f, null, 'no fence line');
+  assert.equal(ledgerLines(x.root).filter((l) => l.kind !== 'incident').length, x.before.lines);
+  x = fenceOnce(t, admittedAt(), 'crash', null, { ifUnclaimed: true });
+  expectExit(x.j, 0);
+  assert.deepEqual([x.r.epoch, x.r.restarts, x.r.nostart], [2, 0, 1]);
+  assert.equal(x.claim.kind, 'tombstone');
+  expectExit(run(x.root, 'bind', { task: RES, epoch: 1, session: SID1, boot: BOOT_B, ifUnclaimed: true }), 66);
 });
 
 test('T8 fence handover at handovers + parks = H_max: exit 1 hmax, row unchanged, incident line', async (t) => {
@@ -1275,6 +1330,7 @@ test('T21 bind: admitted -> bound with session, bound_at and boot; a repeat is i
   const { root } = w;
   table(root, [admittedRow()]);
   fs.mkdirSync(folderAbs(root, RES, 1), { recursive: true });
+  putJ(root, `wt/${RES}-e1/claim.json`, { kind: 'session', session_id: SID1 }); // FX-CLAIM: the session's first tool call claimed
   const j = run(root, 'bind', { task: RES, epoch: 1, session: SID1, boot: BOOT_B });
   expectExit(j, 0);
   assert.equal(j.mode, 'bind');
@@ -1306,6 +1362,7 @@ test('T22 bind where a transcript of the session has another cwd -> exit 1 wrong
     const { root } = w;
     table(root, [admittedRow()]);
     fs.mkdirSync(folderAbs(root, RES, 1), { recursive: true });
+    putJ(root, `wt/${RES}-e1/claim.json`, { kind: 'session', session_id: SID1 });
     fakeT(root, SID1, folderAbs(root, 'other-task', 1), [u(10, 0, 0, 5)]);
     const tb = read(root, 'run/tasks.json');
     const j = run(root, 'bind', { task: RES, epoch: 1, session: SID1, boot: BOOT_B });
@@ -1318,10 +1375,33 @@ test('T22 bind where a transcript of the session has another cwd -> exit 1 wrong
     const { root } = w;
     table(root, [admittedRow()]);
     fs.mkdirSync(folderAbs(root, RES, 1), { recursive: true });
+    putJ(root, `wt/${RES}-e1/claim.json`, { kind: 'session', session_id: SID1 });
     fakeT(root, SID1, folderAbs(root, RES, 1), [u(10, 0, 0, 5)]);
     expectExit(run(root, 'bind', { task: RES, epoch: 1, session: SID1, boot: BOOT_B }), 0);
     assert.equal(getRow(root, RES).step, 'bound');
   });
+});
+
+test('T22b FX-CLAIM bind by claim: no claim -> exit 6 not-claimed; another session or a tombstone -> exit 1 not-claim-holder; the holder binds a started row whose recorded session differs', async (t) => {
+  const w = mk();
+  t.after(w.cleanup);
+  const { root } = w;
+  table(root, [admittedRow()]);
+  fs.mkdirSync(folderAbs(root, RES, 1), { recursive: true });
+  const tb = read(root, 'run/tasks.json');
+  expectExit(run(root, 'bind', { task: RES, epoch: 1, session: SID1, boot: BOOT_B }), 6, 'not-claimed');
+  putJ(root, `wt/${RES}-e1/claim.json`, { kind: 'session', session_id: SID2 });
+  expectExit(run(root, 'bind', { task: RES, epoch: 1, session: SID1, boot: BOOT_B }), 1, 'not-claim-holder');
+  putJ(root, `wt/${RES}-e1/claim.json`, { kind: 'tombstone', task: RES, epoch: 1 });
+  expectExit(run(root, 'bind', { task: RES, epoch: 1, session: SID1, boot: BOOT_B }), 1, 'not-claim-holder');
+  assert.ok(tb.equals(read(root, 'run/tasks.json')), 'a refused bind changes nothing');
+  assert.equal(ofKind(root, 'bind').length, 0);
+  // a started row whose recorded session came from a transcript (the second source): the claim decides
+  table(root, [admittedRow({ step: 'started', attempts: [att(RES, 1, { manifest: M0, settings_sha: Z64, session: SID2 })] })], 2);
+  putJ(root, `wt/${RES}-e1/claim.json`, { kind: 'session', session_id: SID1 });
+  expectExit(run(root, 'bind', { task: RES, epoch: 1, session: SID2, boot: BOOT_B }), 1, 'not-claim-holder');
+  expectExit(run(root, 'bind', { task: RES, epoch: 1, session: SID1, boot: BOOT_B }), 0);
+  assert.deepEqual([getRow(root, RES).step, getRow(root, RES).session], ['bound', SID1]);
 });
 
 // =================================================================== any mode

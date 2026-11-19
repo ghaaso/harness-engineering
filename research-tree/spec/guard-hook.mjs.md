@@ -195,3 +195,7 @@ only through `hookCreate` (strict create, 0b), after every read-only check of th
   (FX-W3), `stepRowAtAdmitted` (FX-CGATE 4, read-only), `stepStartRecord` (FX-CGATE 4), `stepStopIntent`
   (FX-CGATE 5); a step that returns `'allow'` ends them.
 - FX-CGATE step 6 (PostToolUse) has no step: the hook takes PreToolUse only; FX-CGATE adds it.
+
+## FX-CLAIM (round 3)
+
+`stepClaim` (step 4, after the epoch gate, no lock): a malformed `session_id` → `bad-input`; no claim → strict create of the session claim; another session → `attempt-claimed`; a tombstone → `attempt-cancelled`; bytes that do not parse → `claim-invalid`. Tests: T10b; T13 makes its session's claims before counting.

@@ -38,6 +38,7 @@ const SPEC = {
     task: { type: 'string', required: ['fence', 'start', 'bind'] },
     epoch: { type: 'int', required: ['fence', 'start', 'bind'] },
     reason: { type: 'string', required: ['fence'] },
+    'if-unclaimed': { type: 'bool' },
     tick: { type: 'int' },
     session: { type: 'string', required: ['bind'] },
     now: { type: 'string' },
@@ -471,6 +472,7 @@ async function modeFence(env, flags) {
       const cutFiles = cut && cut.files ? Object.keys(cut.files).length : 0;
       const readyCheck = () => readyValid(root, dir, T, E);
       const hold = { task: T, epoch: E, reason, failure, row, att, dir, cut, readyCheck };
+      fenceIfUnclaimed(hold, !!flags['if-unclaimed']);
       fenceOutcomeSteps(env, handle, hold);
 
       // M6 (CONTRACT decision 40): a READY of the current epoch wins over every reason but `first`
@@ -544,8 +546,30 @@ function armedFor(mode, reason) { // eslint-disable-line no-unused-vars
 function fenceOutcomeSteps(env, handle, hold) { // eslint-disable-line no-unused-vars
 }
 
-// FX-CLAIM (FX-OUT step 6): the attempt's tombstone claim, before lib.fence.
-function fenceTombstone(env, handle, hold) { // eslint-disable-line no-unused-vars
+// FX-CLAIM (FX-OUT step 6): the attempt's tombstone claim, before lib.fence. Only for an attempt with a
+// manifest (rev 4 H1: an attempt never admitted has nothing live to cancel). Strict create: `created`
+// means no session ever passed a tool call (a no-start fence; lib.fence reads the claim for nostart),
+// `identical` is the retry of a torn fence, and a session claim holding the name means the attempt
+// started (the fence goes on; lib.fence resets nostart). Nothing is written in a dry run.
+function fenceTombstone(env, handle, hold) {
+  const { att, dir, task, epoch } = hold;
+  if (!handle || !att || !att.manifest) return;
+  try {
+    lib.createExclusive(path.join(dir, 'claim.json'), lib.tombstoneRecord(task, epoch), { strict: true });
+  } catch (e) {
+    if (!e || e.code !== 'exists-different') throw e;
+    lib.readClaim(dir); // a session claim (or an earlier tombstone's bytes) holds the name; tamper throws 3
+  }
+}
+
+// FX-CLAIM rev 5 point 2: `--if-unclaimed` (the lease act). Before any write of the hold, so before
+// FX-OUT's fenced slot: a session claim on attempt E -> exit 5 `claimed-late`, nothing written; the
+// planner then orders bind. A claim made after this read meets the tombstone step, and the fence goes
+// on (FX-OUT: no refusal once the hold has written).
+function fenceIfUnclaimed(hold, ifUnclaimed) {
+  if (!ifUnclaimed) return;
+  const c = lib.readClaim(hold.dir);
+  if (c.kind === 'session') throw tcbError('claimed-late', 5, { task: hold.task, epoch: hold.epoch, session: c.session_id });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1018,11 +1042,16 @@ async function modeBind(env, flags) {
       // (epoch 0, no attempts) is a wrong step (65), not a missing attempt (2).
       const att = lib.attemptOf(row, E);
       const dir = attemptDir(root, T, E, att);
-      if (cwd !== null && !samePath(cwd, dir)) throw tcbError('wrong-folder', 1, { cwd: posix(cwd), folder: posix(dir) });
-      if (row.step === 'started') {
-        const known = att.session ?? row.session ?? null;
-        if (known && known !== SID) throw tcbError('session-differs', 1, { started: known, session: SID });
+      // FX-CLAIM step 4: bind by claim, before today's checks. No claim yet -> exit 6 `not-claimed` (no
+      // tool call has passed; retry later); a tombstone or another session's claim -> exit 1
+      // `not-claim-holder`. The claim also settles a `started` row: reconcile takes `started` from it
+      // first, so the started-session check of round 2 is this one.
+      const claim = lib.readClaim(dir);
+      if (claim.kind === 'none') throw tcbError('not-claimed', 6, { task: T, epoch: E, session: SID });
+      if (claim.kind !== 'session' || claim.session_id !== SID) {
+        throw tcbError('not-claim-holder', 1, { claim: claim.kind, holder: claim.session_id, session: SID });
       }
+      if (cwd !== null && !samePath(cwd, dir)) throw tcbError('wrong-folder', 1, { cwd: posix(cwd), folder: posix(dir) });
       if (handle) {
         lib.updateRow(root, handle, { task: T, epoch: E, steps: ['admitted', 'started'], states: ['active'] }, (copy) => {
           const i = attemptIndex(copy, E);
@@ -1063,6 +1092,7 @@ async function main(ctx) {
     if (!Number.isInteger(flags.epoch) || flags.epoch < 0) throw usage({ flag: 'epoch' });
   }
   if (mode === 'fence' && !REASONS.includes(flags.reason)) throw usage({ flag: 'reason', value: flags.reason ?? null });
+  if (flags['if-unclaimed'] && mode !== 'fence') throw usage({ flag: 'if-unclaimed' });
   if (mode === 'bind' && (typeof flags.session !== 'string' || !SESSION_RE.test(flags.session))) throw usage({ flag: 'session' });
   if (flags.tick !== undefined && flags.tick !== null && (!Number.isInteger(flags.tick) || flags.tick < 0)) throw usage({ flag: 'tick' });
   if (flags['free-mb'] !== undefined && flags['free-mb'] !== null && flags['free-mb'] < 0) throw usage({ flag: 'free-mb' });

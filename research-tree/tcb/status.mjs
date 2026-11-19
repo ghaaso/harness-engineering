@@ -240,12 +240,13 @@ async function gatherFacts(root, th, table, proc, { reconcile }) {
   if (reconcile) {
     for (const row of table.tasks ?? []) {
       if (row.state === 'active' && row.step === 'admitted') {
-        recon.push({ task: row.task, epoch: row.epoch, current: true, sessions: folderSessions(root, tr, row, row.epoch) });
+        recon.push({ task: row.task, epoch: row.epoch, current: true, sessions: folderSessions(root, tr, row, row.epoch), claim: claimOf(root, row, row.epoch) });
       }
       for (const att of row.attempts ?? []) {
         if (att.epoch === row.epoch || att.session) continue;
         const sessions = folderSessions(root, tr, row, att.epoch);
-        if (sessions.length) recon.push({ task: row.task, epoch: att.epoch, rowEpoch: row.epoch, current: false, sessions });
+        const claim = claimOf(root, row, att.epoch);
+        if (sessions.length || claim.kind === 'session') recon.push({ task: row.task, epoch: att.epoch, rowEpoch: row.epoch, current: false, sessions, claim });
       }
     }
   }
@@ -262,17 +263,43 @@ function folderSessions(root, tr, row, e) {
   return [...new Set(found.map((f) => f.sessionId).filter(Boolean))].sort();
 }
 
+// FX-CLAIM step 3: the attempt's claim, the first source of `started` ({kind:'invalid'} when it does not parse).
+function claimOf(root, row, e) {
+  try {
+    return lib.readClaim(attemptDir(root, row, e));
+  } catch (err) {
+    if (err && err.exit === 3) return { kind: 'invalid', session_id: null };
+    throw err;
+  }
+}
+
 // ---------------------------------------------------------------- reconcile (under the lock)
 
 async function applyReconcile(ctx, root, handle, pre, ce, facts, anomalies, dryTable) {
   const changes = [];
   for (const r of pre.recon) {
-    if (r.sessions.length > 1) {
-      anomalies.push({ code: 'several-sessions', detail: { task: r.task, epoch: r.epoch, sessions: r.sessions } });
+    // FX-CLAIM step 3: a session claim is the first source (the session is the claim holder; any other
+    // folder session is the anomaly duplicate-session); transcripts are the second, as before. A
+    // tombstone (a no-start fence cancelled the attempt) starts nothing; an invalid claim is tamper.
+    const kind = r.claim ? r.claim.kind : 'none';
+    if (kind === 'invalid') {
+      anomalies.push({ code: 'claim-invalid', detail: { task: r.task, epoch: r.epoch } });
       continue;
     }
-    if (r.sessions.length !== 1) continue;
-    const sid = r.sessions[0];
+    if (kind === 'tombstone') continue;
+    let sid;
+    if (kind === 'session') {
+      sid = r.claim.session_id;
+      const others = r.sessions.filter((s) => s !== sid);
+      if (others.length) anomalies.push({ code: 'duplicate-session', detail: { task: r.task, epoch: r.epoch, holder: sid, sessions: others } });
+    } else {
+      if (r.sessions.length > 1) {
+        anomalies.push({ code: 'several-sessions', detail: { task: r.task, epoch: r.epoch, sessions: r.sessions } });
+        continue;
+      }
+      if (r.sessions.length !== 1) continue;
+      sid = r.sessions[0];
+    }
     if (dryTable) {
       const row = dryTable.tasks.find((x) => x.task === r.task);
       if (!row) continue;
@@ -363,7 +390,7 @@ async function computeStatus(root, th, ce, pre, facts, table, anomalies) {
 
   if (torn && (torn.length === undefined || torn.length > 0)) anomalies.push({ code: 'ledger-torn', detail: { bytes: torn.length ?? null } });
 
-  const slots = await lib.slotCount(table.tasks, pre.procList, tr);
+  const slots = await lib.slotCount(table.tasks, pre.procList, tr, { root });
   const res = await lib.reservation(table.tasks, spentOf);
   const flags = lib.runFlags(lines, ce);
   const blocked = flags.halted === true || flags.draining === true;

@@ -280,15 +280,22 @@ async function modeRequest(env, T, E) {
       const k = targetEpoch(row);
       const att = lib.attemptOf(row, k);
       if (!pre || pre.k !== k) throw tcbError('rev-moved', 65, { task: T });
-      const session = att.session ?? pre.tt.folderSessions[0] ?? null;
+      // FX-CLAIM step 6 (rev 5 point 1): the target attempt's claim. A tombstone (no session ever passed
+      // a tool call, and none can) confirms at once only when no folder session is visible; with one
+      // visible, the stop is requested for every folder session and goes through verify. Otherwise the
+      // request names the claim holder (today's sources after it).
+      const claim = lib.readClaim(att.folder ? path.resolve(root, att.folder) : path.join(root, 'wt', `${T}-e${k}`));
+      const tomb = claim.kind === 'tombstone';
+      const session = (claim.kind === 'session' ? claim.session_id : null) ?? att.session ?? pre.tt.folderSessions[0] ?? null;
       // Review U1-F5 (R9, R10): an admitted attempt (it has a manifest) may have a session the
       // coordinator already started whose transcript is not visible yet. Without a session it is
       // still stop-requested (session null), and verify observes the folder's transcripts and
       // processes over stop_verify_deltas ticks. Only an attempt that was never admitted, or whose
       // stop an earlier verify already confirmed, is confirmed at once.
-      const mayRun = !!att.manifest && att.stop !== 'confirmed';
+      const mayRun = tomb ? pre.tt.folderSessions.length > 0 : !!att.manifest && att.stop !== 'confirmed';
+      const named = tomb && mayRun ? { sessions: pre.tt.folderSessions } : {};
 
-      if (session || mayRun) {
+      if ((session && !tomb) || mayRun) {
         if (handle) {
           lib.updateRow(root, handle, { task: T, epoch: E, steps: [row.step], states: [row.state] }, (copy) => {
             const i = attemptIndex(copy, k);
@@ -296,9 +303,9 @@ async function modeRequest(env, T, E) {
             copy.step = 'stop-requested';
             return copy;
           });
-          append(env, handle, 'stop-request', T, E, { session });
+          append(env, handle, 'stop-request', T, E, { session, ...named });
         }
-        return { exit: 0, result: { task: T, epoch: E, target: k, session, step: 'stop-requested', state: row.state }, reasons: [] };
+        return { exit: 0, result: { task: T, epoch: E, target: k, session, ...named, step: 'stop-requested', state: row.state }, reasons: [] };
       }
 
       // Nothing ran: never admitted (or already confirmed), no session and no transcript. Confirmed at once.

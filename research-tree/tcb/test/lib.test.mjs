@@ -3088,6 +3088,8 @@ test('S0.5 round-3 skeleton: threshold keys marked guesses, stub signatures, not
     assert.match(p.unit, /guess/, `${k}'s unit says it is a guess`);
   }
   const stubs = { outcomeState: 2, outcomeAppend: 3, readClaim: 1, claimRecord: 1, tombstoneRecord: 2, planAct: 2, liveness: 3 };
+  // FX-CLAIM built readClaim, claimRecord, tombstoneRecord (their tests: T96z): the arity stays, not-built goes
+  for (const [name, n] of [['readClaim', 1], ['claimRecord', 1], ['tombstoneRecord', 2]]) { assert.equal(lib[name].length, n, name); delete stubs[name]; }
   for (const [name, n] of Object.entries(stubs)) {
     assert.equal(typeof lib[name], 'function', name);
     assert.equal(lib[name].length, n, `${name} takes ${n} arguments`);
@@ -3110,4 +3112,66 @@ test('S0.5 round-3 skeleton: threshold keys marked guesses, stub signatures, not
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------- FX-CLAIM
+const CL = (i) => `11111111-0000-4000-8000-00000000000${i}`;
+test('T96z FX-CLAIM readClaim and the claim records: none, a session claim made once by strict create, a tombstone that loses to it, an unparseable claim is tamper 3', (t) => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'cl0-'));
+  t.after(() => fs.rmSync(d, { recursive: true, force: true }));
+  const f = path.join(d, 'claim.json');
+  assert.deepEqual(lib.readClaim(d), { kind: 'none', session_id: null });
+  assert.equal(lib.createExclusive(f, lib.claimRecord(CL(1)), { strict: true }), 'created');
+  assert.equal(lib.createExclusive(f, lib.claimRecord(CL(1)), { strict: true }), 'identical');
+  assert.throws(() => lib.createExclusive(f, lib.tombstoneRecord('x', 1), { strict: true }), (e) => e.code === 'exists-different');
+  assert.deepEqual(lib.readClaim(d), { kind: 'session', session_id: CL(1) });
+  assert.deepEqual(lib.tombstoneRecord('x', 1), { kind: 'tombstone', task: 'x', epoch: 1 });
+  fs.writeFileSync(f, '{ not json');
+  assert.throws(() => lib.readClaim(d), (e) => e.code === 'claim-invalid' && e.exit === 3);
+});
+
+test('T96y FX-CLAIM the start lease (N3) expires only when both the ticks and the wall time have passed', () => {
+  const start = { kind: 'start', session: CL(9), tool_use_id: null, tick: 5, at: '2026-11-20T10:00:00.000Z' };
+  const L = { start_lease_ticks: 10, start_lease_ms: 600000 };
+  const t0 = Date.parse(start.at);
+  assert.equal(lib.startLeaseExpired(start, 15, t0 + 600000, L), true);
+  assert.equal(lib.startLeaseExpired(start, 14, t0 + 600000, L), false, 'ticks short');
+  assert.equal(lib.startLeaseExpired(start, 1000, t0 + 599999, L), false, 'a subject advancing the ticks alone');
+  assert.equal(lib.startLeaseExpired(start, 14, t0 + 1e12, L), false, 'a wall jump alone');
+  assert.equal(lib.startLeaseExpired({ ...start, at: 'not a time' }, 1000, t0 + 1e12, L), false);
+  assert.equal(lib.startLeaseExpired(null, 1000, t0 + 1e12, L), false);
+});
+
+test('T96x FX-CLAIM slotCount step 7: a folder session that is not its attempt\'s own counts one unconfirmed slot until a close-done record counts (H3)', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cl7-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const tr = path.join(root, 'transcripts');
+  const folder = path.join(root, 'wt', 'x-e1');
+  fs.mkdirSync(folder, { recursive: true });
+  const tx = (sid) => {
+    const dir = path.join(tr, lib.projectDirName(folder));
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${sid}.jsonl`), JSON.stringify({ type: 'user', cwd: folder, sessionId: sid, timestamp: '2026-11-20T10:00:00.000Z', message: { role: 'user', content: 'x' } }) + '\n');
+  };
+  tx(CL(1));
+  tx(CL(2));
+  fs.writeFileSync(path.join(folder, 'claim.json'), JSON.stringify(lib.claimRecord(CL(1))));
+  const rows = [{ task: 'x', state: 'active', step: 'fenced', epoch: 2, attempts: [{ epoch: 1, folder: 'wt/x-e1', stop: 'confirmed' }, { epoch: 2, folder: 'wt/x-e2', stop: 'none' }] }];
+  const done = (o) => {
+    fs.mkdirSync(path.join(root, 'run', 'close', 'done'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'run', 'close', 'done', `${CL(2)}.json`), JSON.stringify({ kind: 'close-done', session: CL(2), by: CL(8), ...o }));
+  };
+  // the claim holder (its attempt's stop confirmed) is not counted; the duplicate is
+  assert.deepEqual(lib.slotCount(rows, [], tr, { root }), { live: 0, unknown: 0, unconfirmed: 1 });
+  done({ outcome: 'stopped' });
+  assert.equal(lib.slotCount(rows, [], tr, { root }).unconfirmed, 0);
+  // "no such session" for another coordinator's start: counts only when the process list matches nothing
+  done({ outcome: 'no-such-session' });
+  fs.writeFileSync(path.join(folder, 'start.json'), JSON.stringify({ kind: 'start', session: CL(7), tool_use_id: null, tick: 1, at: '2026-11-20T10:00:00.000Z' }));
+  const proc = [{ pid: 4242, ppid: 1, name: 'node.exe', cmdline: `node child.mjs --cwd "${folder}"` }];
+  assert.equal(lib.slotCount(rows, proc, tr, { root }).unconfirmed, 1);
+  assert.equal(lib.slotCount(rows, [], tr, { root }).unconfirmed, 0);
+  // this coordinator's own start: the record counts whatever the process list says
+  fs.writeFileSync(path.join(folder, 'start.json'), JSON.stringify({ kind: 'start', session: CL(8), tool_use_id: null, tick: 1, at: '2026-11-20T10:00:00.000Z' }));
+  assert.equal(lib.slotCount(rows, proc, tr, { root }).unconfirmed, 0);
 });

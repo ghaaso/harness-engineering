@@ -912,6 +912,26 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
   unknown (never zero, so back-to-back starts cannot all pass); else a transcript exists → unknown.
   A `procList` of null (PowerShell failed) makes every such attempt unknown. Admission uses `live +
   unknown + unconfirmed < N_max` (R10; fail-safe). Shared by admit, status and handover.
+  **FX-CLAIM step 7** (`opts.root`, passed by admit, status, handover and watch): plus one `unconfirmed`
+  for every folder session (a transcript whose first `cwd` is an attempt folder; any row but planned,
+  any attempt) that is not its attempt's own session (the claim holder, else the recorded `session`)
+  and has no counting `run/close/done/<sid>.json`: `stopped` and `owner` count; `no-such-session`
+  counts only when the attempt's `start.json` `session` equals the record's `by`, or the process list
+  matches nothing for the folder or the session (rev 4, H3). There is no fixed ceiling of 3: the cap is
+  `min(N_max, N_ceiling)` (ORCHESTRATION 9 row 5).
+- FX-CLAIM claims (`model/as-built/FIX-fence.md` section 2, rev 5): `readClaim(dir) → {kind: none |
+  session | tombstone, session_id}` (`wt/<T>-e<E>/claim.json`; bytes that do not parse are tamper,
+  `claim-invalid` 3); `claimRecord(sid)`, `tombstoneRecord(task, epoch)`, both made by strict create
+  (0b) and never deleted while the attempt lives. The child hook claims on every task-role call after
+  the epoch gate (deny `bad-input`, `attempt-claimed`, `attempt-cancelled`, `claim-invalid`). `fence`
+  tombstones an attempt with a manifest; for a failure reason, not host, a tombstone is a no-start
+  fence, uncharged while `nostart < H_nostart` (then `nostart + 1`, capped at H_nostart, and no `fails`
+  entry, so no R8 fail), charged like a failure past it; a session claim resets `nostart` to 0.
+  `--if-unclaimed`: a session claim → exit 5 `claimed-late`, checked before any write. `bind` needs
+  the claim (exit 6 `not-claimed`, exit 1 `not-claim-holder`). Reconcile takes `started` from the
+  claim first, transcripts second; another folder session is the anomaly `duplicate-session`. `stop
+  request` on a tombstone confirms at once only with no folder session visible. `startLeaseExpired(start,
+  ticks_total, now_ms, {start_lease_ticks, start_lease_ms})`: both bounds passed (N3).
 - `variant(root, row, {f5Given}) → {V, covered: key[], uncovered: key[]}` (R5), used by replace
   (todo), stop and replace (overflow ids), watch (stall) and status: **research** and **control**:
   `covered` = `row.question_ids` carried by a card of this task (named by an `intake` line of the

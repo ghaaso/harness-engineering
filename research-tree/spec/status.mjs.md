@@ -166,3 +166,7 @@ start (§7 item 7); that the watcher's and alarm's exits reach the coordinator (
 - Flags of the default mode: `ARM_FLAGS` (FX-W2, `arm-nonces`) and `DEADMAN_FLAGS` (FX-W4, `deadman`), empty.
 - `deadmanRun(ctx, flags, dry)` (FX-W4) runs right after the dry-run flag is read, before the ce check;
   null goes on.
+
+## FX-CLAIM (round 3)
+
+Reconcile (FX-CLAIM step 3): a session claim is the first source of `started`; other folder sessions → anomaly `duplicate-session`; a tombstone starts nothing; an invalid claim → anomaly `claim-invalid`; older attempts with a session claim and no transcript are reconciled too. `slotCount` gets `{root}`.

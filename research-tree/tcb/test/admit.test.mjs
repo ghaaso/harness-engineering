@@ -365,6 +365,11 @@ test('T5 decide: a stale selftest or fsck is refused; missing and failing ones h
   assert.deepEqual(dcodes(decide(facts({ fsck: { result: 'fail', seq: 10, last_write_seq: 5 } }))), ['fsck-fail']);
 });
 
+test('T6b decide: no fixed ceiling of 3 (FX-CLAIM; ORCHESTRATION 9 row 5): N_max 5 under N_ceiling 6 is no ceiling, and 4 slots in use are not full', () => {
+  const d = decide(facts({ thresholds: thr({ N_max: 5, N_ceiling: 6 }), slots: { live: 4, unknown: 0, unconfirmed: 0 } }));
+  assert.ok(!dcodes(d).includes('ceiling') && !dcodes(d).includes('slots-full'), JSON.stringify(dcodes(d)));
+});
+
 test('T6 decide: slots over N_max, unknown slots, and N_max above the ceiling', () => {
   const full = decide(facts({ slots: { live: 1, unknown: 0, unconfirmed: 1 } }));
   assert.deepEqual(dcodes(full), ['slots-full']);

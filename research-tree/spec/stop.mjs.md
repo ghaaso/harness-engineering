@@ -129,3 +129,7 @@ test's own `spawnSleeper` children; ticks are moved by the test writing `run/wat
 Whether the coordinator's stop ends a real session's turn and helpers; whether a real `claude.exe`
 command line names its folder or session id so `attemptProcesses` reports it (§7 item 4); real
 transcript flush timing within `stop_verify_deltas` ticks.
+
+## FX-CLAIM (round 3)
+
+`request` (FX-CLAIM step 6, rev 5 point 1): a tombstone confirms at once only with no folder session visible; otherwise stop-requested with `sessions` (every folder session) in the line; a session claim is the named session. Test: T3b.

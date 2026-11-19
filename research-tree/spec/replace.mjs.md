@@ -225,3 +225,7 @@ a real session's transcript `cwd` equals the folder named in `bind` (item 7).
 - `modeFence`'s hold, in order (FIX-JOIN point 11): `fenceOutcomeSteps(env, handle, hold)` (FX-OUT steps
   1-5) before the M6 block; `fenceTombstone(env, handle, hold)` (FX-CLAIM) after it; then `lib.fence`,
   unchanged. `hold` = {task, epoch, reason, failure, row, att, dir, cut, readyCheck}.
+
+## FX-CLAIM (round 3)
+
+`fence --if-unclaimed` (fence only): a session claim → exit 5 `claimed-late` before any write (`fenceIfUnclaimed`, ahead of FX-OUT's steps); `fenceTombstone` (FX-OUT step 6) for an attempt with a manifest; `bind` → exit 6 `not-claimed`, exit 1 `not-claim-holder` before today's checks (the claim replaces the round-2 started-session check). Tests: T7b, T7c, T22b; T21 and T22 make the claim.

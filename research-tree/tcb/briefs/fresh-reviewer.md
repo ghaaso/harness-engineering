@@ -23,3 +23,5 @@ Write `staging/review.json`: `schema_version` 1, `kind: "review"`, `field`, `tas
 Your only step is `review`. When `staging/review.json` is complete and valid, write `staging/READY.json` last: `{"kind":"ready","task":"{{task}}","epoch":{{epoch}},"step":"review"}`. If a card or snapshot that you need is missing, write `{"kind":"repair","task":"{{task}}","epoch":{{epoch}},"question_ids":[...],"missing":"card"}` (missing: source, snapshot, card, check or other) and end your turn.
 
 Your last line of every turn is exactly `TURN-END {{field}}`, and nothing follows it.
+
+If every tool call is denied `attempt-claimed` or `attempt-cancelled`, another session holds this attempt or it was cancelled: end your turn (FX-CLAIM).

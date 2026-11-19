@@ -274,7 +274,7 @@ export async function doRaise(ctx, root, flags, dry, hooks = {}) {
     throw err('proc-unavailable', 2, { detail: e && e.message ? e.message : null });
   }
   if (!Array.isArray(procList)) throw err('proc-unavailable', 2, null);
-  const slots = await lib.slotCount(table.tasks, procList, tr);
+  const slots = await lib.slotCount(table.tasks, procList, tr, { root });
   const counts = { live: slots.live ?? 0, unknown: slots.unknown ?? 0, unconfirmed: slots.unconfirmed ?? 0 };
   if (counts.live + counts.unknown + counts.unconfirmed > 0) {
     return refuse(ctx, root, th, proc, facts, dry, N, 6, 'not-quiescent', counts);
