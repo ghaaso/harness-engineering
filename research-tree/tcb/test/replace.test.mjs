@@ -701,14 +701,29 @@ test('FX-OUT 3: a refused fence (stale-epoch, wrong-step, hmax) writes no slot; 
       assert.ok(tb.equals(read(root, 'run/tasks.json')), `${name}: the row is unchanged`);
     }
   });
-  await t.test('a fence of a running attempt writes one fenced slot, then the CAS', async (t2) => {
+  await t.test('a fence of a running attempt writes one fenced slot, then the CAS; with its line lost, another reason gets 65 and the same reason is the FX-REDO repeat: no second slot', async (t2) => {
     const root = world(t2, [boundRow()]);
     expectExit(run(root, 'fence', { task: RES, epoch: 1, reason: 'stall', tick: 4, boot: BOOT_A }), 0);
     assert.deepEqual(outcomeOf(root, RES, 1), ['0.json']);
     assert.ok(read(root, `wt/${RES}-e1/outcome/0.json`).equals(Buffer.from(fencedSlot(RES, 1, 'stall'))));
     assert.equal(getRow(root, RES).epoch, 2);
-    expectExit(run(root, 'fence', { task: RES, epoch: 1, reason: 'stall', tick: 5, boot: BOOT_A }), 65, 'stale-epoch');
+    // a death after the CAS, before the fence line: the row at the post-state, the fenced slot, no line
+    const lines = read(root, 'run/ledger.jsonl').toString('utf8').split('\n').filter(Boolean);
+    assert.equal(JSON.parse(lines[lines.length - 1]).kind, 'fence');
+    fs.writeFileSync(at(root, 'run/ledger.jsonl'), lines.slice(0, -1).map((l) => l + '\n').join(''));
+    // another reason is not the exact post-state: it loses with 65 (the log's own reason) and writes nothing
+    const before = treeHash(root);
+    const lost = run(root, 'fence', { task: RES, epoch: 1, reason: 'hang', tick: 5, boot: BOOT_A });
+    expectExit(lost, 65, 'fence-pending');
+    assert.equal(lost.reasons.find((x) => x.code === 'fence-pending').detail.reason, 'stall');
+    assert.equal(treeHash(root), before, 'the losing fence writes nothing');
+    // the same fence (a later tick) is FX-REDO's repeat at the exact post-state: exit 0, the line completed once
+    const rep = run(root, 'fence', { task: RES, epoch: 1, reason: 'stall', tick: 5, boot: BOOT_A });
+    expectExit(rep, 0);
+    assert.deepEqual([rep.result.repeat, rep.result.redo], [true, true]);
+    assert.deepEqual(ofKind(root, 'fence').map((l) => [l.epoch, l.data.from, l.data.reason, l.data.redo]), [[2, 1, 'stall', true]]);
     assert.deepEqual(outcomeOf(root, RES, 1), ['0.json'], 'nothing after the fenced slot');
+    await assertLedgerVerifies(root);
   });
   await t.test('a torn fence (its slot, no CAS): another reason exits 65 fence-pending; its own reason completes it with no second slot', async (t2) => {
     const root = world(t2, [boundRow()]);

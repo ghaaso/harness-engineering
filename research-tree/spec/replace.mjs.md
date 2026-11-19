@@ -234,6 +234,9 @@ a real session's transcript `cwd` equals the folder named in `bind` (item 7).
   took the name first → 5; `tainted` appends after it). `start` makes `outcome/` beside `staging/`.
 - FX-OUT tests (replace.test.mjs): a refused fence (`stale-epoch`, `wrong-step`, `hmax`) writes no slot; a
   fence of a parked row writes no slot and no tombstone (schedule F1); T5 and T5b put the READY as a ready slot.
+  FX-OUT 3 with FX-REDO: a fence writes one fenced slot, then the CAS; with its line lost after the CAS, a fence
+  of another reason gets 65 `fence-pending` and writes nothing, and the same fence is the repeat that completes
+  the line, with no second slot.
 
 ## FX-CLAIM (round 3)
 
