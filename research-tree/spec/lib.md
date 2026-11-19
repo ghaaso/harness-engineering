@@ -334,7 +334,16 @@ empty step returns its neutral value, so behaviour is unchanged (FIX-JOIN point 
 - `readClaim(attemptDir)` -> `{kind: 'none'|'session'|'tombstone', session_id}`; `claimRecord(sessionId)`;
   `tombstoneRecord(task, epoch)`: FX-CLAIM.
 - `planAct(row, facts)` -> one act name, `none` and `owner` included: FX-PLAN.
-- `liveness(rec, proc, markers)` -> `alive` | `dead` | `unknown`: FX-W1.
+- `liveness(rec, proc, markers)` -> `alive` | `dead` | `unknown` (FX-W1 step 1, built; branch L1, no
+  lease): `dead` when `rec` is not an object (it names no process) or `markers` holds
+  `markerKey(rec.pid, rec.start_time)` (a Set of keys, anything with `has`, or an array): an exit
+  marker beats the process list. Else `proc.alive(Number(pid), start_time)`: true → `alive`, false →
+  `dead`; null, an absent `alive` or one that throws → `unknown`. Never called inside a run-lock hold:
+  the caller passes a list taken outside every lock (status: `listProc`); inside a hold the reader
+  re-reads the record and keeps the verdict only while its bytes are unchanged.
+  `exitMarkers(root)` -> the Set of keys of the names `run/arm/exited-<key>.json` present (names only,
+  no parse: the strict create is all or nothing); a missing folder gives an empty set; `unarmed-*`, slot
+  files and `*.tmp` names are not markers. Tested in `tcb/test/lib.test.mjs` (FX-W1 liveness).
 - `realProc({timeoutMs, exe})`: unchanged; FX-W2 passes `timeoutMs: ensure_query_ms`.
 - `withRunLock(root, {requireArmed})`: `requireArmed: true` runs the empty step `armedCheck(root, handle)`
   after the ce check: FX-W3 (exit 6 `not-armed`).

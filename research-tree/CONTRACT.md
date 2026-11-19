@@ -67,6 +67,12 @@ node <root>/tcb/<name>.mjs [<mode>] --root <dir> [--ce <n>] [--task <id> --epoch
   No other script sleeps. Scripts that may run longer than 60 s (`watch.mjs` in every mode,
   `selftest.mjs run`, `snap.mjs --new`, `cost.mjs from-transcripts`) are started by the coordinator
   as background commands.
+- **The test seams never reach production (FX-W1 step 5, R29):** the coordinator's guard-hook allows
+  a `node tcb/<n>.mjs` call only in a form that script's production calls use (`EXEC_FORMS` in
+  `tcb/guard-hook.mjs`, `spec/guard-hook.mjs.md` step 12), so `--now`, `--free-mb`, `--boot`, `--tick`,
+  `--once`, `--sleep-ms`, `--interval-ms`, `--no-intake`, `--rng-seed` and `--transcripts-root` are
+  refused (`bash-pattern`, detail `flag not allowed: ...`) and reach a script only from the tests, which
+  run it directly.
 - Tokens are counted, never money. Weighted token cost uses the dimensionless weights in thresholds.
 
 ### 1.3 Output
@@ -100,7 +106,7 @@ node <root>/tcb/<name>.mjs [<mode>] --root <dir> [--ce <n>] [--task <id> --epoch
 | 64 | `stale-ce` | `--ce` differs from `run/coord.json` (also: a watcher or alarm superseded by a newer ce) |
 | 65 | `stale-epoch` | `--epoch`/expected step differs from the row; a commit of a non-current epoch (logged `zombie-write`) |
 | 66 | `usage` | Bad command line |
-| 67 | `table-corrupt` | `run/tasks.json` (or another `run/` state file) unparseable or schema-invalid. Every writing script refuses; `tasks.json.prev` is kept; the owner is told |
+| 67 | `table-corrupt` | `run/tasks.json` (or another `run/` state file) unparseable or schema-invalid. Every writing script refuses; `tasks.json.prev` is kept; the owner is told. Status reads `watcher.json` and `alarm.json` loosely: a corrupt one is its anomaly `state-corrupt` and a dead wake source, not 67 (FX-W1 step 4) |
 | 70 | `internal` | Uncaught error. Gates count it as not-run; a watcher 70 means "restart the watcher", never a field failure |
 | 75 | `lock-busy` | `run/run.lock` still held after the bounded retry (or lost while held) |
 | 0, 1, 2, 5, 6, 17, 21 | round 3 | Reasons added by the round-3 fixes, each filled by its fix (S0.5 lists them): FX-W1 the endturn's tri-state report of the wake sources (1, 2) and the alarms' exit markers; FX-W2 1 `arm-unconfirmed`, 0 `present` / `nonce-reused` / `abandoned`; FX-W3 6 `not-armed`; FX-W6 21 `hang` by kind, 17 `idle-child` / `age-cap`; FX-CLAIM 5 `claimed-late`, 6 `not-claimed`, 1 `not-claim-holder` |
@@ -145,7 +151,7 @@ transcript paths below it otherwise pass 260 characters; `handover.mjs init` rep
 as reason `root-long` (a warning, not a refusal; tests use long temp roots). `handover.mjs init`
 creates missing directories, an empty task table (§2.1), a `.gitattributes` holding `* -text` and a
 `.gitignore` listing `wt/`, `.snapshots/`, `sealed/`, `tmp/`, `run/*.lock`, `run/alarm.json`,
-`run/watcher.json`, `run/*.stale`, `run/*.orphan`, `*.tmp`. The owner makes the git repository; no
+`run/watcher.json`, `run/arm/` (the alarms' files of round 3: the exit markers of FX-W1, §3.9), `run/*.stale`, `run/*.orphan`, `*.tmp`. The owner makes the git repository; no
 script commits to it in the pilot (`commit.mjs` records `git: null`, §8 decision 23); fsck reads it.
 
 ```
@@ -410,6 +416,13 @@ does not apply); `not_run` lists (check, subject) whose last `check` line is not
   that finds the file's sha256 changed since its last look sleeps again instead of exiting. No
   other writer; the format is unchanged.
 - [alarm] `run/alarm.json`: `{pid, start_time, ce, armed_at, sleep_ms}`.
+- [arm-exited] `run/arm/exited-<pid>-<start>.json`: `{ce, exit, at}` (FX-W1 step 2), `<pid>-<start>`
+  = `lib.markerKey(pid, start_time)`. Every alarm, on every exit after its registration (30, 0
+  `superseded`, 64 and any error exit), creates it by a lock-free exclusive create (`lib.createExclusive`, which makes
+  `run/arm/`; `at` from the edge facts; a failed create costs one stderr line, never the exit code); a hard kill writes none. A
+  marker makes `lib.liveness` judge that alarm `dead`, whatever the process list says. Pruned only by
+  `status --reconcile` in its hold 2, and only when neither `alarm.json`, a slot file nor that hold's
+  slots name its pid and start time.
 - [intent] `run/intents/<key>.json`: `{key, ce, subject, text_sha, created_at}`; `.done`: `{key, done_at}`.
 
 ### 3.10 Watcher [watcher] — `run/watcher.json`; `run/watcher.lock` [lock-record]
@@ -1179,3 +1192,7 @@ Settled here where the sources leave it open or disagree (D = the design, L = a 
     every reason but `first` and `tainted` (§1.4 exit 5, §3.6).
 41. The arm first, the armed gate and the dead-man (round 3: FX-W2, FX-W3, FX-W4; FIX-JOIN point 1).
     Filled by those fixes (S0.5 sets the heading only).
+    FX-W1 (R6-b, FIX-JOIN part 3, branch L1): `status --endturn` reports each wake source alive, dead
+    or unknown: exit 1 when any is dead, 2 only when none is dead and some is unknown. Every alarm
+    writes an exit marker before it exits, so an alarm that fired or was superseded is dead, never
+    unknown. On a dead watcher the coordinator starts a new one; on unknown it starts nothing.

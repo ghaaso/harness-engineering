@@ -23,7 +23,7 @@ pattern (CONTRACT §1.5); `--quote-file`/`--text-file` must resolve under `<root
 
 ## Reads
 `run/coord.json`, `run/tasks.json`, `run/ledger.jsonl`, `run/acked.json`, `run/watcher.json`,
-`run/watcher.lock`, `run/alarm.json`, `run/intents/`, `tcb/thresholds.json`, `store/commits/`,
+`run/watcher.lock`, `run/alarm.json`, `run/arm/` (the exit markers and slot files, FX-W1), `run/intents/`, `tcb/thresholds.json`, `store/commits/`,
 `store/status/card_status.jsonl`, `wt/*/staging/READY.json`, transcripts (spend, windows,
 reconcile), the process list (slots, wake sources).
 
@@ -31,7 +31,8 @@ reconcile), the process list (slots, wake sources).
 `run/status.json` (writeAtomic under the run lock), `run/acked.json` (endturn), `run/tasks.json`
 (reconcile: `step` started, `attempts[].session`), `run/intents/<key>.json` and `.done` (exclusive
 create), ledger lines `started` {session}, `owner` {act, subject, quote}, `intent-open` {key},
-`intent-done` {key}, `meter` {pct, self_reported: true}.
+`intent-done` {key}, `meter` {pct, self_reported: true}. Reconcile removes `run/arm/exited-*.json`
+markers that nothing names (hold 2, FX-W1).
 
 ## Steps
 **Build (default; also the last step of `--reconcile`).** 1 Facts outside the lock: `proc.list()`
@@ -53,11 +54,17 @@ attempt, windows. 2 Under `withRunLock(ce)`: read every file, compute [status] �
   `start-session`; started → `bind`; bound with a READY of this epoch for a step without a commit
   record → `audit` when no `audit` line of this task+epoch is newer than its last `intake` line,
   else `commit`; else `none`.
-- `watcher` {alive: `proc.alive(pid, start_time) === true`, ce, last_tick_at, ticks_total};
-  `alarm` {alive, ce}; `open_intents` (`.json` without `.done`); `not_run` = (check, subject)
+- `watcher` {alive, ce, last_tick_at, ticks_total}; `alarm` {alive, ce}. **alive is tri-state (FX-W1
+  step 1):** true, false or null (unknown) from `lib.liveness` with the exit markers. The two records
+  are read before the process list is taken (`readWake`, outside every lock) and judged after it
+  (`judgeWake`), so a record names a process the list shows if it lives; inside the hold each is read
+  again (`sourceNow`): an exit marker, an absent or a corrupt record → false; bytes unchanged → the
+  verdict; bytes changed → null (that record was in no list). A corrupt `watcher.json` or `alarm.json`
+  (unparseable, UTF-16, not an object) is the anomaly `state-corrupt` {file}, never 67 (FX-W1 step 4);
+  `watcher-dead` / `alarm-dead` only when false, never when null; `open_intents` (`.json` without `.done`); `not_run` = (check, subject)
   whose last `check` line has result not_run, plus (`fsck`, `store`) when the last `fsck` line is
   not_run; `anomalies`: `proc-unavailable`, `ledger-torn`,
-  `watcher-dead`, `alarm-dead`, `watcher-stale-ce`, `lock-orphan` (`*.orphan` files),
+  `watcher-dead`, `alarm-dead`, `state-corrupt`, `watcher-stale-ce`, `lock-orphan` (`*.orphan` files),
   `several-sessions`, `zombie-write`, `ready-unparseable`.
 3 Validate against [status] and write. Same inputs → same file except `generated_at`.
 
@@ -67,20 +74,27 @@ exactly one session → `updateRow(steps ['admitted'], epoch e)`: step `started`
 `several-sessions`. For every attempt not current with `session` null and folder transcripts: set
 that attempt's `session` (no step change, no line). Then build. **Then the alarm (M2, CONTRACT
 decision 40):** reconcile is the first act of every turn, so it checks the wake source a dying
-turn would otherwise leave missing: alarm = `alarm.json` ce equals ce and `proc.alive` true. When
-it is not (absent, another ce, dead, or the process list unavailable), exit 1 with reason
-`alarm-missing` {ce, pid, alive} (the status is still built and written, the rows still
-reconciled; `result.arm` = `"alarm"`); the coordinator starts `watch.mjs --alarm` as a background
+turn would otherwise leave missing: alarm = `alarm.json` of this ce whose `lib.liveness` (with the
+exit markers, over the list taken before the lock) is not dead. **FX-W1 (D1 at S:596):** unknown (the
+list unavailable) asks nothing. When it is dead (absent, corrupt, another ce, an exit marker, or gone
+from the list), exit 1 with reason `alarm-missing` {ce, pid, alive: false, state: `dead`} (the status
+is still built and written, the rows still reconciled; `result.arm` = `"alarm"`); the coordinator starts `watch.mjs --alarm` as a background
 command before anything else in the turn. A live alarm is left as it is (endturn's `acked.json`
 write re-arms it, M1). Reconcile starts and kills nothing.
 
 **--endturn.** 1 Under `withRunLock(ce)`: K > ledger head seq → exit 1 `acked-ahead`; K < the
 stored acked_seq → exit 1 `acked-backwards`; write `acked.json` {ce, acked_seq: K, at: now}.
-2 Wake sources: watcher = `watcher.json` ce equals ce, `watcher.lock` holds its pid and
-start_time, and `proc.alive` is true; alarm = `alarm.json` ce equals ce and `proc.alive` true.
-`proc.alive` null for either → exit 2 `proc-unavailable` (acked.json is still written). 3 Exit 0
-when both run; else 1 with reasons `watcher-missing` and/or `alarm-missing` — the coordinator then
-starts `watch.mjs` and/or `watch.mjs --alarm` as background commands. Endturn starts and kills
+2 Wake sources (FX-W1 step 3; R6-b), outside every lock: the records are read first (loosely: a
+corrupt one counts as absent, not 67), then the process list is taken. watcher = `watcher.json` of
+this ce whose pid and start_time `watcher.lock` holds; alarm = `alarm.json` of this ce; each judged
+by `lib.liveness` with the exit markers, and a record that fails those file checks is `dead`.
+`result.sources` = {watcher, alarm}, each `alive`, `dead` or `unknown`; `result.watcher` and
+`result.alarm` are true only for `alive`. 3 Exit 1 when any source is dead, with `watcher-missing`
+and/or `alarm-missing` {ce, pid, state: `dead`} (and `proc-unavailable` {unknown: [names]} when the
+other is unknown); exit 2 `proc-unavailable` {unknown: [names]} only when none is dead and some is
+unknown; else exit 0. The `acked.json` of step 1 stands in every case. On a dead watcher the coordinator
+starts `watch.mjs` (and on a dead alarm `watch.mjs --alarm`) as a background command; on unknown it
+starts nothing. Endturn starts and kills
 nothing (decision 5). The `acked.json` write of step 1 is also the alarm's arm token (M1, CONTRACT
 §3.9): a live alarm reads it and sleeps another period, so endturn never replaces a live alarm.
 
@@ -95,8 +109,9 @@ subject that is a task in the table (else 1 `no-task`); append `owner` {act, sub
 
 ## Exit codes
 0; 1 `acked-ahead`, `acked-backwards`, `watcher-missing`, `alarm-missing` (endturn; and
-reconcile, M2), `intent-differs`, `no-task`; 2 `proc-unavailable` (endturn), `missing`, `schema-version`; 3 `run-from-attempt`; 64;
-65 (reconcile CAS); 66; 67 (tasks, coord, acked, watcher, alarm or an intent file corrupt); 70; 75.
+reconcile, M2), `intent-differs`, `no-task`; 2 `proc-unavailable` (endturn: none dead, some unknown), `missing`, `schema-version`; 3 `run-from-attempt`; 64;
+65 (reconcile CAS); 66; 67 (tasks, coord, acked or an intent file corrupt; a corrupt watcher or alarm
+record is the anomaly `state-corrupt`, FX-W1); 70; 75.
 
 ## Rules implemented
 Process list and transcript parses happen before the lock (CONTRACT §2.1).
@@ -149,6 +164,19 @@ state), R20 (a view, rebuilt), R40 (`not_run`), R58; decisions 3, 4, 5, 17, 25, 
 - T15 meter `--pct 42` → `meter` line `{pct:42, self_reported:true}`; `--pct 101` → 66.
 - T16 `--dry-run` of build, reconcile and endturn → result as the real run, no file changed.
 - T17 `run.lock` busy → 75; every stdout one §1.3 line; every ledger written verifies.
+- FX-W1 endturn, list unavailable: live-looking records of this ce → exit 2, `sources` both
+  `unknown`, reason `proc-unavailable` {unknown: [watcher, alarm]}, `acked.json` written; with the
+  alarm's exit marker → exit 1, `sources.alarm` `dead`, reasons `alarm-missing` {ce, pid, state: dead}
+  then `proc-unavailable` {unknown: [watcher]}.
+- FX-W1 corrupt records: a torn `watcher.json` and a non-JSON `alarm.json` → build exit 0 with two
+  `state-corrupt` anomalies {file} and both alive false; endturn exit 1 with both sources dead;
+  reconcile exit 1 `alarm-missing`. Never 67.
+- FX-W1 reconcile, list unavailable: an unmarked alarm of this ce → exit 0 (no `arm`), status alive
+  null for both, no `*-dead` anomaly, `proc-unavailable` present; with its exit marker → exit 1
+  `alarm-missing` {alive: false, state: dead}, `alarm.alive` false, anomaly `alarm-dead`, and the
+  marker (named by `alarm.json`) is kept.
+- FX-W1 prune: markers of `alarm.json`'s alarm, of a slot file's alarm and of an alarm nothing names,
+  plus an `unarmed-*` record → `--dry-run` removes nothing; reconcile removes only the unnamed marker.
 
 ## Cannot be tested without the app
 That a real session's transcript appears in `projectDirName(folder)` with that `cwd` soon after
@@ -163,6 +191,9 @@ start (§7 item 7); that the watcher's and alarm's exits reach the coordinator (
   `hold2ArmSlots(hold, handle)` (FX-W2 step 7: the live slots, `turn.json` arm and slots, `hold.slots`)
   and then `hold2PruneMarkers(hold, handle)` (FX-W1: reads `hold.slots` in the same hold, takes no lock
   of its own). Hold 2 is file-only: no process list inside it (FX-W1 step 1). Returns `hold.res`.
+  FX-W1 built: `hold2PruneMarkers` lists `run/arm/` first, then reads what keeps a marker (`alarm.json`,
+  every `slot-*.json`, `hold.slots`) and removes each `exited-*` marker none of them names, so a marker
+  made after the listing is never touched; `unarmed-*` records stay; a dry run removes nothing.
 - Flags of the default mode: `ARM_FLAGS` (FX-W2, `arm-nonces`) and `DEADMAN_FLAGS` (FX-W4, `deadman`), empty.
 - `deadmanRun(ctx, flags, dry)` (FX-W4) runs right after the dry-run flag is read, before the ce check;
   null goes on.

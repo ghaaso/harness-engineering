@@ -24,7 +24,7 @@ takes no `--ce` (it creates the first one, §1.1).
 ## Writes
 `init`: the §2 folders that are missing (`tcb/` excepted: the owner's), `<root>/.gitignore` (only if
 absent; lines `wt/`, `.snapshots/`, `sealed/`, `tmp/`, `run/*.lock`, `run/alarm.json`,
-`run/watcher.json`, `run/*.stale`, `run/*.orphan`, `*.tmp`), `<root>/.gitattributes` (only if absent;
+`run/watcher.json`, `run/arm/`, `run/*.stale`, `run/*.orphan`, `*.tmp`), `<root>/.gitattributes` (only if absent;
 `* -text`), the empty task table `{schema_version, rev: 0, tasks: []}` through `lib.writeTasks` (only
 when `tasks.json` and `tasks.json.prev` are both absent, CONTRACT §2.1), `run/coord.json`
 {schema_version, ce: 1, session?, started_at, tcb_commit}. `raise`: `run/coord.json` {ce: N+1,
@@ -74,7 +74,7 @@ check after a sleep); M3's `handover` act is raised by the watcher (class 17) wh
 this ce exists and no slot is used, which is this script's quiescence over the table.
 
 ## Behaviours (tests)
-- T1 init on a root with only `tcb/` → every §2 folder exists, `.gitignore` has the ten lines,
+- T1 init on a root with only `tcb/` → every §2 folder exists, `.gitignore` has the eleven lines,
   `.gitattributes` is `* -text`, `run/tasks.json` is `{schema_version, rev: 0, tasks: []}` and
   validates, `coord.json` {ce:1, tcb_commit, session absent or null}, one `coord-init` line, exit 0;
   the ledger verifies; the temp root is longer than 40 characters, so `result.reasons` holds
