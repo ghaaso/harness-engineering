@@ -145,6 +145,33 @@ args, exit, timeout?}]}`; exit 0.
 0 (`--once` quiet, alarm superseded, intake done), 10-17, 20-27, 30, 3 (`run-from-attempt`, tamper
 in intake), 64, 66, 67, 70, 75.
 
+## Raised again while the condition holds (FX-W5, round 3, branch R1)
+FIX-wake.md FX-W5; `build/branches.md` row 6. Fills the skeleton's `ownerOrNone` and `reraiseStuck`.
+- Step 1: `rowAct` raises nothing for a planned act `owner` or `none` (`ownerOrNone`), so such a row is
+  never raised again nor `stuck`. The act is `planAct`'s once FX-PLAN fills `rowActPlanned`, whose
+  facts bring zombie-over (FIX-JOIN point 11); until then `planned` is undefined and today's filters decide.
+- Classes raised again: every act-due (17) but `run-terminal` (its condition never clears), and stall,
+  hang and loop (20-22), the set the model checked R1 with (ABLATION-wake.md:234-235). Others are
+  raised once per onset as before.
+- Step 2, in evaluate after the present set is keyed by ident and before the active keys are renewed:
+  a present ident of those classes whose key's `event` line is acknowledged (seq ≤ `acked_seq`) and
+  whose last raise (the key's tick) is at least `min(15 × 2^b, 60)` ticks old, b = min(n, 2) after n
+  raises, is raised again: its key leaves `active`, so step 5 gives it a new key `<ident>|<tick>` and
+  one new `event` line with `detail.reraise` = n + 1, which exits like any new key (17 after
+  coalescing, 20-22 at once). An unacknowledged key is due anyway and is not raised again. 15 and 60
+  are marked guesses in the code (slice 1 writes no thresholds.json key).
+- Step 3: `stuck_count` = the raises made once b was at its cap, n − 3 (the raises at 15, 30 and 60
+  ticks reach it). At `stuck_raises` (thresholds.json, 3; missing or not a positive integer: 3) the
+  ident is in `stuck`: 15 + 30 + 60, then 3 × 60 = 285 ticks after the onset (about 4.75 h at Δ 60 s,
+  FIX-wake.md:54). FX-W4's dead-man reads it.
+- `watcher.json` gains `reraise: {<ident>: n ≥ 1}` and `stuck: [<ident>]` (sorted), rebuilt from the
+  present idents at each evaluation: an ident leaving the active set leaves both.
+- Tests: **W5 re-raise** (a planned row's `replace-fence`, acknowledged: quiet one tick short of each
+  interval, raised at 15, 30, 60 and 60 ticks with a new key and `detail.reraise`; `stuck_raises` 1 puts
+  it in `stuck` at the 4th raise, not the 3rd; left unacknowledged it exits 17 and is not raised again);
+  **W5 stuck** (an acknowledged hang raised again and exiting 21 at once, six times; in `stuck` only at
+  the 6th, 285 ticks after the onset; a new call clears the hang and empties `stuck` and `reraise`).
+
 ## Rules implemented
 R1, R4 (reads, decides, exits; watcher.lock; ce first and inside the lock; intake spawned, not
 awaited; no deadline exit), R5 (V, stall by calls, hang by ticks, loop, READY voids suspicion),

@@ -1321,6 +1321,72 @@ test('M3 act due: an event line above acked_seq whose condition has cleared wake
   });
 });
 
+// FX-W5 (FIX-wake.md FX-W5 steps 2-3, branch R1): raised again while the condition holds; `stuck`.
+// jumpTo(ctx, n): the next --once tick is tick n (watcher.json's ticks_total forged to n - 1).
+const jumpTo = (ctx, n) => w(path.join(ctx.root, 'run', 'watcher.json'), { ...watcherJson(ctx), ticks_total: n - 1 });
+const keyTick = (l) => Number(String(l.data.key).split('|').pop());
+
+test('W5 re-raise: an acknowledged act-due still due is raised again after 15, 30, 60 and 60 ticks, never while unacknowledged', async () => {
+  await withRoot({ thr: { coalesce_ticks: 0, stuck_raises: 1 } }, async (ctx) => {
+    setTasks(ctx, [row('f1-research', { state: 'planned', step: 'none', epoch: 0, attempts: [] })]);
+    const ident = '17|f1-research:replace-fence|0';
+    assertLine(tick(ctx), 17); // tick 1: the onset
+    ackUpTo(ctx, actEvents(ctx).at(-1).seq);
+    assertLine(tick(ctx), 0); // tick 2: acknowledged, inside the interval
+    let at = 1;
+    for (const [i, gap] of [15, 30, 60, 60].entries()) {
+      jumpTo(ctx, at + gap - 1);
+      assertLine(tick(ctx), 0);
+      assert.equal(actEvents(ctx).length, i + 1, `raise ${i + 1} not before ${gap} ticks`);
+      const j = assertLine(tick(ctx), 17);
+      at += gap;
+      const ev = actEvents(ctx);
+      assert.equal(ev.length, i + 2, `raise ${i + 1} at ${gap} ticks`);
+      assert.equal(keyTick(ev.at(-1)), at, 'a new key at the tick of the raise');
+      assert.equal(ev.at(-1).data.detail.reraise, i + 1);
+      assert.equal(j.reasons[0].detail.reraise, i + 1);
+      const wj = watcherJson(ctx);
+      assert.equal(wj.reraise[ident], i + 1);
+      assert.deepEqual(wj.stuck, i + 1 >= 4 ? [ident] : [], 'stuck_raises 1: the first raise after the cap (the 4th) counts');
+      if (i < 3) ackUpTo(ctx, ev.at(-1).seq);
+    }
+    jumpTo(ctx, at + 60); // raise 4 left unacknowledged: due, so exit 17, but nothing is raised again
+    assertLine(tick(ctx), 17);
+    assert.equal(actEvents(ctx).length, 5);
+  });
+});
+
+test('W5 stuck: an acknowledged hang is raised again at once; the 6th raise, 285 ticks after the onset, is stuck; a new call clears both', async () => {
+  await withRoot({ thr: { hang_ticks: 2, stuck_raises: 3 } }, async (ctx) => {
+    const t = singleTask(ctx);
+    setTasks(ctx, [t.row]);
+    const ident = `21|${t.task}|1`;
+    assertLine(tick(ctx), 0);
+    assertLine(tick(ctx), 21); // tick 2: the onset
+    let at = 2;
+    for (const [i, gap] of [15, 30, 60, 60, 60, 60].entries()) {
+      ackUpTo(ctx, eventsOf(ctx.root, 'hang', 21).at(-1).seq);
+      jumpTo(ctx, at + gap - 1);
+      assertLine(tick(ctx), 0);
+      assertLine(tick(ctx), 21); // urgent: exits at the tick of the raise
+      at += gap;
+      const ev = eventsOf(ctx.root, 'hang', 21);
+      assert.equal(ev.length, i + 2);
+      assert.equal(ev.at(-1).data.urgent, true);
+      assert.equal(ev.at(-1).data.detail.reraise, i + 1);
+      assert.equal(keyTick(ev.at(-1)), at);
+      assert.deepEqual(watcherJson(ctx).stuck, i + 1 >= 6 ? [ident] : [], `raise ${i + 1}`);
+    }
+    assert.equal(at - 2, 285, 'stuck 285 ticks after the onset (FIX-wake.md:54)');
+    ackUpTo(ctx, eventsOf(ctx.root, 'hang', 21).at(-1).seq);
+    appendCalls(t.file, { sessionId: t.session, cwd: t.cwd, calls: CALLS(1) });
+    assertLine(tick(ctx), 0); // the hang clears: the ident leaves the active set
+    const wj = watcherJson(ctx);
+    assert.deepEqual(wj.stuck, []);
+    assert.deepEqual(wj.reraise, {});
+  });
+});
+
 test('M5 pause discount: a tick more than 2 delta after the last one does not count toward hang', async () => {
   await withRoot({ thr: { hang_ticks: 2, delta_ms: 60000 } }, async (ctx) => {
     const t = singleTask(ctx);
