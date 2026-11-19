@@ -1,0 +1,498 @@
+<title>Bottleneck Rule, Version 2</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+/* Layout: one reading column. The answer first, then each conclusion as a row: the conclusion on the left, the trail that led to it on the right. Same tokens as the version 1 page. */
+:root{
+  --bg:#f3f6f6; --surface:#ffffff; --sunk:#e9eeee; --fg:#152120; --muted:#566664; --line:#d2dbda;
+  --accent:#0a6a66; --accent-soft:#d6ebe9; --bind:#a63a12; --bind-soft:#f6e1d7;
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s5:#e87ba4; --s6:#008300;
+  --font-text:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-head:"Space Grotesk","IBM Plex Sans",system-ui,sans-serif;
+  --font-num:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0f1615; --surface:#172120; --sunk:#1f2b2a; --fg:#e4edeb; --muted:#9db0ad; --line:#2c3b39;
+  --accent:#58c9bf; --accent-soft:#17403d; --bind:#ff9a6b; --bind-soft:#4a2415;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181; --s6:#0ca30c; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#0f1615; --surface:#172120; --sunk:#1f2b2a; --fg:#e4edeb; --muted:#9db0ad; --line:#2c3b39;
+  --accent:#58c9bf; --accent-soft:#17403d; --bind:#ff9a6b; --bind-soft:#4a2415;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181; --s6:#0ca30c; color-scheme:dark }
+body{background:var(--bg);color:var(--fg);font-family:var(--font-text);font-size:16px;line-height:1.5}
+.wrap{max-width:1080px;margin:0 auto;padding-block:28px 56px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:40px}
+h1{font-family:var(--font-head);font-size:2rem;line-height:1.15;margin:0;text-wrap:balance}
+h2{font-family:var(--font-head);font-size:1.3rem;line-height:1.25;margin:0;text-wrap:balance}
+h3{font-size:.8rem;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin:0;font-weight:600}
+h4{font-size:1rem;line-height:1.35;margin:0;font-weight:600;text-wrap:balance}
+p{margin:0;max-width:70ch}
+a{color:var(--accent)}
+a:focus-visible,.seg span:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.lead{font-size:1.08rem}
+.muted{color:var(--muted)}
+.num{font-family:var(--font-num);font-variant-numeric:tabular-nums}
+.note{font-size:.88rem;color:var(--muted)}
+code{font-family:var(--font-num);font-size:.86em;background:var(--sunk);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+header,section{display:flex;flex-direction:column;gap:14px}
+.headrow,.tags,.jump{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.chip{display:inline-block;font-size:.76rem;font-weight:600;padding:2px 9px;border-radius:999px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.chip.warn{background:var(--bind-soft);border-color:var(--bind);color:var(--bind)}
+.chip.acc{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.jump a{font-size:.9rem}
+ol.answer{margin:0;padding-left:1.3rem;display:flex;flex-direction:column;gap:8px;max-width:76ch}
+ul.plain{margin:0;padding-left:1.2rem;display:flex;flex-direction:column;gap:6px;max-width:76ch}
+
+/* figures: a thin segmented bar above the list that carries its numbers */
+.figs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px}
+.fig{display:flex;flex-direction:column;gap:10px;min-width:0}
+.seg{display:flex;gap:2px;height:8px}
+.seg span{display:block;height:8px;min-width:3px}
+.seg span:first-child{border-radius:4px 0 0 4px}
+.seg span:last-child{border-radius:0 4px 4px 0}
+.c1{background:var(--s1)} .c2{background:var(--s2)} .c3{background:var(--s3)} .c4{background:var(--s4)} .c5{background:var(--s5)} .c6{background:var(--s6)}
+ul.key{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px}
+ul.key li{display:grid;grid-template-columns:12px minmax(0,1fr) auto;gap:8px;align-items:baseline;font-size:.93rem}
+ul.key i{width:10px;height:10px;border-radius:2px;align-self:center}
+ul.key b{font-family:var(--font-num);font-weight:500;font-variant-numeric:tabular-nums}
+
+/* the two changes: the only boxed elements on the page */
+.changes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;align-items:start}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.panel dl,.trail{margin:0;display:grid;grid-template-columns:8.2rem minmax(0,1fr);gap:8px 14px}
+dt{font-size:.76rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;padding-top:.2em}
+dd{margin:0;font-size:.95rem}
+.sketch{overflow-x:auto}
+.sketch svg{display:block;width:100%;min-width:420px;height:auto}
+.sk-unit{fill:var(--accent)} .sk-late{fill:var(--bind)}
+.sk-idle{fill:none;stroke:var(--line);stroke-width:1.5;stroke-dasharray:5 4}
+.sk-axis{stroke:var(--muted);stroke-width:1} .sk-mark{stroke:var(--bind);stroke-width:1.5;stroke-dasharray:3 3}
+.sk-t{font-family:var(--font-text);font-size:12.5px;fill:var(--fg)} .sk-m{font-family:var(--font-text);font-size:12px;fill:var(--muted)}
+
+/* the trail rows */
+.group{display:flex;flex-direction:column;gap:0;margin-top:12px}
+.group > h3{padding-bottom:10px}
+.entry{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,8fr);gap:8px 28px;padding-block:16px;border-top:1px solid var(--line)}
+.entry .what{display:flex;flex-direction:column;gap:8px;min-width:0}
+.entry .what p{font-size:.93rem;color:var(--muted)}
+
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:620px;font-size:.93rem}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:.76rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;background:var(--sunk)}
+tr:last-child td{border-bottom:0}
+td.q{font-family:var(--font-num);font-size:.86rem;color:var(--muted);white-space:nowrap}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px;align-items:start}
+.two > div{display:flex;flex-direction:column;gap:10px;min-width:0}
+@media (max-width:820px){
+  .figs,.changes,.two,.entry{grid-template-columns:minmax(0,1fr)}
+  .panel dl,.trail{grid-template-columns:minmax(0,1fr);gap:2px 0}
+  dd{padding-bottom:8px}
+  h1{font-size:1.6rem}
+}
+</style>
+
+<div class="wrap">
+<header>
+  <div class="headrow"><span class="chip acc">Decided 19 November 2026</span><span class="chip warn">A hypothesis: nothing was run or measured</span><span class="chip">No number is set</span></div>
+  <h1>The bottleneck rule, version 2</h1>
+  <p class="lead">Version 1's frame stands: one calculation at every start and finish of a unit of work, run at the smallest number any resource can carry, act only at the gate. Research round 3 changed what goes into it. This page shows where each conclusion came from, what the refuters left of it, and what is still a guess.</p>
+  <p class="muted">Nothing on this page is yours to set. No number of the rule exists yet. Each one waits for a measurement, and no measurement starts without your word.</p>
+  <nav class="jump" aria-label="On this page"><a href="#answer">The answer</a><a href="#mine">Two changes I made</a><a href="#why">How each conclusion was reached</a><a href="#open">Still open</a><a href="#meas">Measurements</a><a href="#notfound">Not found</a><a href="#src">The record</a></nav>
+</header>
+
+<section aria-labelledby="answer">
+  <h2 id="answer">The answer</h2>
+  <ol class="answer">
+    <li><strong>The frame is kept.</strong> Added to it: the parent session's own window as a resource, one token row per window, and a second stop for a unit that reaches its own cap.</li>
+    <li><strong>A token window limits by fit and by order.</strong> A unit starts if it fits in what every window has left above a reserve. When a window cannot pay for everything, the most valuable work goes first. Starts are not capped at an even rate, as the draft had it. That change is mine, and a refuter then narrowed it.</li>
+    <li><strong>What starts next:</strong> a reservation for the oldest unit that does not fit, shorter ones behind it. A unit's model stays the one its kind of job is routed to.</li>
+    <li><strong>The check:</strong> past a computed number of workers, more workers only queue. Four levers raise that number. Which comes first is open.</li>
+    <li><strong>Several writers on one file:</strong> the switch between own copies and one owner is replaced by seven ranked parts. Reshaping the shared places comes first. No file gets one owner by default.</li>
+    <li><strong>The tree of sessions:</strong> the two-level tree stays for a small job. The largest expected gain is fewer wakes of the parent. Whether a leaf that outgrows its window is split or handed over is still open.</li>
+    <li><strong>All of it is untested for model sessions.</strong> Fifteen points are open, each with the measurement that settles it and with what the rule does until then.</li>
+  </ol>
+  <div class="figs">
+    <div class="fig">
+      <h3>Against version 1: 38 conclusions</h3>
+      <div class="seg" role="img" aria-label="Of 38 conclusions: 8 kept, 9 corrected, 2 replaced, 19 new">
+        <span class="c1" style="flex:8" tabindex="0" title="Kept: 8 of 38 (21 %)"></span><span class="c2" style="flex:9" tabindex="0" title="Corrected: 9 of 38 (24 %)"></span><span class="c3" style="flex:2" tabindex="0" title="Replaced: 2 of 38 (5 %)"></span><span class="c4" style="flex:19" tabindex="0" title="New: 19 of 38 (50 %)"></span>
+      </div>
+      <ul class="key">
+        <li><i class="c1"></i><span>Kept as version 1 has it</span><b>8</b></li>
+        <li><i class="c2"></i><span>Corrected</span><b>9</b></li>
+        <li><i class="c3"></i><span>Replaced: the per-file switch, the model rule</span><b>2</b></li>
+        <li><i class="c4"></i><span>New in round 3</span><b>19</b></li>
+      </ul>
+    </div>
+    <div class="fig">
+      <h3>What a fresh reader left of the draft: 145 statements</h3>
+      <div class="seg" role="img" aria-label="Of 145 statements: 86 confirmed, 53 held in part, 1 refuted, 5 not checked at the time">
+        <span class="c1" style="flex:86" tabindex="0" title="Confirmed: 86 of 145 (59 %)"></span><span class="c2" style="flex:53" tabindex="0" title="Held in part: 53 of 145 (37 %)"></span><span class="c3" style="flex:1" tabindex="0" title="Refuted: 1 of 145 (1 %)"></span><span class="c4" style="flex:5" tabindex="0" title="Not checked at the time: 5 of 145 (3 %)"></span>
+      </div>
+      <ul class="key">
+        <li><i class="c1"></i><span>Confirmed</span><b>86</b></li>
+        <li><i class="c2"></i><span>Held in part, and narrowed to that part</span><b>53</b></li>
+        <li><i class="c3"></i><span>Refuted, and taken out of the rule</span><b>1</b></li>
+        <li><i class="c4"></i><span>Could not be checked then; checked in this session</span><b>5</b></li>
+      </ul>
+    </div>
+  </div>
+  <p class="note">"Confirmed" means the statement follows from the sources it cites. It does not mean tested: for model sessions every part of the rule is a mechanism proven in another field (databases, queues, job schedulers, ad budgets) and carried over by reasoning.</p>
+</section>
+
+<section aria-labelledby="mine">
+  <h2 id="mine">Two changes I made to the draft</h2>
+  <p class="muted">The draft was written and checked by child sessions. They did not have two things: my ruling on pacing from the same day, and your rulings on models. These two changes are mine. One fresh Opus refuter attacked them and found both too strong. They are shown here as narrowed; what it took out is at the end of this section.</p>
+  <div class="changes">
+    <div class="panel">
+      <div class="tags"><span class="chip warn">Changed in this session</span></div>
+      <h4>Starts are not capped at an even rate</h4>
+      <dl>
+        <dt>The draft</dt><dd>From the moment a window's used share runs ahead of its share of time gone, hold starts back and spend the rest evenly up to the reset.</dd>
+        <dt>Why not</dt><dd>That rule comes from ad budgets, where better chances to spend keep arriving all day. For waiting work of equal value, spending at once finishes each unit sooner, and the same units by the reset. The refuter added a condition: only if no running unit is cut off when the window runs out. Where units differ in value, the published gain came from their order.</dd>
+        <dt>Decided</dt><dd>A unit starts if it fits in what every window has left above a reserve, and the reserve covers the running units up to their caps. When a window cannot pay for all waiting work, the most valuable per token goes first. Tokens are held back in two ways only: a share kept for work that must not stall and for your own use of the same windows, and a price once units have values.</dd>
+        <dt>Still a guess</dt><dd>Whether any pacer gains for us. The kept share has no number and no unit has a value, so until then only the reserve acts.</dd>
+      </dl>
+      <div class="sketch">
+        <svg viewBox="0 0 500 150" role="img" aria-label="Sketch: six units of work in one token window. Spent at once they finish in the first half, and the window is then empty until the reset. Paced evenly the same six finish spread up to the reset. Pacing helps only work that arrives late.">
+          <text class="sk-m" x="0" y="12">window opens</text><text class="sk-m" x="500" y="12" text-anchor="end">reset</text>
+          <line class="sk-axis" x1="0" y1="18" x2="500" y2="18"/>
+          <text class="sk-t" x="0" y="38">Spent at once</text>
+          <g class="sk-unit"><rect x="0" y="44" width="38" height="22" rx="3"/><rect x="40" y="44" width="38" height="22" rx="3"/><rect x="80" y="44" width="38" height="22" rx="3"/><rect x="120" y="44" width="38" height="22" rx="3"/><rect x="160" y="44" width="38" height="22" rx="3"/><rect x="200" y="44" width="38" height="22" rx="3"/></g>
+          <rect class="sk-idle" x="244" y="45" width="255" height="20" rx="3"/>
+          <text class="sk-m" x="254" y="59">nothing left until the reset</text>
+          <text class="sk-t" x="0" y="88">Paced evenly</text>
+          <g class="sk-unit"><rect x="0" y="94" width="38" height="22" rx="3"/><rect x="92" y="94" width="38" height="22" rx="3"/><rect x="185" y="94" width="38" height="22" rx="3"/><rect x="277" y="94" width="38" height="22" rx="3"/><rect x="370" y="94" width="38" height="22" rx="3"/><rect x="462" y="94" width="38" height="22" rx="3"/></g>
+          <line class="sk-mark" x1="440" y1="22" x2="440" y2="126"/>
+          <rect class="sk-late" x="432" y="130" width="16" height="10" rx="2"/>
+          <text class="sk-m" x="426" y="139" text-anchor="end">work arriving here</text>
+        </svg>
+      </div>
+      <p class="note">A sketch of the argument; its sizes are not measured. The same six units are done either way, as long as no running unit is cut off when the window runs out. Holding tokens back helps only work that arrives late.</p>
+    </div>
+    <div class="panel">
+      <div class="tags"><span class="chip warn">Changed in this session</span></div>
+      <h4>A unit's model is the one its kind of job is routed to</h4>
+      <dl>
+        <dt>The draft</dt><dd>Pick the model with the highest value minus what its tokens cost in the windows, a redo counted. Until pass rates are measured, "the better model runs".</dd>
+        <dt>Why not</dt><dd>You ruled the smallest model that gives the same output, on routes that are enforced. No file of the lane, the draft or its refuter mentions those rulings. Read literally, "the better model" sends every unit to the largest model.</dd>
+        <dt>Decided</dt><dd>The routes stand, and the token window does not choose the model. The draft's formula stays a hypothesis about what measured pass rates would justify changing in the routes. The rule itself changes no route.</dd>
+        <dt>Still a guess</dt><dd>The routes rest on your ruling, not on a measurement: no record here compares a smaller model with a larger one. Pass rate, usage and redo by kind of work and model are unmeasured, and so is what each model charges in the windows.</dd>
+      </dl>
+      <h4>Three points the draft left open</h4>
+      <ul class="plain">
+        <li>The second stop takes the form "commit, hand the rest over, end". Your ruling on handing over through files supports it by likeness only: it was made for a session at its context ceiling. No source gives the form.</li>
+        <li>No file gets one owner by default, because you rejected "one writer per file" as the coarsest lock. The refuter confirmed this one.</li>
+        <li>A leaf of the tree that outgrows its window: I first wrote that the tree's design hands it over. The refuter showed that the design's own rules disagree. It is open again, and nothing is built for it.</li>
+      </ul>
+    </div>
+  </div>
+  <p class="note" id="refuter-result">What the refuter did to my decision: of 21 points it confirmed 4, left 15 standing only in part, refuted 1 and could not check 1. Refuted: I had dropped version 1's cap on age from the order for units that need only a worker; it is back. Narrowed: "the same units by the reset" needed its condition on cut-off units. My way of holding tokens back used a rule that knows nothing of value. I had credited one of Yahoo's gains to pacing when it came from ranking by value. I had called the routes tested when no record compares models. I had called the hand-over the record's answer. Each is corrected on this page. One argument was added afterwards and nobody has checked it: an even-rate cap also slows a burst that would have fitted the window.</p>
+</section>
+
+<section aria-labelledby="why">
+  <h2 id="why">How each conclusion was reached</h2>
+  <p class="muted">Each row: the conclusion, what version 1 said, what round 3 read and in what kind of source, what the refuters left of it, and where it could still be wrong. A company's own figure is marked as such. Lanes of round 3: a1 (the token allowance), c1 (the check), w1 (several writers), t1 (the tree).</p>
+
+  <div class="group">
+    <h3>The frame and the stops</h3>
+    <div class="entry">
+      <div class="what"><h4>Run at the smallest number any resource can carry. Recompute at every start and finish. Act only at the gate.</h4><div class="tags"><span class="chip">Kept</span></div></div>
+      <dl class="trail">
+        <dt>Version 1</dt><dd>The same.</dd>
+        <dt>Round 3 read</dt><dd>Nothing that changes it. Two resources join the list. One is the parent session's own window: a coordinator re-reads its window at every wake, and on two other repositories 97 % of tokens were such re-reads (measured here). The other is one row per token window in place of one token row.</dd>
+        <dt>Refuters left</dt><dd>The frame is version 1's own, not a finding of round 3. Told its costs, an agent still broke a hard budget in 32.8 % of tasks (one model) and 12.4 % (another), so the limit stays at the gate. A budget tracker in the prompt raised the solve rate on a code benchmark from 36.8 to 55.4 %, so the budget is also shown in the prompt.</dd>
+        <dt>Still a guess</dt><dd>Whether each number can be read in time. The two figures are one model each, on simulated tool prices.</dd>
+      </dl>
+    </div>
+    <div class="entry">
+      <div class="what"><h4>A second stop: a unit that reaches its own cap commits what it has, hands the rest over and ends.</h4><div class="tags"><span class="chip">Corrected</span></div></div>
+      <dl class="trail">
+        <dt>Version 1</dt><dd>Running work is stopped in one case only: memory at its floor.</dd>
+        <dt>Round 3 read</dt><dd>The tree's design already cuts a session at its token budget (t1). A reservation promises a start time only if running units end at their caps (a1). Supercomputer schedulers kill a job at its stated length and lose its work.</dd>
+        <dt>Refuters left</dt><dd>Holds in part. "Commit and end" is in no source. Your ruling on handing over through files supports it by likeness only. A ceiling that nothing enforced was overrun here: a coordinator at 404,000 tokens, later 527,000.</dd>
+        <dt>Still a guess</dt><dd>All of it for sessions. The work lost since the last commit. The spend rate that turns a token cap into a time.</dd>
+      </dl>
+    </div>
+  </div>
+
+  <div class="group">
+    <h3>Tokens</h3>
+    <div class="entry">
+      <div class="what"><h4>A token window limits by fit above a reserve, and by order when it cannot pay for everything. Starts are not capped at an even rate.</h4><div class="tags"><span class="chip">Corrected</span><span class="chip warn">Changed in this session</span></div></div>
+      <dl class="trail">
+        <dt>Version 1</dt><dd>The allowance limits how many units run at once only when a window is nearly spent.</dd>
+        <dt>Round 3 read</dt><dd>Published pacers limit earlier, from the moment the share used runs ahead of the share of time gone. Yahoo re-plans the rest of the budget over the rest of the day. LinkedIn steps a rate up or down each minute; with it the median campaign lasted 44 % and 149 % longer (both are the companies' own accounts).</dd>
+        <dt>Refuters left</dt><dd>The lane's inference holds only while demand exceeds the window's rate. My intake ruling of the same day: with equal value per token, spending at once finishes the same units sooner. This page's refuter: only if no running unit is cut off at the limit, so the reserve covers the running units up to their caps.</dd>
+        <dt>Still a guess</dt><dd>Whether any pacer gains for us. The size of the share to keep for work that must not stall. What a unit is worth: no lane says how to measure it.</dd>
+      </dl>
+    </div>
+    <div class="entry">
+      <div class="what"><h4>With several windows, a unit starts only if it fits in every window it draws on. Its price is the sum of their prices.</h4><div class="tags"><span class="chip">New</span></div></div>
+      <dl class="trail">
+        <dt>Version 1</dt><dd>One token row. The lane's first frame said the dearer window binds.</dd>
+        <dt>Round 3 read</dt><dd>Fit in every bucket is the rule of two-bucket network meters (the ATM specification). The summed price is revenue management's: accept only if the fare exceeds the sum of the prices of all capacity used (theory).</dd>
+        <dt>Refuters left</dt><dd>Holds in part. Fit is proven where a cost is known on arrival; we admit on an expected usage. The sum is exact only for costs that add up, and is not shown for windows that count the same tokens.</dd>
+        <dt>Still a guess</dt><dd>The size of each window, whether they count usage alike, and which windows a one-model unit draws on.</dd>
+      </dl>
+    </div>
+    <div class="entry">
+      <div class="what"><h4>The windows: a 5-hour period that starts at the first message and resets in full, a weekly reset at a fixed time per account, on some plans a weekly window for one model.</h4><div class="tags"><span class="chip">Corrected</span></div></div>
+      <dl class="trail">
+        <dt>Version 1</dt><dd>Listed "fixed or rolling" as a measurement to make.</dd>
+        <dt>Round 3 read</dt><dd>The provider's own pages, fetched on 19 November 2026. Every client counts toward the same windows.</dd>
+        <dt>Refuters left</dt><dd>Confirmed. The pages are undated and say limits may change.</dd>
+        <dt>Still a guess</dt><dd>Sizes, whether an unspent part is lost at a reset, and how cached input counts in Claude Code. The pages give none of these.</dd>
+      </dl>
+    </div>
+    <div class="entry">
+      <div class="what"><h4>A unit's model is the one its kind of job is routed to.</h4><div class="tags"><span class="chip">Replaced</span><span class="chip warn">Changed in this session</span></div></div>
+      <dl class="trail">
+        <dt>Version 1</dt><dd>The cheaper model only where its quality gap on that kind of work was measured small.</dd>
+        <dt>Round 3 read</dt><dd>Lane a1's formula: the highest value minus what the tokens cost in the windows. Routing papers on chat and question sets: savings in dollars or in share of queries, some of them only below the best quality (one router at 95, 92 and 87 % of it; another lost 10 to 14 %).</dd>
+        <dt>Refuters left</dt><dd>Holds in part. No source read applies a window price to the choice of a model. Your rulings were not weighed; with them, the routes stand. They rest on the ruling alone: no record here compares a smaller model with a larger one.</dd>
+        <dt>Still a guess</dt><dd>Pass rate, usage and redo by kind of work and model. None of the savings read is in tokens on code.</dd>
+      </dl>
+    </div>
+  </div>
+
+  <div class="group">
+    <h3>What starts next</h3>
+    <div class="entry">
+      <div class="what"><h4>A reservation for the oldest unit that does not fit. Shorter units start behind it only if they do not delay it.</h4><div class="tags"><span class="chip">Corrected</span></div></div>
+      <dl class="trail">
+        <dt>Version 1</dt><dd>The shortest expected check first, then the oldest, with a cap on age.</dd>
+        <dt>Round 3 read</dt><dd>Backfilling on supercomputers. The improved form against the plain one: wait 23 % lower, bounded slowdown 37 % lower, on four real job logs replayed in a simulator with 100 to 1,152 processors.</dd>
+        <dt>Refuters left</dt><dd>Confirmed, as a transfer. Where every unit needs only a worker the rule shrinks to first come, first served, and nothing shows that order is good: shortest first lowered waits in the same studies. Version 1's order stays for that case, with its cap on age.</dd>
+        <dt>Still a guess</dt><dd>Whether it holds at 3 to 16 workers. Which goes first when a token window is the thing not free, the most valuable unit or the oldest: no claim ranks them.</dd>
+      </dl>
+    </div>
+    <div class="entry">
+      <div class="what"><h4>A unit's length is predicted as the mean of the last two of its class and model. Its cap is a limit, never the prediction.</h4><div class="tags"><span class="chip">New</span></div></div>
+      <dl class="trail">
+        <dt>Version 1</dt><dd>Kept figures per class of unit; had no predictor.</dd>
+        <dt>Round 3 read</dt><dd>The same job logs. Predictions that ran short and were left uncorrected made waits 454 % worse on average, from 38 % to 920 % by log.</dd>
+        <dt>Refuters left</dt><dd>Confirmed.</dd>
+        <dt>Still a guess</dt><dd>The papers key the prediction by user. Keying it by class and model is untested.</dd>
+      </dl>
+    </div>
+  </div>
+
+  <div class="group">
+    <h3>The check every change must pass</h3>
+    <div class="entry">
+      <div class="what"><h4>Past <span class="num">c × (S + Z) / S</span> workers, more workers only queue.</h4><p>c: check slots. S: the time of one check run. Z: a worker's own time between two checks.</p><div class="tags"><span class="chip">Corrected</span></div></div>
+      <dl class="trail">
+        <dt>Version 1</dt><dd>The same form, marked "a textbook bound, reasoned".</dd>
+        <dt>Round 3 read</dt><dd>Published for one slot (Denning and Buzen 1978; Lazowska 1984). For several slots no source read states it. Lane c1 computed it on the exact queueing model in 16 cases.</dd>
+        <dt>Refuters left</dt><dd>Confirmed. The refuter derived the same point from two bounds that hold for any spread of times. Changes already wait below it: in the standard model the check is 79 to 92 % busy there. More workers never move the point. A shorter or batched check does.</dd>
+        <dt>Still a guess</dt><dd>That two runs side by side keep full speed. Z was never measured. One suite run took 596 s, measured once.</dd>
+      </dl>
+    </div>
+    <div class="entry">
+      <div class="what"><h4>Four levers raise that number: shorten the run, batch what waits, test ahead, let a waiting worker go on. Which comes first is open.</h4><div class="tags"><span class="chip">New</span></div></div>
+      <dl class="trail">
+        <dt>Version 1</dt><dd>"Make the check wider or shorter."</dd>
+        <dt>Round 3 read</dt><dd>Running only the affected tests: 32 % shorter on average, 54 % on long suites, up to 38 % slower on short ones. Batching: 41 to 72 % fewer runs at Ericsson (simulated). The best batch is 11 changes when 1 % fail and 3 when 30 % fail (Dorfman 1943). Testing ahead: Uber, its own account.</dd>
+        <dt>Refuters left</dt><dd>The lane's ranking failed. The one shortening open at our gate, test files side by side, is untested. The one study with few builds advises selection where builds are few and batching where machines are scarce, and we are both. A claim that one company keeps the full suite at its gate was refuted.</dd>
+        <dt>Still a guess</dt><dd>Whether our test files run side by side. How often a change fails the check: no gate exists yet.</dd>
+      </dl>
+    </div>
+  </div>
+
+  <div class="group">
+    <h3>Several writers on one file</h3>
+    <div class="entry">
+      <div class="what"><h4>Seven ranked parts replace the switch between own copies and one owner. Reshape the shared places first; version-checked writes second.</h4><div class="tags"><span class="chip">Replaced</span></div></div>
+      <dl class="trail">
+        <dt>Version 1</dt><dd>Per file, own copies or one owner, switched on a count of conflicts.</dd>
+        <dt>Round 3 read</dt><dd>Database engines, failure by failure. Taking the hot place out of the unit: 38 times faster on one hot key, 3 times on a larger application, for updates that commute. Version-checked writes on model sessions: 82.5 % of tasks passed, against 63.8 % for own worktrees and 66.4 % for one agent (one preprint, at most 4 writers, no repeated runs reported).</dd>
+        <dt>Refuters left</dt><dd>Holds in part. Every engine figure is for units of seconds or less. Reshaping removes the hot place's own conflicts; the chance of meeting another writer elsewhere still grows with the number of writers. A refused write is redone alone only when the refusal concerns that file alone.</dd>
+        <dt>Still a guess</dt><dd>Which of our 20 shared places can be reshaped: they were counted from the plan, not from diffs. Whether the Edit tool can carry a version check.</dd>
+      </dl>
+    </div>
+    <div class="entry">
+      <div class="what"><h4>The order of writes is fixed before work only for what a plan declares.</h4><div class="tags"><span class="chip">Corrected</span></div></div>
+      <dl class="trail">
+        <dt>Version 1</dt><dd>Place by place from the change list, before work starts.</dd>
+        <dt>Round 3 read</dt><dd>A fixed order needs each unit's read and write sets in advance. One engine built on it runs at 39 % of its own speed under extreme skew. Sessions learn their sets while working.</dd>
+        <dt>Refuters left</dt><dd>Confirmed. Places found while working are claimed in a fixed resource order or checked at landing.</dd>
+        <dt>Still a guess</dt><dd>Whether a plan's file list matches what a session touches.</dd>
+      </dl>
+    </div>
+    <div class="entry">
+      <div class="what"><h4>No file gets one owner by default. An owner of a whole file is the last resort.</h4><div class="tags"><span class="chip">Replaced</span></div></div>
+      <dl class="trail">
+        <dt>Version 1</dt><dd>One owner wherever a conflict is likely, when tokens or the check are scarce.</dd>
+        <dt>Round 3 read</dt><dd>An owned store won 1.54 times when no unit crossed owners, and fell below the optimistic method at about 20 % crossing. One wrong promotion to a file lock stops every other writer.</dd>
+        <dt>Refuters left</dt><dd>Holds in part. Where an owner pays lies between those two points and is not located. You had already rejected one writer per file as the coarsest lock.</dd>
+        <dt>Still a guess</dt><dd>The share of our units that cross owners.</dd>
+      </dl>
+    </div>
+    <div class="entry">
+      <div class="what"><h4>Wait or redo is computed per pair of writers. No direction is taken from a paper.</h4><div class="tags"><span class="chip">Corrected</span></div></div>
+      <dl class="trail">
+        <dt>Version 1</dt><dd>Lock where resources are scarce.</dd>
+        <dt>Round 3 read</dt><dd>No general answer is published. With locks, waiting beat not waiting as units grew longer; in another engine not waiting won.</dd>
+        <dt>Refuters left</dt><dd>Settled in part. One source agrees with version 1 in direction, another rules out a general rule, and a bound the lane had claimed was refuted.</dd>
+        <dt>Still a guess</dt><dd>The tokens of a redo against the minutes of a wait.</dd>
+      </dl>
+    </div>
+    <div class="entry">
+      <div class="what"><h4>A merge-free shared file (a CRDT) is neither used nor ruled out.</h4><div class="tags"><span class="chip">Corrected</span></div></div>
+      <dl class="trail">
+        <dt>Version 1</dt><dd>Merging by transformation is out for more than two writers.</dd>
+        <dt>Round 3 read</dt><dd>One preprint: 13.1 % slower overall while writing 82 to 189 % more code.</dd>
+        <dt>Refuters left</dt><dd>The draft dropped the method; that was refuted. Per 1,000 characters it was faster in 5 of 6 tasks, and one preprint does not rule a family of methods out. Transformation among peers stays out: all five algorithms checked fail with three or more sites.</dd>
+        <dt>Still a guess</dt><dd>All of it. It needs its own run.</dd>
+      </dl>
+    </div>
+  </div>
+
+  <div class="group">
+    <h3>The tree of sessions</h3>
+    <div class="entry">
+      <div class="what"><h4>The kind of tree follows the size of the job. Small: the two-level tree as built. Very large: more coordinator rounds or an inner level, whichever costs fewer tokens.</h4><div class="tags"><span class="chip">New</span></div></div>
+      <dl class="trail">
+        <dt>Version 1</dt><dd>No tree. The tree's own design said three levels, never more.</dd>
+        <dt>Round 3 read</dt><dd>Database index results. On agent hierarchies, one study spent 196 thousand tokens against 1,029 thousand with most delegations running at once.</dd>
+        <dt>Refuters left</dt><dd>Holds in part. That saving is in cache reads and covers only tasks both methods solved. A level that checks its children's reports may pay in errors, untested.</dd>
+        <dt>Still a guess</dt><dd>The tree never ran.</dd>
+      </dl>
+    </div>
+    <div class="entry">
+      <div class="what"><h4>The largest expected gain in the tree is fewer wakes of the parent.</h4><div class="tags"><span class="chip">New</span></div></div>
+      <dl class="trail">
+        <dt>Version 1</dt><dd>Nothing on it.</dd>
+        <dt>Round 3 read</dt><dd>A coordinator re-reads its window at every wake. Batching wakes divides that fixed cost, as buffered database trees do for inserts.</dd>
+        <dt>Refuters left</dt><dd>Confirmed, as a transfer. The 97 % is from two other repositories.</dd>
+        <dt>Still a guess</dt><dd>Tokens per wake in the tree itself.</dd>
+      </dl>
+    </div>
+    <div class="entry">
+      <div class="what"><h4>A leaf that outgrows its window: split or hand over is open.</h4><div class="tags"><span class="chip">New</span></div></div>
+      <dl class="trail">
+        <dt>Version 1</dt><dd>Nothing on it.</dd>
+        <dt>Round 3 read</dt><dd>Lane t1 proposed splitting off the unstarted work, as a B-link tree splits a full page.</dd>
+        <dt>Refuters left</dt><dd>Refuted as a decision: the reading gives how to split, not whether to. The tree's own rules disagree: two of them hand over, two split. Nothing is built for it until it is measured.</dd>
+        <dt>Still a guess</dt><dd>What a hand-over reloads against what a new leaf costs to start.</dd>
+      </dl>
+    </div>
+  </div>
+
+  <div class="group">
+    <h3>Across the whole rule</h3>
+    <div class="entry">
+      <div class="what"><h4>Only the shape of a published rule carries over. Every constant is a measurement.</h4><div class="tags"><span class="chip">Kept</span></div></div>
+      <dl class="trail">
+        <dt>Version 1</dt><dd>The same.</dd>
+        <dt>Round 3 read</dt><dd>One number had slipped in: "about 10 coarse lock units suffice", from a 1977 simulation.</dd>
+        <dt>Refuters left</dt><dd>The draft's refuter left it unsettled, since another study points the other way. The number was taken out: version 1 and three lane claims say only shapes carry.</dd>
+        <dt>Still a guess</dt><dd>Every constant.</dd>
+      </dl>
+    </div>
+    <div class="entry">
+      <div class="what"><h4>Each part is chosen against your objective: quality first, then the least time, memory and tokens.</h4><div class="tags"><span class="chip">Kept</span></div></div>
+      <dl class="trail">
+        <dt>Version 1</dt><dd>The same.</dd>
+        <dt>Round 3 read</dt><dd>Lane t1 chose parts against tokens alone.</dd>
+        <dt>Refuters left</dt><dd>Its own refuter: the token figures show where tokens go. They do not show that tokens run out before memory does.</dd>
+        <dt>Still a guess</dt><dd>Which of the two binds first on this PC.</dd>
+      </dl>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="open">
+  <h2 id="open">Still open, and what the rule does until it is measured</h2>
+  <p class="muted">None of these is a choice for you. Each has a standing answer taken from the record, and a measurement that would change it.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Open point</th><th>Until it is measured, the rule</th><th>Settled by</th></tr></thead>
+    <tbody>
+      <tr><td>Whether any pacer gains for us</td><td>Caps no starts at an even rate; admits by fit above the running units' caps</td><td>Counting how work arrives; the error of forecasting a window; a simulation of pacing against spending at once</td></tr>
+      <tr><td>The share to keep for work that must not stall, and for your own use of the same windows</td><td>Keeps none: it has no number</td><td>Reruns and other apps' use, counted. No lane names a measurement for the share itself</td></tr>
+      <tr><td>A price for work that is worth more</td><td>Treats all units as equal: fewest expected tokens first when a window cannot pay for all</td><td>What a unit is worth. No lane says how to measure it</td></tr>
+      <tr><td>A smaller model for a kind of job</td><td>Uses the route's model</td><td>Pass rate, usage and redo by kind and model; what each model charges in the windows</td></tr>
+      <tr><td>The order for units that need only a worker</td><td>Shortest expected check first, then the oldest, with a cap on age</td><td>A replay of our units at 3 to 16 workers</td></tr>
+      <tr><td>The most valuable unit or the oldest, when a token window is the thing not free</td><td>Ranks by value among the units a reservation lets start</td><td>The same replay, once units have values</td></tr>
+      <tr><td>The form of the second stop</td><td>Commits, hands the rest over through files, ends</td><td>Tokens lost at past stops; the tree's pilot</td></tr>
+      <tr><td>Where one owner of a file pays</td><td>Gives no file an owner</td><td>The share of units that cross owners; a replay</td></tr>
+      <tr><td>How small a claim on part of a file should be</td><td>Claims whole files, on own copies</td><td>Regions touched per unit and per file; a replay</td></tr>
+      <tr><td>How much a refused write undoes</td><td>Gives wait-or-redo no direction</td><td>Tokens of past redos, from transcripts</td></tr>
+      <tr><td>Split a leaf or hand it over</td><td>Builds no split; the tree as built</td><td>The pilot run of the tree</td></tr>
+      <tr><td>A lock or a version check on the tree's task table</td><td>The version check, as built</td><td>Splits per hour, once the tree runs</td></tr>
+      <tr><td>Which lever of the check comes first</td><td>Uses none: two slots, one test file at a time</td><td>The suite with its files side by side; check time and failure rate; the share of changes that touch the shared library</td></tr>
+      <tr><td>A merge-free shared file</td><td>Own copies</td><td>Its own run, against version-checked writes</td></tr>
+      <tr><td>Whether tokens run out before memory</td><td>Treats memory as the hard limit</td><td>Meter readings and memory per unit</td></tr>
+    </tbody></table></div>
+</section>
+
+<section aria-labelledby="meas">
+  <h2 id="meas">To set the numbers: 36 measurements</h2>
+  <div class="two">
+    <div class="fig">
+      <h3>By what each one needs</h3>
+      <div class="seg" role="img" aria-label="36 measurements: 6 counts over files that exist, 6 readings of the usage meter, 4 simulations, 13 runs, 6 counts once the data exist, 1 with no known method">
+        <span class="c1" style="flex:6" tabindex="0" title="Counts over files that exist: 6 of 36 (17 %)"></span><span class="c2" style="flex:6" tabindex="0" title="Readings of the usage meter: 6 of 36 (17 %)"></span><span class="c3" style="flex:4" tabindex="0" title="Simulations: 4 of 36 (11 %)"></span><span class="c4" style="flex:13" tabindex="0" title="Runs: 13 of 36 (36 %)"></span><span class="c5" style="flex:6" tabindex="0" title="Counts once the data exist: 6 of 36 (17 %)"></span><span class="c6" style="flex:1" tabindex="0" title="No known method: 1 of 36 (3 %)"></span>
+      </div>
+      <ul class="key">
+        <li><i class="c1"></i><span>Counts over transcripts, the lane log and history that already exist: no run</span><b>6</b></li>
+        <li><i class="c2"></i><span>Readings of the usage meter during ordinary work</span><b>6</b></li>
+        <li><i class="c3"></i><span>Simulations swept over project sizes</span><b>4</b></li>
+        <li><i class="c4"></i><span>Runs: on the PC, in the tree's pilot, or one probe</span><b>13</b></li>
+        <li><i class="c5"></i><span>Counts that wait for data: a gate, a tree run, a second model</span><b>6</b></li>
+        <li><i class="c6"></i><span>No known method: what a unit is worth</span><b>1</b></li>
+      </ul>
+    </div>
+    <div>
+      <h3>The three that set the most numbers</h3>
+      <ul class="plain">
+        <li><strong>Tokens, minutes and start cost per unit</strong>, counted from transcripts on disk. It sets the length predictions, the reserve and the landings asked per hour.</li>
+        <li><strong>Check time and its spread</strong>, counted from the lane log. It sets the worker cap and the waits. The failure rate must wait for a gate to exist.</li>
+        <li><strong>Each window's size and each model's weight</strong>, from the meter's change against counted tokens. It sets every token price.</li>
+      </ul>
+      <p class="note">Nothing here starts without your word. The planned order is counts first, then simulations swept over project sizes so that no number is tuned to one repository, then runs. The counts need the transcripts and logs on your PC; this session ran in the cloud and did not have them.</p>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="notfound">
+  <h2 id="notfound">Not found, and papers behind a sign-in</h2>
+  <p class="muted">"Not found" means not in the sources read. It never means no paper exists. Four readers checked these lists against the lanes' files in this session: none is contradicted by a source a lane already held; several were worded wider than the lane's own report and are narrowed here.</p>
+  <div class="two">
+    <div>
+      <h3>Not found in what was read</h3>
+      <ul class="plain">
+        <li>Any real system with 3 to 16 workers whose units last minutes. Two near cases: a 1977 simulation and one build project with few builds at once.</li>
+        <li>The worker cap for several check slots, in any source: it is computed here.</li>
+        <li>Any writer mechanism measured on units of minutes in a real engine, and the conflict rate at which locking and the optimistic method cross.</li>
+        <li>Pacing against two windows on separate clocks that count the same tokens.</li>
+        <li>How long a half-finished split lasts in a tree, and depth against fan-out at equal work with tokens per level.</li>
+        <li>Never searched for, so not "not found": a team's account of hitting a usage limit, and scheduling with rough durations.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Papers that need your sign-in</h3>
+      <ul class="plain">
+        <li><strong>The check:</strong> Beheshtian, Bavand and Rigby 2021; Reiser and Lavenberg 1980; Adams, Balas and Zawack 1988; Duclos and Spencer 1995.</li>
+        <li><strong>Several writers:</strong> Adya 1999; Cahill, Röhm and Fekete 2008 and 2009; Fekete and others 2005; IntelliMerge 2019; Korth, Kim and Bancilhon 1988; Mohan 1990; Stonebraker 2007.</li>
+        <li><strong>The tree:</strong> Sagiv 1986; Johnson and Shasha 1990 and 1993; Lanin and Shasha 1986.</li>
+        <li><strong>The allowance:</strong> Balseiro and Gur 2019; Wang and others 2017.</li>
+        <li><strong>Saved but unreadable without OCR</strong>, an install that needs your word: Mu'alem and Feitelson 2001; the 1987 sagas paper.</li>
+      </ul>
+      <p class="note">Listed so you know what a sign-in would open. Nothing was done to get round any of them.</p>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="src">
+  <h2 id="src">How this was checked, and the record behind this page</h2>
+  <ul class="plain">
+    <li><strong>The draft:</strong> written by an Opus child session from the four lane reports; every cited lane claim checked by a Sonnet reader (386 pairs, none missing); every statement attacked by a fresh Opus refuter; the verdicts folded in. No verdict was raised in the fold.</li>
+    <li><strong>This session:</strong> I read the draft, version 1, the refuter's file, the 41 draft records, the four lanes' answers and your rulings, and decided each point. I did not read the lane reports beyond their answers, the collect files or the papers.</li>
+    <li><strong>Helpers in this session:</strong> four Sonnet readers checked the five unchecked statements against the lanes' files (404 thousand tokens in all, under 90 seconds each). One Opus refuter attacked my own decision (202 thousand tokens, nine minutes). Both briefs and all five results are in the record.</li>
+    <li><strong>Not done:</strong> no test, no measurement, no install, no web search. This session could not read your plan's usage meter, so the helper cost above is in tokens only.</li>
+  </ul>
+  <p class="note">The record: <code>docs/program/evidence/rule-v2-2026-11-19/DECISION-RULE-V2.md</code> (the decision) and <code>decide-refute.md</code> beside it (its refutation), <code>docs/program/evidence/round3-2026-11-18/RULE-V2-DRAFT.md</code> (the rule in full, 38 conclusions, 36 measurements), <code>docs/program/evidence/bottleneck-2026-11-18/DECISION-RULE.md</code> (version 1, unchanged). Library records: <span class="num">r57-0410</span>, <span class="num">r57-0414</span>, <span class="num">r57-0415</span> (the rule), <span class="num">r57-0841</span> to <span class="num">r57-0845</span> (the decisions), <span class="num">r57-0612</span> (the mistake behind my two changes), <span class="num">r57-0516</span> (the measurements).</p>
+</section>
+</div>
