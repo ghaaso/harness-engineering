@@ -841,6 +841,108 @@ test('M1 endturn re-arms a live alarm by writing the token (acked.json); alarm.j
   });
 });
 
+// ------------------------------------------------ FX-W1: tri-state liveness and exit markers
+// FIX-wake.md FX-W1 steps 1-4 and FIX-JOIN point 6. The process list is made unavailable (unknown)
+// by pointing proc_exe at a missing program. The marker name is CONTRACT 3.9's
+// run/arm/exited-<pid>-<start>.json, <start> with every character but [0-9A-Za-z] removed.
+const NO_LIST = { proc_exe: 'C:/no-such-dir/no-such-program.exe' };
+const armDir = (ctx) => path.join(ctx.root, 'run', 'arm');
+const markFile = (ctx, rec) => path.join(armDir(ctx), `exited-${rec.pid}-${String(rec.start_time).replace(/[^0-9A-Za-z]/g, '')}.json`);
+const putMarker = (ctx, rec, exit = 30) => w(markFile(ctx, rec), { ce: 1, exit, at: NOW });
+// records of this ce for both wake sources, naming processes that do not run
+function wakeRecords(ctx, { ce = 1 } = {}) {
+  const wr = { pid: 999001, start_time: '2026-11-17T09:00:00.0000000Z' };
+  const ar = { pid: 999002, start_time: '2026-11-17T09:01:00.0000000Z' };
+  w(path.join(ctx.root, 'run', 'watcher.lock'), JSON.stringify(lockRec(wr, { script: 'watch', ce })));
+  w(path.join(ctx.root, 'run', 'watcher.json'), {
+    schema_version: 1, ce, pid: wr.pid, start_time: wr.start_time, ticks_total: 1, last_tick_at: NOW, active: {}, pending: [], tasks: {},
+  });
+  w(path.join(ctx.root, 'run', 'alarm.json'), { schema_version: 1, pid: ar.pid, start_time: ar.start_time, ce, armed_at: NOW, sleep_ms: 1000 });
+  return { wr, ar };
+}
+
+test('FX-W1 endturn with the list unavailable: unmarked sources are unknown (exit 2); a marked alarm is dead (exit 1 alarm-missing, then proc-unavailable)', async () => {
+  await withRoot({ thr: NO_LIST }, async (ctx) => {
+    meterLine(ctx.root);
+    const { ar } = wakeRecords(ctx);
+    const j = assertLine(endturn(ctx, 1), 2);
+    assert.deepEqual(j.result.sources, { watcher: 'unknown', alarm: 'unknown' });
+    assert.equal(j.result.watcher, false);
+    assert.equal(j.result.alarm, false);
+    assert.deepEqual(j.reasons.map((r) => [r.code, r.detail]), [['proc-unavailable', { unknown: ['watcher', 'alarm'] }]]);
+    assert.equal(J(ackedPath(ctx)).acked_seq, 1, 'acked.json is written all the same');
+    putMarker(ctx, ar);
+    const j2 = assertLine(endturn(ctx, 1), 1);
+    assert.deepEqual(j2.result.sources, { watcher: 'unknown', alarm: 'dead' });
+    assert.deepEqual(j2.reasons.map((r) => r.code), ['alarm-missing', 'proc-unavailable']);
+    assert.deepEqual(j2.reasons[0].detail, { ce: 1, pid: ar.pid, state: 'dead' });
+    assert.deepEqual(j2.reasons[1].detail, { unknown: ['watcher'] });
+  });
+});
+
+test('FX-W1 a corrupt watcher.json or alarm.json is the anomaly state-corrupt (build exit 0) and a dead source to endturn (exit 1), not 67', async () => {
+  await withRoot({}, async (ctx) => {
+    meterLine(ctx.root);
+    w(path.join(ctx.root, 'run', 'watcher.json'), '{"ce": 1,');
+    w(path.join(ctx.root, 'run', 'alarm.json'), 'not json');
+    assertLine(build(ctx), 0);
+    const st = statusJson(ctx);
+    assert.deepEqual(st.anomalies.filter((a) => a.code === 'state-corrupt').map((a) => a.detail.file).sort(), ['alarm.json', 'watcher.json']);
+    assert.equal(st.watcher.alive, false);
+    assert.equal(st.alarm.alive, false);
+    const j = assertLine(endturn(ctx, 1), 1);
+    assert.deepEqual(j.result.sources, { watcher: 'dead', alarm: 'dead' });
+    assert.ok(hasReason(j, 'watcher-missing') && hasReason(j, 'alarm-missing'), JSON.stringify(j.reasons));
+    recNoAlarm(reconcile(ctx));
+  });
+});
+
+test('FX-W1 reconcile with the list unavailable: an unmarked alarm of this ce asks nothing (exit 0, alive null); a marked one is dead (exit 1 alarm-missing, anomaly alarm-dead)', async () => {
+  await withRoot({ thr: NO_LIST }, async (ctx) => {
+    meterLine(ctx.root);
+    const { ar } = wakeRecords(ctx);
+    const j = assertLine(reconcile(ctx), 0);
+    assert.equal(j.result.arm, undefined);
+    let st = statusJson(ctx);
+    assert.equal(st.alarm.alive, null);
+    assert.equal(st.watcher.alive, null);
+    assert.ok(!st.anomalies.some((a) => a.code === 'alarm-dead' || a.code === 'watcher-dead'), JSON.stringify(st.anomalies));
+    assert.ok(st.anomalies.some((a) => a.code === 'proc-unavailable'));
+    putMarker(ctx, ar);
+    const j2 = recNoAlarm(reconcile(ctx));
+    assert.equal(j2.reasons[0].detail.alive, false);
+    assert.equal(j2.reasons[0].detail.state, 'dead');
+    st = statusJson(ctx);
+    assert.equal(st.alarm.alive, false);
+    assert.ok(st.anomalies.some((a) => a.code === 'alarm-dead'), 'a marked alarm is dead with the list unknown');
+    assert.ok(fs.existsSync(markFile(ctx, ar)), 'the marker of the alarm alarm.json names is kept');
+  });
+});
+
+test('FX-W1 reconcile prunes an exit marker no record names; the markers of alarm.json and of a slot file stay, unarmed-* stays; --dry-run removes nothing', async () => {
+  await withRoot({}, async (ctx) => {
+    meterLine(ctx.root);
+    const named = { pid: 999005, start_time: '2026-11-17T09:05:00.0000000Z' };
+    w(path.join(ctx.root, 'run', 'alarm.json'), { schema_version: 1, ...named, ce: 1, armed_at: NOW, sleep_ms: 1000 });
+    const slot = { pid: 999003, start_time: '2026-11-17T09:02:00.0000000Z' };
+    w(path.join(armDir(ctx), 'slot-1.json'), { ce: 1, ...slot, nonce: 'a'.repeat(32), turn_seq_at_reg: 0 });
+    const old = { pid: 999004, start_time: '2026-11-17T08:00:00.0000000Z' };
+    for (const r of [named, slot, old]) putMarker(ctx, r);
+    const unarmed = path.join(armDir(ctx), 'unarmed-999004-20261117T0800000000000Z.json');
+    w(unarmed, { ce: 1, turn_seq: 0 });
+    const before = fs.readdirSync(armDir(ctx)).sort();
+    assert.equal(before.length, 5);
+    recNoAlarm(reconcile(ctx, ['--dry-run']));
+    assert.deepEqual(fs.readdirSync(armDir(ctx)).sort(), before, '--dry-run removes nothing');
+    recNoAlarm(reconcile(ctx));
+    assert.equal(fs.existsSync(markFile(ctx, old)), false, 'the marker no record names is removed');
+    assert.ok(fs.existsSync(markFile(ctx, named)), "alarm.json's marker stays");
+    assert.ok(fs.existsSync(markFile(ctx, slot)), "slot-1's marker stays");
+    assert.ok(fs.existsSync(unarmed), 'unarmed-* is not touched');
+    assert.ok(fs.existsSync(path.join(armDir(ctx), 'slot-1.json')));
+  });
+});
+
 // ------------------------------------------------ cannot be tested without the app
 const NEEDS_APP = 'needs the app';
 test('NA1 a real session transcript appears in projectDirName(folder) with that cwd soon after start', { skip: `${NEEDS_APP}: item 7, needs a real session` }, () => {});

@@ -3111,3 +3111,42 @@ test('S0.5 round-3 skeleton: threshold keys marked guesses, stub signatures, not
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// FX-W1 (FIX-wake.md FX-W1 step 1, spec/lib.md "liveness"): an exit marker beats any answer of the
+// list; otherwise the list's true/false/null is alive/dead/unknown; a list that throws or has no
+// alive() is unknown; a record that is not an object is dead. exitMarkers reads only exited-*.json.
+test('FX-W1 liveness: tri-state with exit markers; exitMarkers reads only the exit markers', () => {
+  const rec = { pid: 4242, start_time: '2026-11-19T10:00:00.1234567Z' };
+  const key = lib.markerKey(rec.pid, rec.start_time);
+  const says = (v) => ({ alive: () => v });
+  assert.equal(lib.liveness(rec, says(true), new Set()), 'alive');
+  assert.equal(lib.liveness(rec, says(false), new Set()), 'dead');
+  assert.equal(lib.liveness(rec, says(null), new Set()), 'unknown');
+  assert.equal(lib.liveness(rec, says(undefined), []), 'unknown');
+  assert.equal(lib.liveness(rec, says(true), new Set([key])), 'dead', 'a marker beats alive');
+  assert.equal(lib.liveness(rec, says(null), [key]), 'dead', 'a marker beats unknown (array form)');
+  assert.equal(lib.liveness(rec, says(true), new Set([lib.markerKey(rec.pid, 'other')])), 'alive', 'another start time is another process');
+  assert.equal(lib.liveness(rec, { alive: () => { throw new Error('boom'); } }, null), 'unknown');
+  assert.equal(lib.liveness(rec, {}, null), 'unknown');
+  assert.equal(lib.liveness(rec, null, undefined), 'unknown');
+  assert.equal(lib.liveness(null, says(true), new Set()), 'dead');
+  assert.equal(lib.liveness('x', says(true), new Set()), 'dead');
+  let seen = null;
+  lib.liveness({ pid: '77', start_time: 's' }, { alive: (p, s) => { seen = [p, s]; return true; } }, []);
+  assert.deepEqual(seen, [77, 's'], 'alive() gets the pid as a number and the start time');
+  assert.equal(lib.liveness.length, 3);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fxw1-'));
+  try {
+    assert.deepEqual([...lib.exitMarkers(root)], [], 'no run/arm folder: empty');
+    const P = lib.paths(root);
+    fs.mkdirSync(path.dirname(P.armExited(1, 'a')), { recursive: true });
+    fs.writeFileSync(P.armExited(rec.pid, rec.start_time), '{}');
+    fs.writeFileSync(P.armUnarmed(5, 'b'), '{}');
+    fs.writeFileSync(path.join(path.dirname(P.armExited(1, 'a')), 'slot-1.json'), '{}');
+    fs.writeFileSync(P.armExited(9, 'c') + '.tmp', '{}');
+    assert.deepEqual([...lib.exitMarkers(root)], [key]);
+    assert.equal(lib.liveness(rec, says(true), lib.exitMarkers(root)), 'dead');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

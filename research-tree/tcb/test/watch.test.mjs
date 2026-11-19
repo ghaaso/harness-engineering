@@ -1353,3 +1353,30 @@ test('NA1 a background command exit reaches the coordinator turn, also during sl
 test('NA2 Node timers and the PC across suspend: one sleep of Delta is one tick', { skip: `${NEEDS_APP}: item 6, needs a real suspend of the PC` }, () => {});
 test('NA3 real transcripts match the parser', { skip: `${NEEDS_APP}: item 7, needs real session transcripts` }, () => {});
 test('NA4 a real session window appears in its transcript', { skip: `${NEEDS_APP}: item 7, the last_context of a real session` }, () => {});
+
+// FX-W1 step 2 (FIX-wake.md FX-W1): every exit of a registered alarm leaves its exit marker
+// run/arm/exited-<pid>-<start>.json {ce, exit, at}, written without the lock: exit 30, exit 0
+// superseded, 64 (a newer ce) and an error exit (coord.json corrupt: 67). No marker while it sleeps.
+test('FX-W1 alarm: every exit after registration leaves run/arm/exited-<pt>.json {ce, exit, at}', async () => {
+  const marker = (ctx, a) => path.join(ctx.root, 'run', 'arm', `exited-${LIB.markerKey(a.pid, a.start_time)}.json`);
+  await withRoot({}, async (ctx) => {
+    assertLine(run(ctx.root, 'watch', alarmArgs(ctx, 50)), 30);
+    const a = J(alarmFile(ctx));
+    assert.deepEqual(J(marker(ctx, a)), { ce: 1, exit: 30, at: NOW });
+  });
+  const midSleep = async (change, exit) => {
+    await withRoot({}, async (ctx) => {
+      const s = startScript(ctx.root, 'watch', alarmArgs(ctx, 1500));
+      await waitFor(() => { try { return J(alarmFile(ctx)).pid === s.child.pid; } catch { return false; } });
+      const a = J(alarmFile(ctx));
+      assert.equal(fs.existsSync(marker(ctx, a)), false, 'no marker while the alarm sleeps');
+      change(ctx, a);
+      assertLine(await s.done, exit);
+      assert.deepEqual(J(marker(ctx, a)), { ce: 1, exit, at: NOW }, `the marker of exit ${exit}`);
+      assert.deepEqual([...LIB.exitMarkers(ctx.root)], [LIB.markerKey(a.pid, a.start_time)]);
+    });
+  };
+  await midSleep((ctx, a) => w(alarmFile(ctx), { ...a, pid: a.pid + 1 }), 0);
+  await midSleep((ctx) => w(path.join(ctx.root, 'run', 'coord.json'), { schema_version: 1, ce: 2, started_at: NOW, tcb_commit: COMMIT }), 64);
+  await midSleep((ctx) => w(path.join(ctx.root, 'run', 'coord.json'), '{"ce": 1,'), 67);
+});
