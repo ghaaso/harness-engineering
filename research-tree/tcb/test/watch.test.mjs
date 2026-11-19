@@ -1360,13 +1360,14 @@ test('W5 re-raise: an acknowledged act-due still due is raised again after 15, 3
 });
 
 test('W5 stuck: an acknowledged hang is raised again at once; the 6th raise, 285 ticks after the onset, is stuck; a new call clears both', async () => {
-  await withRoot({ thr: { hang_ticks: 2, stuck_raises: 3 } }, async (ctx) => {
+  await withRoot({ thr: { model_ticks: 2, stuck_raises: 3 } }, async (ctx) => {
     const t = singleTask(ctx);
     setTasks(ctx, [t.row]);
     const ident = `21|${t.task}|1`;
+    assertLine(tick(ctx), 0); // tick 1: the epoch's first tick counts nothing (FX-W6 step 1)
     assertLine(tick(ctx), 0);
-    assertLine(tick(ctx), 21); // tick 2: the onset
-    let at = 2;
+    assertLine(tick(ctx), 21); // tick 3: the onset (a model-kind hang, model_ticks 2)
+    let at = 3;
     for (const [i, gap] of [15, 30, 60, 60, 60, 60].entries()) {
       ackUpTo(ctx, eventsOf(ctx.root, 'hang', 21).at(-1).seq);
       jumpTo(ctx, at + gap - 1);
@@ -1380,13 +1381,40 @@ test('W5 stuck: an acknowledged hang is raised again at once; the 6th raise, 285
       assert.equal(keyTick(ev.at(-1)), at);
       assert.deepEqual(watcherJson(ctx).stuck, i + 1 >= 6 ? [ident] : [], `raise ${i + 1}`);
     }
-    assert.equal(at - 2, 285, 'stuck 285 ticks after the onset (FIX-wake.md:54)');
+    assert.equal(at - 3, 285, 'stuck 285 ticks after the onset (FIX-wake.md:54)');
     ackUpTo(ctx, eventsOf(ctx.root, 'hang', 21).at(-1).seq);
     appendCalls(t.file, { sessionId: t.session, cwd: t.cwd, calls: CALLS(1) });
     assertLine(tick(ctx), 0); // the hang clears: the ident leaves the active set
     const wj = watcherJson(ctx);
     assert.deepEqual(wj.stuck, []);
     assert.deepEqual(wj.reraise, {});
+  });
+});
+
+// FX-W4's dead-man reads watcher.json.stuck at its own times (FIX-wake.md:284-288), so a stuck ident stays
+// listed at every evaluation until it leaves the active set (FIX-wake.md:318), not only at a raise (refute/W5.md M18).
+test('W5 stuck stays: at quiet ticks between raises a stuck act-due stays in watcher.json.stuck', async () => {
+  await withRoot({ thr: { coalesce_ticks: 0, stuck_raises: 1 } }, async (ctx) => {
+    setTasks(ctx, [row('f1-research', { state: 'planned', step: 'none', epoch: 0, attempts: [] })]);
+    const ident = '17|f1-research:replace-fence|0';
+    assertLine(tick(ctx), 17); // tick 1: the onset
+    let at = 1;
+    for (const gap of [15, 30, 60, 60]) {
+      ackUpTo(ctx, actEvents(ctx).at(-1).seq);
+      jumpTo(ctx, at + gap);
+      assertLine(tick(ctx), 17);
+      at += gap;
+    }
+    assert.deepEqual(watcherJson(ctx).stuck, [ident], 'stuck_raises 1: stuck at the 4th raise');
+    ackUpTo(ctx, actEvents(ctx).at(-1).seq);
+    for (const q of [1, 59]) { // acknowledged, inside the 60-tick interval: no raise
+      jumpTo(ctx, at + q);
+      assertLine(tick(ctx), 0);
+      const wj = watcherJson(ctx);
+      assert.deepEqual(wj.stuck, [ident], `still stuck ${q} ticks after the raise`);
+      assert.equal(wj.reraise[ident], 4);
+    }
+    assert.equal(actEvents(ctx).length, 5, 'the quiet ticks raised nothing');
   });
 });
 
