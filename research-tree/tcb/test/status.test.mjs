@@ -772,6 +772,70 @@ test('S1 FX-CGATE owner closed: the CLI session id only; the owner line and run/
   });
 });
 
+// FX-CLOSE T3 (B1-3 "CLOSE places"; refute/PLAN.md findings 1 and 2): close-session end to end through
+// status. A late folder session (a transcript whose first cwd is a stop-confirmed attempt's folder, not
+// its holder, no done record) gives `close-session <sid>` on rows that continue (active at stopped,
+// admitted at e2, bound) and on an ended one; the owner's `closed` act moves each on. closesMissing of
+// a stop-requested row at verify_rounds 3 (the holder, then another folder session of the target
+// attempt) and the facts planFacts reads from the files (the log's fenced reason, a tampered log, an
+// invalid claim) reach `next` the same way.
+test('FX-CLOSE T3 status: close-session on continuing and ended rows, the owner closed moves each on; closesMissing and the planFacts facts reach next', async () => {
+  await withRoot({}, async (ctx) => {
+    const lib = await getLib();
+    const q = ['f1-a-01'];
+    const conf = (task, o = {}) => att(task, 1, { stop: 'confirmed', session: newSid(), ...o });
+    const sB = newSid();
+    const sH = newSid();
+    const sF = newSid();
+    const rows = [
+      row('f1-cont', { step: 'stopped', question_ids: q, attempts: [conf('f1-cont')] }),
+      row('f1-adm', { step: 'admitted', epoch: 2, question_ids: q, attempts: [conf('f1-adm'), att('f1-adm', 2)] }),
+      row('f1-bound', { step: 'bound', epoch: 2, session: sB, question_ids: q, attempts: [conf('f1-bound'), att('f1-bound', 2, { session: sB })] }),
+      row('f1-ended', { state: 'committed', step: 'stopped', question_ids: q, commits: { pack: HEX64 }, attempts: [conf('f1-ended')] }),
+      { ...row('f1-sr', { step: 'stop-requested', epoch: 2, reason: 'stall', question_ids: q, attempts: [att('f1-sr', 1, { session: sH, stop: 'unconfirmed' }), att('f1-sr', 2)] }), verify_rounds: 3 },
+      row('f1-fenced', { session: sF, question_ids: q, attempts: [att('f1-fenced', 1, { session: sF })] }),
+      row('f1-tamper', { session: newSid(), question_ids: q }),
+      row('f1-badclaim', { step: 'admitted', question_ids: q }),
+    ];
+    setTasks(ctx, rows);
+    const lateOf = {};
+    const lateIn = (task, sid = newSid()) => {
+      const dir = folderAbs(ctx, task, 1);
+      writeTranscript(path.join(ctx.root, 'transcripts', lib.projectDirName(dir), sid + '.jsonl'), { sessionId: sid, cwd: dir });
+      return sid;
+    };
+    for (const t of ['f1-cont', 'f1-adm', 'f1-bound', 'f1-ended']) lateOf[t] = lateIn(t);
+    w(path.join(folderAbs(ctx, 'f1-sr', 1), 'claim.json'), lib.claimRecord(sH));
+    const s2 = lateIn('f1-sr');
+    w(path.join(folderAbs(ctx, 'f1-fenced', 1), 'claim.json'), lib.claimRecord(sF));
+    fs.mkdirSync(path.join(folderAbs(ctx, 'f1-fenced', 1), 'outcome'), { recursive: true });
+    lib.outcomeAppend(folderAbs(ctx, 'f1-fenced', 1), { kind: 'fenced', task: 'f1-fenced', epoch: 1, reason: 'stall' }, { row: rows[5] });
+    w(path.join(folderAbs(ctx, 'f1-tamper', 1), 'outcome', '0.json'), '{');
+    w(path.join(folderAbs(ctx, 'f1-badclaim', 1), 'claim.json'), '{');
+    const nexts = () => {
+      assertLine(build(ctx), 0);
+      const st = statusJson(ctx);
+      return Object.fromEntries(rows.map((r) => [r.task, byTask(st, r.task).next]));
+    };
+    const facts = { 'f1-fenced': 'replace-fence --reason stall', 'f1-tamper': 'owner', 'f1-badclaim': 'owner' };
+    assert.deepEqual(nexts(), {
+      'f1-cont': `close-session ${lateOf['f1-cont']}`, 'f1-adm': `close-session ${lateOf['f1-adm']}`,
+      'f1-bound': `close-session ${lateOf['f1-bound']}`, 'f1-ended': `close-session ${lateOf['f1-ended']}`,
+      'f1-sr': 'owner', ...facts,
+    }, 'each late session is closed first; the holder\'s close missing at three rounds is the owner\'s');
+    const qf = notes(ctx, 'closed.txt', 'I closed those sessions myself');
+    const closed = (sid) => assertLine(owner(ctx, ['--act', 'closed', '--subject', sid, '--quote-file', qf]), 0);
+    for (const sid of [...Object.values(lateOf), sH]) closed(sid);
+    assert.deepEqual(nexts(), {
+      'f1-cont': 'replace-start', 'f1-adm': 'start-session', 'f1-bound': 'none', 'f1-ended': 'none',
+      'f1-sr': 'owner', ...facts,
+    }, 'closed: each row moves on; f1-sr still misses the close of its other folder session');
+    closed(s2);
+    assert.equal(nexts()['f1-sr'], 'stop-verify', 'every close the verify needs is recorded: the rule ends');
+    assert.equal(ledgerLines(ctx.root, 'owner').length, 6);
+  });
+});
+
 test('T14 owner: a UTF-8 BOM at the start of the quote file is not part of the quote', async () => {
   await withRoot({}, async (ctx) => {
     const p = path.join(ctx.root, 'plan', 'notes', 'bom.txt');

@@ -1902,6 +1902,7 @@ export function fence(root, handle, o = {}) {
     row.step = 'fenced';
     row.reason = reason;
     row.session = null;
+    if ('verify_rounds' in row) row.verify_rounds = 0; // FX-CLOSE: the next stop's rounds start at 0 (the model's t.vr = 0)
     if (!row.attempts.some((a) => a && a.epoch === e + 1)) row.attempts.push(newAttempt(task, e + 1));
     info = { from: e, to: e + 1, restartCharged: charged, limit };
     return row;
@@ -3269,7 +3270,8 @@ function readJsonOrNull(p) {
 }
 
 // FX-CLAIM step 7 with rev 4's H3 rule: does the close-done record of session sid release its slot?
-function closeDoneCounts(root, sid, start, procList, folderAbs) {
+// Exported for FX-CLOSE: stop verify (a), (b) count a close by the same rule.
+export function closeDoneCounts(root, sid, start, procList, folderAbs) {
   const done = readJsonOrNull(path.join(path.resolve(root), 'run', 'close', 'done', `${sid}.json`));
   if (!done || typeof done !== 'object' || done.kind !== 'close-done') return false;
   if (done.outcome === 'stopped' || done.outcome === 'owner') return true;

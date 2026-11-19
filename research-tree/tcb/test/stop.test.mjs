@@ -166,13 +166,17 @@ function walkRel(dir, base = dir, out = []) {
   return out.sort();
 }
 const treeHash = (dir) => sha(JSON.stringify(walkRel(dir).map((r) => [r, sha(fs.readFileSync(path.join(dir, ...r.split('/'))))])));
+// FX-CLOSE: the tests before the FX-CLOSE ones are about ticks and growth; their roots set stop_verify_ms 0 (the
+// wall floor is the FX-CLOSE tests' subject) and record the target session's close as the owner's act.
 function mk() {
   const h = helpers.makeRoot({ ce: 1 });
+  setThr(h.root, { stop_verify_ms: 0 });
   return { root: h.root, cleanup: () => h.cleanup() };
 }
+const closeDone = (root, sid, o = {}) => putJ(root, `run/close/done/${sid}.json`, { kind: 'close-done', session: sid, outcome: 'owner', by: null, ...o });
 
 function argv(root, mode, o = {}) {
-  const a = [mode, '--root', root, '--ce', String(o.ce ?? 1), '--task', o.task ?? T, '--epoch', String(o.epoch ?? 2), '--now', NOW];
+  const a = [mode, '--root', root, '--ce', String(o.ce ?? 1), '--task', o.task ?? T, '--epoch', String(o.epoch ?? 2), '--now', o.now ?? NOW];
   if (o.dry) a.push('--dry-run');
   return a;
 }
@@ -284,6 +288,7 @@ function verifyWorld(o = {}) {
   table(w.root, [o.row ?? reqRow()]);
   const main = fakeT(w.root, SID1, folderAbs(w.root, T, 1), MAIN_USAGE);
   setTicks(w.root, 10);
+  if (o.close !== false) closeDone(w.root, SID1); // FX-CLOSE (a): the claim holder's close is recorded
   return { ...w, main };
 }
 const sampling = (root) => expectExit(run(root, 'verify'), 6, 'sampling');
@@ -714,6 +719,7 @@ test('T14 request and verify on a committed row at step bound: stopped, state st
   assert.equal(attemptOf(getRow(root), 1).stop, 'requested');
   expectExit(run(root, 'verify', { epoch: 1 }), 6, 'sampling');
   setTicks(root, 12);
+  closeDone(root, SID1); // FX-CLOSE (a)
   expectExit(run(root, 'verify', { epoch: 1 }), 0);
   const r = getRow(root);
   assert.equal(r.step, 'stopped');
@@ -782,6 +788,99 @@ test('T15 both modes: stale --ce -> 64, --dry-run writes nothing, corrupt tasks.
       assert.ok(tb.equals(read(root, 'run/tasks.json')));
     });
   }
+});
+
+// ================================================================ FX-CLOSE (FIX-fence section 4, rev 4 H3, rev 5 point 1)
+const SID3 = '33333333-3333-4333-8333-333333333333';
+const LATER = (ms) => new Date(Date.parse(NOW) + ms).toISOString();
+const folderT = (root, sid) => fakeT(root, sid, folderAbs(root, T, 1), [u(100, 0, 0, 10)], `${lib.projectDirName(folderAbs(root, T, 1))}/${sid}.jsonl`);
+const claimAt = (root, v) => putJ(root, `wt/${T}-e1/claim.json`, v);
+// sample at tick 10, then compare 2 ticks later (stop_verify_ms 0 in these roots unless a subtest sets it)
+function compare(root, o = {}) {
+  setTicks(root, 10);
+  expectExit(run(root, 'verify', o), 6, 'sampling');
+  setTicks(root, 12);
+  return run(root, 'verify', o);
+}
+test('FX-CLOSE T1 request takes a row committed at started; verify confirms only with (a) the holder\'s close, (b) every other folder session\'s, (c) both windows; unconfirmed rounds count', { concurrency: false }, async (t) => {
+  await t.test('committed at started: stop-requested naming the claim holder; confirmed once its close is recorded', async (t2) => {
+    const w = mk();
+    t2.after(w.cleanup);
+    const { root } = w;
+    table(root, [row(T, { state: 'committed', step: 'started', epoch: 1, reason: 'first', commits: { pack: '1'.repeat(64) }, attempts: [att(T, 1, { manifest: M0, settings_sha: Z64 })] })]);
+    claimAt(root, { kind: 'session', session_id: SID1 });
+    fakeT(root, SID1, folderAbs(root, T, 1), MAIN_USAGE, `${lib.projectDirName(folderAbs(root, T, 1))}/${SID1}.jsonl`);
+    expectExit(run(root, 'request', { epoch: 1 }), 0);
+    assert.deepEqual([getRow(root).step, ofKind(root, 'stop-request')[0].data.session], ['stop-requested', SID1]);
+    const j = compare(root, { epoch: 1 });
+    expectExit(j, 1, 'close-missing');
+    assert.deepEqual(j.reasons.find((x) => x.code === 'close-missing').detail.sessions, [SID1]);
+    assert.deepEqual([j.result.closes_missing, j.result.verify_rounds, getRow(root).verify_rounds], [[SID1], 1, 1]);
+    assert.deepEqual(ofKind(root, 'stop')[0].data.closes_missing, [SID1]);
+    closeDone(root, SID1, { outcome: 'stopped' });
+    setTicks(root, 14);
+    expectExit(run(root, 'verify', { epoch: 1 }), 0);
+    const r = getRow(root);
+    assert.deepEqual([r.state, r.step, attemptOf(r, 1).stop, r.verify_rounds], ['committed', 'stopped', 'confirmed', 1]);
+    await assertLedgerVerifies(root);
+  });
+  await t.test('(b) another folder session needs its own close; a no-such-session counts when no process matches; a foreign record does not', async (t2) => {
+    const w = verifyWorld();
+    t2.after(w.cleanup);
+    const { root } = w;
+    folderT(root, SID2);
+    let j = compare(root);
+    expectExit(j, 1, 'close-missing');
+    assert.deepEqual(j.result.closes_missing, [SID2], 'the holder (SID1) is recorded, the folder session is not');
+    closeDone(root, SID2, { kind: 'close-intent' });
+    setTicks(root, 14);
+    j = run(root, 'verify');
+    assert.deepEqual([j.exit, j.result.closes_missing, getRow(root).verify_rounds], [1, [SID2], 2], 'an intent at the done name is not a close');
+    closeDone(root, SID2, { outcome: 'no-such-session', by: SID3 });
+    setTicks(root, 16);
+    expectExit(run(root, 'verify'), 0);
+    assert.equal(attemptOf(getRow(root), 1).stop, 'confirmed');
+  });
+  await t.test('a tombstone needs no holder close, only its folder sessions\'; a claim that does not parse is 3', async (t2) => {
+    const w = mk();
+    t2.after(w.cleanup);
+    const { root } = w;
+    table(root, [noSession()]);
+    claimAt(root, { kind: 'tombstone', task: T, epoch: 1 });
+    folderT(root, SID2);
+    expectExit(run(root, 'request'), 0);
+    const j = compare(root);
+    assert.deepEqual([j.exit, j.result.closes_missing], [1, [SID2]]);
+    closeDone(root, SID2);
+    put(root, `wt/${T}-e1/claim.json`, '{');
+    setTicks(root, 14);
+    expectExit(run(root, 'verify'), 3);
+    assert.equal(getRow(root).step, 'stop-requested', 'never confirmed on a claim that does not parse');
+    claimAt(root, { kind: 'tombstone', task: T, epoch: 1 });
+    expectExit(run(root, 'verify'), 0);
+  });
+  await t.test('(c) the ticks without the wall time wait, and the wall time without the ticks; a sample without at is taken again', async (t2) => {
+    const w = verifyWorld();
+    t2.after(w.cleanup);
+    const { root } = w;
+    setThr(root, { stop_verify_ms: 60000 });
+    setTicks(root, 10);
+    sampling(root);
+    assert.equal(readJ(root, SAMPLE).at, NOW, 'the sample carries its wall time');
+    setTicks(root, 12);
+    const j = run(root, 'verify', { now: LATER(59999) });
+    expectExit(j, 6, 'waiting');
+    assert.equal(j.reasons[0].detail.at_due, LATER(60000));
+    setTicks(root, 11);
+    expectExit(run(root, 'verify', { now: LATER(60000) }), 6, 'waiting');
+    setTicks(root, 12);
+    expectExit(run(root, 'verify', { now: LATER(60000) }), 0);
+    const w2 = verifyWorld();
+    t2.after(w2.cleanup);
+    putJ(w2.root, SAMPLE, { schema_version: 1, task: T, epoch: 1, target: 1, tick: 0, sizes: {} });
+    expectExit(run(w2.root, 'verify'), 6, 'sampling');
+    assert.equal(readJ(w2.root, SAMPLE).tick, 10, 'a sample made before FX-CLOSE is taken again');
+  });
 });
 
 // ================================================================ needs the app
