@@ -284,9 +284,20 @@ const mkHazards = (cut) => ({
 const state = { fsckOk: true };
 async function fsck(name = 'fsck') { return sc('fsck', [], { name, check: (r) => (r.json.result?.result === 'pass' || r.exit === 0 ? true : 'fsck result ' + JSON.stringify(r.json.result).slice(0, 300)) }); }
 
+// FX-W3: an act that creates work (fence first, start) needs an armed turn. The coordinator arms it by its
+// calls 1 and 2 (the ensure, then status --reconcile --arm-nonces X); here this process stands in for that
+// outcome, as it stands in for the watcher and the alarm below: a confirmed turn.json of this ce naming its
+// own slot. The next reconcile of the turn re-checks the slots and finds none, as before.
+function armTurn() {
+  const me = LIB.selfInfo();
+  const prev = exists(P('run', 'turn.json')) ? rj(P('run', 'turn.json')) : { turn_seq: 0, read_seq: 0, unarmed_turns: 0 };
+  fs.writeFileSync(P('run', 'turn.json'), JSON.stringify({ ...prev, ce: CE, arm: 'confirmed', slots: [{ k: 1, pid: me.pid, start_time: me.start_time }] }));
+}
+
 async function beginAttempt(task, e, { sid, dirName, reconcile = false, name = task }) {
   // epoch e of task; fence first when the row is planned
   const pre = rowOf(task);
+  armTurn();
   if (pre.state === 'planned') await sc('replace', ['fence', '--task', task, '--epoch', '0', '--reason', 'first'], { boot: true, name: `${name}: replace fence first` });
   await fsck(`${name}: fsck before start`);
   await sc('admit', ['check', '--task', task], { ce: false, free: true, name: `${name}: admit check`, exit: 0 });
