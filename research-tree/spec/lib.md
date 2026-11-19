@@ -63,6 +63,15 @@ that reason (CONTRACT §7).
   with delete sharing, so a real holder needs another program; the seam stands in for it.)
 - T22 `createExclusive` returns `created`, then `identical` for the same bytes; different bytes throw
   `exists-different` 1 and leave the file unchanged.
+- T22b (0b) `createExclusive(p, data, {strict: true})` behaves as T22; a missing parent folder → `no-parent` 2 and no
+  folder made (without `strict` the parent is made, as before); a `linkSync` failing with ENOTSUP, EINVAL, EXDEV,
+  ENOSYS or EMLINK (seam) → `no-hardlink` 3, nothing at the name, no temp left (without `strict` the `wx` fallback
+  still creates it); `budget` 0 or below → `budget-spent` 2 with no file touched; a temp create failing EPERM
+  every time with `budget` 150 → `budget-spent` 2 inside about the budget, nothing made.
+- T22c (0b) `fsRetry(op, budget)`: an op failing EPERM with budget 0 is tried once → `budget-spent` 2 (`detail.code`
+  EPERM, `tries` 1); with budget 150 it is retried (2 to 40 tries) and gives up inside about the budget; one
+  failing 3 times then succeeding returns within 5000; ENOENT is thrown at once; a budget that is not a number
+  → `bad-budget` 70; no budget → the 40 retries (T21b, T25b).
 - T23 `readJson` throws `missing` 2 and `unparseable` 2 in those cases.
 - T23b `readJson` of a file starting with a UTF-8 BOM parses (the BOM is stripped); a UTF-16LE file
   with its BOM throws `unparseable` 2 with detail `utf16`.

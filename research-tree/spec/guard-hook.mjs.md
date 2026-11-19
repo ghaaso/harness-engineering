@@ -9,7 +9,8 @@ hook input), §3.22 (`must_read.json`), §4.3 (`isUnder`, `segmentName`), §4.8 
 The preventive half of R29: before every tool call of a research session or helper, refuse paths
 outside the role, writes under `.claude/` or a protected path, Bash except the coordinator's `node
 tcb/<n>.mjs`, a wrong helper type, a child's fetch of a non-witnessed URL, any call of a fenced
-attempt. It decides from files, writes nothing (§8.20) and denies on its own error.
+attempt. It decides from files, takes no lock, writes only by strict exclusive create inside its deadline (§8.20, 0b;
+no step writes yet) and denies on its own error.
 
 ## Command line and protocol
 ```
@@ -23,12 +24,22 @@ stderr line `[guard-hook] deny <code>: <detail>`. **No other exit code ever**: a
 non-blocking error that lets the call through, so a usage error is a deny (not 66), the
 run-from-attempt check is a deny (not 3), and uncaught exceptions, rejections and an internal
 deadline (threshold `hook_deadline_ms`, 5000, guess) all exit 2 `internal`. It does not use
-`runMain`'s stdout line; it reads no clock to decide anything. Whether it runs as the entry is
+`runMain`'s stdout line; it reads no wall clock to decide anything; its one clock is its own deadline (the fallback timer, and for a
+write the time left until `hook_deadline_ms` from its start, on the monotonic clock, 0b). Whether it runs as the entry is
 decided by `import.meta.main`, or by comparing the realpath of `process.argv[1]` with the module's
 own path (Node gives `import.meta.url` as the realpath): started through a junction or a symlink it
 still decides, never exits 0 without deciding.
 
-## Reads (never writes)
+## Writes (0b, FIX-fence §0b)
+Only through `hookCreate(io, file, data)`: `lib.createExclusive(file, data, {strict: true, budget})`, `budget` = the
+time left until `hook_deadline_ms` counted from the hook process's start (in-process, a call counts from its own
+start to 5000). Result `created`, `identical` or `different` (another writer's bytes; the caller reads them). Time
+spent before or during the create → deny `budget-spent`; `no-parent`, `no-hardlink` → deny with that code; any
+other error → `write-failed`. A denied write makes nothing at the name. No lock, never a path a script writes. The
+files come with FX-OUT (outcome slots), FX-CLAIM (`claim.json`) and FX-CGATE (`start.json`, `coord-session-<ce>`,
+close records): until then no step writes. `hookWrite(file, data, io)` is exported for tests.
+
+## Reads
 `tcb/profiles/<role>.json`, `tcb/thresholds.json`; task roles: `run/tasks.json` (`lib.readTasks`, no
 lock); `fetch: witnessed`: `{attempt}/in/must_read.json` only, plus the one URL's
 `.snapshots/by-url/<urlKey>.jsonl` and the `.snapshots/meta/<raw_sha>.json` it names (never the
@@ -157,6 +168,12 @@ the exit code is 0 or 2, stdout is empty, and on 2 stderr starts `[guard-hook] d
   parses after substitution, its hook command starts with the quoted `{node}`, names its own role, allows only tools in the
   profile's `tools_allow` and denies every `tools_deny` entry; `reader.md` lists exactly WebSearch,
   WebFetch and `checker.md` exactly Read, each body equal to its brief.
+- T15 (0b) `hookWrite`: a create with time left → `created`, again `identical`, other bytes `different` (no
+  deny, bytes kept); `budgetMs` 0 or below → `budget-spent`; a missing parent → `no-parent`, no folder made;
+  `fs.linkSync` failing ENOTSUP → `no-hardlink`; a temp open failing EPERM every time with 150 ms left →
+  `budget-spent` after 2 to 40 tries inside about that time; a throwing `create` → `write-failed`, a strange
+  result → `internal`. Nothing is left at a denied name. (Runs in a checkout whose path has no `.claude` segment:
+  under `.claude/` T2-T4, T11 and T13 deny every write `write-claude`.)
 
 ## Cannot be tested without the app (written, then `t.skip('needs-app: ...')`)
 - needs-app 1: the harness runs this hook before every tool call, helpers included, passes the
