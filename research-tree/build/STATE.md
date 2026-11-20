@@ -6,7 +6,84 @@ successor (or this root after a compaction) reads `research-tree/build/ROOT-STAR
 nothing listed as running before reading that unit's branch and result file. Times are UTC, from `date -u` and the
 helpers' transcripts (the B1-1 clock times written before 19:44 were guesses; corrected here from the transcripts).
 
-## NOW (2026-11-20 02:00 UTC): slice 1 done (W4 2a45365c, suite 5 pass, e2e 239/239), the cap reached (78 %)
+## NOW (2026-11-20 05:30 UTC): slice 2 done; verdict SEND BACK: FX-W6; QUIET POINT; a fresh root for the fix round is due
+
+- **05:24: S2.4 DONE**: `model/results-build/VERDICT.md`, first line `SEND BACK: FX-W6: AgeCapReachesOwner (AGE-B)`, one fix only: a bare acknowledgement re-arms the age cap (watch.mjs:1199-1204), so FX-W5's stuck count restarts and the dead-man never alerts the owner; smallest change: delete that re-arm (AGE-STUCK, its model, holds AgeCapReachesOwner and AlwaysCanResolve). R1: NoFalseSuspicion holds, so B1 stands; its four failures are byte-equal to FXW-5-B and R57's FXW-6-3000 (decided). R2: all 43 k=2 close parts hold. R3: 75 parts, 97.6 M states, only decided failures; NoDeadlock and AlwaysCanResolve hold in every part. S2.2's model should take the variant's line 1015 (touches only FN-N2 and FN-N2-B). Successor 72 calls, **9.66 M against its 6 M limit** (it did not stop at the limit: a departure, the pool being spent, inside the cap). S2.4 unit 26.9 M (plan 8.0 M, limit 18.6 M).
+- **Slice 2 counts:** helpers 87.4 M (S2.2 59.49 M = 15.11 + 26.20 + 18.18; S2.3 reader 1.05 M; S2.4 26.91 M = 17.25 + 9.66) against 34.8 M planned (2.5x); root 2 19.92 M over 88 calls; model runs 4,989 s in 47 min wall. Meter 79 %, Fable 53 % (05:24). Wall 02:05-05:25.
+- **Reported:** private Artifact https://claude.ai/artifact/9A6ANsETdkJs7Ug4LHDD3k (`reports/slice-2.html`; not screenshot-checked), record `reports/slice-2.md`. **QUIET POINT:** no helper, no background command (timer blko9m9nz ended); records committed on `build` through `hb` (next line).
+- **Next (the plan's S2.4 row: one more round for that fix only):** the FX-W6 fix round, by a fresh root (root 2 at 306 K context, past its 247-273 K hand-over point; a root starts only on the owner's typed turn). Contents: delete the re-arm, a test that fails on the old code, the coordinator brief's idle-child / age-cap line (refute/W4.md), S2.2's model takes line 1015 (units/S2.4/variant/), AGE-B and FN-N2-B run again, a blind refuter, the landing, then the last full suite with the e2e. Estimate 25-35 M (builder about 15-25 M, refuter about 9 M, reader 1 M); cap check against 81 % first (meter 79 %). Gate: `build-invariant: W6 age cap fix` passes (W6's batch is done, no W6 helper runs). Then the build is done through the model check; the pilot (slice 3) has its own plan and cap.
+
+## Then (2026-11-20 02:10 UTC): successor root 2 runs slice 2 (stop line 81 %)
+
+- **Root 2** (session 0be12bcd-59b5-459b-885b-8c18b487d6f7, Opus, kind orchestrate, main checkout), started by root 1
+  after the owner's `cap:` answer. Clock note: `date -u` read 02:04:58 at its start, so root 1's "02:15" and "02:10"
+  lines above were early estimates. Read: board, ROOT-START, ORCHESTRATION 0-9 and 13, BUILD-PLAN slice 2, GATE-USE,
+  this file. Context 151 K at its first work call; its hand-over point by this file's departure line is 247-273 K.
+- **02:05:** meter 78 %, Fable 53 % (usage line written); keep-awake asked (session idle). Brief `briefs/S2.md`
+  (part S2.2). Worktree `.claude/worktrees/S2.2` on `u/S2.2` at 48811a8f.
+- **Cap check for S2.2:** meter 78 + running 0 + S2.2 expected. Plan 25.4 M (0.64 points); root 1's estimate from the
+  builders' ratio to plan, 70 M (1.75 points); the larger: 79.75 <= 81. Section 4's protected line: 100 - 0.21 x 81.9 h
+  = 82.8, not binding. Limit 60 M for the unit (plan.json, five like-for-like model units), successors included; at
+  the limit it returns LIMIT and the root decides from the meter (r57-0038).
+- **S2.2 RUNNING since about 02:12** (`build-invariant: S2.2 model as built`, opus, agent a4173ccb0f7c3cb15; the plan
+  gate allowed it). Timer begb5znfg armed for 7,500 s (3 x Q3 of a builder's 41.6 min), fires about 04:17. On its
+  result: land `u/S2.2` through `hb` (its test files: `research-tree/model/as-built/model-build.test.mjs`,
+  `tcb/test/guard-hook.test.mjs`, `tcb/test/status.test.mjs`), then S2.3: the root runs `RUN-BUILD.md`'s list as
+  background lane commands (free memory read before each), then the Sonnet reader (`run: S2.3 ...`, fact file
+  `facts/S2.3.md`), then S2.4. On LIMIT: a successor from `units/S2.2/checkpoint.md` with the rest of 60 M, after a
+  cap check.
+- **02:32: S2.2's first helper LIMIT** at the 330 K checkpoint (336 K context, 14.1 M, 71 calls, 23.5 min): `u/S2.2`
+  addbcda0 (a00d6d10 OUT's three lines reworded, tests not run; model-build, check-build, run-seq-build,
+  configs-build; with every new flag off the same states and verdicts as the old checker on FN-N2, FN-R5, SMOKE;
+  flags: Q5 owner-typed start with fault q and the `start.json` fact both ways, `--if-unclaimed` with its window and
+  the closing order, CLOSE's id gap with the relayed `closed` and fault w, verify by records, the stop and archive
+  facts). Open: the lease flags change no states at k=1, cs=1; every new configuration fails liveness at small
+  parts; fault w's expected Slots failure did not appear; not diagnosed. Left: those, W6 age cap, REDO, the other
+  departures, MAP-build, RUN-BUILD, the test file, guard-hook and status tests, merge `build`, departures, result.
+  Meter 78 %. Cap: 78 + the rest of about 70 M, 1.4 points = 79.4 <= 81. **Successor 1 RUNNING since 02:34**
+  (`build-invariant: S2.2 model successor 1`, agent a6235fde1f5373e6b, limit 45.9 M). Root context 202 K.
+- **03:20: successor 1 LIMIT** at the checkpoint (25.6 M, 167 calls, 47 min; unit 39.7 M): `u/S2.2` 4609c934, clean.
+  The liveness failures were model errors, fixed (owner step under a drain; the owner's typing its own strongly fair
+  process, Emerson-Lei refinement in check-build, `--weak-owner` the ablation; a dead session's stop leaves a "no
+  such session" close record; an uncounted orphan reaches the owner under the id gap; the owner rule reads
+  closesMissing only at stop-requested); the lease runs were vacuous, now reading (ii) on one field, LEASE-NOWIN new.
+  **Model findings so far** (RUN-BUILD.md, for S2.4): BQ5-SJ k=3,q=3 fails RefusedStartNotCharged; LEASE-B fails
+  LeaseFenceClaimed; IDGAP-W fails Slots; IDGAP-WZ fails AlwaysCanResolve (a false relay leaves no owner act);
+  FN-OUT-CLOSE-K2-B 17 times larger, run by parts. Tests: model-build.test.mjs 29/29 in 29 s (S2.2-mtest1);
+  guard-hook + status from outside `.claude/` 80: 75 pass, 0 fail, 5 skipped (S2.2-tests1). Left: W6 item 6, REDO,
+  FIX-JOIN 2b row 8, MAP/RUN final, merge `build`, departures, result. Meter 78 %. **Successor 2 RUNNING since 03:21**
+  (`build-invariant: S2.2 model successor 2`, agent a5bf262ed54abb2cd, limit 20.3 M, the rest of 60 M). Landing
+  command on its result: `node C:/Users/User/Documents/projects/hb/research-tree/tools/land.mjs S2.2
+  model/as-built/model-build.test.mjs tcb/test/guard-hook.test.mjs tcb/test/status.test.mjs`. Root context 210 K.
+- **03:48: S2.2 DONE** (successor 2, 17.64 M; unit 57.3 M of 60 M, three helpers, about 96 min): `u/S2.2` 531e5ef6;
+  W6 item 6 modelled (fault m, age cap re-armed on acknowledgement, AgeCapReachesOwner: AGE-B fails it F 16 by
+  construction, AGE-STUCK, the design leg FX-W6 lacks, holds: for S2.4, back to FX-W6); REDO modelled (fault g,
+  StartedLineRecorded holds at k=3,x=1,g=2, fails without FX-REDO, REDO-X F 6); MAP-build.md and RUN-BUILD.md final
+  (28 runs); departures/S2.2.md (FX-W3 and FX-W7 not modelled, the owner as a premise, lease reading (ii) bounded,
+  the smallest forms). **S2.2 LANDED 03:49:44:** `build` = e5c9c4f8 (pre 48811a8f): model-build.test 35 pass,
+  guard-hook 28 pass 3 skipped, status 47 pass 2 skipped, 0 fail, 80.2 s (landings.jsonl).
+- **03:52: S2.3's runs RUNNING** (the root's background commands, from `.claude/worktrees/S2.2/research-tree`, MAIN's
+  lane `--timeout-s 1450`, RUN-BUILD's M as given, each run waiting until free memory >= 1.1 M + 4,096 MB): driver
+  and lists in scratchpad `S2.3/` (`run-chain.sh`, `chain-A.txt`, `chain-B.txt`; smoke test BQ5-X k=1,q=1
+  63,205 states as expected, its files removed). Chain A b9212vc9b (FN-OUT-CLOSE-K2-B parts, resumed while exit 3);
+  chain B b0xd7gy0k (the other 27). Outputs `MAIN/research-tree/model/results-build/`; logs `S2.3/chain-*.log`.
+  Free memory 12,723 MB (not the 21 GB RUN-BUILD's shares assumed: so the floor guard). Briefs for the S2.3 reader
+  and S2.4 written (`briefs/S2.md`). **Meter 79 % (03:55).** Root context 249 K: inside the measured hand-over
+  range (247-273 K), but no quiet point until the chains end; the build ends with S2.4, so root 2 goes on to the
+  verdict and the report (a hand-over now would wait for the owner's typed turn; the cost curve is flat there).
+  Next: on both chains' ends, the reader `run: S2.3 model results read` (sonnet; cap: + 0.04), then `analyse: S2.4
+  model verdict` (opus; cap: + 0.2 to 0.4 at the builders' ratio), then the slice 2 report and the records commit.
+- **04:14: timer begb5znfg fired.** Chain B at 8 of 27 runs (FXW-4R-B parts done; FXW-5-B, FXW-6-B 129 s, FN-N2-B,
+  BQ5-NOSJ, BQ5-SJ done, all exit 0); chain A: FN-OUT-CLOSE-K2-B 21 of 43 parts after round 1 (1,350 s), round 2
+  running. Free memory 13,329 MB. Timer blko9m9nz re-armed for 4,350 s (3 x a lane call's 1,450 s), fires about 05:27.
+- **04:21: chain A DONE** (exit 0): FN-OUT-CLOSE-K2-B 43 of 43 parts in 2 rounds, 1,760 s. Chain B at 14 of 27.
+- **04:24: chain B DONE**: 27 runs, all exit 0, 1,912 s summed, no memory wait; 28 outputs in `model/results-build/`. Meter 79 %; cap 79 + 0.07 <= 81. **Reader RUNNING since 04:25** (`run: S2.3 model results read`, sonnet, agent ac8f3307e7bbe3292, limit 2.6 M; done file `facts/S2.3.md`). Next: S2.4 after a cap check.
+- **04:27: S2.3 DONE** (reader 2.3 min, 13 calls; `facts/S2.3.md`): 28 runs ended; 25 complete, 3 BOUNDED (FXW-6-B, LEASE-B, LEASE-X; and one K2-B part, k=2,cv=1,r=1); 3,672 s summed; 23 match RUN-BUILD; 5 do not: FXW-4R-B (75 parts, 98.7 M states against 5 M est., 42 fail, the k=1,u=1 part not among them), FXW-5-B (4 failing properties RUN-BUILD did not list), FXW-6-B (BOUNDED, WakeSourceAlive F 4, EventuallyResolves unknown, F 10 expected), BQ5-X (also EventuallyResolves F 22), FN-OUT-CLOSE-K2-B (holds; part sizes below the estimate). Meter 79 %; cap for S2.4: 79 + 0.4 <= 81. **S2.4 RUNNING since 04:28** (`analyse: S2.4 model verdict`, opus, agent a5ecfa910a43c3c02, limit 18.6 M; it may return once `RERUN units/S2.4/reruns.md` for runs over 150 s, which the root runs in the background and then continues it by SendMessage). Done file `model/results-build/VERDICT.md`.
+- **04:50: S2.4 returned RERUN** (`units/S2.4/reruns.md`; 90 calls, 23 min, about 17.3 M of 18.6 M, context about 300 K; no verdict; the classification of every other failure, the vacuity table and the uncovered list in `units/S2.4/checkpoint.md`). Planned first line: `SEND BACK: FX-W6: AgeCapReachesOwner (AGE-B)` (trace walked against watch.mjs:339, 1199-1206, 1252-1271 and status.mjs:956, 992). Reruns: R1 FXW-6-B whole at 6,000 MB (the B1 check, BOUNDED in S2.3); R2 FN-OUT-CLOSE-K2-B part k=2,cv=1,r=1 at 6,000 MB; R3 FN-N2-B by parts on S2.4's variant (`units/S2.4/variant/`, one line changed: model-build.mjs:1015, a refused not-quiescent hand-over goes to endturn under N2, as handover.mjs:286-287 and coordinator.md:163-166 do; unchanged, the line makes FXW-4R-B's cv and l failures model artefacts). **RUNNING since 04:52:** btthz66wm (R1 then R2, one at a time) and b01pai64j (R3, resumed on exit 3); driver scratchpad `S2.3/reruns.sh`, log `S2.3/reruns.log`; outputs `model/results-build/rerun/`; free memory 14,332 MB (6.6 + 1.65 GB peaks against 10.3 GB above the floor). **Decision (r57-0038):** continuing S2.4 at about 300 K context would pass its limit (each call about 0.3 M), so a successor `analyse: S2.4 model verdict successor` reads the checkpoint and the three outputs: expected about 3 M, limit 6 M, the unit then at most 23.3 M against the plan's 18.6 M; the pooled reserve is spent, so the cap covers it (meter 79 % + 0.15).
+- **04:57: R1 and R2 DONE** (exit 0): R1 FXW-6-B complete, 18,638,479 states, 146 s, peak 2,520 MB; fails WakeSourceAlive, NoDeadlock, AlwaysCanResolve, EventuallyResolves (the four S2.4 expected). R2 FN-OUT-CLOSE-K2-B k=2,cv=1,r=1 complete, 21,932,370 states, 218 s, every property holds. R3 running.
+- **05:07: R3 DONE** (exit 0): FN-N2-B on the variant, 75 of 75 parts in one round, 953 s. Meter 79 %. **S2.4 successor RUNNING since 05:08** (`analyse: S2.4 model verdict successor`, opus, agent a2cb18bab71c5f7bd, expected 3 M, limit 6 M; it reads checkpoint.md, reruns.md and the three outputs and writes VERDICT.md). Root context 285 K. Next: the verdict; then the slice 2 report (page + `reports/slice-2.md`) and the records commit on `build` through `hb`; a SEND BACK is a fix round only on the owner's `cap:` word if it does not fit under 81 %.
+
+## Then (2026-11-20 about 02:05 UTC by the clock): slice 1 done; the owner raised the stop line to 81 % for slice 2; hand-over to a successor root
 
 - **B1-3 landed:** CLOSE 23:51:55 (91b46c34), W3 about 00:28 (`build` = 56918efb, pre 91b46c34; 8 files, 94.1 s;
   no refuter successor after the BREAKING, the fix being the named test setup). **Suite 4 PASS** on 56918efb: others
@@ -46,6 +123,27 @@ helpers' transcripts (the B1-1 clock times written before 19:44 were guesses; co
   On PASS: land W4 (status, guard-hook, lib, and e2e/run-e2e.mjs if changed), suite 5 + e2e (copy and restore the two
   output files in `hb`), the slice 1 report; then slice 2's cap check (S2.2 about 1.5 points will not fit: `cap:`).
 - **01:20 (root after the app's compaction, context 132 K):** board, ROOT-START, GATE-USE, this file and briefs/B1-4.md re-read; meter 77 % logged. W4's landing pre-check: `merge-tree build u/W4` clean (u/W4 holds build's tip cc6df491); W4 changed lib.mjs (4 lines), status, its test and fixtures, the xml file, specs, CONTRACT, the coordinator brief; not the e2e. Landing files on PASS: status.test.mjs, guard-hook.test.mjs, lib.test.mjs (lib not run by W4). Timer b1wz8il07 kept (fires about 02:45, 3 x Q3 of a refuter's minutes).
+- **02:15: the owner's word on the cap.** Asked (chat, next-step box): "cap: raise the build's stop line from 78 % to
+  81 % for slice 2?"; he answered "Yes, 81 %". **The stop line for slice 2 is 81 %** (ROOT-START's cap rule with 81 in
+  place of 78). Meter 78 %, Fable 53 % (02:15). **HAND-OVER:** this root (session 8a7db643, context about 278 K after
+  two compactions, past the measured hand-over point of 250-270 K) starts a successor root in this turn and then
+  stops. Nothing runs: no helper, no background command, no timer; `build` = 48811a8f in `hb` (clean); MAIN's
+  `research-tree/build/` holds this file's newer lines (02:10, 02:15) not yet in a records commit. **The successor:**
+  ROOT-START, the board, ORCHESTRATION (sections as ROOT-START lists), GATE-USE, this file; get_usage and a usage line;
+  keep-awake; then S2.2's brief and start (cap check: meter + S2.2's expected about 70 M, about 1.6 points, against
+  81 %), the wake timer at 3 x Q3 of a builder's minutes; S2.3 and S2.4 after; slice 2's report and `approve:` as
+  ROOT-START says.
+- **02:10: slice 1 reported and the records committed. QUIET POINT** (no helper, no background command, no timer).
+  Page: private Artifact https://claude.ai/artifact/3tasggAhVrSUkeZPmYbUPr (`reports/slice-1.html`, built by scratchpad
+  `root/build-slice1.js` from the plan gate log; the chart's look not screenshot-checked, the top was); record
+  `reports/slice-1.md`. **Records commit on `build`: 48811a8f** (118 files, records only; `hb` clean). Counts for the
+  owner's `cap:`: landed 17 build units (slice 0: 3; slice 1: 13 fixes and S2.1), running 0, held 3 (S2.2, S2.3, S2.4);
+  meter 78 % (cap reached; 63 % at the go); helper tokens about 613 M (slice 0 105 M, slice 1 508 M). Slice 2 needs
+  about 2 points (80-90 M), about 3 with one fix round (125-130 M). **Asked the owner in chat:** `cap:` stop line 78
+  -> 81 % for slice 2, or hold to the weekly reset (2026-11-23 12:00 UTC). **Next, on his typed answer:** a successor
+  root (this one compacted twice; context about 230 K), started in that turn; it reads ROOT-START, this file, then
+  writes S2.2's brief (BUILD-PLAN row S2.2 at line 136; `departures/*.md`; `branches.md`; the "For S2.2" items of the
+  End list: W6 item 6 "ack = continue", CLAIM's millisecond window, OUT's shared lines, the refused-turn start).
 - **Suite 5 PASS, one test flaky under load (01:48-01:52, on 2a45365c):** others 1087 tests, 1034 pass, 2 fail (one
   subtest and its parent), 51 skipped; shards 29 pass, 2 skipped; wall 173 s (`suites/5/summary.txt`). **e2e 239/239**
   (`suites/5/e2e.log`; its two output files copied there and restored in `hb`, which is clean). The failure: stop.test

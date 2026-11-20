@@ -1,5 +1,6 @@
 // Tests of tools/check-commit.mjs and tools/git-hooks/pre-commit through real `git commit` calls (unit P0, 2026-11-19;
-// research-tree/build/check/A-hooks.md rows 8, 9 and 13). Run: node research-tree/build/units/P0/check-commit.test.mjs
+// research-tree/build/check/A-hooks.md rows 8, 9 and 13; unit FIX-GUARD added the cases marked F1, CA, CB and CC:
+// finding 1 and mutants CA-CC of research-tree/build/refute/P0-GATE.md). Run: node research-tree/build/units/P0/check-commit.test.mjs
 //   [--check <check-commit.mjs>] [--hook <pre-commit>]   (defaults: this repository's copies; pass old copies to compare)
 // It builds a throwaway repository in a temporary folder: a first commit without tools/ or migration/ (like the old base
 // 48660877), a second commit that adds them, core.hooksPath set to the absolute path of its tools/git-hooks, and a
@@ -33,6 +34,8 @@ try {
   mkdirSync(main);
   g(main, 'init', '-q');
   put(main, 'recovered/a.txt', 'a\n'); put(main, 'docs/program/evidence/x.md', 'x\n'); put(main, J, rec('r57-0001')); put(main, 'notes.md', 'n\n');
+  const EV = 'docs/program/evidence/unlisted.md'; // in no manifest (F1)
+  put(main, EV, 'u\n');
   g(main, 'add', '-A'); g(main, 'commit', '-q', '--no-verify', '-m', 'base without tools or manifests');
   const base = g(main, 'rev-parse', 'HEAD').trim();
   put(main, 'tools/check-commit.mjs', ''); copyFileSync(check, join(main, 'tools', 'check-commit.mjs'));
@@ -55,6 +58,22 @@ try {
   put(main, 'notes-new.md', 'n\n'); g(main, 'add', 'notes-new.md');
   expect('main: an ordinary new file commits', commit(main, 'new note'), true);
 
+  // FIX-GUARD: each refused case is set back to the commit before it, also when a wrong check lets it through
+  const refused = (cwd, name, prep, re) => { const head = g(cwd, 'rev-parse', 'HEAD').trim(); prep(); expect(name, commit(cwd, 'x'), false, re); g(cwd, 'reset', '-q', '--hard', head); };
+  refused(main, 'F1 main: a change of a committed file under docs/program/evidence/ in no manifest is refused', () => { put(main, EV, 'changed\n'); g(main, 'add', '-A'); }, /archived evidence/);
+  refused(main, 'F1 main: its deletion is refused', () => g(main, 'rm', '-q', EV), /archived evidence/);
+  refused(main, 'F1 main: its rename is refused', () => g(main, 'mv', EV, 'docs/program/evidence/renamed.md'), /archived evidence/);
+  put(main, 'docs/program/evidence/new-run/state.md', 's\n'); g(main, 'add', '-A');
+  expect('F1 main: a new file under docs/program/evidence/ commits', commit(main, 'new evidence'), true);
+  refused(main, 'CA main: an added record whose id is already used is refused', () => { appendFileSync(join(main, J), rec('r57-0001')); g(main, 'add', '-A'); }, /used more than once/);
+  refused(main, 'CC main: an added line that is not JSON is refused', () => { appendFileSync(join(main, J), 'not json\n'); g(main, 'add', '-A'); }, /not one JSON object/);
+  refused(main, 'CB main: deleting a journal file is refused', () => g(main, 'rm', '-q', J), /never deleted or renamed/);
+  refused(main, 'CB main: renaming a journal file (same writer, another day) is refused', () => {
+    mkdirSync(join(main, 'library', 'journal', '2026-11-20'), { recursive: true }); g(main, 'mv', J, 'library/journal/2026-11-20/r57.jsonl');
+  }, /never deleted or renamed/);
+  appendFileSync(join(main, J), rec('r57-0003')); g(main, 'add', '-A');
+  expect('main: an appended valid journal record commits', commit(main, 'append'), true);
+
   // worktree cut from the base, which has no tools/ and no migration/
   put(wt, 'recovered/a.txt', 'changed\n'); g(wt, 'add', '-A');
   expect('A9 worktree at an old base: a change of archived evidence is refused by the check, not by a crash', commit(wt, 'x'), false, /archived evidence/, /MODULE_NOT_FOUND|Cannot find module/);
@@ -69,6 +88,9 @@ try {
   expect('A9 worktree: an appended valid journal record commits', commit(wt, 'append'), true);
   put(wt, 'notes2.md', 'n\n'); g(wt, 'add', '-A');
   expect('A9 worktree: an ordinary new file commits', commit(wt, 'new note'), true);
+  refused(wt, 'F1 worktree at an old base: a change of a committed file under docs/program/evidence/ is refused (its own HEAD)', () => { put(wt, EV, 'changed\n'); g(wt, 'add', '-A'); }, /archived evidence/);
+  put(wt, 'docs/program/evidence/new-run/state.md', 's\n'); g(wt, 'add', '-A');
+  expect('F1 worktree: a file only the main checkout committed is new here and commits', commit(wt, 'new evidence in the worktree'), true);
 } finally {
   try { rmSync(tmp, { recursive: true, force: true }); } catch {}
 }
