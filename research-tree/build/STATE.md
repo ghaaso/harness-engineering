@@ -15,6 +15,12 @@ helpers' transcripts (the B1-1 clock times written before 19:44 were guesses; co
 - **Round counts:** builder 13.64 M (plan 11.7 M, limit 29.2 M; 83 calls, 21 min); refuter 13.25 M (plan 5.4 M,
   limit 15.6 M; 77 calls, 19 min); root 3 about 14 M (63 calls at 07:15, context 290 K); about 41 M against the
   25-35 M estimate. Model runs 21 s, landing 99.5 s, suite 6 164 s + e2e. Wall 06:27-07:20. Meter 79 % to 80 %.
+- **07:25: records commit a1a46e4e on `build`** through `hb` (44 files: the round's records under
+  `research-tree/build/` and `research-tree/model/results-build/fx-w6/`; `hb` clean). The newer lines of this file
+  and usage.jsonl after it are in MAIN only. **Reported:** private Artifact
+  https://claude.ai/artifact/3kvgESgxWgEysZFXDFCnUW (`reports/fx-w6.html`, one screenshot looked at before the
+  publish), record `reports/fx-w6.md`. **QUIET POINT:** no helper, no background command; the wake timer bim5hhf4y
+  stopped. Root 3 stops here; the next step is the owner's (the pilot, slice 3, its own plan and cap).
 
 ## Then (2026-11-20 06:30 UTC): root 3 runs the FX-W6 fix round (stop line 81 %)
 
