@@ -50,8 +50,8 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(build.by_package(rows), [("WP3a", [("B", 1), ("A", 2)]), ("WP13", [("B", 1)])])
         self.assertTrue(build.summary(rows).endswith("1 wait logged"))
         page = build.render_html(ds, {"runs": []}, TODAY)
-        self.assertLess(page.index("<details>"), page.index('<span class="id">C</span>'))
-        self.assertGreater(page.index("<details>"), page.index('<span class="id">B</span>'))
+        self.assertLess(page.index("<details"), page.index('<span class="id">C</span>'))
+        self.assertGreater(page.index("<details"), page.index('<span class="id">B</span>'))
 
     def test_real_files_validate(self):
         here = Path(__file__).resolve().parent
