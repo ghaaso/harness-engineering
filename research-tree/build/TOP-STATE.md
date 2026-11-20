@@ -148,3 +148,74 @@ start the analysis helper; then a blind Opus refuter (as `briefs/PILOT-PLAN-refu
 a table, the reduced plan. When he writes in your session, give B, C and D in a few lines and act on his go. Start
 nothing else; the preparation and the pilot wait for his decision after the analysis. Meter at 10:59 UTC: 81 % all
 models, 53 % Fable.
+
+## Top session 3 (started by top session 2; Opus, kind orchestrate), progress, 2026-11-20
+Clock note: top session 2 found today's times above about 1.5 h early (his approval of the analysis is stamped 12:39
+UTC in its transcript). Times below are read from `date -u`.
+- 12:55 UTC: meter 81 % all models, 53 % Fable (reset 2026-11-23 12:00 UTC). Started the analysis helper
+  (`analyse: complexity of the pilot plan`, Opus, limit 18 M) on `briefs/COMPLEXITY.md`. Wrote the blind review's
+  brief `briefs/COMPLEXITY-refute.md` (limit 12 M).
+- 13:00 UTC: top session 2 relayed the owner's words of 12:39 and 12:49 UTC (verbatim in the shared note
+  `side-session-notes/local_81c25c0a-6160-477f-b5a3-f978bfe951a4/top2-to-top3-2026-11-20.md`): S1 and S2 approved;
+  his go to design a router (a model and effort per operation inside a session) and to look into running without his
+  typed "go" (never around the app's controls); the tree drawing (D) asked; the audit (B) not yet his go. Top session 2
+  writes nothing more here or to the journal: this session is the one writer. To record in the library: his approval of
+  S1 and S2, the router directive, the running-without-him directive.
+- 13:05 UTC: one `cap:` put to him in this session for the router, running without him, the audit and the tree, each
+  of the first three with a blind review and a fold, one page: expected 79 M, cap 106 M (3 x (analyse 8.05 + refute
+  10.6 + fold 3.0) + tree 1 + page 1 + this session 12; cap at each Q3: 3 x (10.39 + 13.4 + 4.5) + 2 + 2 + 17). Not
+  started before his answer.
+- 13:05-13:30 UTC: the analysis returned (7.11 M); its blind review `refute/COMPLEXITY.md`: CORRECT, 14 findings
+  (7.47 M); all accepted with five decisions (`briefs/COMPLEXITY-fold.md`); the fold helper (`analyse: fold of the
+  complexity analysis`, Opus, limit 6 M) writes version 2, version 1 kept as `COMPLEXITY-v1.md`. Rulings r57-0040 to
+  r57-0043 appended to `library/journal/2026-11-20/r57.jsonl` and put on the board (not committed yet).
+- 13:33 UTC: the owner typed "Yes, 106 M" to the ask "cap: 106 M tokens for the router, running without you, the
+  faults audit and the tree?". Top session 3 (window about 215 K, hand-over point 247-273 K, r57-0171) hands the four
+  pieces to top session 4 and finishes the complexity round itself (fold, page, Artifact, commit, records).
+- 14:30 UTC: the owner raised the round's limit to 32 M ("Yes, 32 M"). The page (Sonnet helper, 0.54 M; the totals of e and e2 re-added, within 1 %) looked at once at 1870 px and published: private Artifact https://claude.ai/artifact/JQsXXJ43jk7CJBgbJCZeG9 (`reports/complexity.html`). The round's briefs, analysis v1 and v2, review and page committed on `build` through `hb`: 10174e8c. Records r57-0044, r57-0174, r57-0420 and the board on the working branch (the commit that holds this line). Round tokens about 32.1 M of 32 M.
+- Top session 3 closed (14:30 UTC): top session 4 is the one writer of this file and the journal from now on. Add the four pieces' results to the complexity page above (read it with the Artifact tool first).
+
+## Hand-over to top session 4 (2026-11-20, 13:35 UTC): the four pieces under the owner's cap of 106 M
+From top session 3 (Opus). Read first, from the files (r57-0009): CLAUDE.md; the board `library/INDEX.md`; this
+section and "Hand-over to top session 3" above (items B, C, D, the sketch for D, "Answered in chat"); the owner's two
+messages of 12:39 and 12:49 UTC verbatim, with top session 2's pointers for the router and for running without him:
+`C:/Users/User/AppData/Local/Claude-Data/claude_pzs8sxrjxfjjc/side-session-notes/local_81c25c0a-6160-477f-b5a3-f978bfe951a4/top2-to-top3-2026-11-20.md`;
+his rulings r57-0040 to r57-0043 (`bash library/lookup.sh -f <id>`; journal `library/journal/2026-11-20/r57.jsonl`).
+
+**The pieces.** You write each brief (models by the tier routes). Each of 1-3 is one Opus analyse helper, then one blind
+Opus refuter in a fresh context whose findings you decide (r57-0021) and have folded, as top session 3 did for the
+complexity analysis (`briefs/COMPLEXITY.md`, `-refute.md`, `-fold.md` show the form). Figures, M tokens, expected /
+limit: analyse 8.05 / 18.6 (E 1a analyse/opus, n=19), refute 10.6 / 18.5 (r57-0173, n=16), fold 3.0 / 6.
+1. **Router** (item C, r57-0041): a model and effort for each operation inside a session, not one model for a
+   session's life; built from what each model is measured to do; the objective is the two weekly meters (their weight
+   per model and for cache reads is not measured: name what measures it). Check it against the routes in force
+   (`.claude/hooks/tier-routes.json`), `docs/ORCHESTRATION-DESIGN-2026-10.md` section 3 (r57-0201, r57-0206 to
+   r57-0210), the build's `research-tree/build/ORCHESTRATION.md`, `check/E-tokens.md`, `check/G-models.md`, and the
+   orchestration document he remembers from the EMS workshop folder (`../EMS_workshop1`, r57-0155: find the file).
+   Every row marked measured or reasoned.
+2. **Running without his typed "go"** (r57-0042): the ways the app itself allows work to start without his turns, and
+   what each needs from him; never a way around the app's controls. Build on the complexity analysis version 2
+   (`research-tree/build/COMPLEXITY.md`: path b and variant e2); start this piece only once that file has its
+   "Changes from version 1" section, and do not redo it. Public documentation only, read raw, nothing of the project in
+   any request (CLAUDE.md rule 4, r57-0110). A probe of the app's behaviour is a small test: his word first (r57-0506).
+3. **Where the faults came from** (item B, r57-0040): for each fault on record (13 of the R57 round, 3 breaking in the
+   build's reviews, FX-W6, the pilot plan's gaps), whether a proven design was applied wrongly or our own glue was at
+   fault, and where a proven implementation would replace our code; from the records now; new papers only where an
+   adapted mechanism has no source, quoted from the paper (r57-0014).
+4. **The tree drawn** (item D): every agent its own node with a short name, lines for who starts whom, no models or
+   tokens on it (memory note `feedback-tree-is-nodes-and-lines.md`, mistake r57-0612); the sketch above. Sonnet build,
+   1 / 2.
+5. **His page**: add the results to the complexity page (a private Artifact; its URL will be in top session 3's closing
+   line below; read it with the Artifact tool before publishing to it), answer first. Sonnet build, 1 / 2.
+Your own turns: about 12 M. The cap for all of it is **106 M**: read usage before each fan-out (CLAUDE.md rule 5);
+stop new starts at the cap and ask him with `cap:` (r57-0038). Start pieces 1 and 3 together now (r57-0006); piece 2
+when its input exists.
+
+**Writers.** Top session 3 stays the one writer of this file and the journal until it writes "Top session 3 closed"
+as the last line of its section above; until then keep your progress in your shared notes folder. After that line you
+are the one writer. Commit your briefs and outputs on `build` through `hb` (`C:/Users/User/Documents/projects/hb`;
+`git -c core.longpaths=true`; `-F` message files ending with the Co-Authored-By line; identity Muhammad Bilal /
+Tempest-Zero); records and this file on the working branch `transfer/2026-11-16-embeddings-final-and-setup`. Never
+touch `docs/program/pipeline-diagram/` (the owner's own session). Do not merge or push `build`. Start nothing else: the
+research run waits for one plan with the router's models, put to him with `approve:` and `cap:` after these pieces
+(r57-0007). He wants plain words, the answer first, short; results on a page (CLAUDE.md rule 6).
