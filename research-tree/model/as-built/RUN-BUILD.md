@@ -14,6 +14,13 @@ in the same lane form; exit 3 means "more to do": the same command again resumes
 budget; the share is of the free memory F the root reads before the run (the process peaks at about 1.1 x the flag).
 Sizes marked "est." come from the ratio -B / R57 at the k=1 parts measured here (1.3-1.7; 17 for the close group).
 
+## 0. One run per branch S0.3 changed (branches.md line 63 and its rows)
+
+Q5 (row 1): section 3. L1 (row 3), S1 (row 4) and P1 (row 10, the re-alert): FXW-4R-B. B1 (row 5): FXW-6-B. R1 (row 6):
+FXW-5-B. E1 with N2 (row 11): FN-N2-B. FX-CGATE without `FX_Q5B` (row 1): every fence-group `-B` run. H4 (row 8, alerts
+go to the owner): the dead-man alert sets the owner's typing (`om`) in every run with the Q5 rule. Rows 2, 7, 9, 12-17
+change no actor the model has (thresholds, the untimed pace, RL not modelled: ABLATION-wake.md:196).
+
 ## 1. Regression: flags off, the R57 model
 
 | ID | part | M (share of F) | expected | output |
@@ -70,7 +77,7 @@ failures (ABLATION-fence.md:71 for the first and the last), with or without the 
 |---|---|---|---|---|---|
 | IDGAP-X (ablation) | k=1,cd=1 | 600 | 75,971 / 1 | every property holds | `IDGAP-X__k=1,cd=1.json` |
 | IDGAP-W | k=1,w=1 | 800 | 443,247 / 4 | **Slots F 19** (SlotsProc 19, SlotsR10 18), AlwaysCanResolve F 18, EventuallyResolves F 25: a false relay frees the slot of a session that lives | `IDGAP-W__k=1,w=1.json` |
-| IDGAP-WZ | k=2,z=1,w=1 | 800 | 378,638 / 4 | AlwaysCanResolve F 15, EventuallyResolves F 25 (a zombie with a false relay; trace not read yet) | `IDGAP-WZ__k=2,z=1,w=1.json` |
+| IDGAP-WZ | k=2,z=1,w=1 | 800 | 378,638 / 4 | AlwaysCanResolve F 15, EventuallyResolves F 25: the false relay gives the zombie a counted record, so `closesMissing` is false (lib.mjs:4229-4230) and the owner act never comes, while the verify sees growth for good; only FX-W5's `stuck` path, not in this group, would reach the owner | `IDGAP-WZ__k=2,z=1,w=1.json` |
 | FN-OUT-CLOSE-K2-B `--set BLD_VERIFY_RECORDS=0` (ablation) | k=1,cd=1 | 600 | 75,971 | every property holds; with the flag 1,049,518 | `CLOSE-NOREC__k=1,cd=1.json` |
 
 ## 6. The unrecorded close facts, the other value (stop_session interrupts only, archive_session waits for approval)
@@ -78,7 +85,7 @@ failures (ABLATION-fence.md:71 for the first and the last), with or without the 
 | ID | part | M | expected states / s | expected outcome | output |
 |---|---|---|---|---|---|
 | CLOSE-APPROVAL | k=1,cd=1 | 2500 | 1,725,799 / 16 | every property holds | `CLOSE-APPROVAL__k=1,cd=1.json` |
-| CLOSE-APPROVAL-R5 | k=0 | 800 | 167,145 / 2 | **Slots F 16**: the fence group's verify has no close records (no FX-CLOSE), so it confirms while the interrupted session lives (trace not read yet) | `CLOSE-APPROVAL-R5__k=0.json` |
+| CLOSE-APPROVAL-R5 | k=0 | 800 | 167,145 / 2 | **Slots F 16**: the fence group has no FX-CLOSE (the R57 split), so its verify confirms on no growth while the interrupted session lives and its slot is reused. On `build` FX-CLOSE's verify waits for a close-done record, so this is the split's, unless the hook records a close for a stop that only interrupts (not recorded: a pilot fact) | `CLOSE-APPROVAL-R5__k=0.json` |
 
 ## 7. Not in this draft
 
