@@ -1414,6 +1414,84 @@ test('FX-PLAN: a zombie-over row raises no row act, only class 25', async () => 
   });
 });
 
+// FX-CLOSE T3 (B1-3 "CLOSE places"; refute/PLAN.md findings 1 and 2): close-session end to end through the
+// watcher, with its empty process list. One tick raises `close-session <sid>` for each late folder session
+// of a stop-confirmed attempt (rows at stopped, admitted at e2 and bound, which continue, and an ended row);
+// a stop-requested row at verify_rounds 3 whose closes are missing raises nothing (the owner's). After the
+// owner's `closed` acts (status owner, the script) the next ticks raise each row's next act. With N_max 1
+// the orphan holds the only slot: replace-start waits on it, and close-session is what frees it.
+test('FX-CLOSE T3 watch: close-session due on continuing and ended rows; the owner closed moves each on; closesMissing holds the verify; the orphan holds the slot', async () => {
+  const conf = (task) => att(task, 1, { stop: 'confirmed', session: newSid() });
+  const lateIn = (ctx, task, s = newSid()) => {
+    const dir = path.join(ctx.root, 'wt', `${task}-e1`);
+    writeTranscript(path.join(ctx.root, 'transcripts', LIB.projectDirName(dir), s + '.jsonl'), { sessionId: s, cwd: dir });
+    return s;
+  };
+  const closed = (ctx, s) => {
+    const qf = path.join(ctx.root, 'plan', 'notes', 'closed.txt');
+    if (!fs.existsSync(qf)) w(qf, 'I closed those sessions myself');
+    const r = run(ctx.root, 'status', ['owner', '--act', 'closed', '--subject', s, '--quote-file', qf, '--root', ctx.root, '--ce', '1']);
+    assert.equal(r.exit, 0, `owner closed: ${r.stdout} ${r.stderr}`);
+  };
+  const lastSeq = (ctx) => ledgerLines(ctx.root).at(-1).seq;
+  const dueSince = (ctx, seq) => Object.fromEntries(actEvents(ctx).filter((l) => l.seq > seq && l.task).map((l) => [l.task, l.data.detail.act]));
+  await withRoot({ thr: { coalesce_ticks: 0, N_max: 20 } }, async (ctx) => {
+    const sB = newSid();
+    const sH = newSid();
+    setTasks(ctx, [
+      row('f1-cont', { step: 'stopped', attempts: [conf('f1-cont')] }),
+      row('f1-adm', { step: 'admitted', epoch: 2, attempts: [conf('f1-adm'), att('f1-adm', 2)] }),
+      row('f1-bound', { step: 'bound', epoch: 2, session: sB, attempts: [conf('f1-bound'), att('f1-bound', 2, { session: sB })] }),
+      row('f1-ended', { state: 'committed', step: 'stopped', commits: { pack: 'c'.repeat(64) }, attempts: [conf('f1-ended')] }),
+      { ...row('f1-sr', { step: 'stop-requested', epoch: 2, reason: 'stall', attempts: [att('f1-sr', 1, { session: sH, stop: 'unconfirmed' }), att('f1-sr', 2)] }), verify_rounds: 3 },
+    ]);
+    const [l1, l2, l3, l4] = ['f1-cont', 'f1-adm', 'f1-bound', 'f1-ended'].map((t) => lateIn(ctx, t));
+    w(path.join(ctx.root, 'wt', 'f1-sr-e1', 'claim.json'), LIB.claimRecord(sH));
+    const s2 = lateIn(ctx, 'f1-sr');
+    assertLine(tick(ctx), 17);
+    assert.deepEqual(dueSince(ctx, 0), {
+      'f1-cont': `close-session ${l1}`, 'f1-adm': `close-session ${l2}`, 'f1-bound': `close-session ${l3}`, 'f1-ended': `close-session ${l4}`,
+    }, 'one close-session per late session; f1-sr, its closes missing at three rounds, is the owner\'s');
+    ackUpTo(ctx, lastSeq(ctx));
+    for (const s of [l1, l2, l3, l4, sH]) closed(ctx, s);
+    let mark = lastSeq(ctx);
+    assertLine(tick(ctx), 17);
+    assert.deepEqual(dueSince(ctx, mark), { 'f1-cont': 'replace-start', 'f1-adm': 'start-session' },
+      'bound and ended rows are none; f1-sr still misses the close of its other folder session');
+    ackUpTo(ctx, lastSeq(ctx));
+    closed(ctx, s2);
+    mark = lastSeq(ctx);
+    assertLine(tick(ctx), 17);
+    assert.deepEqual(dueSince(ctx, mark), { 'f1-sr': 'stop-verify@-' }, 'every close counted: the verify is due');
+  });
+  await withRoot({ thr: { coalesce_ticks: 0, N_max: 1 } }, async (ctx) => {
+    setTasks(ctx, [row('f1-cont', { step: 'stopped', attempts: [conf('f1-cont')] })]);
+    const s = lateIn(ctx, 'f1-cont');
+    assert.deepEqual(actsOf(assertLine(tick(ctx), 17)), [`close-session ${s}`], 'the orphan holds the only slot: its close is due');
+    ackUpTo(ctx, lastSeq(ctx));
+    closed(ctx, s);
+    assert.deepEqual(actsOf(assertLine(tick(ctx), 17)), ['replace-start'], 'the close freed the slot');
+  });
+});
+
+// FX-CLOSE (c), N3 (spec/stop.mjs.md FX-CLOSE): the stop-verify act also waits for stop_verify_ms of wall
+// time since the sample's `at`, or the verify could only wait (exit 6). A sample without `at` keeps the tick
+// rule alone (M3 above).
+test('FX-CLOSE T3 watch: stop-verify waits for stop_verify_ms of wall time since the sample, as well as the ticks', async () => {
+  await withRoot({ thr: { coalesce_ticks: 0, stop_verify_deltas: 2, stop_verify_ms: 60000 } }, async (ctx) => {
+    const task = 'f1-research';
+    const at = (ms) => new Date(Date.parse(NOW) + ms).toISOString();
+    forgeWatcher(ctx, 100);
+    setTasks(ctx, [row(task, { step: 'stop-requested', epoch: 2, attempts: [att(task, 1, { stop: 'requested' }), att(task, 2)] })]);
+    w(path.join(ctx.root, 'run', 'stop-sample', `${task}-e1.json`), { schema_version: 1, task, epoch: 1, target: 1, tick: 100, sizes: {}, at: NOW });
+    assertLine(tick(ctx), 0); // tick 101: too few ticks
+    assertLine(tick(ctx, [], { now: at(1000) }), 0); // tick 102: the ticks are there, 1 s of wall time is not
+    assertLine(tick(ctx, [], { now: at(59999) }), 0); // tick 103
+    assert.equal(actEvents(ctx).length, 0);
+    assert.deepEqual(actsOf(assertLine(tick(ctx, [], { now: at(60000) }), 17)), ['stop-verify@100']); // tick 104
+  });
+});
+
 test('M3 act due: a drain of this ce with no slot used is handover', async () => {
   await withRoot({ thr: { coalesce_ticks: 0 } }, async (ctx) => {
     addLine(ctx.root, { kind: 'drain', data: { window: 1, w_star: 1 } });

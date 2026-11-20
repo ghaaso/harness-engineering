@@ -1061,12 +1061,17 @@ function postText(hook) {
 }
 
 // The close's outcome for target t from the result text (CGATE M2), or null: write nothing.
-function closeOutcome(text, t) {
-  const s = text.trimStart();
+// FX-CLOSE anchors it (refute/CGATE.md item 3): `stopped` only from the archive tool, whose answer
+// begins `Archived session <t>` or is exactly `Session <t> is already archived.`; `no-such-session`
+// only when the whole answer is `Session <t> not found.`. A sentence quoted inside another answer (a
+// session's title in stop_session's) or wrapped in more text writes nothing: the owner's `closed`.
+const ARCHIVE_TOOL = 'mcp__ccd_session_mgmt__archive_session';
+function closeOutcome(text, t, archive) {
+  const s = text.trim();
   const head = `Archived session ${t}`;
-  if (s.startsWith(head) && (s.startsWith(' (', head.length) || s.startsWith('.', head.length))) return 'stopped';
-  if (text.includes(`Session ${t} is already archived.`)) return 'stopped';
-  if (text.includes(`Session ${t} not found.`)) return 'no-such-session';
+  if (archive && s.startsWith(head) && (s.startsWith(' (', head.length) || s.startsWith('.', head.length))) return 'stopped';
+  if (archive && s === `Session ${t} is already archived.`) return 'stopped';
+  if (s === `Session ${t} not found.`) return 'no-such-session';
   return null;
 }
 
@@ -1078,7 +1083,7 @@ function postToolUse(pass) {
   const { hook, role, toolName } = pass;
   if (role !== 'coordinator' || !isSessionTool(pass, 'stop')) throw new Deny('bad-input', `${hook.hook_event_name} of ${role} ${oneLine(toolName)}`);
   const t = stopTarget(pass);
-  const outcome = closeOutcome(postText(hook), t);
+  const outcome = closeOutcome(postText(hook), t, toolName === ARCHIVE_TOOL);
   if (outcome === null) return;
   const sid = callerSession(pass);
   if (!sid) throw new Deny('bad-input', 'session_id is not a UUID');

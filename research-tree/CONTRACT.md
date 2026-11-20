@@ -357,6 +357,19 @@ since its last attempt (`committed`, or `cut`/`dropped` before any start) it tar
 A step machine call that finds another step exits 65 and changes nothing; a call whose effect is
 already there (same epoch, same step reached, same session) exits 0 (idempotent).
 
+**FX-CLOSE (round 3; FIX-fence section 4, rev 4 H3, rev 5 point 1).** `stop request` also takes a row
+committed at `started` (the claim holder was never bound). `stop verify` confirms only when (a) the target
+attempt's claim is a tombstone or the claim holder's close is recorded (no claim: the attempt's
+`session`), (b) every other folder session's close is recorded, and (c) nothing grew and no process
+names the attempt over `stop_verify_deltas` ticks **and** at least `stop_verify_ms` of wall time since
+the sample (N3; before both, exit 6 `waiting`). A close is recorded by `run/close/done/<CLI id>.json`,
+counted by H3 (`lib.closeDoneCounts`: `stopped` or `owner`; `no-such-session` only for this
+coordinator's own start or when the process list matches nothing). Otherwise `stop` = unconfirmed,
+`verify_rounds` + 1 (row field, absent = 0; reset to 0 by every fence that moves the epoch), reason
+`close-missing` naming the CLI ids; FX-PLAN asks the owner at `verify_rounds` >= 3 while a close is
+missing. The hook names its close records by the app's id (`local_<uuid>`), so until a map from the
+app's id to the CLI id exists, a close counted here is the owner's `closed` act (departures/CGATE.md 1).
+
 ### 3.7 The ledger line [ledger-line] — `run/ledger.jsonl`
 `{seq: int ≥1, prev: 64 hex, hash: 64 hex, ts: iso, ce: int?, writer: script name, writer_sha: 64 hex,
 kind, task?, epoch?, data: {}}`; `hash = sha256hex(prev + canonical(line without hash))`; the first
@@ -721,7 +734,8 @@ as written there; the spec is the single place of their fields.
   makes the case root a git repository whose one commit holds the case's `tcb/` and sets
   `run/coord.json` `tcb_commit` to it (the only way an `fsck` case can pass the tcb check).
 - [stop-sample] `run/stop-sample/<task>-e<e>.json` (stop): `{schema_version, task, epoch, target,
-  tick, sizes: {<path relative to transcripts_root>: bytes}}`.
+  tick, at, sizes: {<path relative to transcripts_root>: bytes}}`; `at` (FX-CLOSE) the sample's wall time,
+  a sample without it is taken again.
 - [unit-costs] `plan/unit-costs.json`: as `spec/cost.mjs.md`.
 
 ### 3.23 Outcome log [outcome-slot] — `wt/<task>-e<e>/outcome/<j>.json`

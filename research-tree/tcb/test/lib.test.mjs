@@ -3259,7 +3259,7 @@ test('T96x FX-CLAIM slotCount step 7: a folder session that is not its attempt\'
 // T1, the total table (FIX-JOIN point 13): every (state, step) of the tasks schema x claim {none, session,
 // tombstone} x start record x lease, Q5a only (branches row 1), gives exactly one act of the planner's set;
 // each script act is accepted by its script's guard (a dry run in a run root: no wrong-step, stale-epoch,
-// usage or not-claimed). committed at started -> stop-request waits for FX-CLOSE step 3 (a todo test).
+// usage or not-claimed). committed at started -> stop-request is accepted since FX-CLOSE step 3 (its own test).
 const PLAN_ACT_RE = /^(none|owner|replace-fence|replace-start|stop-request|stop-session|stop-verify|start-session|bind|audit|commit|replace-fence --reason crash --if-unclaimed|close-session [0-9a-f-]{36})$/;
 const PLAN_STATES = ['planned', 'active', 'parked', 'committed', 'cut', 'failed', 'dropped'];
 const PLAN_STEPS = ['none', 'fenced', 'stop-requested', 'stopped', 'admitted', 'started', 'bound'];
@@ -3304,7 +3304,7 @@ const planScriptCase = async (state, step, claim, act) => {
 test('FX-PLAN T1 total table: the script guard accepts each script act', async () => {
   const seen = new Set();
   for (const state of PLAN_STATES) for (const step of PLAN_STEPS) for (const claim of ['none', 'session']) for (const leaseExpired of [false, true]) {
-    if (state === 'committed' && step === 'started') continue; // the todo test below
+    if (state === 'committed' && step === 'started') continue; // its own test below (FX-CLOSE step 3)
     const act = lib.planAct(planRow(state, step), { claim, start: true, leaseExpired, fenced: null, sessions: [] });
     if (!['bind', 'stop-request', 'replace-fence', 'replace-fence --reason crash --if-unclaimed'].includes(act)) continue;
     const key = `${act}|${state}|${step}|${claim}`;
@@ -3314,7 +3314,7 @@ test('FX-PLAN T1 total table: the script guard accepts each script act', async (
   }
   assert.ok(seen.size >= 6, `script cases: ${[...seen].join(', ')}`);
 });
-test('FX-PLAN T1 total table: committed at started -> stop-request, accepted once FX-CLOSE step 3 lands', { todo: 'FX-CLOSE step 3 (B1-3)' }, async () => {
+test('FX-PLAN T1 total table: committed at started -> stop-request, accepted by FX-CLOSE step 3', async () => {
   assert.equal(lib.planAct(planRow('committed', 'started'), { claim: 'session', sessions: [] }), 'stop-request');
   await planScriptCase('committed', 'started', 'session', 'stop-request');
 });
@@ -3423,4 +3423,58 @@ rt('FX-W3 armedState: each why of not armed; armed with turn_seq; the hook\'s io
   fs.rmSync(P.armExited(slot.pid, slot.start_time));
   await lib.withRunLock(root, { script: 'test', ce: 1, proc: fproc(), now: NOW, requireArmed: true }, () => { called++; });
   assert.equal(called, 1, 'armed: fn runs');
+});
+
+// ------------------------------------------------------------------ FX-CLOSE (FIX-fence section 4; B1-3)
+// The facts verify and the planner read from the files (refute/PLAN.md finding 2): the log's fenced
+// reason, a tampered log, an invalid claim, and closesMissing with H3; lib.fence resets verify_rounds.
+rt('FX-CLOSE T2 planFacts reads the fenced reason, a tampered log, an invalid claim and closesMissing from the files; lib.fence resets verify_rounds', async (root) => {
+  const dirOf = (e) => P(root, 'wt', `f1-research-e${e}`);
+  const a1 = (o = {}) => ({ ...att('f1-research', 1, o), folder: 'wt/f1-research-e1' });
+  fs.mkdirSync(P(dirOf(1), 'outcome'), { recursive: true });
+  const bound = mkRow({ state: 'active', step: 'bound', epoch: 1, reason: 'first', session: SID, attempts: [a1({ session: SID })] });
+  wj(P(dirOf(1), 'claim.json'), lib.claimRecord(SID));
+  lib.outcomeAppend(dirOf(1), { kind: 'fenced', task: 'f1-research', epoch: 1, reason: 'stall' }, { row: bound });
+  let f = lib.planFacts(root, bound, {});
+  assert.equal(f.fenced, 'stall', 'the fenced reason is read from the log');
+  assert.equal(lib.planAct(bound, f), 'replace-fence --reason stall');
+  fs.writeFileSync(P(dirOf(1), 'outcome', '1.json'), '{');
+  f = lib.planFacts(root, bound, {});
+  assert.deepEqual([f.tamper, f.fenced, lib.planAct(bound, f)], [true, null, 'owner'], 'a slot that does not parse is tamper');
+  fs.rmSync(P(dirOf(1), 'outcome'), { recursive: true });
+  fs.writeFileSync(P(dirOf(1), 'claim.json'), '{');
+  const adm = mkRow({ state: 'active', step: 'admitted', epoch: 1, reason: 'first', attempts: [a1()] });
+  f = lib.planFacts(root, adm, {});
+  assert.deepEqual([f.claim, lib.planAct(adm, f)], ['invalid', 'owner'], 'a claim that does not parse');
+  // closesMissing of a stop-requested row (target e - 1 = 1): the claim holder, then another folder session (H3)
+  wj(P(dirOf(1), 'claim.json'), lib.claimRecord(SID));
+  const S2 = CL(2);
+  const sr = mkRow({ state: 'active', step: 'stop-requested', epoch: 2, reason: 'stall', verify_rounds: 3, attempts: [a1({ session: SID, stop: 'unconfirmed' }), { ...att('f1-research', 2), folder: 'wt/f1-research-e2' }] });
+  const tr = P(root, 'transcripts');
+  for (const x of [SID, S2]) await helpers.fakeTranscript(P(tr, lib.projectDirName(dirOf(1)), `${x}.jsonl`), { sessionId: x, cwd: dirOf(1), calls: [] });
+  const done = (x, o) => wj(P(root, 'run', 'close', 'done', `${x}.json`), { kind: 'close-done', session: x, by: null, ...o });
+  const facts = async (procList) => {
+    const counted = [];
+    await lib.slotCount([sr], procList, tr, { root, counted });
+    return lib.planFacts(root, sr, { counted, procList });
+  };
+  assert.equal((await facts([])).closesMissing, true, 'no close recorded');
+  assert.equal(lib.planAct(sr, await facts([])), 'owner', 'three rounds with a close missing: owner');
+  done(SID, { outcome: 'owner' });
+  assert.equal((await facts([])).closesMissing, true, 'the holder counts, the other folder session does not');
+  done(S2, { outcome: 'no-such-session', by: CL(8) });
+  assert.equal((await facts(null)).closesMissing, true, 'no-such-session, not our start, no process list: missing');
+  assert.equal((await facts([])).closesMissing, false, 'no-such-session and a list that matches nothing: counts');
+  wj(P(dirOf(1), 'start.json'), { kind: 'start', session: CL(8), tool_use_id: null, tick: 1, at: '2026-11-20T10:00:00.000Z' });
+  assert.equal((await facts(null)).closesMissing, false, 'no-such-session for our own start: counts');
+  assert.equal(lib.planAct(sr, await facts(null)), 'stop-verify', 'every close counted: the rule ends');
+  fs.rmSync(P(root, 'run', 'close', 'done', `${SID}.json`));
+  assert.equal((await facts(null)).closesMissing, true, 'the holder close missing again');
+  // lib.fence: every fence that moves the epoch resets verify_rounds (the model's t.vr = 0); no field, none added
+  await seedRows(root, [{ ...boundRow(), verify_rounds: 3 }, boundRow('f1-other')]);
+  await doFence(root, { reason: 'stall' });
+  await doFence(root, { task: 'f1-other', reason: 'stall' });
+  const r = await rowOf(root);
+  assert.deepEqual([r.epoch, r.step, r.verify_rounds], [2, 'fenced', 0]);
+  assert.equal('verify_rounds' in (await rowOf(root, 'f1-other')), false);
 });

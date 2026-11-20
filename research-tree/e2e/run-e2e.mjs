@@ -403,6 +403,7 @@ async function main() {
   const APPROVAL_Q = 'I approve this protocol and plan as written.';
   put('plan/notes/approve-protocol.txt', APPROVAL_Q);
   put('plan/notes/approve-plan.txt', APPROVAL_Q);
+  put('plan/notes/closed.txt', 'I closed the session; its window and process are gone.'); // FX-CLOSE: quoted by the owner's `closed` act (closeAttempt)
   put('plan/protocols/f1.json', {
     schema_version: 1, kind: 'protocol', field: 'f1', question_ids: ['f1-a-01', 'f1-a-02'],
     criteria: { include: [{ code: 'I1', text: 'reports a number with a baseline' }], exclude: [{ code: 'E1', text: 'no baseline' }] },
@@ -641,9 +642,11 @@ async function main() {
   chk('FAULT replaced attempt: the late write is logged (zombie-write) and not stored', ofKind('zombie-write').length > zBefore && !exists(P('store', 'objects', `${lateId}.json`)) && !exists(P('store', 'commits', 'f1-control.pack.json')), `zombie lines ${ofKind('zombie-write').length - zBefore}`, 'commit.mjs');
   await sc('watch', ['--once', '--no-intake'], { free: true, exit: [0, 11, 12, 13, 14, 15, 16, 17], name: 'watch --once after the replaced attempt\'s late writes (its READY was denied: no copy for the zombie-write telemetry)' });
   await sc('stop', ['request', '--task', 'f1-control', '--epoch', '2'], { name: 'stop request (fence first, then stop)', check: () => (rowOf('f1-control').step === 'stop-requested' ? true : 'step ' + rowOf('f1-control').step) });
+  await closeAttempt('f1-control', 1, 'the stalled attempt');
   await sc('stop', ['verify', '--task', 'f1-control', '--epoch', '2'], { exit: 6, name: 'stop verify samples the transcript sizes (exit 6)' });
   for (let i = 0; i < 2; i += 1) await sc('watch', ['--once', '--no-intake'], { free: true, exit: [0, 11, 12, 13, 14, 15, 16, 17], name: `watch --once tick (stop_verify_deltas ${i + 1}/2)` });
-  await sc('stop', ['verify', '--task', 'f1-control', '--epoch', '2'], { name: 'stop verify: no growth, no survivors -> stopped', check: () => (rowOf('f1-control').step === 'stopped' && LIB.attemptOf(rowOf('f1-control'), 1).stop === 'confirmed' ? true : JSON.stringify(rowOf('f1-control').step)) });
+  tick(LIB.thresholds(ROOT).get('stop_verify_ms')); // FX-CLOSE (c), N3: the no-growth window also needs stop_verify_ms of wall time
+  await sc('stop', ['verify', '--task', 'f1-control', '--epoch', '2'], { name: 'stop verify: no growth, no survivors, the close recorded -> stopped', check: () => (rowOf('f1-control').step === 'stopped' && LIB.attemptOf(rowOf('f1-control'), 1).stop === 'confirmed' ? true : JSON.stringify(rowOf('f1-control').step)) });
   const C2 = await beginAttempt('f1-control', 2, { sid: sidOf(31), name: 'f1-control' });
   chk('f1-control e2: checkpoint prefix of e1 enters in/checkpoint (R7)', exists(path.join(C2.folder, 'in', 'checkpoint', 'prefix', 'notes.txt')) && rowOf('f1-control').state === 'active', '', 'replace.mjs');
   await bind(C2, 'f1-control e2');
@@ -766,14 +769,31 @@ async function main() {
   return finish();
 }
 
-// A committed row's session still counts as a slot until `stop verify` confirms it gone (decision 17).
+// FX-CLOSE (a), (b): stop verify confirms only once the close of the attempt's claim holder (else its bound session),
+// and of every other session whose transcript has the attempt's folder as cwd, is recorded. Here each attempt has one
+// session, its claim holder. The app closes a session, and no hook record names a close by the CLI's id yet, so this
+// process stands in for the owner: his `closed` act records it (run/close/done/<sid>.json, outcome owner).
+async function closeAttempt(task, epoch, label) {
+  let sid = null;
+  try {
+    const a = LIB.attemptOf(rowOf(task), epoch);
+    const c = LIB.readClaim(a.folder ? path.resolve(ROOT, a.folder) : att(task, epoch));
+    sid = c.kind === 'session' ? c.session_id : (a.session || null);
+  } catch { sid = null; }
+  return sc('status', ['owner', '--act', 'closed', '--subject', String(sid), '--quote-file', P('plan', 'notes', 'closed.txt')], { name: `status owner --act closed: ${task} e${epoch}'s session (${label})`, check: () => (exists(P('run', 'close', 'done', `${sid}.json`)) ? true : `no run/close/done/${sid}.json`) });
+}
+
+// A committed row's session still counts as a slot until `stop verify` confirms it gone (decision 17); FX-CLOSE: the
+// confirm needs the session's close (closeAttempt) and stop_verify_ms of wall time since the sample as well as the ticks.
 async function stopCommitted(label) {
   const rows = tasks().tasks.filter((r) => r.state === 'committed').map((r) => ({ task: r.task, epoch: r.epoch }))
     .filter(({ task, epoch }) => { try { return LIB.attemptOf(rowOf(task), epoch).stop !== 'confirmed'; } catch { return true; } });
   if (rows.length && !exists(P('run', 'watcher.json'))) await sc('watch', ['--once', '--no-intake'], { free: true, exit: [0, 10, 11, 12, 13, 14, 15, 16, 17], name: 'watch --once (first tick: watcher.json, the stop sample needs ticks_total)' });
   for (const { task, epoch } of rows) await sc('stop', ['request', '--task', task, '--epoch', String(epoch)], { name: `stop request ${task} (committed, ${label})` });
+  for (const { task, epoch } of rows) await closeAttempt(task, epoch, label);
   for (const { task, epoch } of rows) await sc('stop', ['verify', '--task', task, '--epoch', String(epoch)], { exit: 6, name: `stop verify ${task}: sample` });
   for (let i = 0; i < 2; i += 1) await sc('watch', ['--once', '--no-intake'], { free: true, exit: [0, 10, 11, 12, 13, 14, 15, 16, 17], name: `watch --once tick for the stops (${i + 1}/2)` });
+  if (rows.length) tick(LIB.thresholds(ROOT).get('stop_verify_ms')); // FX-CLOSE (c), N3
   for (const { task, epoch } of rows) await sc('stop', ['verify', '--task', task, '--epoch', String(epoch)], { name: `stop verify ${task}: confirmed`, check: () => (rowOf(task).state === 'committed' && LIB.attemptOf(rowOf(task), epoch).stop === 'confirmed' ? true : 'stop ' + LIB.attemptOf(rowOf(task), epoch).stop) });
 }
 

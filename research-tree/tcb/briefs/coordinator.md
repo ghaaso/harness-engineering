@@ -93,7 +93,14 @@ fence won; finish that fence first. Exit 3 `outcome-tamper`: stop and report it.
 
 ### 5c. Close a session: `stop request` to the claim holder, the close tool (5d), then `stop verify` (FX-CLOSE)
 
-(empty until FX-CLOSE)
+`stop request` names the session to close (`session`, the claim holder; after a tombstone, `sessions`). Close it
+and every other session of that attempt folder with the close tool (5d), then run `stop verify` when its act is
+due: the first call samples (exit 6), a later one compares once `stop_verify_deltas` ticks and `stop_verify_ms`
+have passed (exit 6 `waiting` before). Exit 1 `stop-unconfirmed` with reason `close-missing` lists the CLI ids
+whose close is not recorded. The hook records your close under the app's id, which verify cannot read yet, so
+tell the owner which sessions you closed; only on the owner's own words, record each with `status.mjs owner --act
+closed --subject <CLI id> --quote-file P` (the words in P). Never write that act without them. After three
+unconfirmed rounds `next` is `owner`.
 
 ### 5d. The close tool: the hook records the intent before the call and the close after it (FX-CGATE)
 
