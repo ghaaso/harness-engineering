@@ -1208,5 +1208,198 @@ test('FX-W3 endturn: turn-stale writes nothing; K above read_seq is acked-ahead;
   });
 });
 
+// ------------------------------------------------ FX-W4: the dead-man (status --deadman)
+// FIX-wake.md FX-W4 steps 1-3, rev 5 N1 (the re-alert every realert_runs runs, branch P1), FIX-JOIN point
+// 1.4 (runs_no_watcher) and departures/W4.md. Each call is one run of the scheduled task; the tests call the
+// script as the task does and read run/deadman.json, the dead-man's one file. tcb/settings/deadman-task.xml
+// is read as text: no test hands it to schtasks or the Task Scheduler.
+const dmPath = (ctx) => path.join(ctx.root, 'run', 'deadman.json');
+const deadman = (ctx, extra = [], now = NOW) => run(ctx.root, ['--deadman', '--root', ctx.root, '--now', now, ...extra]);
+const dmAlerts = (j) => j.reasons.find((r) => r.code === 'deadman-alert')?.detail ?? null;
+const watcherPath = (ctx) => path.join(ctx.root, 'run', 'watcher.json');
+const setStuck = (ctx, stuck) => w(watcherPath(ctx), { ...J(watcherPath(ctx)), stuck });
+const unarmedPath = (ctx, pid, st = '2026-11-17T09:02:00.0000000Z') => path.join(armDir(ctx), `unarmed-${pid}-${st.replace(/[^0-9A-Za-z]/g, '')}.json`);
+function setThr(ctx, thr) {
+  const p = path.join(ctx.root, 'tcb', 'thresholds.json');
+  const doc = J(p);
+  for (const [k, v] of Object.entries(thr)) doc.params[k] = { ...(doc.params[k] ?? { unit: 'test value', source: 'guess', gate: true }), value: v };
+  w(p, doc);
+}
+// one run whose exit is 0 or 1: the stdout line checked, the alerts of this run returned ([] at exit 0)
+function dmRun(ctx, extra = [], now = NOW) {
+  const res = deadman(ctx, extra, now);
+  const j = assertLine(res, res.exit === 1 ? 1 : 0);
+  return { j, alerts: j.exit === 1 ? dmAlerts(j).alerts : [] };
+}
+
+test('FX-W4 dead-man, the list answering: no records count runs_no_alarm and runs_no_watcher, two runs alert both; a live alarm and watcher of the ce clear them; an exit marker or a missing watcher.lock counts; the list down leaves the counts; a new ce restarts them', async () => {
+  await withRoot({}, async (ctx) => {
+    let j = assertLine(deadman(ctx), 0);
+    assert.deepEqual([j.result.list, j.result.alarm, j.result.watcher, j.result.state, j.result.written], ['answered', 'none', 'none', 'fresh', true]);
+    let f = J(dmPath(ctx));
+    assert.deepEqual([f.ce, f.runs, f.runs_no_alarm, f.runs_no_watcher, f.list_hist, f.alerted, f.at], [1, 1, 1, 1, [false], {}, NOW]);
+    assert.equal(typeof f.boot, 'string', 'the boot of the list that answered');
+    j = assertLine(deadman(ctx), 1);
+    assert.deepEqual(dmAlerts(j), { alerts: ['no-alarm', 'no-watcher'], causes: ['no-alarm', 'no-watcher'] });
+    assert.deepEqual(J(dmPath(ctx)).alerted, { 'no-alarm': 0, 'no-watcher': 0 });
+    // a live alarm (alarm.json and slot 1 of ce 1) and a live watcher (watcher.json and watcher.lock)
+    const a = liveAlarm(ctx);
+    liveWatcher(ctx);
+    j = assertLine(deadman(ctx), 0);
+    assert.deepEqual([j.result.alarm, j.result.watcher, j.result.causes], ['alive', 'alive', []]);
+    f = J(dmPath(ctx));
+    assert.deepEqual([f.runs_no_alarm, f.runs_no_watcher, f.alerted], [0, 0, {}]);
+    // the alarm's exit marker, and watcher.lock gone: both count though both processes live
+    putMarker(ctx, a);
+    const lockFile = path.join(ctx.root, 'run', 'watcher.lock');
+    const lock = fs.readFileSync(lockFile);
+    fs.rmSync(lockFile);
+    j = assertLine(deadman(ctx), 0);
+    assert.deepEqual([j.result.alarm, j.result.watcher, j.result.runs_no_alarm, j.result.runs_no_watcher], ['none', 'none', 1, 1]);
+    // the list down, the marker gone, the lock back: both unknown, the counts unchanged
+    fs.rmSync(markFile(ctx, a));
+    w(lockFile, lock);
+    setThr(ctx, NO_LIST);
+    j = assertLine(deadman(ctx), 0);
+    assert.deepEqual([j.result.list, j.result.alarm, j.result.watcher], ['failed', 'unknown', 'unknown']);
+    f = J(dmPath(ctx));
+    assert.deepEqual([f.runs_no_alarm, f.runs_no_watcher, f.list_hist], [1, 1, [false, false, false, false, true]]);
+    // a new ce (the successor's first run): the records of ce 1 are none and the counts restart (1, no alert)
+    w(path.join(ctx.root, 'run', 'coord.json'), { schema_version: 1, ce: 2, started_at: NOW, tcb_commit: COMMIT });
+    j = assertLine(deadman(ctx), 0);
+    assert.deepEqual([j.result.alarm, j.result.watcher], ['none', 'none']);
+    f = J(dmPath(ctx));
+    assert.deepEqual([f.ce, f.runs, f.runs_no_alarm, f.runs_no_watcher, f.list_hist], [2, 6, 1, 1, [false, false, false, true, true]]);
+  });
+});
+
+test('FX-W4 dead-man, the list down: unknown sources leave the counts; 3 of the last 5 runs alert list-failing; stuck, busy_ticks, unarmed_turns and two unarmed records of the current turn_seq alert at their thresholds, not below', async () => {
+  await withRoot({ thr: { ...NO_LIST, busy_alert_ticks: 5 } }, async (ctx) => {
+    wakeRecords(ctx);
+    let j = assertLine(deadman(ctx), 0);
+    assert.deepEqual([j.result.list, j.result.alarm, j.result.watcher], ['failed', 'unknown', 'unknown']);
+    assert.equal(J(dmPath(ctx)).boot, null, 'no boot without a list or --boot');
+    assertLine(deadman(ctx), 0);
+    j = assertLine(deadman(ctx), 1);
+    assert.deepEqual(dmAlerts(j), { alerts: ['list-failing'], causes: ['list-failing'] });
+    let f = J(dmPath(ctx));
+    assert.deepEqual([f.runs_no_alarm, f.runs_no_watcher, f.list_hist], [0, 0, [true, true, true]]);
+    // the four other causes, each at its threshold (busy_alert_ticks 5 is read from thresholds.json)
+    setStuck(ctx, ['act-due:t1']);
+    w(path.join(ctx.root, 'run', 'watcher-busy.json'), { ce: 1, busy_ticks: 5 });
+    w(turnPath(ctx), { ce: 1, turn_seq: 7, read_seq: 1, arm: 'unconfirmed', slots: [], unarmed_turns: 3 });
+    w(unarmedPath(ctx, 999101), { ce: 1, turn_seq: 7 });
+    w(unarmedPath(ctx, 999102), { ce: 1, turn_seq: 7 });
+    j = assertLine(deadman(ctx), 1);
+    assert.deepEqual(dmAlerts(j), {
+      alerts: ['stuck', 'run-lock-busy', 'unarmed-turns', 'unarmed-records'],
+      causes: ['list-failing', 'stuck', 'run-lock-busy', 'unarmed-turns', 'unarmed-records'],
+    });
+    assert.deepEqual([j.result.stuck, j.result.busy_ticks, j.result.unarmed_turns, j.result.turn_seq, j.result.unarmed_same_turn], [['act-due:t1'], 5, 3, 7, 2]);
+    // one below each: stuck empty, busy 4, unarmed_turns 2, turn_seq 8 with one record of ce 1 and one of ce 2 at it
+    setStuck(ctx, []);
+    w(path.join(ctx.root, 'run', 'watcher-busy.json'), { ce: 1, busy_ticks: 4 });
+    w(turnPath(ctx), { ce: 1, turn_seq: 8, read_seq: 1, arm: 'unconfirmed', slots: [], unarmed_turns: 2 });
+    w(unarmedPath(ctx, 999103), { ce: 1, turn_seq: 8 });
+    w(unarmedPath(ctx, 999104), { ce: 2, turn_seq: 8 });
+    j = assertLine(deadman(ctx), 0);
+    assert.deepEqual([j.result.causes, j.result.alerts, j.result.unarmed_same_turn], [['list-failing'], [], 1]);
+    f = J(dmPath(ctx));
+    assert.deepEqual([f.runs_no_alarm, f.runs_no_watcher, f.list_hist, f.alerted], [0, 0, [true, true, true, true, true], { 'list-failing': 2 }]);
+  });
+});
+
+test('FX-W4 dead-man re-alert (rev 5 N1, P1): a cause alerts at its onset and again every realert_runs runs while it holds; one run without it ends the onset', async () => {
+  await withRoot({ thr: NO_LIST }, async (ctx) => {
+    wakeRecords(ctx); // unknown sources: only stuck and list-failing can hold
+    setStuck(ctx, ['act-due:t1']);
+    const seq = [];
+    for (let r = 1; r <= 7; r += 1) seq.push(dmRun(ctx).alerts);
+    setStuck(ctx, []); // run 8: stuck cleared for one run
+    seq.push(dmRun(ctx).alerts);
+    setStuck(ctx, ['act-due:t1']); // run 9: a new onset
+    seq.push(dmRun(ctx).alerts);
+    assert.deepEqual(seq, [['stuck'], [], ['list-failing'], [], [], [], ['stuck'], [], ['list-failing', 'stuck']]);
+    assert.deepEqual(J(dmPath(ctx)).alerted, { 'list-failing': 0, stuck: 0 });
+    // realert_runs is read from thresholds.json: at 2, both alert again on the second run
+    setThr(ctx, { realert_runs: 2 });
+    seq.push(dmRun(ctx).alerts, dmRun(ctx).alerts);
+    assert.deepEqual(seq.slice(9), [[], ['list-failing', 'stuck']]);
+  });
+});
+
+test('FX-W4 status view: deadman-nowake for no record, an unreadable one, one older than 3 periods, or a gap of its runs within one boot; a --dry-run writes nothing; --deadman refuses the coordinator flags; no coord.json exits 2; the task file as text', async () => {
+  await withRoot({ thr: NO_LIST }, async (ctx) => {
+    const T = (min) => new Date(Date.parse(NOW) + min * 60000).toISOString();
+    const nowake = (min) => {
+      assertLine(run(ctx.root, [...common(ctx), '--now', T(min), '--free-mb', '100000']), 0);
+      return statusJson(ctx).anomalies.filter((a) => a.code === 'deadman-nowake').map((a) => a.detail);
+    };
+    const at = (min, boot, extra = []) => dmRun(ctx, ['--boot', boot, ...extra], T(min)).j;
+    wakeRecords(ctx);
+    assert.deepEqual(nowake(0), [{ why: 'no-run' }]);
+    w(dmPath(ctx), 'not json');
+    assert.deepEqual(nowake(0), [{ why: 'unreadable' }]);
+    assert.equal(at(0, 'B1').result.state, 'reset', 'an unreadable record starts the counts again');
+    assert.deepEqual([J(dmPath(ctx)).boot, J(dmPath(ctx)).gap], ['B1', null]);
+    assert.deepEqual(nowake(4), []);
+    assert.deepEqual(nowake(16), [{ why: 'stale', at: T(0) }]);
+    // two runs of one boot 20 min apart (more than 2 periods): runs were missed
+    assert.deepEqual(at(20, 'B1').result.gap, { from: T(0), to: T(20), ms: 1200000, boot: 'B1', runs_since: 0 });
+    assert.deepEqual(nowake(20), [{ why: 'gap', from: T(0), to: T(20), ms: 1200000 }]);
+    // flagged while fewer runs followed it than 2 alarm periods hold (alarm_ms 100 here: one run)
+    at(25, 'B1');
+    assert.deepEqual(nowake(25), []);
+    // a jump across a new boot is no gap
+    assert.equal(at(60, 'B2').result.gap.runs_since, 2);
+    assert.deepEqual(nowake(60), []);
+    // a dry run reports the run and writes nothing
+    const bytes = fs.readFileSync(dmPath(ctx));
+    const d = at(90, 'B2', ['--dry-run']);
+    assert.deepEqual([d.dry_run, d.result.written, d.result.gap.ms, d.result.runs], [true, false, 1800000, 5]);
+    assert.ok(bytes.equals(fs.readFileSync(dmPath(ctx))), 'deadman.json unchanged');
+    // the coordinator's flags are refused with --deadman (66), so is a relative root; no coord.json exits 2
+    for (const extra of [['--ce', '1'], ['--reconcile'], ['--endturn', '--acked-seq', '1'], ['--arm-nonces', 'a'.repeat(32)]]) {
+      assertLine(deadman(ctx, extra), 66);
+    }
+    assertLine(run(ctx.root, ['--deadman', '--root', 'run']), 66);
+    fs.rmSync(path.join(ctx.root, 'run', 'coord.json'));
+    assert.ok(hasReason(assertLine(deadman(ctx), 2), 'no-coordinator'));
+    assert.ok(bytes.equals(fs.readFileSync(dmPath(ctx))), 'no record written by a refused run');
+  });
+  // the task file, read as text (never registered): wake-to-run, every 5 min and at logon, only while the owner
+  // is logged on, no battery, idle or network condition, and a toast on any exit but 0
+  const xml = fs.readFileSync(path.join(TCB_SRC, 'settings', 'deadman-task.xml'), 'utf8');
+  const tag = (name) => [...xml.matchAll(new RegExp(`<${name}>([^<]*)</${name}>`, 'g'))].map((m) => m[1]);
+  assert.deepEqual(tag('WakeToRun'), ['true']);
+  assert.deepEqual(tag('Interval'), ['PT5M'], 'the period of DM.periodMs');
+  assert.match(xml, /<LogonTrigger>/);
+  assert.deepEqual([tag('LogonType'), tag('RunLevel')], [['InteractiveToken'], ['LeastPrivilege']]);
+  assert.deepEqual([tag('StartWhenAvailable'), tag('MultipleInstancesPolicy'), tag('ExecutionTimeLimit')], [['true'], ['IgnoreNew'], ['PT4M']]);
+  for (const n of ['DisallowStartIfOnBatteries', 'StopIfGoingOnBatteries', 'RunOnlyIfNetworkAvailable', 'RunOnlyIfIdle']) assert.deepEqual(tag(n), ['false'], n);
+  assert.equal((xml.match(/&(?!(?:amp|lt|gt|quot|apos);)/g) ?? []).length, 0, 'every & is an entity');
+  const args = tag('Arguments');
+  assert.equal(args.length, 1);
+  const cmdText = args[0].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+  const m = /^-NoProfile -NonInteractive -WindowStyle Hidden -Command "([^"]*)"$/.exec(cmdText);
+  assert.ok(m, `the arguments: ${cmdText}`);
+  assert.match(m[1], /^\$o = & '\{node\}' '\{root\}\/tcb\/status\.mjs' --deadman --root '\{root\}'; \$x = \$LASTEXITCODE;/, 'the production form only');
+  assert.match(m[1], /if \(\$x -ne 0\) \{/);
+  assert.match(m[1], /ToastText02/);
+  assert.match(m[1], /exit \$x$/);
+  // the command parses as PowerShell (parsed only, never run)
+  fs.mkdirSync(TMP, { recursive: true });
+  const cmdFile = path.join(TMP, `deadman-cmd-${process.pid}.txt`);
+  fs.writeFileSync(cmdFile, m[1]);
+  try {
+    const r = cp.spawnSync(PS_EXE, ['-NoProfile', '-NonInteractive', '-Command',
+      `$t = $null; $e = $null; $null = [System.Management.Automation.Language.Parser]::ParseInput((Get-Content -Raw -LiteralPath '${cmdFile}'), [ref]$t, [ref]$e); $e.Count`],
+    { encoding: 'utf8', windowsHide: true, timeout: 30000 });
+    assert.equal((r.stdout || '').trim(), '0', `PowerShell parse errors: ${r.stdout} ${r.stderr}`);
+  } finally {
+    fs.rmSync(cmdFile, { force: true });
+  }
+});
+
 test('NA1 a real session transcript appears in projectDirName(folder) with that cwd soon after start', { skip: `${NEEDS_APP}: item 7, needs a real session` }, () => {});
 test('NA2 the watcher and alarm exits reach the coordinator', { skip: `${NEEDS_APP}: item 5, needs the harness's background commands` }, () => {});
