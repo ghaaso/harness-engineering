@@ -46,9 +46,11 @@ when a `BQ5_*` or `BLD_*` flag is on (`BX`, MB:45).
 
 ## 3. Not modelled (say why in departures/S2.2.md)
 
-FX-W3 and FX-W7 are in no model (branches.md thin item 6). W1 item 9 changes an actor and needs a flag (left): on
-`build` a corrupt `alarm.json` is the anomaly `state-corrupt` and a dead source, not exit 67, while the model's fault y
-(`AB_ARM_SPLIT`) still exits 67 until an alarm registers again. Left to the successor: W6 item 6 (age cap), REDO.
+FX-W3 and FX-W7 are in no model (branches.md thin item 6). W1 item 9 (a corrupt `alarm.json` is the anomaly
+`state-corrupt` and a dead source, not exit 67) is already the model's FX-W1 reading: with `FIX_ALARM_MARKER` (on in
+FXW-4R and so in FXW-4R-B) fault y's unreadable file counts as a dead source and is re-armed (MB endturn block, the
+`n.cj` tests at about MB:1043 and 1481-1485); the exit-67 path (about MB:1058) is the pre-FX-W1 one. Left to the
+successor: W6 item 6 (age cap), REDO.
 
 ## 4. Disagreements with the round's own files (listed, not edited there)
 
