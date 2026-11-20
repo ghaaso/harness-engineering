@@ -399,4 +399,4 @@ empty step returns its neutral value, so behaviour is unchanged (FIX-JOIN point 
   fenced reason, ready slots and tamper, the stop sample, `closesMissing`, the row's step-7 sessions; ctx gives
   ticksTotal, nowMs, lease, procList, counted, Hmax, zombieOver, blocked, audited.
 - `slotCount`'s `opts.counted` (an array) receives `{task, epoch, session, claim, done}` per counted step-7 session.
-- Tests: lib FX-PLAN T1 (the total table; committed at started is a todo until FX-CLOSE step 3), T2, T3.
+- Tests: lib FX-PLAN T1 (the total table; committed at started -> `stop-request` is accepted by stop.mjs since FX-CLOSE step 3), T2, T3.

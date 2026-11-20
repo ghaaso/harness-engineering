@@ -1344,7 +1344,7 @@ Settled here where the sources leave it open or disagree (D = the design, L = a 
     reason, `stop`, the stop tools) is never gated. `status --endturn` takes K from the turn (K at most
     turn.json's `read_seq`; absent or of another ce: exit 1 `turn-stale`, nothing written), spends the
     arm in every endturn of this ce, and reports the wake sources after a refusal too; the coordinator
-    ends every turn with it (E1). An alarm that fires with turn_seq unmoved since it registered writes
+    ends every turn with it, also after `handover` exit 2 and after any exit 75 (E1; tests: status "S2.1 N2"). An alarm that fires with turn_seq unmoved since it registered writes
     [arm-unarmed] (§3.9).
     FX-W4 (R6-d, FIX-JOIN part 3 and point 1.4; rev 5 N1; branches P1, H4 B, H7): "The bound: a wake arrives
     while either source lives; a dead watcher is restarted at the next turn, within two alarm periods. A
