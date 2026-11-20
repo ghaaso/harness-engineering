@@ -1,0 +1,25 @@
+name: claude-files-check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test the checker
+        run: python -m unittest discover -s work/wp10b-ci -p 'test_*.py' -v
+      - name: Check .claude agents and skills (record-only, never fails the build)
+        run: python work/wp10b-ci/check_claude_files.py --json claude-files-report.json
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-files-report
+          path: claude-files-report.json
