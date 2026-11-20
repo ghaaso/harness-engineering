@@ -1472,26 +1472,27 @@ test('S2.1 N2 after exit 75 the turn still ends: K is run/status.json\'s ledger.
   });
 });
 
-// FX-W4 (FIX-wake FX-W4 steps 2-3; this test reads the unarmed-turn counter FX-W3 writes): the dead-man alerts
-// when no alarm of the ce is alive for two runs, once per onset, and again after the cause cleared for one run.
-// Written against the design; FX-W4 (B1-4, unit W4) had not landed when S2.1 was built, so it is a todo. Whichever
-// of W4 and S2.1 lands second drops the `todo` once it passes.
-test('S2.1 FX-W4 dead-man: no live alarm for two runs alerts once; an alarm alive for one run clears the onset', { todo: 'FX-W4 (unit W4) not landed: status --deadman is an empty stub' }, async () => {
+// FX-W4 (FIX-wake FX-W4 steps 2-3 and rev 5 N1; this test reads the unarmed-turn counter FX-W3 writes): the
+// dead-man alerts when no alarm of the ce is alive for two runs, not again on the next run (the re-alert waits
+// realert_runs runs, P1), and a live alarm clears the count and ends the onset. Written by S2.1 against the design
+// as a todo; W4 landed second and adapted it to the built fields (exit 1 `deadman-alert` {alerts, causes}).
+test('S2.1 FX-W4 dead-man: no live alarm for two runs alerts once; an alarm alive for one run clears the onset', async () => {
   await withRoot({}, async (ctx) => {
     meterLine(ctx.root);
     liveWatcher(ctx);
     const dm = () => run(ctx.root, ['--deadman', '--root', ctx.root, '--now', NOW]);
     const file = path.join(ctx.root, 'run', 'deadman.json');
-    const first = dm();
+    const first = assertLine(dm(), 0);
     assert.equal(J(file).runs_no_alarm, 1, 'one run with no alarm: counted, no alert yet');
-    assert.ok(!/alert/.test(first.stdout) || first.json?.result?.alert === false);
-    const second = dm();
+    assert.deepEqual(first.result.alerts, []);
+    const second = assertLine(dm(), 1);
     assert.equal(J(file).runs_no_alarm, 2);
-    assert.ok(second.json?.result?.alert || (second.json?.reasons ?? []).length > 0, 'two runs: alert');
-    const third = dm();
-    assert.ok(!third.json?.result?.alert && !(third.json?.reasons ?? []).some((r) => r.code === 'runs-no-alarm'), 'once per onset: no second alert');
+    assert.deepEqual(second.reasons.find((r) => r.code === 'deadman-alert')?.detail.alerts, ['no-alarm'], 'two runs: alert');
+    const third = assertLine(dm(), 0);
+    assert.deepEqual([third.result.causes, third.result.alerts], [['no-alarm'], []], 'the cause holds: no alert on the next run');
     liveAlarm(ctx);
-    dm();
+    assertLine(dm(), 0);
     assert.equal(J(file).runs_no_alarm, 0, 'an alarm alive: the count clears');
+    assert.deepEqual(J(file).alerted, {}, 'and the onset ends');
   });
 });
