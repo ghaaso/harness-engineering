@@ -233,11 +233,11 @@ export function makeParams(over = {}) {
     BLD_ARCHIVE_APPROVAL: false, // unrecorded fact: archive_session waits for the owner's approval (outside auto and bypass);
                                // with BLD_STOP_INTERRUPT_ONLY a coordinator's close may leave the session alive (no fault)
     BLD_PROPS: false,          // check RefusedStartNotCharged and LeaseFenceClaimed (observers, no behaviour)
-    BLD_AGE_CAP: false,        // W6 item 6 as built (watch.mjs:339, 1177-1209): FX-W6 step 5, the act-due `age-cap` of an
-                               // attempt whose child imitates (fault m); the coordinator's acknowledgement is a continue: the
+    BLD_AGE_CAP: false,        // W6 item 6 as built after the FX-W6 fix round (watch.mjs:339, 1177-1205): the act-due `age-cap`
+                               // of an attempt whose child imitates (fault m); acknowledged, it is not re-armed: FX-W5 raises it
+                               // again, after AGE_STUCK re-raises it is `stuck` and the dead-man alerts (status.mjs:956, 992)
+    AB_AGE_REARM: false,       // ablation, off by default: the re-arm the fix round deleted (d655547f watch.mjs:1198-1204): the
                                // next tick re-arms the cap (age_base = age_ticks), so FX-W5 never raises it again (no `stuck`)
-    BLD_AGE_STUCK: false,      // the design leg, not built (FIX-wake B5.2 with FX-W5 steps 2-3): an acknowledged age cap stays
-                               // present, FX-W5 raises it again, after AGE_STUCK re-raises it is `stuck` and the dead-man alerts
     AGE_STUCK: 2,              // re-raises before `stuck` (watch.mjs stuckCount: 6 at the capped interval; untimed here)
     BLD_REDO: false,           // REDO as built (status.mjs:341-391): fault g, a reconcile dies after a row's `started` write and
                                // before its `started` line; FX-REDO writes the line at a later reconcile while the row is at
@@ -1012,7 +1012,7 @@ function runOp(st, i, P, L) {
   }
   if (k === OP.H) {
     if (P.AB_PROCLIST && !n.pl) { c.pc = P.FIX_ENDTURN_ALWAYS ? [[OP.E, 0, 0, 0]] : null; out.push({ lab: L && `${who} handover raise: no process list -> exit 2 (proc-unavailable, handover.mjs:271-276); ${P.FIX_ENDTURN_ALWAYS ? 'goes to endturn (N2)' : 'turn ends'}`, n, viol: [] }); return out; }
-    if (!c.dr || !readyToHandOver(n, P)) { c.pc = null; out.push({ lab: L && `${who} handover skipped: not quiescent; turn ends`, n, viol: [] }); return out; }
+    if (!c.dr || !readyToHandOver(n, P)) { c.pc = P.FIX_ENDTURN_ALWAYS ? [[OP.E, 0, 0, 0]] : null; out.push({ lab: L && `${who} handover ${P.FIX_ENDTURN_ALWAYS ? 'raise: exit 6 no-drain or not-quiescent (handover.mjs:274, 287, 353); goes to endturn (N2, coordinator.md:177-180)' : 'skipped: not quiescent; turn ends'}`, n, viol: [] }); return out; }
     if (P.D7_HANDOVER_CAS && c.ce !== n.ce) { c.pc = null; out.push({ lab: L && `${who} handover.mjs raise: CAS on ce fails (read ${c.ce}, coord.json ${n.ce}); turn ends`, n, viol: [] }); return out; }
     c.pc = null;
     if (P.AB_ARM_SPLIT || P.AB_ENDTURN_SPLIT) n.ar = 0; // alarm.json now names an older ce
@@ -1307,16 +1307,16 @@ function tick(st, j, P, L) {
     const ra = H | Tm;
     if ((ra & ~n.ra) !== 0) { n.rk = 1; raised.push(ra & 1 ? 'handover' : 'run-terminal'); }
     n.ra = ra;
-    // S2.2 (W6 item 6, BLD_AGE_CAP): FX-W6 step 5's act-due age-cap (watch.mjs:1177-1209), per field: ag 0 armed, 1 raised (an
+    // S2.2 (W6 item 6, BLD_AGE_CAP): FX-W6 step 5's act-due age-cap (watch.mjs:1177-1205), per field: ag 0 armed, 1 raised (an
     // event line, due), 2 read by a turn, 3 acknowledged at endturn. Only an attempt whose child imitates reaches the cap
-    // (the premise: attempt_max_ticks is above any healthy attempt), here at a tick (untimed). As built the tick after the
-    // acknowledgement re-arms it (age_base = age_ticks): the condition clears and the ident leaves the active set, so
-    // FX-W5's re-raise and `stuck` never see it, and the cap is reached again later. BLD_AGE_STUCK (the design leg, not
-    // built): the condition stays, FX-W5 raises it again, and after AGE_STUCK re-raises it is in watcher.json `stuck` (ax)
+    // (the premise: attempt_max_ticks is above any healthy attempt), here at a tick (untimed). As built after the FX-W6 fix
+    // round the condition stays, FX-W5 raises it again (watch.mjs:1244-1267), after AGE_STUCK re-raises it is in watcher.json
+    // `stuck` (ax). AB_AGE_REARM (the code before the fix round): the tick after the acknowledgement re-arms it (age_base =
+    // age_ticks), the ident leaves the active set, FX-W5 and `stuck` never see it, and the cap is reached again later
     if (P.BLD_AGE_CAP) n.T.forEach((t, f) => {
       const imit = imitating(n, f, P);
       if (t.ag === 3) {
-        if (P.BLD_AGE_STUCK && imit) { if (t.ac + 1 >= P.AGE_STUCK) t.ax = 1; t.ac = Math.min(1, t.ac + 1); t.ag = 1; raised.push(`f${f}:age-cap (again${t.ax ? '; stuck' : ''})`); }
+        if (!P.AB_AGE_REARM && imit) { if (t.ac + 1 >= P.AGE_STUCK) t.ax = 1; t.ac = Math.min(1, t.ac + 1); t.ag = 1; raised.push(`f${f}:age-cap (again${t.ax ? '; stuck' : ''})`); }
         else { t.ag = 0; t.ac = 0; t.ax = 0; }
       } else if (t.ag === 0 && imit) { t.ag = 1; raised.push(`f${f}:age-cap`); }
     });
@@ -1480,10 +1480,10 @@ export function successors(st, P, L) {
     push(L && `owner: closed f${s.f}e${s.ep} (ended if it lived); the coordinator relays it (owner act closed: a record under the CLI id)`, n, { proc: PROC.O });
     if (s.al && has(st, 'w')) { const b = clone(st); spend(b, 'w'); b.S[q].dn = 1; wake(b, b.ce); push(L && `FAULT the coordinator relays closed for f${s.f}e${s.ep}, which the owner did not close (it lives)`, b, { fault: true, proc: PROC.O }); }
   });
-  // S2.2 (W6 item 6, BLD_AGE_STUCK, the design leg): the dead-man's run finds watcher.json `stuck` (status.mjs:956, 992) and
-  // alerts; the owner ends the imitating session and wakes the coordinator with a typed turn (merged: a delivered alert, an
-  // owner who answers; his other answers, drop or resume, are not modelled)
-  if (P.BLD_AGE_STUCK) st.T.forEach((t, f) => {
+  // S2.2 (W6 item 6, BLD_AGE_CAP after the fix round, not AB_AGE_REARM): the dead-man's run finds watcher.json `stuck`
+  // (status.mjs:956, 992) and alerts; the owner ends the imitating session and wakes the coordinator with a typed turn
+  // (merged: a delivered alert, an owner who answers; his other answers, drop or resume, are not modelled)
+  if (P.BLD_AGE_CAP && !P.AB_AGE_REARM) st.T.forEach((t, f) => {
     if (!t.ax) return; const q = st.S.findIndex((s) => s.f === f && s.ep === t.ep && s.al && s.m === MODE.IMIT); if (q < 0) return;
     const n = clone(st); n.S[q].al = 0; if (P.BQ5_OWNER_TURN && n.C[n.ce] && n.C[n.ce].pc === null) n.C[n.ce].om = 1; wake(n, n.ce);
     push(L && `status --deadman run: stuck (f${f}:age-cap) -> ALERT; the owner ends f${f}e${t.ep}'s imitating session and wakes coord${n.ce}`, n, { proc: PROC.O });
