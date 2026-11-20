@@ -72,7 +72,19 @@ CLAUDE.md rules 1 to 7. He wants plain words, the answer first, short (memory no
 - Step 3 done: `library/journal/2026-11-20/r57.jsonl` (r57-0166 to r57-0173, r57-0519 to r57-0522, r57-0612); board
   version 1.4 (NEXT r57-0519). Measured for the records (transcripts, once per message id): the build's window
   997.1 M tokens, the build 907.7 M (roots 154.1 M), about 62 M a meter point; per role in r57-0173.
-- Step 6 (the pilot's plan and cap): next.
+- Step 6 (the pilot's plan and cap): one Opus helper (`analyse: pilot plan and token cap`, started about 09:20
+  UTC, limit 30 M) computes it from the brief `briefs/PILOT-PLAN.md` into `research-tree/build/PILOT-PLAN.md`; then
+  the owner's page (`reports/pilot-plan.html`, a private Artifact) with only `approve:` and `cap:` asks.
+  Done: version 1 (10.3 M tokens); blind review `refute/PILOT-PLAN.md` CORRECT: 14 findings (9.8 M); the top
+  session accepted all 14 (decisions in `briefs/PILOT-PLAN-fold.md`); version 2 by an Opus helper (3.0 M):
+  expected 418 M, cap 593 M. The page by a Sonnet helper (0.6 M), corrected by the top session (the pilot's "when";
+  every agent its own node in the tree; the meter read 81 % at 10:24 UTC, so the preparation's line is 85 %), checked
+  once by screenshot and published: private Artifact https://claude.ai/artifact/RPdurZvvLXWQcyFCf7M8wx. The plan,
+  four briefs, verdict and page are committed on `build` through `hb` (**fed8113c**); library r57-0419. Then the two
+  asks: `approve:` the preparation and `cap:` 593 M. Nothing is started before his answer.
+- When `build` is merged (r57-0520), the identical untracked copies in main go first: 627 now (620 + these 7).
+- This session was compacted once (at the fold); at 10:30 UTC its context was about 175 K of 400 K. A successor takes
+  over at an owner-typed turn when it nears the measured hand-over point (247-273 K, r57-0171).
 
 ## Top session 1's commits (branch transfer/2026-11-16-embeddings-final-and-setup, none pushed)
 372d5b97, 6a391755, e09778ae (build start, review fixes, owner page); c7da4d98 and 8151831a (the agent tree in
