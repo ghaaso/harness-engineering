@@ -155,6 +155,20 @@ with arguments are run with exactly those words: `replace-fence --reason <r>` (a
 not finish) and `replace-fence --reason crash --if-unclaimed` (a start lease that ran out; exit 5 `claimed-late`:
 the next act is `bind`).
 
+## 7b. Act-due `idle-child` and `age-cap` of an attempt (FX-W6)
+
+The watcher raises these for an attempt at `started` or `bound`. Neither is charged and neither fences anything; a
+READY of the attempt's epoch ends both.
+- `idle-child`: the child's turn has ended and no new record of the attempt has come for `idle_ticks` ticks. Answer
+  the child, or stop the attempt.
+- `age-cap`: the attempt has been at `bound` for `attempt_max_ticks` ticks. Stop it unless it is making progress.
+
+To stop an attempt, fence it (5a), then close its session (5c): `stop request` takes only a fenced or committed
+attempt. Acknowledging either act at endturn does not let the attempt go on silently: while its condition holds, the
+watcher raises it again (FX-W5), 15, 30, 60, 60, 60 and 60 ticks after the raise before. At the sixth raise again
+(3 + `stuck_raises`; 285 ticks after the first event with the defaults) it is `stuck`, and the dead-man alerts the
+owner (0c). No act re-arms the age cap: it stays due until the attempt is fenced or committed or its READY comes.
+
 ## 8. Any script exits 75: retry nothing, then endturn (FX-W3; N2 in place of "end the turn")
 
 A script that exits 75 (`lock-busy`): retry nothing. The turn still ends with endturn (place 9), its last call

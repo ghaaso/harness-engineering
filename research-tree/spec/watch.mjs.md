@@ -69,7 +69,7 @@ b. Per row active at step started|bound (current attempt e): parse its transcrip
      `{hang_ticks, kind, deadline}`, charged as before. An `idle` child is never a hang: at hang_ticks ≥
      `idle_ticks` step j raises act-due `idle-child`. `age_ticks` adds 1 on every counted tick at step
      bound after the first (a paused one too); age_ticks − age_base ≥ `attempt_max_ticks` → act-due
-     `age-cap` (step j). `hang_ticks` (the threshold) is read no more. **Pause
+     `age-cap` (step j; age_base stays 0: no script sets it). `hang_ticks` (the threshold) is read no more. **Pause
      discount (M5, CONTRACT §1.2):** a counted tick whose gap `now − last_tick_at` (the stored
      value of the previous evaluation, any watcher) exceeds 2Δ is *paused*: hang_ticks is left as
      it is (new calls still reset it). This is the watcher's only use of a clock difference and it
@@ -113,9 +113,11 @@ j. **Act due → 17 (M3, CONTRACT decision 40): the planner's own predicate**, s
    when the attempt folder already has a transcript (the reconcile at the next turn start will make
    it started). After the row acts (FX-W6, not row acts, uncharged, no fence): per row at started|bound
    without a READY of the epoch (class 11 or 12), `<task>:idle-child` while its kind is `idle` and
-   hang_ticks ≥ `idle_ticks`, and `<task>:age-cap` while age_ticks − age_base ≥ `attempt_max_ticks`. The
-   coordinator's acknowledgement of the age-cap event line (seq ≤ acked_seq) lets the attempt
-   continue: age_base = age_ticks, so the cap asks again after another `attempt_max_ticks`. Failed rows, `limit` rows and rows whose `next` is `owner`, `none`, `audit` or
+   hang_ticks ≥ `idle_ticks`, and `<task>:age-cap` while age_ticks − age_base ≥ `attempt_max_ticks`. An
+   acknowledgement of the age-cap event line (seq ≤ acked_seq) does not re-arm the cap: the condition
+   stays, so FX-W5 raises it again at its interval and counts it towards `stuck`, which FX-W4's dead-man
+   reads. No script sets age_base (0 from the epoch's fresh state): it is where an explicit "continue"
+   act would re-arm the cap, and none is built. Failed rows, `limit` rows and rows whose `next` is `owner`, `none`, `audit` or
    `commit` raise nothing here (READY is class 11). Run level: a `drain` line of this ce with no
    slot used → `-:handover`; a non-empty table whose rows are all committed|cut|failed|dropped and
    none has a row act → `-:run-terminal`; an `event` line with seq > acked_seq whose key is not in
@@ -332,8 +334,12 @@ All with `--once` or `--interval-ms 50` and `--no-intake` unless stated; fake tr
   the whole parse.
 - W6b idle child: end_turn, idle_ticks 2, model_ticks 1 → no 21; act-due `idle-child` at 2 ticks; a
   user message (the answer) → kind `model`, hang_ticks 0, the key gone.
-- W6c age cap: attempt_max_ticks 2 → act-due `age-cap` at age 2, no 21; acknowledged → age_base 3, quiet;
-  asked again at age 5 with a second event line.
+- W6c age cap: attempt_max_ticks 2 → act-due `age-cap` at age 2 (tick 3), no 21; acknowledged → age_base
+  stays 0 and the key stays active, quiet inside FX-W5's interval; raised again at tick 18 (15 ticks
+  after the onset) with `detail.reraise` 1 and a second event line.
+- W6d age cap stuck: a coordinator that only acknowledges → the cap is raised again 15, 30, 60, 60, 60
+  and 60 ticks apart; the 6th raise (285 ticks after the onset, stuck_raises 3) puts `17|<task>:age-cap|1`
+  in watcher.json.stuck, and it stays there at an acknowledged quiet tick after; age_base stays 0.
 - M5 pause discount (after the epoch's first tick): model_ticks 2; tick 1 at T, tick 2 at T + 10 min (Δ 60 s) → no exit 21,
   hang_ticks still 1, `result.paused` true; tick 3 at T + 11 min → exit 21. Without the discount
   tick 2 exits 21.
