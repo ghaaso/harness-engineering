@@ -253,7 +253,7 @@ function analyses() {
   // but never taken is not fair. Exact by the Emerson-Lei refinement: such a component loses the states where the step
   // is enabled, and its rest is searched again (a sub-cycle that avoids them may still be fair). No OT edge: as before.
   let bad = null;
-  const SF = PROC.OT; let removed = null;
+  const SF = args.includes('--weak-owner') ? -1 : PROC.OT; let removed = null; // --weak-owner: the ablation (weak fairness only)
   for (let f = 0; f < F && !bad; f++) {
    if (removed) removed.fill(0);
    for (;;) {
