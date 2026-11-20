@@ -289,3 +289,50 @@ cap: of 1.2 B tokens?" (r57-0046). The plan: `research-tree/build/NEXT-STEP.md` 
 keep the preparation small, read usage before each fan-out, protect his own use until the reset. Start neither the
 coordinator nor any field: he opens it with his go. Do not merge or push `build`; never touch
 `docs/program/pipeline-diagram/`. Plain words to him, the answer first; results on a page (CLAUDE.md rule 6).
+
+## Top session 5 (started by top session 4; Opus, kind orchestrate), progress, 2026-11-20
+- About 18:10 UTC: meter 85 % all models, 54 % Fable, both reset 2026-11-23 12:00 UTC; the usage card lists no
+  five-hour window. Room this week by PILOT-PLAN s3's gate (his use protected at 0.21 points an hour, 65 h): about
+  1.3 points, so the preparation's line is the meter at 86 %; its helpers' limits sum to about 82 M (1.3 points).
+- The run root `C:/research-runs/2026-11-harness-leads/` (protocol v2 line 58's example path): its own git repository
+  (nothing committed yet), `.gitignore` papers and snapshots; `.claude/settings.json` with the tier hook, the record
+  guard and `CLAUDE_CODE_FORK_SUBAGENT=0`; both hooks tested from that folder (tier hook refuses collect on Opus, passes
+  it on Sonnet; the guard refuses a design question, passes `cap:`, a write and a commit in the run root, refuses an
+  edit of round 3's ROUND.md). Its CLAUDE.md departs from protocol v2's "no CLAUDE.md": on e2 nothing starts a session
+  under the run root, and the router's efforts apply only once written (ROUTER s7).
+- The interface all briefs follow: `briefs/RUN-INTERFACE.md` (units sheet, planted, f2-f8, closing; record prefixes
+  d1-d9; extractor files x49-x84; the four scripts; config.json; returns).
+- About 18:31 UTC: started together `analyse: run coordinator brief` (Opus, limit 18.6 M, `briefs/RUN-COORD.md`),
+  `analyse: run field brief` (Opus, limit 18.6 M, `briefs/RUN-FIELD.md`), `build: run tools` (Sonnet, limit 6 M,
+  `briefs/RUN-TOOLS.md`). Next: the blind review (`briefs/RUN-REFUTE.md`, Opus, limit 18.5 M), the fold, records,
+  commits on build through hb, his page. Start neither the coordinator nor any field.
+- About 19:02 UTC: the three returned. Scripts (Sonnet): `RUN:tools/` tokens, wait, shuffle, gate, 17 tests then 20
+  pass; tokens.mjs equals tokens-self.mjs on three real helpers; a helper's own helpers' transcripts lie flat in the
+  same `subagents/` folder (parentAgentId, spawnDepth 2); 2.0 M. Field brief (Opus): `RUN:briefs/FIELD.md`, 8 step
+  templates, review form, topics, fill.mjs (17 briefs a field), self.mjs; one field 117.7 M (96.3-146.4), its helper
+  15.6 M, window 169-220 K; the app refuses a helper's Write of a file named report.md; 24 fills; 13.4 M.
+  Coordinator side (Opus): `RUN:CLAUDE.md` (4.4 KB), COORDINATOR, SHEET, PLANTED, CLOSING, config.json, GO, DOWNLOADS;
+  coordinator 6.0 M (4.1-8.9), window 120-175 K; expected sum 975.2 M plus the preparation; no start before the reset;
+  34 fills; 15.6 M.
+- About 19:20 UTC: meter 87 % / 54 % (85 % at 18:10). At 0.21 points an hour (PILOT-PLAN s3) his protected use to the
+  reset is 13.4 points, so the meter is past that line; at the measured rate of his own sessions (0.10, r57-0170) it is
+  6.4 points and fits. The review was started in the same step as that reading; the rest kept small.
+- About 19:45 UTC: the blind review `refute/RUN-BRIEFS.md`: CORRECT: 13 findings (10.9 M; stopped at its context
+  line, its unchecked parts listed). Breaking: 1 the F1 comparison confounded (plants in files the R_same arm read in
+  the original); 2 a refuter or fold checkpoint at 330 K writes its done file and no successor runs. All 13 accepted
+  (r57-0021) as `briefs/RUN-FOLD.md` decides (1: fix a and b, plants stay in the fields' files; 5: the readers get the
+  raw-page route); item 14 added (what Auto mode does with the run's commands; allow rules offered in GO.md as his,
+  none written). Started two folds at once (Part F field side, Part C coordinator side; Opus, limit 6 M each) and
+  `tools/typed.mjs` for finding 3 (the scripts helper resumed).
+- About 19:30-19:55 UTC: Part F folded (4.7 M), Part C folded (5.7 M); a check of the run's locks from another session
+  ("orchestrate: locks against the database way", `research-tree/build/LOCKS.md`, its file) added three faults, fixed:
+  the gate records starts as test-and-set slots (no lock to go stale), the shuffle reuses its key, `tools/commit.mjs`
+  waits on index.lock (30 s against a measured 162-198 ms). `tools/typed.mjs` searches his typed turns (5 s over
+  1.82 GB). curl uses `--ssl-revoke-best-effort` (plain curl fails the revocation check here; tested); no rm in the
+  briefs. 29 tests pass.
+- About 19:55 UTC: meter 88 % / 54 %. The preparation 69.3 M to then (r57-0183); `run/config.json` preparation 80 M. The
+  run root's first commit d83da0d (39 files); the gate holds the first start this week, as it should. On build through
+  hb: fa8d28c1 (briefs RUN-*.md, the review, a copy of the run root in `research-tree/build/research-run/`).
+- His page: https://claude.ai/artifact/J2EcMdZR1uSQ6KLp7VGJWu (what he types and when). Records r57-0180 to r57-0183,
+  r57-0423, r57-0523 (NEXT), r57-0615, r57-0616, r57-0712 and the board's lines.
+- Top session 5 done (about 20:15 UTC). Next: his go (r57-0523), at the reset or before it in form 2. Start nothing else.
