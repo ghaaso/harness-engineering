@@ -97,3 +97,54 @@ commit that holds this file.
   widest parallelism this PC allows, and what the parallel readers and writers work saves. Answered in chat. The
   `approve:` and `cap:` asks are on hold. Proposed (r57-0018), waiting for his go: one Opus analyse helper, a blind
   Opus refuter and a page, about 21 M tokens, limit 30 M. Mistake r57-0613.
+
+## Hand-over to top session 3 (2026-11-20, about 11:10 UTC)
+From top session 2 (app local_b8dee401-7bf8-4328-b309-33c328e3a1b2, Opus): its window stood at 315 K of 400 K, past
+the measured hand-over point (220-245 K after a compaction, r57-0171), so a fresh top session takes over (r57-0008).
+
+**Approved, not started:** the complexity analysis. The owner's words (about 11:05 UTC): "I approve you doing
+comprehensive, good complexity, and also that gives the accurate, correct complexity." Brief:
+`research-tree/build/briefs/COMPLEXITY.md` (untracked; commit it on `build` through `hb` with the outputs). Limit for
+the round 30 M tokens (expected about 21 M: analysis about 12, blind review about 8, page about 1).
+
+**On hold:** the pilot's `approve:` and `cap:` asks (r57-0419, r57-0613) until he has seen the analysis.
+
+**Asked in the same message, waiting for his go (r57-0018: say what you understand and intend, then act on his go):**
+- B. An audit of the tree's algorithms ("Are we still making shit out on our own? ... a very good, proven algorithm
+  already exists"): every mechanism marked as a proven algorithm used whole, adapted (where and why) or invented here;
+  where a proven implementation would replace our own code; where each fault so far came from (13 in the R57 round,
+  3 breaking in the build's reviews, FX-W6, the plan's 3 gaps). One Opus analyse helper, about 10 M.
+- C. Model routing per operation ("the sub operations inside that session should also have the optimal models ... if
+  we're running scripts, we use Haiku"): whether the routes in force (`.claude/hooks/tier-routes.json`, version 1,
+  from `docs/ORCHESTRATION-DESIGN-2026-10.md` section 3; r57-0201, r57-0206, r57-0207) and the plan's assignments are
+  good enough; a model for every operation inside a session, built from what each model is measured to do well;
+  checked against that design (he remembers a comprehensive one from the EMS workshop folder; confirm which file) and
+  the build's ORCHESTRATION.md; each row marked measured or reasoned, with the measurements still missing. One Opus
+  analyse helper, about 12 M.
+- D. The correct tree, drawn (nodes and lines, memory `feedback-tree-is-nodes-and-lines.md`): the full run's B+ tree
+  (root coordinator, eight leaves = fields, readers under each; split and hand-over noted) and the pilot as one leaf
+  with the test marked apart. The owner saw this sketch:
+  ```
+  coordinator (root: the question list and the separators between leaves)
+  ├── leaf 1: one research session, field 1's questions packed to fit one window
+  │     ├── reader
+  │     └── …
+  │   …
+  └── leaf 8: field 8
+        └── readers …
+  Pilot: coordinator ── T (leaf for field X) ── readers   | S1, S2 | R1, R2 | checks
+  ```
+  Sonnet build, about 1 M.
+
+**Answered in chat (do not re-ask):** what S1 and S2 are and why they cannot run today; why he types "go" (r57-0109,
+the app's own control, not to be worked around; helpers or a workflow need no turns from him, and the analysis costs
+that path); "are we making things up" (the layers are borrowed whole; the glue, about 25 scripts, is ours, and the
+fill factor is in thresholds.json but no built script reads it); routing (a table of twelve kinds and four models, per
+start only; never measured smaller against larger).
+
+**Your steps:** read CLAUDE.md, the board, this file, the brief and PILOT-PLAN.md section 0 (r57-0009); read usage;
+start the analysis helper; then a blind Opus refuter (as `briefs/PILOT-PLAN-refute.md`); decide its findings
+(r57-0021) and have them folded; then his page (Sonnet build, one look, a private Artifact): answer first, the paths as
+a table, the reduced plan. When he writes in your session, give B, C and D in a few lines and act on his go. Start
+nothing else; the preparation and the pilot wait for his decision after the analysis. Meter at 10:59 UTC: 81 % all
+models, 53 % Fable.
