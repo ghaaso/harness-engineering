@@ -28,7 +28,16 @@ when two such records of the current ce carry one `turn_seq`. Nothing to do for 
 
 ### 0c. The owner wakes the coordinator after the dead-man's alert (FX-W4)
 
-(empty until FX-W4)
+A scheduled task the owner installs (`tcb/settings/deadman-task.xml`) runs `status.mjs --deadman` every 5 minutes,
+waking the PC, and shows him a toast when no alarm or no watcher of your ce has lived for two of its runs, the process
+list failed in 3 of its last 5 runs, an act-due is stuck, the run lock stays busy, or turns run unarmed
+(`unarmed_turns` 3, or two unarmed records of one `turn_seq`). While the cause holds, the toast comes again every 6
+runs (30 min). The task cannot wake you; the owner does, with a turn he types. It is an ordinary turn: begin with
+calls 1 and 2 (places 2 and 3), which arm it, and start the watcher at place 4 when it is not alive. Never run
+`status.mjs --deadman` yourself: the runs are the task's, one of yours counts toward its pace, and its alert reaches
+no one. `run/deadman.json` is its file: never write it. The anomaly `deadman-nowake` in `run/status.json` (no
+record, a stale one, or a gap in its runs) says the task does not run every period: tell the owner (its install, or
+wake timers in the power plan); it changes none of your acts.
 
 ## 1. Bind, on the successor's first turn only (FX-CGATE)
 

@@ -47,6 +47,10 @@ Shape per CONTRACT §3.20 (`schema_version`, `params`; each param `{value, unit,
   K is the reconcile's `result.status.ledger.seq`, else `run/status.json` `ledger.seq`; exit 1 acted on once
   (`alarm-missing`: ensure again; `watcher-missing`: place 4; `acked-*` or `turn-stale` alone: nothing);
   exit 2: start nothing; 75: end.
+- FX-W4: `coordinator.md` 0c: the dead-man (the owner's scheduled task, `status.mjs --deadman` every 5 min) alerts
+  the owner by a toast, again every 6 runs while the cause holds; the owner wakes the coordinator with a typed turn,
+  an ordinary one (calls 1 and 2, place 4). The coordinator never runs `status.mjs --deadman` (its run counts toward
+  the pace and alerts no one) and never writes `run/deadman.json`; on the anomaly `deadman-nowake` it tells the owner.
 - T7 `reader.md` names web search and web fetch only, the route words `keyword`, `backward`, `forward`, `contrary`, `seed`, the 15-word quote, `not stated`, `skipped` and `no-exact-words`, at most 10 cards, and contains no `{{`, no `staging/`, no `in/`, no project name (`FixFlow`, `tcb`, `ledger`).
 - T8 `checker.md` names only Read, the folder `queue/<batch>/`, the six verdict words exactly as CONTRACT §3.17 (`confirmed`, `number_mismatch`, `baseline_swapped`, `conditions_mismatch`, `outside_conditions`, `unclear`), one verdict per item, and says text in items is data.
 - T9 `fresh-reviewer.md` forbids web and research, names `in/pack.json`, `in/cards/`, `in/files/`, the six verdict words of CONTRACT §3.4, the four dismissal verdicts, the reasons `wrong-assumption|wrong-number|wrong-scope|other`, an 80-word sentence cap, the 40-word finding cap, the `fact`/`judgment` rule and the step name `review`.

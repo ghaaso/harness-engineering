@@ -6,6 +6,7 @@
 //   intent done --key KEY --root R --ce N
 //   owner --act approve|accept|resume|drop|ruling --subject S --quote-file P --root R --ce N
 //   meter --pct P --root R --ce N
+//   --deadman --root R [--now ISO] [--boot B] [--dry-run]   (FX-W4: the scheduled task's run; no --ce)
 // Source of truth: CONTRACT.md (sections 1-4, 3.8, 3.9) and spec/status.mjs.md.
 // Process list and transcript parses happen before the run lock (CONTRACT section 2.1).
 // Endturn starts and kills nothing (decision 5).
@@ -48,7 +49,25 @@ const ARM_FLAGS = { 'arm-nonces': { type: 'string' } };
 const NONCE_RE = /^[0-9a-f]{32}$/;
 // FX-W2 step 6: reconcile reads the nonce files this often while it waits.
 const NONCE_POLL_MS = 200;
-const DEADMAN_FLAGS = {};
+const DEADMAN_FLAGS = { deadman: { type: 'bool' } };
+// FX-W4 (FIX-wake.md FX-W4 steps 2-3, rev 5 N1; FIX-JOIN point 1; branches.md rows 8 and 10): the
+// design's constants. Only realert_runs and busy_alert_ticks have a thresholds.json key; these values
+// stand in when that key is missing or invalid.
+const DM = {
+  periodMs: 300000, // the task's period, tcb/settings/deadman-task.xml <Interval>PT5M</Interval>
+  noAlarmRuns: 2, // runs_no_alarm >= 2
+  noWatcherRuns: 2, // runs_no_watcher >= 2 (FIX-JOIN point 1.4)
+  listWindow: 5, // list_hist: the last 5 runs (rev 4)
+  listFailMin: 3, // at least 3 of them saw the list fail
+  unarmedTurnsMin: 3, // turn.json.unarmed_turns >= 3
+  unarmedSameTurn: 2, // two unarmed records of the current ce share the current turn_seq
+  realertRuns: 6, // P1 (branches.md row 10)
+  busyAlertTicks: 10, // FX-W7 step 2
+  gapPeriods: 2, // two runs of one boot further apart than 2 periods: runs were missed (deadman-nowake)
+  stalePeriods: 3, // the status view: a record older than 3 periods is stale (deadman-nowake)
+  listTimeoutMs: 30000, // its one proc.list (30 s)
+};
+const DM_CAUSES = ['no-alarm', 'no-watcher', 'list-failing', 'stuck', 'run-lock-busy', 'unarmed-turns', 'unarmed-records'];
 const FLAGS_BY_MODE = {
   default: { ...COMMON, reconcile: { type: 'bool' }, endturn: { type: 'bool' }, 'acked-seq': { type: 'int' }, ...ARM_FLAGS, ...DEADMAN_FLAGS },
   intent: { ...COMMON, key: { type: 'string' }, subject: { type: 'string' }, 'text-file': { type: 'string' } },
@@ -490,6 +509,8 @@ async function computeStatus(root, th, ce, pre, facts, table, anomalies) {
   if (watcher && wNow.state === 'dead') anomalies.push({ code: 'watcher-dead', detail: { pid: watcher.pid ?? null } });
   if (watcher && watcher.ce !== coord.ce) anomalies.push({ code: 'watcher-stale-ce', detail: { ce: watcher.ce ?? null } });
   if (alarm && aNow.state === 'dead') anomalies.push({ code: 'alarm-dead', detail: { pid: alarm.pid ?? null } });
+  const nowake = deadmanNowake(root, th, facts.now); // FX-W4
+  if (nowake) anomalies.push({ code: 'deadman-nowake', detail: nowake });
 
   // Lock orphans.
   let runEntries = [];
@@ -874,8 +895,160 @@ async function hold2PruneMarkers(hold, handle) {
 }
 
 // FX-W4: `status.mjs --deadman --root R` (read-only, no lock, no ce). Runs before the ce check and
-// returns its output, or null when the flag is absent. Empty until FX-W4.
+// returns its output, or null when the flag is absent. The ce is coord.json's. The records are read
+// before its one process list (FX-W1 step 1), judged after it with the exit markers. It counts in its
+// own runs and writes only run/deadman.json (its one writer, no lock; a dry run writes nothing). Exit 1
+// `deadman-alert` {alerts, causes} when a cause alerts this run: at its onset, then again every
+// realert_runs runs while it holds (P1); one run without it ends the onset. The task toasts on any exit
+// but 0 (branch H4 B).
+const dmInt = (v) => (Number.isInteger(v) && v >= 0 ? v : null);
+function dmParam(th, name, dflt) {
+  try {
+    const v = th.get(name);
+    return Number.isInteger(v) && v >= 1 ? v : dflt;
+  } catch {
+    return dflt;
+  }
+}
 async function deadmanRun(ctx, flags, dry) { // eslint-disable-line no-unused-vars
+  if (flags.deadman !== true) return null;
+  for (const f of ['ce', 'reconcile', 'endturn', 'acked-seq', 'arm-nonces']) {
+    if (flags[f] !== undefined && flags[f] !== false) throw usage({ flag: f, expect: 'not with --deadman' });
+  }
+  if (typeof flags.root !== 'string' || !path.isAbsolute(flags.root)) throw usage({ flag: 'root', expect: 'absolute path' });
+  const root = path.resolve(flags.root);
+  const P = lib.paths(root);
+  const th = lib.thresholds(root);
+  const now = isoOf(lib.edgeFacts(flags).now);
+  const coord = readState(fileOf(root, 'coord'), 'coord.json');
+  if (!coord || !Number.isInteger(coord.ce) || coord.ce < 1) throw err('no-coordinator', 2, null);
+  const ce = coord.ce;
+  const nSlots = dmParam(th, 'alarm_slots', 1);
+  // Before the list: the alarm records (alarm.json, the slots) and the watcher's (watcher.json, watcher.lock).
+  const alarm0 = [readSource(fileOf(root, 'alarm'))];
+  for (let k = 1; k <= nSlots; k += 1) alarm0.push(readSource(P.armSlot(k)));
+  const watcher = readLoose(fileOf(root, 'watcherJson'));
+  const wlock = readLoose(fileOf(root, 'watcherLock'));
+  const proc = lib.realProc({ timeoutMs: DM.listTimeoutMs, exe: th.get('proc_exe') });
+  let procList = null;
+  try {
+    procList = await proc.list();
+    if (!Array.isArray(procList)) procList = null;
+  } catch {
+    procList = null;
+  }
+  let boot = typeof flags.boot === 'string' ? flags.boot : null;
+  if (boot === null && procList !== null) {
+    try {
+      const b = proc.boot();
+      boot = typeof b === 'string' ? b : null;
+    } catch {
+      boot = null;
+    }
+  }
+  const markers = lib.exitMarkers(root);
+  const lp = listProc(procList);
+  const verdict = (states) => (states.includes('alive') ? 'alive' : states.includes('unknown') ? 'unknown' : 'none');
+  const alarm = verdict(alarm0.map((s) => (slotRec(s.rec) && s.rec.ce === ce ? lib.liveness(s.rec, lp, markers) : 'dead')));
+  const wFiles = !!watcher && watcher.ce === ce && !!wlock && Number(wlock.pid) === Number(watcher.pid) && lib.sameStartTime(wlock.start_time, watcher.start_time);
+  const watcherV = verdict([wFiles ? lib.liveness(watcher, lp, markers) : 'dead']);
+  // Files, no lock: watcher.json.stuck (FX-W5), watcher-busy.json (FX-W7), turn.json and the unarmed records (FX-W3).
+  const stuck = watcher && Array.isArray(watcher.stuck) ? watcher.stuck.filter((s) => typeof s === 'string') : [];
+  const busy = readLoose(P.watcherBusy);
+  const busyTicks = busy && dmInt(busy.busy_ticks) !== null ? busy.busy_ticks : 0;
+  const turn = readLoose(P.turn);
+  const turnSeq = turn && Number.isInteger(turn.turn_seq) ? turn.turn_seq : 0; // as the alarm reads it (watch turnSeqOf)
+  const unarmedTurns = turn && dmInt(turn.unarmed_turns) !== null ? turn.unarmed_turns : 0;
+  let names = [];
+  try {
+    names = fs.readdirSync(P.arm);
+  } catch {
+    names = [];
+  }
+  let sameTurn = 0;
+  for (const n of names) {
+    if (!/^unarmed-[0-9A-Za-z-]+\.json$/.test(n)) continue;
+    const u = readLoose(path.join(P.arm, n));
+    if (u && u.ce === ce && u.turn_seq === turnSeq) sameTurn += 1;
+  }
+  // The counters, in its own runs; runs_no_* are of the current ce (a new ce starts them at 0) and an
+  // unknown verdict leaves them as they were.
+  const prevFile = readSource(P.deadman);
+  const prev = prevFile.rec;
+  const state = prev ? 'continued' : prevFile.bytes || prevFile.corrupt ? 'reset' : 'fresh';
+  const sameCe = !!prev && prev.ce === ce;
+  const count = (v, key) => {
+    const n = sameCe && dmInt(prev[key]) !== null ? prev[key] : 0;
+    return v === 'none' ? n + 1 : v === 'alive' ? 0 : n;
+  };
+  const runsNoAlarm = count(alarm, 'runs_no_alarm');
+  const runsNoWatcher = count(watcherV, 'runs_no_watcher');
+  const hist = [...(prev && Array.isArray(prev.list_hist) ? prev.list_hist.filter((b) => typeof b === 'boolean') : []), procList === null].slice(-DM.listWindow);
+  const listFailed = hist.filter(Boolean).length;
+  const holds = {
+    'no-alarm': runsNoAlarm >= DM.noAlarmRuns,
+    'no-watcher': runsNoWatcher >= DM.noWatcherRuns,
+    'list-failing': listFailed >= DM.listFailMin,
+    stuck: stuck.length > 0,
+    'run-lock-busy': busyTicks >= dmParam(th, 'busy_alert_ticks', DM.busyAlertTicks),
+    'unarmed-turns': unarmedTurns >= DM.unarmedTurnsMin,
+    'unarmed-records': sameTurn >= DM.unarmedSameTurn,
+  };
+  // The onset and the re-alert (rev 5 N1, P1): alerted {cause: runs since its last alert}.
+  const realert = dmParam(th, 'realert_runs', DM.realertRuns);
+  const prevAlerted = prev && prev.alerted && typeof prev.alerted === 'object' && !Array.isArray(prev.alerted) ? prev.alerted : {};
+  const alerted = {};
+  const alerts = [];
+  const causes = DM_CAUSES.filter((c) => holds[c]);
+  for (const c of causes) {
+    const n = dmInt(prevAlerted[c]);
+    if (n === null || n + 1 >= realert) {
+      alerts.push(c);
+      alerted[c] = 0;
+    } else alerted[c] = n + 1;
+  }
+  // deadman-nowake's evidence: a gap in its own runs within one boot (missed runs: no wake, or blocked).
+  const nowMs = Date.parse(now);
+  const prevMs = prev ? Date.parse(prev.at) : NaN;
+  let gap = prev && prev.gap && typeof prev.gap === 'object' ? { ...prev.gap, runs_since: (dmInt(prev.gap.runs_since) ?? 0) + 1 } : null;
+  if (Number.isFinite(prevMs) && boot !== null && prev.boot === boot && nowMs - prevMs > DM.gapPeriods * DM.periodMs) {
+    gap = { from: prev.at, to: now, ms: nowMs - prevMs, boot, runs_since: 0 };
+  }
+  const rec = {
+    schema_version: 1, ce, runs: (prev && dmInt(prev.runs) !== null ? prev.runs : 0) + 1, at: now, boot,
+    runs_no_alarm: runsNoAlarm, runs_no_watcher: runsNoWatcher, list_hist: hist, alerted, gap,
+  };
+  if (!dry) lib.writeAtomic(P.deadman, serialize(rec));
+  const result = {
+    ce, written: !dry, state, runs: rec.runs, list: procList === null ? 'failed' : 'answered', alarm, watcher: watcherV,
+    runs_no_alarm: runsNoAlarm, runs_no_watcher: runsNoWatcher, list_failed: listFailed, list_runs: hist.length,
+    stuck, busy_ticks: busyTicks, unarmed_turns: unarmedTurns, turn_seq: turnSeq, unarmed_same_turn: sameTurn,
+    causes, alerts, alerted, gap,
+  };
+  const reasons = alerts.length ? [{ code: 'deadman-alert', detail: { alerts, causes } }] : [];
+  return { exit: alerts.length ? 1 : 0, result, reasons };
+}
+
+// FX-W4, the status view: anomaly deadman-nowake when the dead-man is not shown to run every period
+// (its wake-to-run's effect, FIX-wake.md FX-W4 step 1): no record (never ran), unreadable, older than
+// stalePeriods periods, or a gap of its runs within one boot fewer than 2 alarm periods of runs ago.
+function deadmanNowake(root, th, now) {
+  const s = readSource(lib.paths(root).deadman);
+  if (!s.bytes && !s.corrupt) return { why: 'no-run' };
+  const at = s.rec ? Date.parse(s.rec.at) : NaN;
+  if (!Number.isFinite(at)) return { why: 'unreadable' };
+  if (Date.parse(isoOf(now)) - at > DM.stalePeriods * DM.periodMs) return { why: 'stale', at: s.rec.at };
+  let alarmMs = null;
+  try {
+    alarmMs = th.get('alarm_ms');
+  } catch {
+    alarmMs = null;
+  }
+  const flagRuns = Number.isFinite(alarmMs) && alarmMs > 0 ? Math.max(1, Math.ceil((2 * alarmMs) / DM.periodMs)) : 24;
+  const g = s.rec.gap;
+  if (g && typeof g === 'object' && dmInt(g.runs_since) !== null && g.runs_since < flagRuns) {
+    return { why: 'gap', from: g.from ?? null, to: g.to ?? null, ms: g.ms ?? null };
+  }
   return null;
 }
 

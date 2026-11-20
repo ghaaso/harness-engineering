@@ -18,11 +18,14 @@ node tcb/status.mjs owner --act closed --subject SID --quote-file P --root R --c
   session id, a lowercase UUID, else 66; in the hold the owner line, then run/close/done/<SID>.json {kind:
   'close-done', session, outcome: 'owner', by: null} by an exclusive create, a record already there kept)
 node tcb/status.mjs meter --pct P --root R --ce N
+node tcb/status.mjs --deadman --root R [--now ISO] [--boot B] [--dry-run]   (FX-W4: the scheduled task's
+  form is `--deadman --root R` only; no ce, the ce is coord.json's)
 ```
 Modes `intent` (sub-mode `open|done`), `owner`, `meter`; the default and the two flags otherwise.
 `--reconcile` and `--endturn` together → 66. `--arm-nonces X[,X2]` (FX-W2) only with `--reconcile`
 (else 66): the nonces of this turn's ensures (branch S1: one), each 32 lowercase hex, comma-separated,
-else 66 before any write; a later reconcile of the same turn passes none. `--pct` an integer 0..100; `--key` the intent-key
+else 66 before any write; a later reconcile of the same turn passes none. `--deadman` (FX-W4) with `--ce`,
+`--reconcile`, `--endturn`, `--acked-seq` or `--arm-nonces` → 66; its root must be absolute (else 66). `--pct` an integer 0..100; `--key` the intent-key
 pattern (CONTRACT §1.5); `--quote-file`/`--text-file` must resolve under `<root>/plan/notes/`
 (`isUnder`; the coordinator's only writable place for them) → else 66 `path-outside-root`.
 
@@ -33,7 +36,8 @@ files, FX-W2), `run/turn.json` (FX-W2), `run/intents/`, `tcb/thresholds.json` (F
 `release_ms`, `arm_confirm_ms`), `store/commits/`,
 `store/status/card_status.jsonl`, `wt/*/outcome/` (the READY of an epoch, FX-OUT; a bad log is anomaly
 `outcome-tamper`), `wt/*/staging/READY.json` (zombie-write telemetry only), transcripts (spend, windows,
-reconcile), the process list (slots, wake sources).
+reconcile), the process list (slots, wake sources). The build also reads `run/deadman.json` (FX-W4, the
+anomaly `deadman-nowake`); `--deadman` reads only what the FX-W4 section names.
 
 ## Writes
 `run/status.json` (writeAtomic under the run lock), `run/acked.json` (endturn), `run/tasks.json`
@@ -42,7 +46,8 @@ create), ledger lines `started` {session}, `owner` {act, subject, quote}, `inten
 `intent-done` {key}, `meter` {pct, self_reported: true}. Reconcile removes `run/arm/exited-*.json`
 markers that nothing names (hold 2, FX-W1). Reconcile writes `run/turn.json` (FX-W2: in the main hold
 after `status.json`, and again in hold 2; CONTRACT §3.9 [turn]) and `run/arm/<nonce>.json` {state:
-'abandoned'} for a given nonce still absent or `started` (hold 2; [arm-nonce]).
+'abandoned'} for a given nonce still absent or `started` (hold 2; [arm-nonce]). `--deadman` writes only
+`run/deadman.json` (FX-W4: writeAtomic, its one writer, no lock; a dry run writes nothing).
 
 ## Steps
 **Build (default; also the last step of `--reconcile`).** 1 Facts outside the lock: `proc.list()`
@@ -140,7 +145,7 @@ subject that is a task in the table (else 1 `no-task`); append `owner` {act, sub
 
 ## Exit codes
 0; 1 `turn-stale`, `acked-ahead`, `acked-backwards`, `watcher-missing`, `alarm-missing` (endturn),
-`arm-unconfirmed` (reconcile, FX-W2), `intent-differs`, `no-task`; 2 `proc-unavailable` (endturn: none dead, some unknown), `missing`, `schema-version`; 3 `run-from-attempt`; 64;
+`arm-unconfirmed` (reconcile, FX-W2), `intent-differs`, `no-task`, `deadman-alert` (FX-W4); 2 `proc-unavailable` (endturn: none dead, some unknown), `missing`, `schema-version`, `no-coordinator` (also `--deadman`); 3 `run-from-attempt`; 64;
 65 (reconcile CAS); 66; 67 (tasks, coord, acked or an intent file corrupt; a corrupt watcher or alarm
 record is the anomaly `state-corrupt`, FX-W1); 70; 75.
 
@@ -234,11 +239,11 @@ start (§7 item 7); that the watcher's and alarm's exits reach the coordinator (
   FX-W1 built: `hold2PruneMarkers` lists `run/arm/` first, then reads what keeps a marker (`alarm.json`,
   every `slot-*.json`, `hold.slots`) and removes each `exited-*` marker none of them names, so a marker
   made after the listing is never touched; `unarmed-*` records stay; a dry run removes nothing.
-- Flags of the default mode: `ARM_FLAGS` (FX-W2, `arm-nonces`, built) and `DEADMAN_FLAGS` (FX-W4, `deadman`), empty.
+- Flags of the default mode: `ARM_FLAGS` (FX-W2, `arm-nonces`, built) and `DEADMAN_FLAGS` (FX-W4, `deadman`, built).
 - FX-W2 built: `armNonces`, `readArmSlots`/`judgeArmSlots` (r1), `turnHold1` (the main hold's
   `turn.json`), `hold2Wait`, `hold2Lock` (`lib.withRunLock` with `lockOpts`), `hold2ArmSlots`.
-- `deadmanRun(ctx, flags, dry)` (FX-W4) runs right after the dry-run flag is read, before the ce check;
-  null goes on.
+- `deadmanRun(ctx, flags, dry)` (FX-W4, built) runs right after the dry-run flag is read, before the ce
+  check; null (no `--deadman`) goes on. `deadmanNowake` (FX-W4) is the build's anomaly.
 
 ## FX-CLAIM (round 3)
 
@@ -259,3 +264,37 @@ keeps its filters: the first fence and `replace-start` wait for a free slot and 
 `audit`/`commit` are class 11's; `stop-verify` waits for its sample's age; `owner`/`none` raise nothing. Its
 facts: its tick, wall time, an empty process list, the step-7 sessions of its own slotCount, and the rows of class
 25 as zombie-over. Tests: status T3; watch "FX-PLAN act due", "FX-PLAN: a zombie-over row"; lib FX-PLAN T1-T3.
+
+## FX-W4 (round 3): the dead-man
+`status.mjs --deadman --root R` (FIX-wake FX-W4 steps 1-3, rev 5 N1; FIX-JOIN point 1.4; branches P1, H4 B, H7;
+`departures/W4.md`). One run of the owner's scheduled task, `tcb/settings/deadman-task.xml` (every 5 min and at
+logon, wake-to-run; a file: the build never installs it). Read-only but for its own file; no lock, no ledger line.
+- **The ce** is `run/coord.json`'s: absent or without an integer ce >= 1 → 2 `no-coordinator`; corrupt → 67.
+- **Before its one process list** (`realProc`, 30 s): `run/alarm.json`, `run/arm/slot-1..alarm_slots.json`,
+  `run/watcher.json`, `run/watcher.lock`. After it: the exit markers (`lib.exitMarkers`). The alarm is `alive` when
+  one record of this ce is alive and unmarked, else `unknown` when one is unknown, else `none` (absent, corrupt,
+  another ce, marked or dead). The watcher likewise, its record valid as endturn judges it (watcher.json of this
+  ce, watcher.lock naming the same pid and start).
+- **Files, no lock:** `watcher.json.stuck` (FX-W5, any ce), `run/watcher-busy.json.busy_ticks` (FX-W7, per root),
+  `run/turn.json` (`turn_seq` as the alarm reads it, `unarmed_turns`), `run/arm/unarmed-*.json` of this ce whose
+  `turn_seq` is the current one (FX-W3).
+- **Counts, in its own runs:** `runs_no_alarm`, `runs_no_watcher`: `none` +1, `alive` 0, `unknown` unchanged; both
+  restart at 0 when the record's ce is not the current one. `list_hist`: the last 5 runs, true where the list failed.
+- **Causes** (in this order): `no-alarm` (runs_no_alarm >= 2), `no-watcher` (runs_no_watcher >= 2), `list-failing`
+  (3 of the last 5), `stuck` (non-empty), `run-lock-busy` (busy_ticks >= `busy_alert_ticks`, fallback 10),
+  `unarmed-turns` (>= 3), `unarmed-records` (>= 2 of the current turn_seq).
+- **Alerts (P1):** `alerted` {cause: runs since its last alert}. A cause alerts at its onset and again when
+  `realert_runs` runs (fallback 6) have passed since its last alert; a cause absent for one run is dropped (its
+  onset ends). Exit 1 `deadman-alert` {alerts, causes} when one alerts this run, else 0; result {ce, written,
+  state fresh|continued|reset, runs, list answered|failed, alarm, watcher, the counts, stuck, busy_ticks,
+  unarmed_turns, turn_seq, unarmed_same_turn, causes, alerts, alerted, gap}. The task toasts on every exit but 0.
+- **Writes** `run/deadman.json` (CONTRACT §3.9 [deadman]) with writeAtomic, its one writer; `--dry-run` writes
+  nothing. `boot` is `--boot`, else the boot of the list when it answered, else null. `gap`: the previous run of
+  the same boot more than 2 periods (10 min) before this one, `{from, to, ms, boot, runs_since: 0}`, carried with
+  runs_since + 1.
+- **The status view** (build, every mode): anomaly `deadman-nowake` {why}: `no-run` (no file), `unreadable`, `stale`
+  {at} (older than 3 periods, 15 min, at `--now`), `gap` {from, to, ms} while runs_since < max(1, ceil(2 x
+  alarm_ms / 5 min)). The task's wake setting is judged by its effect: the runs keep coming through sleeps.
+- Tests (`tcb/test/status.test.mjs`): "FX-W4 dead-man, the list answering", "FX-W4 dead-man, the list down",
+  "FX-W4 dead-man re-alert (rev 5 N1, P1)", "FX-W4 status view" (with the task file read as text and its command
+  parsed as PowerShell, never run).
