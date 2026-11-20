@@ -80,7 +80,7 @@ attempt, windows. 2 Under `withRunLock(ce)`: read every file, compute [status] Â
   whose last `check` line has result not_run, plus (`fsck`, `store`) when the last `fsck` line is
   not_run; `anomalies`: `proc-unavailable`, `ledger-torn`,
   `watcher-dead`, `alarm-dead`, `state-corrupt`, `watcher-stale-ce`, `lock-orphan` (`*.orphan` files),
-  `several-sessions`, `zombie-write`, `ready-unparseable`.
+  `several-sessions`, `zombie-write`, `outcome-tamper`.
 3 Validate against [status] and write. Same inputs â†’ same file except `generated_at`.
 
 **--reconcile.** For each row active at step `admitted` (epoch e): `transcriptsForFolder(folder)`;
