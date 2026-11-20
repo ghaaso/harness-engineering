@@ -11,7 +11,7 @@
 //                       event needed, owner wake only after two wake losses or a host reset)
 //   EventuallyResolves  AF(field resolved) under weak fairness per process (coordinator i, watcher,
 //                       alarm, owner, child f/e): no fair cycle that keeps a field unresolved
-import { FAULTS, makeParams, initial, canon, encode, decode, successors, invariants, ownerLegit, isTerm } from './model-build.mjs';
+import { FAULTS, PROC, makeParams, initial, canon, encode, decode, successors, invariants, ownerLegit, isTerm } from './model-build.mjs';
 import { CONFIGS } from './configs-build.mjs';
 
 // provenance (MB2b, at the coordinator's request): sha256 of the model and the configs as they were when this run started
@@ -27,6 +27,9 @@ if (!cfg) { console.error('unknown config ' + id + '; known: ' + CONFIGS.map((c)
 const budArg = args.includes('--bud') ? args[args.indexOf('--bud') + 1] : null;
 const over = { ...cfg.over, BUD: { ...(cfg.over.BUD || {}) } };
 if (budArg) { for (const k of FAULTS) over.BUD[k] = 0; for (const kv of budArg.split(',')) { const [k, v] = kv.split('='); over.BUD[k] = +v; } }
+// --set FLAG=1,FLAG2=0,N=3 (S2.2): one flag over the configuration, for an ablation or a diagnosis (1 true, 0 false, else a number)
+const setArg = args.includes('--set') ? args[args.indexOf('--set') + 1] : null;
+if (setArg) for (const kv of setArg.split(',')) { const [k, v] = kv.split('='); over[k] = v === '1' ? true : v === '0' ? false : +v; }
 const P = makeParams(over);
 const BUDGET = memMB * 1024 * 1024;
 const DEADLINE = args.includes('--deadline') ? +args[args.indexOf('--deadline') + 1] : Infinity; // epoch ms: stop exploring then
@@ -245,10 +248,16 @@ function analyses() {
     props.NoBusyLoop = best < 0 ? { holds: complete ? true : 'not refuted (bounded)' } : { holds: false, trace: [...traceTo(best), '-- this cycle repeats with no child, watcher, alarm or owner action --', ...cycleIn(best, inNode, inEdge)] };
   }
 
-  // eventual resolution under weak fairness, per field
+  // eventual resolution under weak fairness, per field. S2.2: one process is strongly fair, the owner typing to a
+  // coordinator that has a start due (PROC.OT, model-build.mjs): a cycle in which that step is enabled at some state
+  // but never taken is not fair. Exact by the Emerson-Lei refinement: such a component loses the states where the step
+  // is enabled, and its rest is searched again (a sub-cycle that avoids them may still be fair). No OT edge: as before.
   let bad = null;
+  const SF = PROC.OT; let removed = null;
   for (let f = 0; f < F && !bad; f++) {
-    const inNode = (q) => !(flags[q] & (1 << f)) && !(flags[q] & 16);
+   if (removed) removed.fill(0);
+   for (;;) {
+    const inNode = (q) => !(flags[q] & (1 << f)) && !(flags[q] & 16) && !(removed && removed[q]);
     const inEdge = (q, e) => allowedEdge(q, e);
     const nc = sccs(inNode, inEdge);
     const req = alloc(Uint32Array, nc).fill(0xffffffff), took = alloc(Uint32Array, nc), internal = alloc(Uint8Array, nc), minq = alloc(Int32Array, nc).fill(-1);
@@ -259,12 +268,24 @@ function analyses() {
       if (minq[c] < 0) minq[c] = q;
       for (let e = estart[q]; e < estart[q + 1]; e++) if (inEdge(q, e) && eto[e] < expanded && comp[eto[e]] === c && inNode(eto[e])) { internal[c] = 1; took[c] |= 1 << procOf(e); }
     }
+    const sfOn = (q) => { for (let e = estart[q]; e < estart[q + 1]; e++) if (procOf(e) === SF && allowedEdge(q, e)) return true; return false; };
+    const sfEn = alloc(Uint8Array, nc); for (let q = 0; q < expanded; q++) if (inNode(q) && sfOn(q)) sfEn[comp[q]] = 1;
+    const weakOk = (c) => internal[c] && (((req[c] & ~ENV) & ~took[c]) >>> 0) === 0;
+    const sfTook = (c) => ((took[c] >>> SF) & 1) === 1;
     let bc = -1;
-    for (let c = 0; c < nc; c++) if (internal[c] && (((req[c] & ~ENV) & ~took[c]) >>> 0) === 0) { if (bc < 0 || minq[c] < minq[bc]) bc = c; }
+    for (let c = 0; c < nc; c++) if (weakOk(c) && (sfTook(c) || !sfEn[c])) { if (bc < 0 || minq[c] < minq[bc]) bc = c; }
     if (bc >= 0) bad = { f, q: minq[bc], tr: null };
     if (bad) bad.tr = [...traceTo(bad.q), `-- a fair cycle in which field f${f} is never resolved --`, ...cycleIn(bad.q, inNode, inEdge)];
-    free(req); free(took); free(internal); free(minq);
+    let changed = false;
+    if (!bad) for (let q = 0; q < expanded; q++) {
+      if (!inNode(q)) continue; const c = comp[q];
+      if (weakOk(c) && sfEn[c] && !sfTook(c) && sfOn(q)) { if (!removed) removed = alloc(Uint8Array, N); removed[q] = 1; changed = true; }
+    }
+    free(req); free(took); free(internal); free(minq); free(sfEn);
+    if (bad || !changed) break;
+   }
   }
+  if (removed) free(removed);
   props.EventuallyResolves = bad ? { holds: false, trace: bad.tr } : { holds: complete ? true : 'not refuted (bounded)' };
 }
 let anaErr = null;

@@ -1275,7 +1275,7 @@ function tick(st, j, P, L) {
 
 // ---------------------------------------------------------------- successors
 // proc ids for fairness: coordinator i -> i (0..3), watcher 4, alarm 5, owner 6, child (f,ep) 7 + f*6 + min(ep,5)
-export const PROC = { W: 4, A: 5, O: 6 };
+export const PROC = { W: 4, A: 5, O: 6, OT: 29 }; // S2.2: OT, the owner types (Q5), the one strongly fair process (check-build.mjs)
 const childProc = (s) => 7 + s.f * 6 + Math.min(s.ep, 5);
 
 export function successors(st, P, L) {
@@ -1401,9 +1401,11 @@ export function successors(st, P, L) {
   }
   // S2.2 (Q5, branches row 1): the owner types to the current coordinator while the status view shows a start due (the
   // premise that the owner answers a due start: an owner step, weakly fair). BQ5_NO_OWNER: never (the ablation)
+  // Under a drain the plan still starts an admitted row (lib.mjs:4121-4127 has no drain test; only replace-fence and
+  // replace-start wait, lib.mjs:4103-4104), so the status view shows that start due and the owner answers it.
   if (P.BQ5_OWNER_TURN && !P.BQ5_NO_OWNER) {
     const i = st.ce; const c = st.C[i];
-    if (c && c.pc === null && !c.om && !c.dr && st.T.some((t) => startDue(st, t, P))) { const n = clone(st); n.C[i].om = 1; n.C[i].wk = Math.min(3, n.C[i].wk + 1); push(L && `owner types to coord${i} (the status view shows a start due)`, n, { proc: PROC.O }); }
+    if (c && c.pc === null && !c.om && st.T.some((t) => startDue(st, t, P) && (!c.dr || (t.st === ST.A && t.step === STEP.ADMITTED)))) { const n = clone(st); n.C[i].om = 1; n.C[i].wk = Math.min(3, n.C[i].wk + 1); push(L && `owner types to coord${i} (the status view shows a start due)`, n, { proc: PROC.OT }); }
   }
   // S2.2 (CLOSE's id gap): the owner, asked at the first close-missing (brief 5c), ends the session if it lives and says
   // `closed`; the coordinator relays it with a quote file (merged: the premise of a true relay, at once). Fault w: the
