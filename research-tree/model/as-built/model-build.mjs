@@ -21,7 +21,7 @@ export const STEP = { NONE: 0, FENCED: 1, STOPPED: 2, ADMITTED: 3, RUN: 4 };
 // process lives until someone closes it (nobody knows its session id)
 // MODE.SLOW (as-built wake group, AB_HANG_CALLS / D5): a HEALTHY child in a call longer than the hang threshold, or
 // waiting for its own background job (no new assistant message); it returns to OK by an environment step
-export const MODE = { OK: 0, STUCK: 1, LOOPS: 2, LOOPV: 3, DEAD: 4, IDLE: 5, SLOW: 6 };
+export const MODE = { OK: 0, STUCK: 1, LOOPS: 2, LOOPV: 3, DEAD: 4, IDLE: 5, SLOW: 6, IMIT: 7 }; // S2.2: IMIT, fault m (BLD_AGE_CAP)
 // CRASH (fence fixes, FX_PLAN): `replace-fence --reason crash` after a start lease expired with no claim (a failure reason)
 export const RSN = { FIRST: 0, STALL: 1, HANG: 2, LOOP: 3, HO: 4, CRASH: 5 };
 // SR/SV (as-built, AB_COMMIT_CLOSE): stop.mjs request and verify of a committed row's last attempt
@@ -29,7 +29,7 @@ export const RSN = { FIRST: 0, STALL: 1, HANG: 2, LOOP: 3, HO: 4, CRASH: 5 };
 // exit 1 (AR, AB_ARM_SPLIT), and the watcher / the alarm after endturn's missing reasons (SW, SA, AB_ENDTURN_SPLIT)
 export const OP = { F: 1, S: 2, A: 3, T: 4, B: 5, M: 6, D: 7, H: 8, Y: 9, E: 10, SR: 11, SV: 12, AR: 13, SW: 14, SA: 15, EN: 16, RC: 17 };
 const RNAME = ['first', 'stall', 'hang', 'loop', 'planned hand-over', 'crash (start lease expired, no claim)'];
-const MNAME = ['ok', 'stuck in a slow call', 'loops (same call)', 'loops (varied calls, no progress)', 'crashed', 'idle (every tool call denied)', 'healthy but slow (a call longer than the hang threshold, or waiting on its own job)'];
+const MNAME = ['ok', 'stuck in a slow call', 'loops (same call)', 'loops (varied calls, no progress)', 'crashed', 'idle (every tool call denied)', 'healthy but slow (a call longer than the hang threshold, or waiting on its own job)', 'imitates activity (new records and a falling V, never READY: no detector fires)'];
 // u (as-built, AB_PROCLIST): the process list becomes unavailable (proc.list fails) until an environment step restores it
 // o (as-built wake group, AB_ACT_DUE): a turn reaches endturn (and acknowledges) without taking the acts it planned
 // y (as-built wake group, AB_ARM_SPLIT): run/alarm.json is unreadable (reconcile and endturn exit 67) until an alarm
@@ -233,6 +233,16 @@ export function makeParams(over = {}) {
     BLD_ARCHIVE_APPROVAL: false, // unrecorded fact: archive_session waits for the owner's approval (outside auto and bypass);
                                // with BLD_STOP_INTERRUPT_ONLY a coordinator's close may leave the session alive (no fault)
     BLD_PROPS: false,          // check RefusedStartNotCharged and LeaseFenceClaimed (observers, no behaviour)
+    BLD_AGE_CAP: false,        // W6 item 6 as built (watch.mjs:339, 1177-1209): FX-W6 step 5, the act-due `age-cap` of an
+                               // attempt whose child imitates (fault m); the coordinator's acknowledgement is a continue: the
+                               // next tick re-arms the cap (age_base = age_ticks), so FX-W5 never raises it again (no `stuck`)
+    BLD_AGE_STUCK: false,      // the design leg, not built (FIX-wake B5.2 with FX-W5 steps 2-3): an acknowledged age cap stays
+                               // present, FX-W5 raises it again, after AGE_STUCK re-raises it is `stuck` and the dead-man alerts
+    AGE_STUCK: 2,              // re-raises before `stuck` (watch.mjs stuckCount: 6 at the capped interval; untimed here)
+    BLD_REDO: false,           // REDO as built (status.mjs:341-391): fault g, a reconcile dies after a row's `started` write and
+                               // before its `started` line; FX-REDO writes the line at a later reconcile while the row is at
+                               // started; property StartedLineRecorded (no row leaves started with its line missing)
+    BLD_REDO_OFF: false,       // ablation: no FX-REDO (a missing started line is never written)
   });
   base.BUD = { ...base.BUD, q: 0, w: 0, m: 0, g: 0 };
   const P = { ...base, ...over, BUD: { ...base.BUD, ...(over.BUD || {}) } };
@@ -299,6 +309,10 @@ const PLU = (P) => P.AB_PROCLIST || P.AB_ARM_SPLIT || P.AB_ENDTURN_SPLIT;
 const term = (st) => st === ST.C || st === ST.F;
 export const isTerm = term;
 // the session of the current attempt; with FX_CLAIM the claim holder first (ch is 0 everywhere when FX_CLAIM is off)
+// S2.2 (W6 item 6): the field's attempt is at bound (started, without FX-CLAIM's bind) and a child of it imitates
+export const imitating = (n, f, P) => { const t = n.T[f]; return t.st === ST.A && t.step === STEP.RUN && (!P.FX_CLAIM || !!t.bn) && n.S.some((s) => s.f === f && s.ep === t.ep && s.al && s.m === MODE.IMIT); };
+// the region of AgeCapReachesOwner (check-build.mjs): an imitating attempt that has not reached the owner (no `stuck`)
+export const waitsOwner = (n, f, P) => !!P.BLD_AGE_CAP && imitating(n, f, P) && !n.T[f].ax;
 export const cur = (n, f) => n.S.find((s) => s.f === f && s.ep === n.T[f].ep && s.ch) || n.S.find((s) => s.f === f && s.ep === n.T[f].ep);
 const liveCount = (n) => n.S.filter((s) => s.al && s.p < 2).length;
 const quiescent = (n) => !n.S.some((s) => s.al && s.p < 2);
@@ -347,7 +361,7 @@ export function canon(n, P) {
     if (s.p === 2 || !s.al) s.z = s.al ? s.z : 0;
     if (s.p === 2 || !s.al) s.rh = 0; // a landed READY, or a writer that died mid-write (a torn READY reads as absent)
   }
-  for (const t of n.T) if (t.st !== ST.A || t.step !== STEP.RUN) { t.wep = 0; t.cs = 0; t.hs = 0; t.rep = 0; t.ry = 0; }
+  for (const t of n.T) if (t.st !== ST.A || t.step !== STEP.RUN) { t.wep = 0; t.cs = 0; t.hs = 0; t.rep = 0; t.ry = 0; t.ag = 0; t.ac = 0; t.ax = 0; }
   for (const t of n.T) if (term(t.st)) { t.step = 0; t.cut = 0; t.ctn = 0; t.rsn = 0; t.fail = t.st === ST.F ? 1 : 0; t.bn = 0; t.gf = 0; t.ol = 0; t.orr = 0; t.sj = 0; t.le = 0; t.ns = 0; t.se = 0; t.rq = 0; t.sq = 0; if (!t.cl) { t.cm = 0; t.vr = 0; } if (t.cl !== 2) t.vt = 0; }
   for (const t of n.T) if (t.st === ST.A && t.step !== STEP.FENCED) { t.sq = 0; t.vt = 0; }
   // ledger: keep events after acked_seq that name a current running attempt; renumber 1..n
@@ -441,10 +455,13 @@ export function decode(b) {
 }
 
 // ---------------------------------------------------------------- the coordinator
-function reconcile(n, P) {
+// S2.2 (REDO, BLD_REDO): die = f is fault g, the run dies after row f's `started` write and before its `started` line (t.sl,
+// status.mjs:343-352); die = -2: it dies before FX-REDO; otherwise FX-REDO (status.mjs:370-391) writes the missing line of
+// every row still active at started. A run that dies writes no status.json (the caller's failed reconcile)
+function reconcile(n, P, die = -1) {
   if (!P.RECONCILE) return;
   for (let f = 0; f < n.T.length; f++) {
-    const t = n.T[f];
+    const t = n.T[f]; const adm = t.st === ST.A && t.step === STEP.ADMITTED;
     // FX-CLAIM step 3: a session claim on an admitted row -> started (the session taken from the claim); transcripts stay a
     // second source below (so `started` with no claim is reachable: FX-PLAN rev 4, P2)
     if (P.FX_CLAIM && t.st === ST.A && t.step === STEP.ADMITTED && t.cm === 1) { t.step = STEP.RUN; t.bn = 0; }
@@ -453,8 +470,19 @@ function reconcile(n, P) {
       // more than one -> `several-sessions` anomaly, no change (status.mjs:266-268)
       if (t.st === ST.A && t.step === STEP.ADMITTED) { const k = n.S.filter((s) => s.f === f && s.ep === t.ep && s.tv).length; if (k === 1) { t.step = STEP.RUN; t.bn = 0; } }
     } else if (t.st === ST.A && t.step === STEP.ADMITTED && cur(n, f)) { t.step = STEP.RUN; t.bn = 0; } // a transcript for the attempt folder: the start happened
+    if (f === die && adm && t.step === STEP.RUN) { t.sl = 1; return; }
     if (!P.AB_NO_COMMIT_RECONCILE && t.st === ST.A && t.cmE >= 0) { t.st = ST.C; t.step = 0; } // a COMMIT record exists: the task is committed
   }
+  if (P.BLD_REDO && !P.BLD_REDO_OFF && die !== -2) for (const t of n.T) if (t.sl && t.st === ST.A && t.step === STEP.RUN && !t.bn) t.sl = 0;
+}
+// the death points of fault g in a reconcile of n (BLD_REDO): each row it moves to started, and before FX-REDO while a line
+// is missing at started
+function redoDeaths(n, P) {
+  if (!P.BLD_REDO || !has(n, 'g')) return [];
+  const out = [];
+  for (let f = 0; f < n.T.length; f++) { const g = clone(n); reconcile(g, P, f); if (g.T[f].sl && !n.T[f].sl) out.push(f); }
+  if (!P.BLD_REDO_OFF && n.T.some((t) => t.sl && t.st === ST.A && t.step === STEP.RUN && !t.bn)) out.push(-2);
+  return out;
 }
 
 // AB_STALE_SNAPSHOT: status.json as the last status build wrote it; per row the epoch at which it showed the row admitted
@@ -661,7 +689,7 @@ function admitCount(n, P) {
 // READY keys the turn read (aks 2) are acknowledged with it (one K acknowledges every key at or below it, S:631)
 function ackAt(n, i, P, rd) {
   n.ack = P.ACK_READ ? rd : n.seq;
-  if (P.AB_ACT_DUE) { for (const t of n.T) if (t.aks === 2 || (!P.ACK_READ && t.aks)) t.aks = 0; if (n.rk === 2 || (!P.ACK_READ && n.rk)) n.rk = 0; }
+  if (P.AB_ACT_DUE) { for (const t of n.T) { if (t.aks === 2 || (!P.ACK_READ && t.aks)) t.aks = 0; if (t.ag === 2 || (!P.ACK_READ && t.ag === 1)) t.ag = 3; } if (n.rk === 2 || (!P.ACK_READ && n.rk)) n.rk = 0; }
 }
 
 // AB_STOP_HELD (FIDELITY-3 gap 1): stop verify needs stop_verify_deltas (= 2 in the model) watcher ticks after the request's
@@ -1087,9 +1115,10 @@ function runOp(st, i, P, L) {
     let fail = null;
     if (P.AB_ARM_SPLIT && n.rl && !n.pl) fail = 'exits 75 (run.lock held by a holder no process list can judge): no status.json';
     else {
+      for (const d of redoDeaths(n, P)) { const g = clone(n); spend(g, 'g'); reconcile(g, P, d); g.C[i].pc = [[OP.E, 0, 0, 0]]; out.push({ lab: L && `${who} status --reconcile: FAULT g, it dies ${d >= 0 ? `after f${d}'s started write, before its started line` : 'before FX-REDO writes a missing started line'}: no status.json; goes to endturn (brief place 9)`, n: g, fault: true, viol: sv, d6: 'p5' }); }
       reconcile(n, P); c.rd = n.seq; if (P.AB_STALE_SNAPSHOT) snapStatus(n);
       if (P.AB_ARM_SPLIT && n.cj && !P.FIX_ALARM_MARKER) fail = 'exits 67 (alarm.json unreadable): no status.json';
-      else { if (n.pl) n.rl = 0; if (P.AB_ACT_DUE) { for (const t2 of n.T) if (t2.aks === 1) t2.aks = 2; if (n.rk === 1) n.rk = 2; } }
+      else { if (n.pl) n.rl = 0; if (P.AB_ACT_DUE) { for (const t2 of n.T) { if (t2.aks === 1) t2.aks = 2; if (t2.ag === 1) t2.ag = 2; } if (n.rk === 1) n.rk = 2; } }
     }
     if (fail) { c.pc = P.FIX_ENDTURN_ALWAYS ? [[OP.E, 0, 0, 0]] : null; out.push({ lab: L && `${who} status --reconcile ${fail}; ${P.FIX_ENDTURN_ALWAYS ? 'goes to endturn (N2)' : 'turn ends'}`, n, viol: sv, d6: 'p5' }); return out; }
     n.A = n.A.map((a) => (aPar(a) === i ? a & ~32 : a)); // seconds after the ensure: from here on it may fire (untimed)
@@ -1233,7 +1262,7 @@ function tick(st, j, P, L) {
     const disc = P.FIX_PAUSE_DISCOUNT && (P.AB_PAUSE_GAP ? gp0 : s.pu);
     if (P.FIX_OP_DEADLINE && fresh) { /* FX-W6 step 1: the first tick of an epoch counts nothing */ }
     else if (P.AB_HANG_CALLS && fresh) { if (!disc) t.hs = Math.min(P.H_HANG, t.hs + 1); } // W:375: a fresh state forces newCalls = 0
-    else if (s.mv) { t.cs = 0; t.hs = 0; }
+    else if (s.mv || s.m === MODE.IMIT) { t.cs = 0; t.hs = 0; } // S2.2: an imitating child's records read as a move
     else if (s.nc > 0) { if (P.PROGRESS) t.cs = Math.min(P.C_STALL, t.cs + s.nc); t.hs = 0; }
     // FX-W6 B1: a healthy in-call child ends its call within its kind's deadline (the stated bound): its count stays below it
     else if (!disc) t.hs = Math.min(P.FIX_OP_DEADLINE && s.m === MODE.SLOW ? P.H_HANG - 1 : P.H_HANG, t.hs + 1);
@@ -1278,7 +1307,20 @@ function tick(st, j, P, L) {
     const ra = H | Tm;
     if ((ra & ~n.ra) !== 0) { n.rk = 1; raised.push(ra & 1 ? 'handover' : 'run-terminal'); }
     n.ra = ra;
-    const due = n.T.some((t) => t.aks) || n.rk || n.E.some((e) => e.seq > n.ack);
+    // S2.2 (W6 item 6, BLD_AGE_CAP): FX-W6 step 5's act-due age-cap (watch.mjs:1177-1209), per field: ag 0 armed, 1 raised (an
+    // event line, due), 2 read by a turn, 3 acknowledged at endturn. Only an attempt whose child imitates reaches the cap
+    // (the premise: attempt_max_ticks is above any healthy attempt), here at a tick (untimed). As built the tick after the
+    // acknowledgement re-arms it (age_base = age_ticks): the condition clears and the ident leaves the active set, so
+    // FX-W5's re-raise and `stuck` never see it, and the cap is reached again later. BLD_AGE_STUCK (the design leg, not
+    // built): the condition stays, FX-W5 raises it again, and after AGE_STUCK re-raises it is in watcher.json `stuck` (ax)
+    if (P.BLD_AGE_CAP) n.T.forEach((t, f) => {
+      const imit = imitating(n, f, P);
+      if (t.ag === 3) {
+        if (P.BLD_AGE_STUCK && imit) { if (t.ac + 1 >= P.AGE_STUCK) t.ax = 1; t.ac = Math.min(1, t.ac + 1); t.ag = 1; raised.push(`f${f}:age-cap (again${t.ax ? '; stuck' : ''})`); }
+        else { t.ag = 0; t.ac = 0; t.ax = 0; }
+      } else if (t.ag === 0 && imit) { t.ag = 1; raised.push(`f${f}:age-cap`); }
+    });
+    const due = n.T.some((t) => t.aks || t.ag === 1 || t.ag === 2) || n.rk || n.E.some((e) => e.seq > n.ack);
     if (raised.length || due) evs.push({ f: 0, ep: 0, cls: 0, ready: 1, open: 1, txt: raised.length ? `act-due raised: ${raised.join(', ')}` : 'unacknowledged keys due' });
   } else if (P.FIX_WATCHER_ACTIONABLE && actionable(n, P)) evs.push({ f: 0, ep: 0, cls: 0, ready: 1, open: 1 });
   if (evs.length) {
@@ -1364,6 +1406,9 @@ export function successors(st, P, L) {
       // AB_HANG_CALLS (D5): a healthy call longer than the hang threshold, or the child waits on its own background job
       // (planned, not a fault): no new assistant message, so the watcher's ticks go on (no timeliness assumption for it)
       if (P.AB_HANG_CALLS && !preClaim && has(st, 's')) { const n = clone(st); spend(n, 's'); n.S[q].m = MODE.SLOW; push(L && `child f${s.f}e${s.ep} (healthy) starts a long call or waits on its own background job: no new assistant message for a while`, n, { proc }); }
+      // S2.2 (W6 item 6): fault m, the child imitates activity (new records, a falling V, never READY: no detector fires);
+      // at bound only, where age_ticks counts (watch.mjs:339)
+      if (!preClaim && t.st === ST.A && t.step === STEP.RUN && (!P.FX_CLAIM || t.bn) && has(st, 'm')) { const n = clone(st); spend(n, 'm'); n.S[q].m = MODE.IMIT; push(L && `FAULT child f${s.f}e${s.ep} ${MNAME[MODE.IMIT]}`, n, { fault: true, proc }); }
     }
   });
   // owner: ends an escalated zombie; starts the fresh coordinator after a hand-over; wakes the tree (recovery only)
@@ -1435,6 +1480,14 @@ export function successors(st, P, L) {
     push(L && `owner: closed f${s.f}e${s.ep} (ended if it lived); the coordinator relays it (owner act closed: a record under the CLI id)`, n, { proc: PROC.O });
     if (s.al && has(st, 'w')) { const b = clone(st); spend(b, 'w'); b.S[q].dn = 1; wake(b, b.ce); push(L && `FAULT the coordinator relays closed for f${s.f}e${s.ep}, which the owner did not close (it lives)`, b, { fault: true, proc: PROC.O }); }
   });
+  // S2.2 (W6 item 6, BLD_AGE_STUCK, the design leg): the dead-man's run finds watcher.json `stuck` (status.mjs:956, 992) and
+  // alerts; the owner ends the imitating session and wakes the coordinator with a typed turn (merged: a delivered alert, an
+  // owner who answers; his other answers, drop or resume, are not modelled)
+  if (P.BLD_AGE_STUCK) st.T.forEach((t, f) => {
+    if (!t.ax) return; const q = st.S.findIndex((s) => s.f === f && s.ep === t.ep && s.al && s.m === MODE.IMIT); if (q < 0) return;
+    const n = clone(st); n.S[q].al = 0; if (P.BQ5_OWNER_TURN && n.C[n.ce] && n.C[n.ce].pc === null) n.C[n.ce].om = 1; wake(n, n.ce);
+    push(L && `status --deadman run: stuck (f${f}:age-cap) -> ALERT; the owner ends f${f}e${t.ep}'s imitating session and wakes coord${n.ce}`, n, { proc: PROC.O });
+  });
   // watchers (AB_FAIR_IDS: one fairness id per watcher, by the coordinator that started it)
   st.W.forEach((w, j) => {
     const proc = P.AB_FAIR_IDS ? 19 + Math.min(w.par, 3) : PROC.W;
@@ -1473,10 +1526,11 @@ export function successors(st, P, L) {
         if (!c.boot && has(st, 'l')) { const n = clone(st); spend(n, 'l'); n.C[i].wk--; push(L && `FAULT a wake to coord${i} is lost`, n, { fault: true, proc: i, d6: 'lost' }); }
         return;
       }
-      let arm = false; let head = 'status --reconcile'; let fail = null;
+      let arm = false; let head = 'status --reconcile'; let fail = null; let gd = []; let g0 = null; // fault g (REDO)
       if (current || !P.FENCE_CE) {
         if (P.AB_ARM_SPLIT && n0.rl && !n0.pl) fail = 'p5';  // r8: a stale run.lock cannot be judged with no process list: 75
         else {
+          gd = redoDeaths(n0, P); if (gd.length) g0 = clone(n0);
           reconcile(n0, P); cc.rd = n0.seq; if (P.AB_STALE_SNAPSHOT && current) snapStatus(n0); // reconcile writes status.json
           if (P.AB_ARM_SPLIT && n0.cj && !P.FIX_ALARM_MARKER) fail = 'p5'; // r11 reads alarm.json: unreadable -> 67 under the lock (FX-W1: an anomaly)
           else if (P.AB_ARM_SPLIT) {
@@ -1485,7 +1539,7 @@ export function successors(st, P, L) {
             arm = P.ALARM && (P.FIX_ALARM_MARKER ? (n0.cj || slotVerdict(n0, 0, P) === 0) : (!n0.A.includes(i) || !n0.pl));
             if (!arm) cc.ch = 0;
           } else if (P.FIX_ARM_AT_START && P.ALARM && !n0.A.includes(i)) n0.A.push(i);
-          if (P.AB_ACT_DUE && current) { for (const t of n0.T) if (t.aks === 1) t.aks = 2; if (n0.rk === 1) n0.rk = 2; } // the turn reads status.json
+          if (P.AB_ACT_DUE && current) { for (const t of n0.T) { if (t.aks === 1) t.aks = 2; if (t.ag === 1) t.ag = 2; } if (n0.rk === 1) n0.rk = 2; } // the turn reads status.json
         }
         if (fail) head = n0.rl && !n0.pl ? 'status --reconcile exits 75 (run.lock held by a holder no process list can judge): no status.json, no arm request' : 'status --reconcile exits 67 (alarm.json unreadable, S:354): no status.json, no arm request';
         else if (arm) head = `status --reconcile exits 1 alarm-missing${n0.pl ? '' : ' (no process list: the alarm cannot be seen alive)'}`;
@@ -1503,6 +1557,13 @@ export function successors(st, P, L) {
         n.C[i].pc = ops.length ? ops.map((o) => o.slice()) : null;
         const lab0 = L && `coord${i} wakes, ${head}, plan: ${ops.length ? ops.map(opName).join(' > ') : fail ? '(nothing it can act on: end turn)' : '(stale ce: end turn)'}${v.o ? ' -- FAULT o: it goes to endturn without taking the planned acts' : ''}`;
         for (const r of macro(n, i, P, L, [lab0], true)) push(r.lab, r.n, { proc: i, u: true, fault: r.fault || v.o, viol: r.viol, d6: r.d6 || fail });
+      }
+      // S2.2 (REDO): fault g, the status run dies mid-reconcile: no status.json, nothing to act on; the turn goes to endturn, its
+      // last call after any failed call (tcb/briefs/coordinator.md place 9, built: N2), whatever FIX_ENDTURN_ALWAYS says
+      for (const d of gd) {
+        const n = clone(g0); spend(n, 'g'); reconcile(n, P, d); n.C[i].pc = [[OP.E, 0, 0, 0]];
+        const lab0 = L && `coord${i} wakes, status --reconcile: FAULT g, it dies ${d >= 0 ? `after f${d}'s started write, before its started line` : 'before FX-REDO writes a missing started line'}: no status.json; plan: endturn (brief place 9)`;
+        for (const r of macro(n, i, P, L, [lab0], true)) push(r.lab, r.n, { proc: i, u: true, fault: true, viol: r.viol, d6: 'p5' });
       }
       if (!c.boot && has(st, 'l')) { const n = clone(st); spend(n, 'l'); n.C[i].wk--; push(L && `FAULT a wake to coord${i} is lost`, n, { fault: true, proc: i, d6: 'lost' }); }
     } else {
@@ -1565,6 +1626,8 @@ export function invariants(n, P) {
   if (n.T.some((t) => t.ncr > 1)) v.push('AtMostOneCommit');
   if (n.W.filter((w) => w.ph === 1).length > 1) v.push('SingleWatcher');
   n.T.forEach((t, f) => { if (t.st === ST.F && n.S.some((s) => s.f === f && s.al && s.p < 2 && !s.z)) v.push('FailedTaskStopped'); });
+  // S2.2 (REDO): a row left started (bound, fenced, committed, failed) with its started line missing: no redo, no fsck warning
+  if (P.BLD_REDO && n.T.some((t) => t.sl && !(t.st === ST.A && t.step === STEP.RUN && !t.bn))) v.push('StartedLineRecorded');
   // wake group: at most two alarm processes of one coordinator (the current one and one superseded by a registration race)
   if (P.WAKE_PROPS && n.C.some((c, i) => alarmsOf(n, i) > (P.FIX_ARM_FIRST ? P.ALARM_SLOTS + 1 : 2))) v.push('AlarmsBounded'); // FX-W1: alarm_slots + 1
   // FX_PROPS: OneWriterPerAttempt - two sessions of one attempt have both passed a tool call that writes (true state)

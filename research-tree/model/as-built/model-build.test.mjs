@@ -35,6 +35,7 @@ const SMALL = {
   'FN-N2-B': ['k=0'], 'BQ5-SJ': ['k=1,q=1'], 'BQ5-NOSJ': ['k=1,q=1'], 'BQ5-X': ['k=1,q=1'],
   'LEASE-B': ['k=0', 120], 'LEASE-ORDER': ['k=0', 120], 'LEASE-NOWIN': ['k=0', 120], 'LEASE-X': ['k=0', 120],
   'IDGAP-W': ['k=1,w=1'], 'IDGAP-WZ': ['k=2,z=1,w=1'], 'IDGAP-X': ['k=0'], 'CLOSE-APPROVAL': ['k=0'], 'CLOSE-APPROVAL-R5': ['k=0'],
+  'AGE-B': ['k=1,m=1'], 'AGE-STUCK': ['k=1,m=1'], 'REDO-B': ['k=2,x=1,g=1', 1500], 'REDO-X': ['k=2,x=1,g=1', 1500],
 };
 const small = (id) => run(id, SMALL[id][0], { mem: SMALL[id][1] ?? 600 });
 const FINAL = ['SMOKE', 'FN-R5', 'FN-OUT-CLOSE-K2', 'FXW-4R', 'FXW-5', 'FXW-6', 'FN-N2', 'FX-CLAIM', 'FX-CLOSE'];
@@ -104,6 +105,19 @@ describe('model-build', { concurrency: 4 }, () => {
   test('fault w: a false closed relay for a live session breaks Slots (IDGAP-W k=1,w=1)', async () => {
     const j = await small('IDGAP-W');
     assert.ok(j.fails.includes('Slots'));
+  });
+
+  test('W6 item 6: the age cap as built never reaches the owner; the design leg (BLD_AGE_STUCK) does (k=1,m=1)', async () => {
+    const [built, stuck, nocap] = await Promise.all([small('AGE-B'), small('AGE-STUCK'), run('AGE-B', 'k=1,m=1', { set: 'BLD_AGE_CAP=0' })]);
+    for (const p of ['AgeCapReachesOwner', 'EventuallyResolves', 'AlwaysCanResolve']) assert.ok(built.fails.includes(p), p);
+    assert.deepEqual(stuck.fails, []);
+    assert.notEqual(built.states, stuck.states); assert.notEqual(built.states, nocap.states); assert.ok(!('AgeCapReachesOwner' in nocap.props));
+  });
+
+  test('REDO: FX-REDO writes a lost started line before the row moves on; without it the line is lost (k=2,x=1,g=1)', async () => {
+    const [redo, off] = await Promise.all([small('REDO-B'), small('REDO-X')]);
+    assert.deepEqual(redo.fails, []); assert.ok(off.fails.includes('StartedLineRecorded'));
+    assert.notEqual(redo.states, off.states);
   });
 
   test('BLD_PROPS adds the two observers', async () => {

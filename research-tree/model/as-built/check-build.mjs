@@ -11,7 +11,9 @@
 //                       event needed, owner wake only after two wake losses or a host reset)
 //   EventuallyResolves  AF(field resolved) under weak fairness per process (coordinator i, watcher,
 //                       alarm, owner, child f/e): no fair cycle that keeps a field unresolved
-import { FAULTS, PROC, makeParams, initial, canon, encode, decode, successors, invariants, ownerLegit, isTerm } from './model-build.mjs';
+import { FAULTS, PROC, makeParams, initial, canon, encode, decode, successors, invariants, ownerLegit, isTerm, waitsOwner } from './model-build.mjs';
+//   AgeCapReachesOwner  (S2.2, BLD_AGE_CAP) as EventuallyResolves, region: a field whose attempt keeps an imitating child
+//                       and has not reached the owner (watcher.json `stuck`); StartedLineRecorded (BLD_REDO) is a safety one
 import { CONFIGS } from './configs-build.mjs';
 
 // provenance (MB2b, at the coordinator's request): sha256 of the model and the configs as they were when this run started
@@ -95,6 +97,7 @@ if (P.D7_LOOPS) SAFETY.push('LoopReported');
 if (P.FX_PROPS) SAFETY.push('OneWriterPerAttempt', 'NoChargeWithoutFault'); // round 3, fence fixes (MB2a)
 if (P.WFX_PROPS) SAFETY.push('NoSilenceAfterFirstCall'); // round 3, wake fixes (MB2b)
 if (P.BLD_PROPS) SAFETY.push('RefusedStartNotCharged', 'LeaseFenceClaimed'); // S2.2, the model as built
+if (P.BLD_REDO) SAFETY.push('StartedLineRecorded'); // S2.2, REDO
 // diagnostics (not properties): the D6 path by which the current coordinator was left with no wake source
 const DIAG = P.WAKE_PROPS ? ['D6:p0', 'D6:p1', 'D6:p2', 'D6:p3', 'D6:p3b', 'D6:p4', 'D6:p5', 'D6:p6', 'D6:p7', 'D6:lost', 'D6:other'] : [];
 const first = {}; // prop -> {src, k (successor index) | null, dst}
@@ -117,6 +120,7 @@ for (let q = 0; q < N; q++) {
   let fl = 0; st.T.forEach((t, f) => { if (isTerm(t.st)) fl |= 1 << f; });
   const legit = ownerLegit(st, P);
   if (legit) fl |= 8; if (st.syn) fl |= 16;
+  if (P.BLD_AGE_CAP) st.T.forEach((t, f) => { if (waitsOwner(st, f, P)) fl |= 32 << f; }); // S2.2: AgeCapReachesOwner's region
   const succ = successors(st, P, false);
   estart[q] = nE;
   for (let k = 0; k < succ.length; k++) {
@@ -252,12 +256,14 @@ function analyses() {
   // coordinator that has a start due (PROC.OT, model-build.mjs): a cycle in which that step is enabled at some state
   // but never taken is not fair. Exact by the Emerson-Lei refinement: such a component loses the states where the step
   // is enabled, and its rest is searched again (a sub-cycle that avoids them may still be fair). No OT edge: as before.
-  let bad = null;
-  const SF = args.includes('--weak-owner') ? -1 : PROC.OT; let removed = null; // --weak-owner: the ablation (weak fairness only)
+  const SF = args.includes('--weak-owner') ? -1 : PROC.OT; // --weak-owner: the ablation (weak fairness only)
+  // S2.2: one search per liveness property; region(q, f): the states in which field f has not reached the property's goal
+  function fairCycle(region, what) {
+  let bad = null; let removed = null;
   for (let f = 0; f < F && !bad; f++) {
    if (removed) removed.fill(0);
    for (;;) {
-    const inNode = (q) => !(flags[q] & (1 << f)) && !(flags[q] & 16) && !(removed && removed[q]);
+    const inNode = (q) => region(q, f) && !(flags[q] & 16) && !(removed && removed[q]);
     const inEdge = (q, e) => allowedEdge(q, e);
     const nc = sccs(inNode, inEdge);
     const req = alloc(Uint32Array, nc).fill(0xffffffff), took = alloc(Uint32Array, nc), internal = alloc(Uint8Array, nc), minq = alloc(Int32Array, nc).fill(-1);
@@ -275,7 +281,7 @@ function analyses() {
     let bc = -1;
     for (let c = 0; c < nc; c++) if (weakOk(c) && (sfTook(c) || !sfEn[c])) { if (bc < 0 || minq[c] < minq[bc]) bc = c; }
     if (bc >= 0) bad = { f, q: minq[bc], tr: null };
-    if (bad) bad.tr = [...traceTo(bad.q), `-- a fair cycle in which field f${f} is never resolved --`, ...cycleIn(bad.q, inNode, inEdge)];
+    if (bad) bad.tr = [...traceTo(bad.q), `-- a fair cycle in which field f${f} ${what} --`, ...cycleIn(bad.q, inNode, inEdge)];
     let changed = false;
     if (!bad) for (let q = 0; q < expanded; q++) {
       if (!inNode(q)) continue; const c = comp[q];
@@ -286,7 +292,11 @@ function analyses() {
    }
   }
   if (removed) free(removed);
-  props.EventuallyResolves = bad ? { holds: false, trace: bad.tr } : { holds: complete ? true : 'not refuted (bounded)' };
+  return bad ? { holds: false, trace: bad.tr } : { holds: complete ? true : 'not refuted (bounded)' };
+  }
+  props.EventuallyResolves = fairCycle((q, f) => !(flags[q] & (1 << f)), 'is never resolved');
+  // S2.2 (W6 item 6): an attempt whose child imitates reaches the owner (watcher.json `stuck`, the dead-man's alert)
+  if (P.BLD_AGE_CAP) props.AgeCapReachesOwner = fairCycle((q, f) => (flags[q] & (32 << f)) !== 0, 'keeps an imitating child and never reaches the owner');
 }
 let anaErr = null;
 try {
@@ -294,7 +304,7 @@ try {
   if (Date.now() > DEADLINE + 45000) throw new Error('no time left for the graph analyses');
   if (used() + need > BUDGET) throw new Error(`analyses need about ${Math.round(need / 1048576)} MB more than the budget leaves`);
   analyses();
-} catch (e) { anaErr = String(e.message || e); for (const p of ['NoDeadlock', 'AlwaysCanResolve', 'NoBusyLoop', 'EventuallyResolves']) props[p] ??= { holds: 'not checked: ' + anaErr }; }
+} catch (e) { anaErr = String(e.message || e); for (const p of ['NoDeadlock', 'AlwaysCanResolve', 'NoBusyLoop', 'EventuallyResolves', ...(P.BLD_AGE_CAP ? ['AgeCapReachesOwner'] : [])]) props[p] ??= { holds: 'not checked: ' + anaErr }; }
 
 const res = { id, sha256: SHA, part: budArg, title: cfg.title, base: cfg.base || null, states: N, transitions: nE, complete, bounded_why: why || null, seconds: Math.round((Date.now() - T0) / 100) / 10, peak_mb: Math.round(used() / 1048576), bytes_per_state: Math.round(used() / Math.max(1, N)), avg_record: Math.round(aTop / Math.max(1, N)), props, ...(DIAG.length ? { diag } : {}), levels_done: levels, level_open: { found: N - levels.reduce((a, b) => a + b, 0), expanded_upto: expanded } };
 process.stdout.write(JSON.stringify(res) + '\n');
