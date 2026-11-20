@@ -1,6 +1,7 @@
 # RUN-BUILD: the run list of the model as built (S2.2 for S2.3, task r57-0507 slice 2)
 
 Final, S2.2 successor 2, 2026-11-20: 28 runs in sections 1-8, each measured or estimated well below 1,400 s.
+FX-W6 fix round, 2026-11-20: section 9, seven runs on the model as it now is; sections 1-8 are the record S2.3 ran.
 
 **How to run.** From the S2.2 worktree's `research-tree/` folder (or `build` after the landing), one run per call,
 through MAIN's lane, each under 1,400 s:
@@ -40,6 +41,8 @@ FN-N2 k=1,u=1 (363,706), FN-R5 k=1,cd=1 (867,362), FN-R5 k=1,cs=1 (778,987), SMO
 | FXW-5-B | whole | 4500 (20 %) | est. 10.6 M / 70 s | as FXW-5 (k=1,o=1 holds in both, 20,117 states) | `FXW-5-B.json` |
 | FXW-6-B | whole | 2500 (12 %) | est. 18.5 M / 130 s | as FXW-6 (k=1,cs=1: EventuallyResolves F 10 in both models) | `FXW-6-B.json` |
 | FN-N2-B | k=1,u=1 | 800 (4 %) | 623,250 / 6 s (measured) | EventuallyResolves F 9, as FN-N2 at this part (the u artefact, ABLATION-wake.md:55) | `FN-N2-B__k=1,u=1.json` |
+
+FN-N2-B after the FX-W6 fix round (line 1015 from the S2.4 variant): 619,856 states at k=1,u=1, section 9.
 
 The whole FN-OUT-CLOSE-K2-B does not fit: its k=1,cd=1 part alone is 17 times FN-OUT-CLOSE-K2's (60,948), since every
 close now waits for the owner's relayed `closed` and every start for an owner-typed turn. **Uncovered**: the k=2
@@ -91,7 +94,8 @@ failures (ABLATION-fence.md:71 for the first and the last), with or without the 
 
 The FXW-5-B group (FX-W5 with the act-due keys, the Q5 rule) with the age cap and fault m, a child at bound that
 imitates activity. AgeCapReachesOwner fails in AGE-B by construction: that gap goes back to FX-W6 (S2.4). AGE-STUCK, the
-design's second leg (not built), is the run that shows the property is not vacuous.
+design's second leg (not built), is the run that shows the property is not vacuous. This was the model before the FX-W6
+fix round; for the model now (AGE-B fixed, AGE-STUCK the same, the ablation AGE-REARM), section 9.
 
 | ID | part | M (share) | expected states / s | expected outcome | output |
 |---|---|---|---|---|---|
@@ -114,3 +118,40 @@ without it a row is bound in the turn that starts it, no reconcile moves it, and
 
 REDO-B at k=2,x=1,g=1: 574,250 states, every property holds. **Uncovered**: g with the close group's other faults
 (cd, z, t) at three faults.
+
+## 9. The FX-W6 fix round (S2.4 VERDICT sections 1 and 6; `build/briefs/FX-W6.md` part 5)
+
+The model now follows the fixed code. `BLD_AGE_CAP` explores the age cap as built on `u/W6`: an acknowledgement does
+not re-arm it, FX-W5 raises it again, after `AGE_STUCK` re-raises it is `stuck` and the dead-man reaches the owner
+(the leg `BLD_AGE_STUCK` modelled before; that flag is gone). The deleted re-arm is the ablation `AB_AGE_REARM`, off
+by default, in the configuration AGE-REARM. **AGE-B and AGE-STUCK now have the same flags and explore the same
+states**; both ids stay runnable because the record names them, and one of the two runs is enough. AGE-REARM explores
+exactly what AGE-B explored before the round (S2.3's AGE-B figures), and the new AGE-B what AGE-STUCK explored.
+Line 1015 is the S2.4 variant's line: a refused hand-over (handover exit 6) goes to endturn under FIX_ENDTURN_ALWAYS.
+
+**FN-N2-B reads no flag this round changed besides line 1015**: it sets neither `BLD_AGE_CAP` nor `AB_AGE_REARM`, and
+every line the round touched in the age cap and the dead-man's `stuck` step runs only under `BLD_AGE_CAP`. So R3
+(`results-build/rerun/FN-N2-B-V-parts.json`, 75 parts on the variant, whose only difference was line 1015) stands as
+FN-N2-B's k=2 result; only its k=1,u=1 row is run again here.
+
+From the W6 worktree's `research-tree/` folder (or `build` after the landing), one run per call, each a background
+command through MAIN's lane, the output folder made first:
+
+```
+mkdir -p model/results-build/fx-w6 && node C:/Users/User/Documents/projects/harness-engineering/research-tree/tools/lane.mjs --label FXW6-<ID>[-<part>] --timeout-s 1450 --wait-s 30 -- node model/as-built/check-build.mjs <ID> [--bud <part>] --mem-mb <M> > model/results-build/fx-w6/<ID>[__<part>].json
+```
+
+| ID | part (`--bud`) | M (share of F) | expected states / s | expected outcome | output (`model/results-build/fx-w6/`) |
+|---|---|---|---|---|---|
+| AGE-B | whole (k=1; no `--bud`) | 800 (4 %) | 476,122 / 3 (S2.3's AGE-STUCK) | AgeCapReachesOwner holds, AlwaysCanResolve holds; EventuallyResolves F 5, fault u's process-list artefact (ABLATION-wake.md:55), as S2.3's AGE-STUCK | `AGE-B.json` |
+| AGE-B | k=2,m=1,o=1 | 600 (3 %) | 162,074 / 1 (S2.3's AGE-STUCK) | every property holds | `AGE-B__k=2,m=1,o=1.json` |
+| AGE-STUCK | whole (k=1; no `--bud`) | 800 (4 %) | 476,122 / 3, the same states as AGE-B | as AGE-B | `AGE-STUCK.json` |
+| AGE-STUCK | k=2,m=1,o=1 | 600 (3 %) | 162,074 / 1, the same states as AGE-B | every property holds | `AGE-STUCK__k=2,m=1,o=1.json` |
+| AGE-REARM (ablation) | whole (k=1; no `--bud`) | 800 (4 %) | 434,359 / 3 (S2.3's AGE-B) | **AgeCapReachesOwner F 16** (raised, read, acknowledged, re-armed, raised again: the owner is never told), AlwaysCanResolve F 3, EventuallyResolves F 5 | `AGE-REARM.json` |
+| AGE-REARM (ablation) | k=2,m=1,o=1 | 600 (3 %) | 62,123 / 1 (S2.3's AGE-B) | AgeCapReachesOwner F 16, EventuallyResolves F 16, AlwaysCanResolve F 3 | `AGE-REARM__k=2,m=1,o=1.json` |
+| FN-N2-B | k=1,u=1 | 800 (4 %) | 619,856 / 6 (measured here: 5.5 s) | EventuallyResolves F 9, the u artefact, as FN-N2 at this part; the trace as the variant's (S2.4 VERDICT section 6) | `FN-N2-B__k=1,u=1.json` |
+
+Measured here at k=1,m=1 (lane `W6-fix-model-small`; model-build.test.mjs pins them): AGE-B 65,582 states and
+AGE-STUCK 65,582, every property holds; AGE-REARM 23,819, AgeCapReachesOwner F 16, EventuallyResolves F 16,
+AlwaysCanResolve F 3. **Uncovered**: as section 7 (three faults with m); the coordinator's stop of an age-capped
+attempt (place 7b of the brief) is not modelled, its coordinator only acknowledges.
