@@ -266,3 +266,26 @@ Its notes until 14:30 UTC are in the shared folder
   session 17.6 M to 15:40 UTC: about 119 M, with the last calls about 120 M.
 - Top session 4 done (15:40 UTC). Next: his answer to approve: and cap: for the research run (r57-0422). Start nothing
   else before it.
+
+## Hand-over to top session 5 (2026-11-20, about 15:50 UTC): prepare the research run
+From top session 4 (Opus; window at about 340 K of 400 K, past its hand-over point, r57-0008, r57-0171).
+**Approved:** at about 15:45 UTC the owner typed "Yes, 1.2 B" to "approve: the research run as on the page, with a
+cap: of 1.2 B tokens?" (r57-0046). The plan: `research-tree/build/NEXT-STEP.md` (r57-0422): path e2 of
+`COMPLEXITY.md` version 2 (section 5), the models and efforts of `ROUTER.md` version 2 (section 4), the start of
+`UNATTENDED.md` version 2 (sections 0 and 5), the three checks e2 drops (`FAULTS.md` version 2, section 0).
+**Your task** (kind orchestrate, Opus): prepare the run so that he can open its coordinator with one typed go:
+1. the run's folder outside every repository (protocol v2), with the tier hook (`tools/ensure-tier-hook.sh <folder>
+   --force`; r57-0026, r57-0122) and the run's own CLAUDE.md holding the router's models and efforts (they apply only
+   once written, r57-0176, r57-0421; at source quality, r57-0019);
+2. the coordinator's brief (Fable, r57-0035) and the field helper's brief, from COMPLEXITY section 5 and protocol v2:
+   the seven fields, the problem sheet, the checks kept, the cap and its gate, the hourly wake while it waits, restarts
+   after a five-hour limit, quiet scripts;
+3. the paper downloads named with source and size for his go (CLAUDE.md rule 3; about 420 MB) and the rule-3
+   exception for the review test;
+4. the go he types, in both forms (at the reset at his desk; or before it with Windows set not to sleep on mains
+   power and one wake at the reset), and the settings that are his (Auto mode, Remote Control on the coordinator alone);
+5. one blind review of the two briefs before he opens the coordinator (they govern about 1 B tokens).
+**Limits:** within the cap of 1.2 B; this week's meter about 84 % all models, 53 % Fable (reset 2026-11-23 12:00 UTC):
+keep the preparation small, read usage before each fan-out, protect his own use until the reset. Start neither the
+coordinator nor any field: he opens it with his go. Do not merge or push `build`; never touch
+`docs/program/pipeline-diagram/`. Plain words to him, the answer first; results on a page (CLAUDE.md rule 6).
