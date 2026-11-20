@@ -34,6 +34,12 @@ svg{display:block;max-width:none}
 .s{stroke-width:1.5}
 .s.research{fill:var(--c1);stroke:var(--c1s)}.s.comp{fill:var(--c2);stroke:var(--c2s)}.s.coord{fill:var(--c3);stroke:var(--c3s)}.s.fix{fill:var(--c4);stroke:var(--c4s)}.s.chk{fill:var(--c5);stroke:var(--c5s)}.s.stop{fill:var(--c6);stroke:var(--c6s)}
 .t{fill:var(--fg);font:13px Inter,system-ui,sans-serif}.t.m{fill:var(--mute)}
+
+.treewrap{width:min(1870px,calc(100vw - 32px));margin-left:calc((100% - min(1870px,calc(100vw - 32px)))/2)}
+.treebox svg{width:100%;height:auto;max-width:100%}
+.box ul{margin:.6em 0}
+a{color:var(--acc)}
+h2{scroll-margin-top:12px}
 </style>
 <main>
 <h1>Pilot plan complexity</h1>
@@ -54,6 +60,15 @@ svg{display:block;max-width:none}
 <li>Lane 1 is the problem sheet, written once. One single-session run of a field could only rule that form out, not in.</li>
 <li>Not known: whether helpers of helpers share the app&rsquo;s 20 at once, how a helper coordinator does on a real field, Fable&rsquo;s weight on the meter.</li>
 </ol></div>
+
+<h2 id="four">Your four questions</h2>
+<div class="box"><ul>
+<li><strong>A model for each step inside a session?</strong> Worth it, but small: on the chosen path it saves 13-49 M of 986 M tokens. <a href="#router">The router</a></li>
+<li><strong>Running without typing &ldquo;go&rdquo;?</strong> Yes, by the app&rsquo;s own means: three typed turns, none during the run unless it stops. <a href="#unattended">How</a></li>
+<li><strong>Where the faults came from?</strong> At least 56 faults; our own glue is the largest cause, 23 of the 56. <a href="#faults">The counts</a></li>
+<li><strong>The tree?</strong> One picture, the plan chosen beside the plan as it was, every agent one node. <a href="#tree">The tree</a></li>
+<li><strong>Next step:</strong> one plan for the research run, from the reset on 2026-11-23, with two questions for you. <a href="#next">The plan</a></li>
+</ul></div>
 
 <h2>Where the planned pilot&rsquo;s tokens and hours go</h2>
 <p>The pilot as the plan stands: 418 M tokens expected (417.8 M), and 8.5-13.8 h on the critical path. Bars are drawn to scale, one scale each.</p>
@@ -186,9 +201,534 @@ svg{display:block;max-width:none}
 <tr><td>His typed-turn latency, and the app&rsquo;s session id against the CLI&rsquo;s</td><td>Observation.</td></tr>
 </table></div>
 
-<h2>What happens next</h2>
-<p>Top session 4 runs the four pieces he approved at 13:33 UTC under a cap of 106 M tokens: the router (a model per operation inside a session), running without his typed &ldquo;go&rdquo;, where the faults came from, and the tree drawn as nodes and lines. Their results are added to this page once checked.</p>
-<p>After them, one plan for the research run using the router&rsquo;s models, put to him with <code>approve:</code> and <code>cap:</code>. The pilot&rsquo;s earlier asks (the preparation, the 593 M cap) stay on hold until then. Nothing is asked of him on this page.</p>
+<h2 id="router">A model for each step inside a session</h2>
+<p class="sub">From <code>ROUTER.md</code> version 2. Marks: [m] measured, [r] a rule or record, [e] estimated, [c] computed.</p>
+<div class="box"><ol>
+<li>Worth it, but small: on path e2 it saves 13-49 M of 986 M tokens and 0.7-2.7 of its 13-17 all-models points.</li>
+<li>On the plan: 19-35 M of 418 M tokens and 0.8-2.2 of its 8-9.5 points. On the Fable meter: from -0.3 to 5 points.</li>
+<li>These are ranges: the meter&rsquo;s weight per model is measured only within ranges (132 readings, one week).</li>
+<li>The method is the provider&rsquo;s documented pattern, not one of ours: one model for a session, helpers on cheaper models.</li>
+<li>A step&rsquo;s effort is lowered before the step moves to a cheaper model. Published routers do not fit here.</li>
+<li>A step gets its own model as a helper or a script. A session cannot switch its own model: the app refuses it.</li>
+<li>Measured: the meter counts fresh tokens (new input, cache writes, output); a cached re-read costs about 1 % of one.</li>
+<li>Range: per fresh token Sonnet weighs 0.15-0.5 of Opus, Haiku 0.15-0.8 (a fortieth by price), Fable 2.7-5.6 times.</li>
+<li>Largest lever: a waiting Fable coordinator wakes at least hourly and keeps its cache: 0.5-1.9 of e2&rsquo;s points.</li>
+<li>Next: quiet scripts (one line printed, the rest to a file); no separate token-count or meter calls.</li>
+<li>The efforts below take effect only once written into CLAUDE.md or a skill; nothing is written now.</li>
+<li>Not known: Haiku&rsquo;s weight, and pass rates by model and effort on our steps; each test needs his word.</li>
+</ol></div>
+<h3>The router: one row per operation</h3>
+<p>&ldquo;Inline&rdquo; means the session&rsquo;s own model and call. The routes in force are <code>.claude/hooks/tier-routes.json</code>; no row breaks them.</p>
+<div class="scroll"><table>
+<tr><th>#</th><th>Operation</th><th>Model, effort</th><th>How</th><th>Mark</th></tr>
+<tr><td>1</td><td>Coordinator: read a helper&rsquo;s return, decide</td><td>The session&rsquo;s model (Opus; Fable only where its helpers have helpers, r57-0035); high</td><td>Inline; returns at most 2 K, details in files</td><td>[r] rule; [e] effort</td></tr>
+<tr><td>2</td><td>Write a brief and start a helper</td><td>Inline</td><td>Brief points at files; fixed parts from a template</td><td>[m]</td></tr>
+<tr><td>3</td><td>Write state (STATE.md, usage line, landing lines)</td><td>No model for counts, readings and landings; one judgment line inline</td><td>Script (not built)</td><td>[m] share</td></tr>
+<tr><td>4</td><td>Read the meter; count own tokens</td><td>No model</td><td>The reading goes in the same call as the next action; the lane prints the caller&rsquo;s count with each result</td><td>[m]</td></tr>
+<tr><td>5</td><td>Wait, poll</td><td>None</td><td>Notices wake a session; a background timer as a safety wake, shorter than the cache lifetime (under an hour; a helper&rsquo;s polls under five minutes)</td><td>[m] lifetimes</td></tr>
+<tr><td>6</td><td>Hand over</td><td>Successor on the same model</td><td>At W* 247-273 K</td><td>[m]</td></tr>
+<tr><td>7</td><td>Run scripts: lane, suites, landing, git</td><td>No model beyond the issuing call</td><td>Quiet output to a file, one line printed; a Sonnet <code>run</code> helper only when the output needs judgment; a pass or fail read with no judgment is a Haiku extract</td><td>[m]; [c]</td></tr>
+<tr><td>8</td><td>Read a few files</td><td>Inline</td><td>Ranges and grep, not whole files</td><td>[m]</td></tr>
+<tr><td>9</td><td>Locate (where is X)</td><td>Script; Haiku when the target is not a name; low</td><td>Script first</td><td>[r] routes; effort [e]</td></tr>
+<tr><td>10</td><td>Extract one file into a fixed schema</td><td>Haiku, low for literal, medium when names vary; under 100 K of prompt</td><td>Helper, several files per helper. Sonnet at low effort is the alternative to measure first</td><td>[m] r57-0208; effort [e], never run</td></tr>
+<tr><td>11</td><td>Read across files: maps, cross-references, citation checks</td><td>Sonnet medium; high for cross-references</td><td>Helper; Haiku barred across files (r57-0206)</td><td>model [m]; effort [e]</td></tr>
+<tr><td>12</td><td>Collect and quote sources</td><td>Sonnet medium</td><td>Helpers at once</td><td>model [m] (151 sampled, none failed); effort [e]</td></tr>
+<tr><td>13</td><td>Ordinary code: tests, pages, scripts without invariants</td><td>Sonnet medium</td><td>Helper; low only after a test shows the same output</td><td>model [m]; effort [r]</td></tr>
+<tr><td>14</td><td>Invariant-sensitive code</td><td>Opus high</td><td>Helper (builder)</td><td>[m] 16 units</td></tr>
+<tr><td>15</td><td>Run tests</td><td>No model beyond the builder&rsquo;s call</td><td>Script, quiet</td><td>[m]</td></tr>
+<tr><td>16</td><td>Analysis, design</td><td>Opus high; xhigh only where measured to gain</td><td>Helper</td><td>[m]</td></tr>
+<tr><td>17</td><td>Refutation</td><td>Opus high, fresh context; xhigh for a claim that would stop the work</td><td>Helper</td><td>[m]</td></tr>
+<tr><td>18</td><td>Fold a decided review</td><td>Opus medium</td><td>Helper; Sonnet only after a test shows the same output, and it would break the routes</td><td>[e]; the effort cut is a quality risk not measured</td></tr>
+<tr><td>19</td><td>Build a page</td><td>Sonnet medium</td><td>Helper</td><td>model [m]; effort [e]</td></tr>
+<tr><td>20</td><td>Records and commits</td><td>The record&rsquo;s claims inline; commit and check by script</td><td>Script</td><td>[r]</td></tr>
+</table></div>
+<h3>The sessions of the research run (path e2)</h3>
+<ul>
+<li>Coordinator on Fable throughout, effort high. It starts the problem sheet and the planted copy (Opus, high), seven field helpers (Opus, high) and the closing helper (Opus, high), and reads ten-line returns: 23-32 calls ending at 153-243 K, so it never hands over.</li>
+<li>Each field helper runs Sonnet readers (medium), the Opus report writer (high), the Sonnet gate and checker (medium), the fresh Opus refuter (high), the Sonnet blind scorer (medium), the Opus fold (medium) and Haiku extraction (low or medium). The top session is Opus high.</li>
+<li>The Fable coordinator&rsquo;s 6.0 M (4.1-8.9) is 0.13-0.18 point of the all-models meter more than an Opus one, and 0.45-0.56 Fable point. That is a ruling&rsquo;s consequence, not the router&rsquo;s choice.</li>
+<li>On the plan (PILOT-PLAN version 2) the Fable coordinator&rsquo;s 94.3 M is 1.5-2.8 points of the all-models meter more than on Opus, and 6.3-8.8 Fable points.</li>
+</ul>
+<h3>The saving on the research run</h3>
+<p>Points are on the all-models meter (range over 12 weight vectors) unless the column says Fable. The plan is 417.8 M tokens (8.0-9.5 points); path e2 is 986 M (13.4-17.3 points).</p>
+<div class="scroll"><table>
+<tr><th>Lever</th><th>Plan: M tokens</th><th>Plan: points</th><th>e2: M tokens</th><th>e2: points</th><th>e2: Fable points</th></tr>
+<tr><td>Counts and meter readings folded into calls already made (rows 3, 4)</td><td>13.6-22.3</td><td>0.12-0.41</td><td>4.2-8.4</td><td>0.03-0.11</td><td>0.00-0.01</td></tr>
+<tr><td>Quiet scripts: tests, lane, landing, git, waits (rows 7, 15)</td><td>6.5-7.2</td><td>0.08-0.12</td><td>11.2</td><td>0.13-0.17</td><td>0.00</td></tr>
+<tr><td>The same, other shell commands too (an upper bound)</td><td>18.4-18.7</td><td>0.23-0.32</td><td>41.2</td><td>0.53-0.70</td><td>0.01</td></tr>
+<tr><td>Helper returns at most 2 K (row 1)</td><td>0-0.2</td><td>0.00-0.01</td><td>0.1</td><td>0.00</td><td>0.00</td></tr>
+<tr><td>P3.2 and the run root as scripts (rows 9, 7)</td><td>about 1.2</td><td>0.01-0.02</td><td>-</td><td>-</td><td>-</td></tr>
+<tr class="pick"><td><strong>A waiting coordinator keeps its cache: a timer under an hour (rows 5, 1)</strong></td><td>-0.5 to -2.0 (the wakes&rsquo; reads)</td><td><strong>0.63-1.58</strong></td><td>-0.4 to -2.4</td><td><strong>0.50-1.92</strong></td><td>-0.28 to 5.02</td></tr>
+<tr><td>Polls removed by a workflow per field, with his words</td><td>-</td><td>-</td><td>30-59</td><td>0.09-0.60</td><td>0</td></tr>
+<tr><td>Ranged reads (row 8)</td><td>not computed</td><td>-</td><td>not computed</td><td>-</td><td>-</td></tr>
+<tr><td>Model switches, effort changes</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>Not the router&rsquo;s: the coordinator on Fable rather than Opus (r57-0035)</td><td>0</td><td>+1.5 to +2.8</td><td>0</td><td>+0.13 to +0.18</td><td>0.45-0.56</td></tr>
+</table></div>
+<p><strong>Totals of what is computed.</strong> The plan: <strong>19-35 M tokens</strong> (4.6-8.4 %), <strong>0.8-2.2 all-models points</strong> (of 8.0-9.5), -0.2 to 4.5 Fable points (of 7.1-8.8). Path e2: <strong>13-49 M tokens</strong> (1.3-5.0 %), <strong>0.7-2.7 all-models points</strong> (of 13.4-17.3), -0.3 to 5.0 Fable points, most of it the coordinator&rsquo;s cache. With a workflow per field, 30-59 M and 0.1-0.6 point more. If every Opus helper is told to count its tokens every 10 calls as the build&rsquo;s were, that adds about 35 M and 0.26-0.45 point, unless the count is printed by calls already made (row 4).</p>
+<div class="note"><strong>What is measured and what is a range.</strong> Token shares per operation are measured from transcripts. The weight of each model on the meter is a range, and the efforts are estimates never run on our steps. The saving above is computed from both, so it is a range too.</div>
+
+<h2 id="unattended">Running without typing &ldquo;go&rdquo;</h2>
+<p class="sub">From <code>UNATTENDED.md</code> version 2.</p>
+<div class="box"><ol>
+<li>Yes, by the app&rsquo;s own means: the run chosen above (e2) needs no go per session; a Fable coordinator starts helpers, and they start theirs.</li>
+<li>Yours to type: <code>approve:</code>, <code>cap:</code>, and the go that opens the coordinator: three turns, none during the run unless it stops.</li>
+<li>The go in one of two forms, your choice. Form 1: at the reset, Monday 23 November 17:00 your time, at the desk; no tokens added.</li>
+<li>Form 2: before the reset, in one sitting, with Windows set not to sleep on mains power until the run ends; one wake at the reset; about 0.2-0.3 M tokens.</li>
+<li>Why Windows: the app keeps the PC awake while a session or its helpers work, not while a session waits.</li>
+<li>Also yours, in the coordinator&rsquo;s own controls: Auto mode, so routine prompts do not wait for you, and Remote Control on that session alone.</li>
+<li>Remote Control&rsquo;s cost: while connected, the coordinator&rsquo;s transcript is kept on the provider&rsquo;s servers; without it, any stop waits for you at the desk.</li>
+<li>From the phone you can answer prompts and questions, watch and stop helpers, send a message; not start the coordinator, run /rate-limit-options or wake the PC. Push to the phone is not shown for this app: you look.</li>
+<li>The run stops on: Auto mode going back to prompts (3 blocks in a row, 20 in all), the cap, a Fable credit prompt, an app restart, the 5-hour limit.</li>
+<li>At the 5-hour limit the running helpers fail and the coordinator restarts them after the reset; with Remote Control on it first waits for your message, and in form 1 the PC may sleep meanwhile.</li>
+<li>e2 drops checks protocol v2 has: Q6-Q11, comparison 1, fencing a replaced helper, a restart limit, hang detection. All kept: the pilot&rsquo;s 25-30 typed turns; path b about 6 acts, Q6 weaker and Q11 changed.</li>
+<li>Not known: whether a session may start sessions on a continuation or its task&rsquo;s turn (1.3-2.6 M to test); the run after an app restart; how often Auto mode goes back to prompts.</li>
+</ol></div>
+<h3>The ways the app allows</h3>
+<div class="scroll wide"><table>
+<tr><th>Way</th><th>What it starts</th><th>Turns from him</th><th>What it needs from him</th></tr>
+<tr><td>a. Helpers start helpers (background; 3 levels; a helper orchestrator must poll)</td><td>Helpers, no session</td><td>0</td><td>Nothing new; the go and the cap</td></tr>
+<tr><td>b. A chain of sessions (a started session starting sessions)</td><td>Sessions, in this project only</td><td>0 inside a chain; 1 to restart it after 10 side-sessions notes since his last message, or after a stopped or failed turn</td><td>His go naming those steps as sessions. Never observed</td></tr>
+<tr><td>c. A dynamic workflow</td><td>Agents from one script</td><td>1 (his opt-in)</td><td>His typed words; the approval card. Not taken in the complexity analysis</td></tr>
+<tr><td>d1. A local scheduled task (desktop app)</td><td>A fresh session at a set time</td><td>0 at the fire</td><td>The PC awake at the fire, which the app&rsquo;s hold does not give while nothing works: his Windows setting</td></tr>
+<tr><td>d2. Self-paced wake-ups and session cron</td><td>A later turn of the same session</td><td>0</td><td>The PC awake at the fire</td></tr>
+<tr><td>d3. /goal</td><td>Further turns of the same session</td><td>1 (it can be the go)</td><td>His typed command; Auto mode</td></tr>
+<tr><td>d4. A cross-session message</td><td>A turn of an existing session</td><td>0</td><td>A sender he started; the same permission mode</td></tr>
+<tr><td>d5. Cloud scheduled tasks</td><td>Cloud sessions</td><td>0 at the fire</td><td>A GitHub repository, a cloud environment. Left out</td></tr>
+<tr><td>e. Remote Control</td><td>Nothing; his answers move to the phone</td><td>His answers, from the phone</td><td>The phone app signed in; the coordinator&rsquo;s own switch</td></tr>
+<tr><td>e. Dispatch</td><td>A Code session Dispatch sets up</td><td>1 a task</td><td>Pairing. Not needed</td></tr>
+<tr><td>e. Notifications</td><td>Nothing</td><td>0</td><td>His settings; whether they reach the phone is not shown</td></tr>
+</table></div>
+<h3>What he does in one sitting, and from his phone</h3>
+<ul>
+<li><strong>In one sitting:</strong> answer <code>approve:</code> and <code>cap:</code>; type the go (it names the paper downloads); pick Auto mode in the coordinator&rsquo;s mode picker; turn on Remote Control for the coordinator alone if he wants to answer from the phone; for form 2, set Windows not to sleep on mains power until the run ends.</li>
+<li><strong>From the phone:</strong> answer prompts and questions, watch and stop helpers, send a message. Not start the coordinator, not <code>/rate-limit-options</code>, not <code>/resume</code>, not wake the PC.</li>
+<li>The settings are his; none is made for him. Keep computer awake is on now. Auto mode has no separate Settings toggle: it is the coordinator&rsquo;s mode selector.</li>
+</ul>
+<h3>The run under each combination</h3>
+<div class="scroll wide"><table>
+<tr><th>Combination</th><th>His typed turns, when</th><th>Desk or reachable</th><th>Tokens the ways add</th></tr>
+<tr><td>A0 the plan as it stands</td><td>37-58 in the pilot, one every 9-22 min; the whole tree as planned about 75-140</td><td>At the desk 8.5-13.8 h plus drains</td><td>0</td></tr>
+<tr><td>A1 + W* computed</td><td>25-30, one every 17-33 min</td><td>Same</td><td>0</td></tr>
+<tr><td>A2 = A1 + Auto mode and Remote Control on the top session</td><td>25-30, from the phone</td><td>Desk only to open; reachable 8.5-13.8 h</td><td>0</td></tr>
+<tr><td>A3 = A2 + the chain</td><td>1-26; rests on a way never seen: until tested, A2</td><td>Reachable</td><td>About 0</td></tr>
+<tr><td>B the plan&rsquo;s tree from helpers</td><td>The go, the cap and about 6 acts</td><td>Not computed</td><td>0; the path itself about 1.0-1.27 B</td></tr>
+<tr><td>E0 path e2</td><td>The two answers; 1 go at the reset; 0 during the run</td><td>At the desk at the reset; without Remote Control, at the desk for any stop in 5.0-8.4 h</td><td>0</td></tr>
+<tr class="pick"><td><strong>E1, form 1</strong> = E0 + Auto mode and Remote Control; the go at the reset, at the desk</td><td>The same three; 0 during the run but stops</td><td>At the desk at the reset; stops from the phone; at a 5-hour stop the PC may sleep before the reset</td><td>0</td></tr>
+<tr class="pick"><td><strong>E2, form 2</strong> = E1 with the go typed before the reset, Windows set not to sleep, and one one-shot wake at 17:05 his time</td><td>The same three, in one sitting before the reset; 0 at the reset</td><td>0 h at the desk from the sitting on; stops from the phone; the app and session left open</td><td>0.18-0.27 M; hourly wakes instead: 11-20 M and a hand-over</td></tr>
+<tr><td>E3 = E1 + <code>/goal</code> as the go</td><td>1</td><td>As E1</td><td>0.3-2.4 M judgements; idle check-ins 0-0.72 M</td></tr>
+<tr><td>E4 = E1 + a one-time local scheduled task opening the coordinator at the reset</td><td>0 at the reset</td><td>The PC awake at the fire; not reachable by Remote Control unless a setting reaches it</td><td>0</td></tr>
+</table></div>
+<p><strong>Fewest typed turns: E1 and E2 alike</strong>, three acts, none in the run but stops. With every check of protocol v2 kept (path a): A2, 25-30 typed turns in the pilot, from the phone.</p>
+<h3>What can stop the run</h3>
+<div class="scroll wide"><table>
+<tr><th>Stall</th><th>The app&rsquo;s own remedy</th><th>Needs from him</th></tr>
+<tr><td>The PC sleeps after 15 idle minutes</td><td>The app&rsquo;s hold: taken at every turn, kept while helpers work, let go while the session waits idle</td><td>For a wait before the reset (form 2), Windows set not to sleep on mains power</td></tr>
+<tr><td>A permission prompt</td><td>Auto mode; his allow rules. It goes back to prompting after 3 blocks in a row or 20 in total</td><td>Auto mode on the coordinator; an answer when prompting resumes (from the phone if connected)</td></tr>
+<tr><td>The cap, the weekly limit</td><td>The coordinator reads usage before every start, holds what does not fit, stops at the cap</td><td>His word past the cap</td></tr>
+<tr><td>The 5-hour limit</td><td>Running helpers fail; only the coordinator waits, and after the reset restarts them</td><td>With Remote Control: a message from the phone after the reset, and the PC awake till then. Without it: nothing, unless the PC slept over 30 minutes past the reset</td></tr>
+<tr><td>A Fable credit prompt</td><td>The gate&rsquo;s Fable line</td><td>An answer, only past the Fable line</td></tr>
+<tr><td>A helper stalled past 180 s</td><td>Calls under 150 s; field helpers wait in calls of at most 150 s</td><td>Nothing</td></tr>
+<tr><td>A stop with helpers running</td><td>The coordinator ends its own helpers</td><td>Nothing</td></tr>
+<tr><td>The app restarts and kills helpers</td><td>Files first, commit at once</td><td>At the PC: open the session and type &ldquo;resume&rdquo;</td></tr>
+<tr><td>The coordinator&rsquo;s window</td><td>Form 2 with one wake: 154-246 K; hourly wakes would end at about 215-335 K, past the hand-over point</td><td>None; hourly wakes would cost one typed turn</td></tr>
+</table></div>
+
+<h2 id="faults">Where the faults came from</h2>
+<p class="sub">From <code>FAULTS.md</code> version 2.</p>
+<div class="box"><ol>
+<li>At least 56 faults in the tree&rsquo;s scripts, build and plan: version 1&rsquo;s 44 and 12 the review found (a floor; design flaws apart).</li>
+<li>Our own glue is the largest cause: 17 of the 44 (23 of the 56). A borrowed design with a step missed or changed: 12 (16).</li>
+<li>A borrowed design used as written whose assumption fails for model sessions: 3. Made here where a proven one existed: 3 (4).</li>
+<li>The rest: a part planned, never written 5 (6); a clash of two units, caught at landing 2; a test that checked nothing 1; a guess 1.</li>
+<li>So both happened: the first scripts failed mostly in borrowed designs (10 of 13), the build mostly in glue (15 of 27; 21 of 38).</li>
+<li>No one part carries most: none holds more than 8 of the 56; with the design&rsquo;s own 12, the wake holds the most, 11 of 68.</li>
+<li>Known now, but for two classes: one waits on whether an app feature can start a coordinator turn, the other on a lock test.</li>
+<li>The pilot adds how often each fault happens and six app facts; it changes no class.</li>
+<li>No more papers: nine fixes cite sources outside our recorded selections, but no fault&rsquo;s class here rests on them.</li>
+<li>Pays most: the app&rsquo;s helpers in place of our session control (path e2, chosen); 10 of the first 13 faults (11 of 14) go.</li>
+<li>But helpers do not fence a replaced helper, limit restarts or catch a hang: those checks are dropped, not done; loss unmeasured.</li>
+<li>After the pilot: our run lock&rsquo;s checked break for the lane and lander; OS file protection for evidence (your setting, a test first).</li>
+</ol></div>
+<h3>The counts by class</h3>
+<div class="scroll"><table>
+<tr><th>Class</th><th>First scripts</th><th>Build reviews</th><th>Plan</th><th>Other build</th><th>The 44</th><th>Added</th><th>The 56</th><th>Design (counted apart)</th></tr>
+<tr><td>P proven design, step missed or changed</td><td>7</td><td>2</td><td>0</td><td>3</td><td><strong>12</strong></td><td>4</td><td><strong>16</strong></td><td>5</td></tr>
+<tr><td>G our own glue</td><td>1</td><td>4</td><td>1</td><td>11</td><td><strong>17</strong></td><td>6</td><td><strong>23</strong></td><td>3</td></tr>
+<tr><td>I made here where a proven design existed</td><td>1</td><td>1</td><td>0</td><td>1</td><td><strong>3</strong></td><td>1</td><td><strong>4</strong></td><td>1</td></tr>
+<tr><td>F proven design, its assumption fails</td><td>3</td><td>0</td><td>0</td><td>0</td><td><strong>3</strong></td><td>0</td><td><strong>3</strong></td><td>3</td></tr>
+<tr><td>O a planned part never written</td><td>1</td><td>1</td><td>2</td><td>1</td><td><strong>5</strong></td><td>1</td><td><strong>6</strong></td><td>0</td></tr>
+<tr><td>L a clash of units, caught at landing</td><td>0</td><td>2</td><td>0</td><td>0</td><td><strong>2</strong></td><td>0</td><td><strong>2</strong></td><td>0</td></tr>
+<tr><td>T a test that did not test (code right)</td><td>0</td><td>1</td><td>0</td><td>0</td><td><strong>1</strong></td><td>0</td><td><strong>1</strong></td><td>0</td></tr>
+<tr><td>X a guessed value</td><td>0</td><td>0</td><td>1</td><td>0</td><td><strong>1</strong></td><td>0</td><td><strong>1</strong></td><td>0</td></tr>
+<tr><td><strong>Total</strong></td><td>13</td><td>11</td><td>4</td><td>16</td><td><strong>44</strong></td><td>12</td><td><strong>56</strong></td><td>12</td></tr>
+</table></div>
+<p>The first four columns are where the faults were found: the first scripts, the build&rsquo;s reviews, the pilot plan&rsquo;s gaps, and other faults in the build&rsquo;s records. The first scripts&rsquo; 13 were mostly borrowed designs (P 7, F 3), 10 of 13; the build&rsquo;s 27 mostly glue (G 15); the plan&rsquo;s 4 had no borrowed design. Of the 44, 34 rest on records read and 10 on reasoning for the class; the 12 added are classed by the review&rsquo;s reasoning.</p>
+<h3>Where they sit</h3>
+<div class="scroll"><table>
+<tr><th>Part</th><th>Of the 44</th><th>Of the 56</th><th>Design&rsquo;s 12</th></tr>
+<tr><td>Start, claim and the step machine</td><td>3</td><td>8</td><td>0</td></tr>
+<tr><td>Failure detection</td><td>6</td><td>8</td><td>2</td></tr>
+<tr><td>Record guard and commit check</td><td>8</td><td>8</td><td>0</td></tr>
+<tr><td>The wake</td><td>4</td><td>7</td><td>4</td></tr>
+<tr><td>Fencing and outcomes</td><td>4</td><td>4</td><td>2</td></tr>
+<tr><td>Integrity</td><td>3</td><td>3</td><td>0</td></tr>
+<tr><td>Plan gate</td><td>3</td><td>3</td><td>0</td></tr>
+<tr><td>land.mjs</td><td>2</td><td>3</td><td>0</td></tr>
+<tr><td>Locks</td><td>2</td><td>2</td><td>1</td></tr>
+<tr><td>Records</td><td>1</td><td>2</td><td>0</td></tr>
+<tr><td>Stop and close</td><td>1</td><td>1</td><td>1</td></tr>
+<tr><td>Admission and budget</td><td>1</td><td>1</td><td>2</td></tr>
+<tr><td>Three other parts, one each</td><td>3</td><td>3</td><td>0</td></tr>
+<tr><td>No part: the clashes and the test</td><td>3</td><td>3</td><td>0</td></tr>
+<tr><td><strong>Total</strong></td><td><strong>44</strong></td><td><strong>56</strong></td><td><strong>12</strong></td></tr>
+</table></div>
+<h3>What a proven design would replace</h3>
+<p>One fix unit costs 42.9 M tokens (builder 32.3 M plus refuter 10.6 M, medians; 28.5-51.4 M by quartiles).</p>
+<div class="scroll wide"><table>
+<tr><th>Part</th><th>The replacement</th><th>Cost and saving</th></tr>
+<tr><td>Locks</td><td>A lock the OS frees when its holder dies; a small test first on this PC</td><td>About 1 unit, 43 M; saves the stale-break class</td></tr>
+<tr><td>Fencing and outcomes</td><td>None better: the fixes now apply the designs</td><td>-</td></tr>
+<tr><td>Start, claim, step machine; stop and close</td><td>The app&rsquo;s own helper mechanism, where the work fits helpers: start, completion notice, result and model per helper, in real use</td><td>Nothing to build; our session control and its faults go (10 of the first 13, 11 of 14); fencing, a restart limit and hang detection are not done there</td></tr>
+<tr><td>Failure detection</td><td>Deadlines from the pilot&rsquo;s measured calls; an adaptive detector</td><td>After the pilot</td></tr>
+<tr><td>The wake</td><td>No proven implementation for this app is known; made here, because an outside supervisor cannot start its subject&rsquo;s turn</td><td>The pilot answers whether an app feature can start a coordinator turn</td></tr>
+<tr><td>Record guard and commit check</td><td>The OS&rsquo;s own protection: archived evidence read-only, journals append-only, the commit check kept for hashes</td><td>No build unit (under 2 M for a script); a security setting, so it is his, after a small test</td></tr>
+<tr><td>The model checker</td><td>TLC, plus a Java install (rule 3)</td><td>About 2 units (86 M); no recorded fault avoided; does not pay now</td></tr>
+<tr><td>Hand-over, admission, records, integrity, evidence method, plan gate</td><td>Keep</td><td>-</td></tr>
+</table></div>
+<h3>What changes before the run</h3>
+<ul>
+<li>Path e2, chosen, has no fix round and no child sessions, so the faults of start, claim, stop, failure detection and the wake do not arise in the research run. Neither do their checks.</li>
+<li>If the tree itself runs later, three gaps change nothing in size: the route is read from <code>tier-routes.json</code>; the scorer is a missing part; the single-session run is withdrawn. The quality window is computed at 280 K, and the attempt cap at about 1.8 h (about 108 ticks), a value, not code.</li>
+<li>Nothing else needs to move before the pilot. The rest is robustness work for after it.</li>
+</ul>
+
+<h2 id="tree">The tree</h2>
+<p class="sub">From <code>research-tree/build/tree/README.md</code>. The picture is unchanged.</p>
+<p>One picture, two trees side by side, asked for on 2026-11-20. Every agent is one node; a line joins it to the one that starts it. Dark is a session, light is a helper, dashed is only if needed. Figures are not on the picture; they are in the complexity analysis and the pilot plan. <strong>Left:</strong> the plan chosen (path e2): 111 nodes, 1 session, 108 helpers, 2 dashed; all seven fields are drawn. <strong>Right:</strong> the plan as it was planned: 28 nodes, 11 sessions, 15 helpers, 2 dashed; six leaves are shown as Field 1-6 and the pilot is the seventh leaf. The preparation nodes are not drawn, as they are not in the coordinator&rsquo;s tree.</p>
+<div class="treewrap"><div class="scroll treebox"><svg role="img" aria-label="The research run: the plan chosen, and the plan as it was" xmlns="http://www.w3.org/2000/svg" width="1870" height="2484" viewBox="0 0 1870 2484" font-family="Helvetica, Arial, sans-serif">
+<rect width="1870" height="2484" fill="#ffffff"/>
+<text x="28" y="46" font-size="26" font-weight="700" fill="#1f2933">The research run: the plan chosen, and the plan as it was</text>
+<rect x="28" y="74" width="30" height="20" rx="10" fill="#2f5d8a" stroke="#2f5d8a"/>
+<text x="66" y="84" font-size="15" dominant-baseline="central" fill="#24313f">Session</text>
+<rect x="151.05" y="74" width="30" height="20" rx="10" fill="#eef2f7" stroke="#9fb0c2"/>
+<text x="189.05" y="84" font-size="15" dominant-baseline="central" fill="#24313f">Helper</text>
+<rect x="266" y="74" width="30" height="20" rx="10" fill="#ffffff" stroke="#6b7885" stroke-dasharray="5 3"/>
+<text x="304" y="84" font-size="15" dominant-baseline="central" fill="#24313f">Only if needed: a split, a hand-over</text>
+<rect x="577.1499999999999" y="74" width="30" height="20" rx="4" fill="#fff6e0" stroke="#e0a93b" stroke-dasharray="4 3"/>
+<text x="615.1499999999999" y="84" font-size="15" dominant-baseline="central" fill="#24313f">Framed: a test of the method, apart from the tree</text>
+<text x="28" y="112" font-size="15" fill="#24313f">A line joins each one to the one that starts it.</text>
+<line x1="870" y1="125" x2="870" y2="2454" stroke="#d5dbe2"/>
+<text x="28" y="148" font-size="18" font-weight="700" fill="#1f2933">As chosen: a coordinator and one helper for each of seven fields</text>
+<text x="920" y="148" font-size="18" font-weight="700" fill="#1f2933">As planned: the full run, with the pilot inside it</text>
+<text x="920" y="170" font-size="14" fill="#5b6876">The pilot is one leaf, T, and its test.</text>
+<path d="M142,1310.5 H159 M159,199.5 V2421.5 M159,199.5 H176 M159,221.5 H176 M159,364.5 H176 M238,364.5 H299 M299,243.5 V485.5 M299,243.5 H316 M299,265.5 H316 M299,287.5 H316 M299,309.5 H316 M299,331.5 H316 M299,353.5 H316 M299,375.5 H316 M299,397.5 H316 M299,419.5 H316 M299,441.5 H316 M299,463.5 H316 M299,485.5 H316 M159,628.5 H176 M238,628.5 H299 M299,507.5 V749.5 M299,507.5 H316 M299,529.5 H316 M299,551.5 H316 M299,573.5 H316 M299,595.5 H316 M299,617.5 H316 M299,639.5 H316 M299,661.5 H316 M299,683.5 H316 M299,705.5 H316 M299,727.5 H316 M299,749.5 H316 M159,892.5 H176 M238,892.5 H299 M299,771.5 V1013.5 M299,771.5 H316 M299,793.5 H316 M299,815.5 H316 M299,837.5 H316 M299,859.5 H316 M299,881.5 H316 M299,903.5 H316 M299,925.5 H316 M299,947.5 H316 M299,969.5 H316 M299,991.5 H316 M299,1013.5 H316 M159,1156.5 H176 M238,1156.5 H299 M299,1035.5 V1277.5 M299,1035.5 H316 M299,1057.5 H316 M299,1079.5 H316 M299,1101.5 H316 M299,1123.5 H316 M299,1145.5 H316 M299,1167.5 H316 M299,1189.5 H316 M299,1211.5 H316 M299,1233.5 H316 M299,1255.5 H316 M299,1277.5 H316 M159,1420.5 H176 M238,1420.5 H299 M299,1299.5 V1541.5 M299,1299.5 H316 M299,1321.5 H316 M299,1343.5 H316 M299,1365.5 H316 M299,1387.5 H316 M299,1409.5 H316 M299,1431.5 H316 M299,1453.5 H316 M299,1475.5 H316 M299,1497.5 H316 M299,1519.5 H316 M299,1541.5 H316 M159,1684.5 H176 M238,1684.5 H299 M299,1563.5 V1805.5 M299,1563.5 H316 M299,1585.5 H316 M299,1607.5 H316 M299,1629.5 H316 M299,1651.5 H316 M299,1673.5 H316 M299,1695.5 H316 M299,1717.5 H316 M299,1739.5 H316 M299,1761.5 H316 M299,1783.5 H316 M299,1805.5 H316 M159,1948.5 H176 M238,1948.5 H299 M299,1827.5 V2069.5 M299,1827.5 H316 M299,1849.5 H316 M299,1871.5 H316 M299,1893.5 H316 M299,1915.5 H316 M299,1937.5 H316 M299,1959.5 H316 M299,1981.5 H316 M299,2003.5 H316 M299,2025.5 H316 M299,2047.5 H316 M299,2069.5 H316 M159,2256.5 H176 M282,2256.5 H299 M299,2113.5 V2399.5 M299,2113.5 H316 M299,2135.5 H316 M299,2157.5 H316 M299,2179.5 H316 M299,2201.5 H316 M299,2223.5 H316 M299,2245.5 H316 M299,2267.5 H316 M299,2289.5 H316 M299,2311.5 H316 M299,2333.5 H316 M299,2355.5 H316 M299,2377.5 H316 M299,2399.5 H316" fill="none" stroke="#8d99a6" stroke-width="1.4"/>
+<path d="M159,2091.5 H176 M159,2421.5 H176" fill="none" stroke="#8d99a6" stroke-width="1.4" stroke-dasharray="5 3"/>
+<rect x="28" y="1297.5" width="114" height="26" rx="13" fill="#2f5d8a" stroke="#2f5d8a" stroke-width="1.2"/>
+<text x="85" y="1310.5" font-size="15" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff">Coordinator</text>
+<rect x="176" y="190" width="106" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="229" y="199.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Problem sheet</text>
+<rect x="176" y="212" width="95" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="223.5" y="221.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Planted copy</text>
+<rect x="176" y="355" width="62" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="207" y="364.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Field 1</text>
+<rect x="316" y="234" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="243.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 1</text>
+<rect x="316" y="256" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="265.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 2</text>
+<rect x="316" y="278" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="287.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 3</text>
+<rect x="316" y="300" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="309.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 4</text>
+<rect x="316" y="322" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="331.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 5</text>
+<rect x="316" y="344" width="103" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="367.5" y="353.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Report writer</text>
+<rect x="316" y="366" width="81" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="356.5" y="375.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Quote gate</text>
+<rect x="316" y="388" width="102" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="367" y="397.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Fresh refuter</text>
+<rect x="316" y="410" width="62" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="347" y="419.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Scorer</text>
+<rect x="316" y="432" width="45" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="338.5" y="441.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Fold</text>
+<rect x="316" y="454" width="81" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="356.5" y="463.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Extraction</text>
+<rect x="316" y="476" width="101" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="366.5" y="485.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Record check</text>
+<rect x="176" y="619" width="62" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="207" y="628.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Field 2</text>
+<rect x="316" y="498" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="507.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 1</text>
+<rect x="316" y="520" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="529.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 2</text>
+<rect x="316" y="542" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="551.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 3</text>
+<rect x="316" y="564" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="573.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 4</text>
+<rect x="316" y="586" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="595.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 5</text>
+<rect x="316" y="608" width="103" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="367.5" y="617.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Report writer</text>
+<rect x="316" y="630" width="81" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="356.5" y="639.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Quote gate</text>
+<rect x="316" y="652" width="102" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="367" y="661.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Fresh refuter</text>
+<rect x="316" y="674" width="62" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="347" y="683.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Scorer</text>
+<rect x="316" y="696" width="45" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="338.5" y="705.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Fold</text>
+<rect x="316" y="718" width="81" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="356.5" y="727.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Extraction</text>
+<rect x="316" y="740" width="101" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="366.5" y="749.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Record check</text>
+<rect x="176" y="883" width="62" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="207" y="892.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Field 3</text>
+<rect x="316" y="762" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="771.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 1</text>
+<rect x="316" y="784" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="793.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 2</text>
+<rect x="316" y="806" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="815.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 3</text>
+<rect x="316" y="828" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="837.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 4</text>
+<rect x="316" y="850" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="859.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 5</text>
+<rect x="316" y="872" width="103" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="367.5" y="881.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Report writer</text>
+<rect x="316" y="894" width="81" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="356.5" y="903.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Quote gate</text>
+<rect x="316" y="916" width="102" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="367" y="925.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Fresh refuter</text>
+<rect x="316" y="938" width="62" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="347" y="947.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Scorer</text>
+<rect x="316" y="960" width="45" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="338.5" y="969.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Fold</text>
+<rect x="316" y="982" width="81" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="356.5" y="991.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Extraction</text>
+<rect x="316" y="1004" width="101" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="366.5" y="1013.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Record check</text>
+<rect x="176" y="1147" width="62" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="207" y="1156.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Field 4</text>
+<rect x="316" y="1026" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="1035.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 1</text>
+<rect x="316" y="1048" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="1057.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 2</text>
+<rect x="316" y="1070" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="1079.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 3</text>
+<rect x="316" y="1092" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="1101.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 4</text>
+<rect x="316" y="1114" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="1123.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 5</text>
+<rect x="316" y="1136" width="103" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="367.5" y="1145.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Report writer</text>
+<rect x="316" y="1158" width="81" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="356.5" y="1167.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Quote gate</text>
+<rect x="316" y="1180" width="102" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="367" y="1189.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Fresh refuter</text>
+<rect x="316" y="1202" width="62" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="347" y="1211.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Scorer</text>
+<rect x="316" y="1224" width="45" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="338.5" y="1233.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Fold</text>
+<rect x="316" y="1246" width="81" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="356.5" y="1255.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Extraction</text>
+<rect x="316" y="1268" width="101" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="366.5" y="1277.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Record check</text>
+<rect x="176" y="1411" width="62" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="207" y="1420.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Field 5</text>
+<rect x="316" y="1290" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="1299.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 1</text>
+<rect x="316" y="1312" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="1321.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 2</text>
+<rect x="316" y="1334" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="1343.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 3</text>
+<rect x="316" y="1356" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="1365.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 4</text>
+<rect x="316" y="1378" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="1387.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 5</text>
+<rect x="316" y="1400" width="103" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="367.5" y="1409.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Report writer</text>
+<rect x="316" y="1422" width="81" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="356.5" y="1431.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Quote gate</text>
+<rect x="316" y="1444" width="102" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="367" y="1453.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Fresh refuter</text>
+<rect x="316" y="1466" width="62" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="347" y="1475.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Scorer</text>
+<rect x="316" y="1488" width="45" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="338.5" y="1497.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Fold</text>
+<rect x="316" y="1510" width="81" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="356.5" y="1519.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Extraction</text>
+<rect x="316" y="1532" width="101" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="366.5" y="1541.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Record check</text>
+<rect x="176" y="1675" width="62" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="207" y="1684.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Field 6</text>
+<rect x="316" y="1554" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="1563.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 1</text>
+<rect x="316" y="1576" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="1585.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 2</text>
+<rect x="316" y="1598" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="1607.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 3</text>
+<rect x="316" y="1620" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="1629.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 4</text>
+<rect x="316" y="1642" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="1651.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 5</text>
+<rect x="316" y="1664" width="103" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="367.5" y="1673.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Report writer</text>
+<rect x="316" y="1686" width="81" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="356.5" y="1695.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Quote gate</text>
+<rect x="316" y="1708" width="102" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="367" y="1717.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Fresh refuter</text>
+<rect x="316" y="1730" width="62" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="347" y="1739.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Scorer</text>
+<rect x="316" y="1752" width="45" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="338.5" y="1761.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Fold</text>
+<rect x="316" y="1774" width="81" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="356.5" y="1783.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Extraction</text>
+<rect x="316" y="1796" width="101" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="366.5" y="1805.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Record check</text>
+<rect x="176" y="1939" width="62" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="207" y="1948.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Field 7</text>
+<rect x="316" y="1818" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="1827.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 1</text>
+<rect x="316" y="1840" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="1849.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 2</text>
+<rect x="316" y="1862" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="1871.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 3</text>
+<rect x="316" y="1884" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="1893.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 4</text>
+<rect x="316" y="1906" width="75" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="353.5" y="1915.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Reader 5</text>
+<rect x="316" y="1928" width="103" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="367.5" y="1937.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Report writer</text>
+<rect x="316" y="1950" width="81" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="356.5" y="1959.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Quote gate</text>
+<rect x="316" y="1972" width="102" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="367" y="1981.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Fresh refuter</text>
+<rect x="316" y="1994" width="62" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="347" y="2003.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Scorer</text>
+<rect x="316" y="2016" width="45" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="338.5" y="2025.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Fold</text>
+<rect x="316" y="2038" width="81" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="356.5" y="2047.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Extraction</text>
+<rect x="316" y="2060" width="101" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="366.5" y="2069.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Record check</text>
+<rect x="176" y="2082" width="72" height="19" rx="9.5" fill="#ffffff" stroke="#6b7885" stroke-width="1.2" stroke-dasharray="5 3"/>
+<text x="212" y="2091.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Split leaf</text>
+<rect x="176" y="2247" width="106" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="229" y="2256.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Closing helper</text>
+<rect x="316" y="2104" width="122" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="377" y="2113.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Sample reader 1</text>
+<rect x="316" y="2126" width="122" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="377" y="2135.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Sample reader 2</text>
+<rect x="316" y="2148" width="122" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="377" y="2157.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Sample reader 3</text>
+<rect x="316" y="2170" width="122" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="377" y="2179.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Sample reader 4</text>
+<rect x="316" y="2192" width="122" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="377" y="2201.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Sample reader 5</text>
+<rect x="316" y="2214" width="122" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="377" y="2223.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Sample reader 6</text>
+<rect x="316" y="2236" width="122" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="377" y="2245.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Sample reader 7</text>
+<rect x="316" y="2258" width="110" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="371" y="2267.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Fold in packets</text>
+<rect x="316" y="2280" width="88" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="360" y="2289.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Draft board</text>
+<rect x="316" y="2302" width="82" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="357" y="2311.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Recall test</text>
+<rect x="316" y="2324" width="77" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="354.5" y="2333.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Synthesis</text>
+<rect x="316" y="2346" width="124" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="378" y="2355.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Synthesis refuter</text>
+<rect x="316" y="2368" width="103" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="367.5" y="2377.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Synthesis fold</text>
+<rect x="316" y="2390" width="96" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="364" y="2399.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Page for him</text>
+<rect x="176" y="2412" width="83" height="19" rx="9.5" fill="#ffffff" stroke="#6b7885" stroke-width="1.2" stroke-dasharray="5 3"/>
+<text x="217.5" y="2421.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Successor</text>
+<rect x="1056" y="386" width="234" height="174" rx="8" fill="#fff6e0" stroke="#e0a93b" stroke-dasharray="4 3"/>
+<text x="1066" y="400" font-size="13" font-weight="700" fill="#8a5a00">Design checks and tests</text>
+<rect x="1056" y="565" width="234" height="189" rx="8" fill="#fff6e0" stroke="#e0a93b" stroke-dasharray="4 3"/>
+<text x="1066" y="579" font-size="13" font-weight="700" fill="#8a5a00">The pilot’s test</text>
+<path d="M1034,501 H1051 M1051,209.5 V792.5 M1051,209.5 H1068 M1130,209.5 H1168 M1168,209.5 V209.5 M1168,209.5 H1185 M1051,231.5 H1068 M1130,231.5 H1168 M1168,231.5 V231.5 M1168,231.5 H1185 M1051,253.5 H1068 M1130,253.5 H1168 M1168,253.5 V253.5 M1168,253.5 H1185 M1051,275.5 H1068 M1130,275.5 H1168 M1168,275.5 V275.5 M1168,275.5 H1185 M1051,297.5 H1068 M1130,297.5 H1168 M1168,297.5 V297.5 M1168,297.5 H1185 M1051,319.5 H1068 M1130,319.5 H1168 M1168,319.5 V319.5 M1168,319.5 H1185 M1051,341.5 H1068 M1103,341.5 H1168 M1168,341.5 V341.5 M1168,341.5 H1185 M1051,423 H1068 M1051,452 H1068 M1051,481 H1068 M1051,510 H1068 M1051,539 H1068 M1051,602 H1068 M1051,631 H1068 M1051,660 H1068 M1051,689 H1068 M1051,714.5 H1068 M1051,736.5 H1068" fill="none" stroke="#8d99a6" stroke-width="1.4"/>
+<path d="M1051,363.5 H1068 M1051,792.5 H1068" fill="none" stroke="#8d99a6" stroke-width="1.4" stroke-dasharray="5 3"/>
+<rect x="920" y="488" width="114" height="26" rx="13" fill="#2f5d8a" stroke="#2f5d8a" stroke-width="1.2"/>
+<text x="977" y="501" font-size="15" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff">Coordinator</text>
+<rect x="1068" y="200" width="62" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="1099" y="209.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Field 1</text>
+<rect x="1185" y="200" width="69" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="1219.5" y="209.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Readers</text>
+<rect x="1068" y="222" width="62" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="1099" y="231.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Field 2</text>
+<rect x="1185" y="222" width="69" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="1219.5" y="231.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Readers</text>
+<rect x="1068" y="244" width="62" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="1099" y="253.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Field 3</text>
+<rect x="1185" y="244" width="69" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="1219.5" y="253.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Readers</text>
+<rect x="1068" y="266" width="62" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="1099" y="275.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Field 4</text>
+<rect x="1185" y="266" width="69" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="1219.5" y="275.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Readers</text>
+<rect x="1068" y="288" width="62" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="1099" y="297.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Field 5</text>
+<rect x="1185" y="288" width="69" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="1219.5" y="297.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Readers</text>
+<rect x="1068" y="310" width="62" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="1099" y="319.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Field 6</text>
+<rect x="1185" y="310" width="69" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="1219.5" y="319.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Readers</text>
+<rect x="1068" y="328.5" width="35" height="26" rx="13" fill="#2f5d8a" stroke="#2f5d8a" stroke-width="1.2"/>
+<text x="1085.5" y="341.5" font-size="15" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff">T</text>
+<rect x="1185" y="332" width="91" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="1230.5" y="341.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">T’s readers</text>
+<rect x="1068" y="354" width="72" height="19" rx="9.5" fill="#ffffff" stroke="#6b7885" stroke-width="1.2" stroke-dasharray="5 3"/>
+<text x="1104" y="363.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Split leaf</text>
+<rect x="1068" y="410" width="80" height="26" rx="13" fill="#2f5d8a" stroke="#2f5d8a" stroke-width="1.2"/>
+<text x="1108" y="423" font-size="15" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff">Control</text>
+<rect x="1068" y="439" width="79" height="26" rx="13" fill="#2f5d8a" stroke="#2f5d8a" stroke-width="1.2"/>
+<text x="1107.5" y="452" font-size="15" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff">Canary</text>
+<rect x="1068" y="468" width="68" height="26" rx="13" fill="#2f5d8a" stroke="#2f5d8a" stroke-width="1.2"/>
+<text x="1102" y="481" font-size="15" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff">STPA</text>
+<rect x="1068" y="497" width="71" height="26" rx="13" fill="#2f5d8a" stroke="#2f5d8a" stroke-width="1.2"/>
+<text x="1103.5" y="510" font-size="15" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff">FMEA</text>
+<rect x="1068" y="526" width="82" height="26" rx="13" fill="#2f5d8a" stroke="#2f5d8a" stroke-width="1.2"/>
+<text x="1109" y="539" font-size="15" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff">Mapper</text>
+<rect x="1068" y="589" width="46" height="26" rx="13" fill="#2f5d8a" stroke="#2f5d8a" stroke-width="1.2"/>
+<text x="1091" y="602" font-size="15" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff">S1</text>
+<rect x="1068" y="618" width="46" height="26" rx="13" fill="#2f5d8a" stroke="#2f5d8a" stroke-width="1.2"/>
+<text x="1091" y="631" font-size="15" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff">S2</text>
+<rect x="1068" y="647" width="46" height="26" rx="13" fill="#2f5d8a" stroke="#2f5d8a" stroke-width="1.2"/>
+<text x="1091" y="660" font-size="15" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff">R1</text>
+<rect x="1068" y="676" width="46" height="26" rx="13" fill="#2f5d8a" stroke="#2f5d8a" stroke-width="1.2"/>
+<text x="1091" y="689" font-size="15" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff">R2</text>
+<rect x="1068" y="705" width="76" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="1106" y="714.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Checkers</text>
+<rect x="1068" y="727" width="62" height="19" rx="9.5" fill="#eef2f7" stroke="#9fb0c2" stroke-width="1.2"/>
+<text x="1099" y="736.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Scorer</text>
+<rect x="1068" y="783" width="83" height="19" rx="9.5" fill="#ffffff" stroke="#6b7885" stroke-width="1.2" stroke-dasharray="5 3"/>
+<text x="1109.5" y="792.5" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#24313f">Successor</text>
+</svg></div></div>
+
+<h2 id="next">Next step: one plan for the research run</h2>
+<p class="sub">From <code>NEXT-STEP.md</code>, written by top session 4 on 2026-11-20. Two questions for him at the end.</p>
+<p><strong>The plan.</strong> The research run as path e2 of the complexity analysis (<code>COMPLEXITY.md</code> version 2, section 5), with the router&rsquo;s models (<code>ROUTER.md</code> version 2), started the way <code>UNATTENDED.md</code> version 2 describes, and with what the faults audit found (<code>FAULTS.md</code> version 2).</p>
+<ul>
+<li><strong>Shape</strong> (the tree, left side of the picture above): one coordinator session, the only one that talks to you; under it one helper per field (seven fields) and the problem sheet, written once; under each field helper its readers, quote gate, fresh refuter, scorer, fold, extraction and record check, all helpers.</li>
+<li><strong>Models and effort per step</strong> (router section 4): the coordinator on Fable at high effort (r57-0035: its children have children); field helpers, refuters and analysts on Opus at high; readers on Sonnet at medium; extraction into a fixed schema on Haiku at low or medium; a fold on Opus at medium. Effort is lowered before a cheaper model is tried. These efforts take effect only once written into the run&rsquo;s own instructions; writing them is part of the preparation.</li>
+<li><strong>Token savers from the router</strong>: the waiting coordinator wakes at least once an hour so its cache does not expire; scripts print one line and write the rest to a file; meter readings and token counts go inside calls already made; helper returns stay under 2 K tokens.</li>
+<li><strong>Checks kept</strong>: the quote gate, a fresh refuter per field, the scorer, the recall test, and your review idea (each field&rsquo;s writer and its refuter review a planted copy). <strong>Dropped by this path</strong>: Q6 to Q11 and comparison 1 of protocol v2, and three checks our own session control did that the app&rsquo;s helpers do not: fencing a replaced helper, a restart limit, hang detection. The loss is not measured.</li>
+<li><strong>When</strong>: from the weekly reset, 2026-11-23 12:00 UTC (17:00 your time); nothing of it fits this week. Two ways to start, your choice: you type the go at the reset, at your desk (no tokens added); or you type it before, set Windows not to sleep on mains power until the run ends, and the coordinator waits for the reset with one wake (about 0.2 to 0.3 M tokens). The app keeps the PC awake only while a session or its helpers work, not while a session waits.</li>
+<li><strong>Your acts, in one sitting, three typed turns</strong>: answer the two questions below; type the go (it names the paper downloads, about 420 MB of public papers, CLAUDE.md rule 3, and the rule-3 exception for the review test); pick Auto mode in the coordinator&rsquo;s mode picker; if you want to answer from your phone, turn on Remote Control for the coordinator alone (while connected its transcript is kept on the provider&rsquo;s servers; without it any stop waits for you at the desk). After that the run needs no typed turn from you unless it stops. Push to the phone is not shown for this app: you look.</li>
+<li><strong>What can stop it while you are away</strong>: Auto mode going back to prompts (3 blocks in a row, 20 in all); the cap; a Fable credit prompt; an app restart; the five-hour limit (the running helpers fail and the coordinator restarts them after that limit resets; with Remote Control on it first waits for your message).</li>
+<li><strong>Time</strong>: about 5.0 to 8.4 hours of machine time, three fields at once.</li>
+<li><strong>Tokens</strong>: expected about 955 M (800 M to 1,206 M): the complexity analysis&rsquo;s 801 / 985 / 1,219 M less the router&rsquo;s 13 to 49 M. About 16 points of next week&rsquo;s all-models meter (13 to 20) and about 1 Fable point (0.5 to 1.9). That is about 1.6 times the 10 % of a week the research direction set for it (620 M).</li>
+<li><strong>Not known</strong>: whether helpers of helpers count in the app&rsquo;s 20 at once; a field helper on a real field; Haiku&rsquo;s weight on the meter; whether the run goes on after an app restart.</li>
+</ul>
+<h3>The two questions</h3>
+<div class="box"><ul>
+<li><code>approve:</code> the research run as above (path e2 with the router&rsquo;s models, from the reset of 23 November), its preparation, and the paper downloads it names?</li>
+<li><code>cap:</code> 1.2 B tokens for the run, preparation included (the high estimate; expected about 955 M)?</li>
+</ul></div>
 
 <h2>How the numbers were reached</h2>
 <ul>
