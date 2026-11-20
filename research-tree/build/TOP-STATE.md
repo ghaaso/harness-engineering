@@ -90,3 +90,10 @@ CLAUDE.md rules 1 to 7. He wants plain words, the answer first, short (memory no
 372d5b97, 6a391755, e09778ae (build start, review fixes, owner page); c7da4d98 and 8151831a (the agent tree in
 `docs/program/agent-session-map/`; add sessions to `sessions.json` and run `build/tree.mjs` to redraw it); and the
 commit that holds this file.
+- 10:50 UTC: the owner asked about the pilot (what it is and whether it is an A/B test, why S1 and S2 cannot run as
+  single sessions, what the cap means, preparation against pilot, which field, whether the tree is his B+ tree, why
+  8.5-13.8 h and 37-58 of his turns, top session against coordinator, how it serves the goal after the embeddings
+  test, whether it is over-engineered) and asked for a complexity analysis of the plan: can it be reduced, at the
+  widest parallelism this PC allows, and what the parallel readers and writers work saves. Answered in chat. The
+  `approve:` and `cap:` asks are on hold. Proposed (r57-0018), waiting for his go: one Opus analyse helper, a blind
+  Opus refuter and a page, about 21 M tokens, limit 30 M. Mistake r57-0613.
