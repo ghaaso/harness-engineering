@@ -6,6 +6,7 @@
 //   intent done --key KEY --root R --ce N
 //   owner --act approve|accept|resume|drop|ruling --subject S --quote-file P --root R --ce N
 //   meter --pct P --root R --ce N
+//   --deadman --root R [--now ISO] [--boot B] [--dry-run]   (FX-W4: the scheduled task's run; no --ce)
 // Source of truth: CONTRACT.md (sections 1-4, 3.8, 3.9) and spec/status.mjs.md.
 // Process list and transcript parses happen before the run lock (CONTRACT section 2.1).
 // Endturn starts and kills nothing (decision 5).
@@ -50,8 +51,8 @@ const NONCE_RE = /^[0-9a-f]{32}$/;
 const NONCE_POLL_MS = 200;
 const DEADMAN_FLAGS = { deadman: { type: 'bool' } };
 // FX-W4 (FIX-wake.md FX-W4 steps 2-3, rev 5 N1; FIX-JOIN point 1; branches.md rows 8 and 10): the
-// design's constants, kept here (slice 1 writes no thresholds.json key); realert_runs and
-// busy_alert_ticks come from thresholds.json, these values only when a key is missing or invalid.
+// design's constants. Only realert_runs and busy_alert_ticks have a thresholds.json key; these values
+// stand in when that key is missing or invalid.
 const DM = {
   periodMs: 300000, // the task's period, tcb/settings/deadman-task.xml <Interval>PT5M</Interval>
   noAlarmRuns: 2, // runs_no_alarm >= 2

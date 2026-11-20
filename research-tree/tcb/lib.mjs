@@ -3867,8 +3867,8 @@ export const RUNTIME_FILES = Object.freeze([
   },
   {
     path: 'run/deadman.json', helper: 'deadman', fix: 'FX-W4', rewritten: true,
-    writer: 'status --deadman deadmanRun (single writer, no lock)',
-    fields: '{runs_no_alarm, runs_no_watcher, list_hist[5], alerted:{cause, runs}}',
+    writer: 'status --deadman deadmanRun (single writer, writeAtomic, no lock; a dry run writes nothing)',
+    fields: '{schema_version, ce, runs, at, boot, runs_no_alarm, runs_no_watcher, list_hist[<=5], alerted:{cause: runs}, gap}',
   },
   {
     path: 'run/watcher-busy.json', helper: 'watcherBusy', fix: 'FX-W7', rewritten: true,

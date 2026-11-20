@@ -109,7 +109,7 @@ node <root>/tcb/<name>.mjs [<mode>] --root <dir> [--ce <n>] [--task <id> --epoch
 | 67 | `table-corrupt` | `run/tasks.json` (or another `run/` state file) unparseable or schema-invalid. Every writing script refuses; `tasks.json.prev` is kept; the owner is told. Status reads `watcher.json` and `alarm.json` loosely: a corrupt one is its anomaly `state-corrupt` and a dead wake source, not 67 (FX-W1 step 4) |
 | 70 | `internal` | Uncaught error. Gates count it as not-run; a watcher 70 means "restart the watcher", never a field failure |
 | 75 | `lock-busy` | `run/run.lock` still held after the bounded retry (or lost while held) |
-| 0, 1, 2, 5, 6, 17, 21 | round 3 | Reasons added by the round-3 fixes, each filled by its fix (S0.5 lists them): FX-W1 the endturn's tri-state report of the wake sources (1, 2) and the alarms' exit markers; FX-W2 1 `arm-unconfirmed`, 0 `present` / `nonce-reused` / `abandoned`; FX-W3 6 `not-armed`, 1 `turn-stale` (endturn); FX-W6 21 `hang` by kind, 17 `idle-child` / `age-cap`; FX-CLAIM 5 `claimed-late`, 6 `not-claimed`, 1 `not-claim-holder` |
+| 0, 1, 2, 5, 6, 17, 21 | round 3 | Reasons added by the round-3 fixes, each filled by its fix (S0.5 lists them): FX-W1 the endturn's tri-state report of the wake sources (1, 2) and the alarms' exit markers; FX-W2 1 `arm-unconfirmed`, 0 `present` / `nonce-reused` / `abandoned`; FX-W3 6 `not-armed`, 1 `turn-stale` (endturn); FX-W4 1 `deadman-alert` {alerts, causes} (status `--deadman`); FX-W6 21 `hang` by kind, 17 `idle-child` / `age-cap`; FX-CLAIM 5 `claimed-late`, 6 `not-claimed`, 1 `not-claim-holder` |
 
 Watcher precedence when several classes are present (first wins): 64, 27, 26, 25, 24, 23, 22, 21, 20,
 11, 12, 10, 13, 15, 16, 14, 17. Urgent classes exit at the tick that sees them; non-urgent ones wait up to
@@ -179,7 +179,8 @@ wt/<task>-e<e>/            in/ (brief.md, manifest.json, checkpoint/, the inputs
 ### 2.1 Single writer of each path
 
 Every write below `run/`, `store/`, `plan/frozen/` and `completeness/` that is not exclusive-create
-happens under `run/run.lock`. "lib" means through the named library function. **No subprocess**
+happens under `run/run.lock`, except two files each rewritten without it by its one writer: `run/deadman.json`
+(status `--deadman`, FX-W4) and `run/watcher-busy.json` (the watcher, FX-W7, §3.10). "lib" means through the named library function. **No subprocess**
 (git, PowerShell, taskkill, a child script) **and no transcript parse runs while `run.lock` is
 held**: a script takes its facts before the lock and writes after taking it (the lock's own
 `selfInfo` is computed once per process before the first acquisition, §4.4).
@@ -202,6 +203,7 @@ held**: a script takes its facts before the lock and writes after taking it (the
 | `run/arm/slot-<k>.json` | watch `--alarm --ensure` (hold 1) | lib.writeAtomic |
 | `run/arm/<nonce>.json` | watch `--alarm --ensure` (create, hold 1); status `--reconcile` (hold 2, `abandoned`) | exclusive create; writeAtomic |
 | `run/turn.json` | status `--reconcile` (main hold, hold 2) | lib.writeAtomic |
+| `run/deadman.json` | status `--deadman` (FX-W4; the owner's scheduled task) | lib.writeAtomic, without the run lock |
 | `run/watcher.json`; `run/watcher.lock` | watch (watcher mode) | writeAtomic; wx |
 | `run/intents/<key>.json`, `.done` | status `intent` | exclusive create |
 | `run/audit/<task>-e<e>.json`, `run/audit/search-<task>-e<e>.jsonl`, `run/audit/coordinator-ce<ce>.json` | audit | writeAtomic |
@@ -424,7 +426,10 @@ watcher: {alive, ce, last_tick_at, ticks_total}, alarm: {alive, ce}, open_intent
 not_run: [{check, subject}], anomalies: [{code, detail}]}`. A pure function of files; any writer
 gives the same view for the same inputs (except `generated_at`). `V` is `lib.variant` (null where it
 does not apply); `not_run` lists (check, subject) whose last `check` line is not_run, plus
-(`fsck`, `store`) when the last `fsck` line is not_run.
+(`fsck`, `store`) when the last `fsck` line is not_run. FX-W4: anomaly `deadman-nowake` {why} when the dead-man
+is not shown to run every period: `no-run` (no `run/deadman.json`), `unreadable`, `stale` {at} (its `at` older than
+3 periods, 15 min), `gap` {from, to, ms} (two of its runs of one boot more than 2 periods apart, while fewer runs
+than max(1, ceil(2 x alarm_ms / 5 min)) followed it).
 
 ### 3.9 Coordinator files
 - [coord] `run/coord.json`: `{ce: int ≥1, session?, started_at, tcb_commit: 40 hex}`.
@@ -451,6 +456,11 @@ does not apply); `not_run` lists (check, subject) whose last `check` line is not
   that exits 30, before its exit marker and without a lock, when turn.json's turn_seq still equals its slot
   record's `turn_seq_at_reg` (no reconcile in a whole alarm period). Never rewritten; the reconcile's prune
   of exit markers leaves it; FX-W4's dead-man reads it.
+- [deadman] `run/deadman.json`: `{schema_version: 1, ce, runs, at, boot, runs_no_alarm, runs_no_watcher, list_hist:
+  bool[<=5], alerted: {cause: runs since its last alert}, gap: null|{from, to, ms, boot, runs_since}}` (FX-W4). Written
+  by `status --deadman` only (writeAtomic, no lock), one run of the owner's scheduled task each; absent or corrupt
+  starts the counts again. `runs_no_*` count the runs since a live alarm (watcher) of `ce`, unchanged by a run that
+  could not tell, restarted when `ce` changes; `list_hist` true where the list failed; `boot` the run's boot or null.
 - [arm-nonce] `run/arm/<nonce>.json`, nonce 32 lowercase hex: `{state: 'started'|'registered'|'present'|
   'abandoned', k?, pid?}` (FX-W2). The ensure creates it `{started, pid}` by exclusive create (a name
   already there: exit 0 `nonce-reused`, nothing else written) and in its hold 1 rewrites it `{registered,
@@ -1336,6 +1346,15 @@ Settled here where the sources leave it open or disagree (D = the design, L = a 
     arm in every endturn of this ce, and reports the wake sources after a refusal too; the coordinator
     ends every turn with it (E1). An alarm that fires with turn_seq unmoved since it registered writes
     [arm-unarmed] (§3.9).
+    FX-W4 (R6-d, FIX-JOIN part 3 and point 1.4; rev 5 N1; branches P1, H4 B, H7): "The bound: a wake arrives
+    while either source lives; a dead watcher is restarted at the next turn, within two alarm periods. A
+    scheduled task outside the tree, which wakes the PC, alerts the owner when no alarm or no watcher lives, the
+    process list keeps failing, an act-due is stuck (about 4.75 h), the run lock stays busy, or turns run
+    unarmed; it cannot wake the coordinator." Revision 5 N1 replaces "once per onset": while the same cause
+    holds the alert repeats every `realert_runs` runs (P1: 6, 30 min), and one run without the cause ends the
+    onset. The task (`tcb/settings/deadman-task.xml`, installed by the owner) runs `status --deadman --root R`
+    every 5 min and at logon with wake-to-run, and shows a toast on any exit but 0 (H4 B); the status view
+    raises `deadman-nowake` when its runs stop coming every period ([status], §3.8; [deadman], §3.9).
 
 ### FX-PLAN (round 3): the planner's acts, first match (class 17; status `next`)
 `lib.planAct(row, lib.planFacts(root, row, ctx))`, called by status's `nextOf` and the watcher's `rowAct`
