@@ -5,7 +5,7 @@
 // failure of its own (usage, unreadable files, an exception, its deadline) is a deny, because any
 // other exit code lets the call through. It takes no lock and writes only through `hookCreate`: a
 // strict exclusive create inside the time left until its deadline (CONTRACT §8.20, FIX-fence §0b).
-// No step writes yet: the writes come with FX-OUT, FX-CLAIM and FX-CGATE.
+// The steps that write: FX-CLAIM's session claim, FX-OUT's ready slot, and FX-CGATE's records (coord-session, start, close).
 //
 // Exports `decide(input, args, io)`; importing the module has no side effect (the library is loaded
 // with a guarded dynamic import so that a broken lib.mjs is a deny, never a crash with exit 1).
