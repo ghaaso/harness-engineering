@@ -1222,7 +1222,7 @@ test('S2.1 N2 the brief ends every turn with endturn, also after handover exit 2
   assert.match(brief, /when no reconcile of this turn printed a status \(it exited 75\), the `ledger\.seq` of `run\/status\.json`/);
 });
 
-test('S2.1 N2 after handover exit 2 the turn still ends: endturn acknowledges the reconcile\'s K and spends the arm', async () => {
+test('S2.1 N2 after handover raise exits 2 (proc-unavailable) the turn still ends: nothing was written, endturn acknowledges the reconcile K, spends the arm and reports the sources unknown', async () => {
   await withRoot({}, async (ctx) => {
     meterLine(ctx.root); meterLine(ctx.root);
     liveWatcher(ctx);
@@ -1230,18 +1230,26 @@ test('S2.1 N2 after handover exit 2 the turn still ends: endturn acknowledges th
     const rec = reconcile(ctx);
     assert.ok([0, 1].includes(rec.exit), `reconcile: ${rec.stdout}`);
     const k = rec.json.result.status.ledger.seq;
-    // the turn's handover call exits 2 (no coord.json to read); it changes nothing of the turn
-    const coordFile = path.join(ctx.root, 'run', 'coord.json');
-    const keep = fs.readFileSync(coordFile);
-    fs.rmSync(coordFile);
-    const h = cp.spawnSync(process.execPath, [path.join(TCB_SRC, 'handover.mjs'), 'bind', '--ce', '1', '--nonce', 'a'.repeat(32), '--root', ctx.root, '--dry-run', '--now', NOW],
-      { cwd: ctx.root, encoding: 'utf8', windowsHide: true });
-    assert.equal(h.status, 2, `handover exit 2: ${h.stdout}${h.stderr}`);
-    fs.writeFileSync(coordFile, keep);
+    // the turn's drain line of this ce, then the process list becomes unavailable for the raise (and the endturn)
+    addLine(ctx.root, { kind: 'drain', ce: 1, data: { window: 140000, w_star: 133200 } });
+    const thrFile = path.join(ctx.root, 'tcb', 'thresholds.json');
+    const thr = J(thrFile);
+    thr.params.proc_exe = { ...thr.params.proc_exe, value: NO_LIST.proc_exe };
+    w(thrFile, thr);
+    const before = snapshotTree(ctx.root);
+    // a real raise, not a dry run: its own exit 2, proc-unavailable, with the whole tree unchanged
+    const h = parseOut(cp.spawnSync(process.execPath, [path.join(TCB_SRC, 'handover.mjs'), 'raise', '--root', ctx.root, '--ce', '1', '--now', NOW],
+      { cwd: ctx.root, encoding: 'utf8', windowsHide: true, timeout: 120000 }));
+    assert.equal(h.exit, 2, `handover raise exit 2: ${h.stdout}${h.stderr}`);
+    assert.ok(h.json && (h.json.reasons ?? []).some((r) => r.code === 'proc-unavailable'), `raise reason: ${h.stdout}`);
+    assert.deepEqual(snapshotTree(ctx.root), before, 'raise exit 2 wrote nothing: coord.json is still ce 1, no acked.json, the arm kept');
+    assert.equal(J(path.join(ctx.root, 'run', 'coord.json')).ce, 1, 'coord.json still names ce 1');
     assert.equal(fs.existsSync(ackedPath(ctx)), false, 'nothing acknowledged before endturn');
-    const j = endturn(ctx, k);
-    assert.ok([0, 1].includes(j.exit), `endturn after exit 2: ${j.stdout}`);
-    assert.ok(!hasReason(j, 'turn-stale') && !hasReason(j, 'acked-ahead') && !hasReason(j, 'acked-backwards'));
+    // the turn's last call is endturn --ce 1: K accepted, the arm spent, the sources unknown (exit 2)
+    const j = assertLine(endturn(ctx, k), 2);
+    assert.ok(!hasReason(j, 'turn-stale') && !hasReason(j, 'acked-ahead') && !hasReason(j, 'acked-backwards') && !hasReason(j, 'no-coordinator'), JSON.stringify(j.reasons));
+    assert.ok(hasReason(j, 'proc-unavailable'), JSON.stringify(j.reasons));
+    assert.deepEqual(j.result.sources, { watcher: 'unknown', alarm: 'unknown' });
     assert.equal(J(ackedPath(ctx)).acked_seq, k);
     assert.equal(J(turnPath(ctx)).arm, 'spent');
   });
@@ -1266,7 +1274,7 @@ test('S2.1 N2 after exit 75 the turn still ends: K is run/status.json\'s ledger.
     fs.rmSync(path.join(ctx.root, 'run', 'run.lock'), { force: true });
     const j = endturn(ctx, k);                                 // lock free: K from status.json is accepted
     assert.ok([0, 1].includes(j.exit), `endturn after 75: ${j.stdout}`);
-    assert.ok(!hasReason(j, 'acked-ahead') && !hasReason(j, 'acked-backwards') && !hasReason(j, 'turn-stale'));
+    assert.ok(!hasReason(j.json, 'acked-ahead') && !hasReason(j.json, 'acked-backwards') && !hasReason(j.json, 'turn-stale'), JSON.stringify(j.json?.reasons));
     assert.equal(J(ackedPath(ctx)).acked_seq, k);
   });
 });
