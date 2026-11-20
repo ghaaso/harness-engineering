@@ -62,6 +62,18 @@ is the expected need plus a buffer); r57-0024 (end your processes before reporti
 CLAUDE.md rules 1 to 7. He wants plain words, the answer first, short (memory notes `feedback-plain-wording.md`,
 `feedback-tree-is-nodes-and-lines.md`).
 
+## Top session 2 (app local_b8dee401-7bf8-4328-b309-33c328e3a1b2, Opus, kind orchestrate), progress, 2026-11-20
+- Step 2 done: of 621 uncommitted files under `research-tree/` in the main checkout, 618 were byte-equal on `build`;
+  STATE.md and usage.jsonl had only root 3's 07:25 lines more: committed on `build` through `hb`, **17be051d**. The
+  lane log (`research-tree/lane/log.jsonl`, main's tracked file, 1,583 to 2,846 lines) goes on the working branch.
+- Step 4: five of six archived. The sixth, local_427ef5e7 (harness check and plan), was refused by the app's
+  auto-mode classifier; not retried; left for the owner.
+- Step 5 done: memory line and file "Research tree: start here" now say the fixes are built.
+- Step 3 done: `library/journal/2026-11-20/r57.jsonl` (r57-0166 to r57-0173, r57-0519 to r57-0522, r57-0612); board
+  version 1.4 (NEXT r57-0519). Measured for the records (transcripts, once per message id): the build's window
+  997.1 M tokens, the build 907.7 M (roots 154.1 M), about 62 M a meter point; per role in r57-0173.
+- Step 6 (the pilot's plan and cap): next.
+
 ## Top session 1's commits (branch transfer/2026-11-16-embeddings-final-and-setup, none pushed)
 372d5b97, 6a391755, e09778ae (build start, review fixes, owner page); c7da4d98 and 8151831a (the agent tree in
 `docs/program/agent-session-map/`; add sessions to `sessions.json` and run `build/tree.mjs` to redraw it); and the
