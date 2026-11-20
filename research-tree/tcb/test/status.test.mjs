@@ -1210,3 +1210,95 @@ test('FX-W3 endturn: turn-stale writes nothing; K above read_seq is acked-ahead;
 
 test('NA1 a real session transcript appears in projectDirName(folder) with that cwd soon after start', { skip: `${NEEDS_APP}: item 7, needs a real session` }, () => {});
 test('NA2 the watcher and alarm exits reach the coordinator', { skip: `${NEEDS_APP}: item 5, needs the harness's background commands` }, () => {});
+
+// ------------------------------------------------ S2.1: tests that cross fixes
+// R5 N2 (FX-W3 + FX-W2 + the coordinator brief): every turn ends with endturn, also after `handover` exit 2 and
+// after any exit 75. The brief says so (sections 8 and 9) and endturn does what the brief promises in both turns.
+test('S2.1 N2 the brief ends every turn with endturn, also after handover exit 2 and exit 75', () => {
+  const brief = fs.readFileSync(path.join(TCB_SRC, 'briefs', 'coordinator.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(brief, /Every turn's last call, also after `handover` exit 2, after any exit 75 and after an unarmed reconcile: `node <root>\/tcb\/status\.mjs --endturn/);
+  assert.match(brief, /A script that exits 75 \(`lock-busy`\): retry nothing\. The turn still ends with endturn/);
+  assert.match(brief, /If endturn itself exits 75, end the turn\./);
+  assert.match(brief, /when no reconcile of this turn printed a status \(it exited 75\), the `ledger\.seq` of `run\/status\.json`/);
+});
+
+test('S2.1 N2 after handover raise exits 2 (proc-unavailable) the turn still ends: nothing was written, endturn acknowledges the reconcile K, spends the arm and reports the sources unknown', async () => {
+  await withRoot({}, async (ctx) => {
+    meterLine(ctx.root); meterLine(ctx.root);
+    liveWatcher(ctx);
+    liveAlarm(ctx);
+    const rec = reconcile(ctx);
+    assert.ok([0, 1].includes(rec.exit), `reconcile: ${rec.stdout}`);
+    const k = rec.json.result.status.ledger.seq;
+    // the turn's drain line of this ce, then the process list becomes unavailable for the raise (and the endturn)
+    addLine(ctx.root, { kind: 'drain', ce: 1, data: { window: 140000, w_star: 133200 } });
+    const thrFile = path.join(ctx.root, 'tcb', 'thresholds.json');
+    const thr = J(thrFile);
+    thr.params.proc_exe = { ...thr.params.proc_exe, value: NO_LIST.proc_exe };
+    w(thrFile, thr);
+    const before = snapshotTree(ctx.root);
+    // a real raise, not a dry run: its own exit 2, proc-unavailable, with the whole tree unchanged
+    const h = parseOut(cp.spawnSync(process.execPath, [path.join(TCB_SRC, 'handover.mjs'), 'raise', '--root', ctx.root, '--ce', '1', '--now', NOW],
+      { cwd: ctx.root, encoding: 'utf8', windowsHide: true, timeout: 120000 }));
+    assert.equal(h.exit, 2, `handover raise exit 2: ${h.stdout}${h.stderr}`);
+    assert.ok(h.json && (h.json.reasons ?? []).some((r) => r.code === 'proc-unavailable'), `raise reason: ${h.stdout}`);
+    assert.deepEqual(snapshotTree(ctx.root), before, 'raise exit 2 wrote nothing: coord.json is still ce 1, no acked.json, the arm kept');
+    assert.equal(J(path.join(ctx.root, 'run', 'coord.json')).ce, 1, 'coord.json still names ce 1');
+    assert.equal(fs.existsSync(ackedPath(ctx)), false, 'nothing acknowledged before endturn');
+    // the turn's last call is endturn --ce 1: K accepted, the arm spent, the sources unknown (exit 2)
+    const j = assertLine(endturn(ctx, k), 2);
+    assert.ok(!hasReason(j, 'turn-stale') && !hasReason(j, 'acked-ahead') && !hasReason(j, 'acked-backwards') && !hasReason(j, 'no-coordinator'), JSON.stringify(j.reasons));
+    assert.ok(hasReason(j, 'proc-unavailable'), JSON.stringify(j.reasons));
+    assert.deepEqual(j.result.sources, { watcher: 'unknown', alarm: 'unknown' });
+    assert.equal(J(ackedPath(ctx)).acked_seq, k);
+    assert.equal(J(turnPath(ctx)).arm, 'spent');
+  });
+});
+
+test('S2.1 N2 after exit 75 the turn still ends: K is run/status.json\'s ledger.seq, endturn acknowledges it; endturn itself busy exits 75 and writes nothing', async () => {
+  await withRoot({ thr: { lock_retries: 3 } }, async (ctx) => {
+    meterLine(ctx.root); meterLine(ctx.root);
+    liveWatcher(ctx);
+    liveAlarm(ctx);
+    assert.ok([0, 1].includes(reconcile(ctx).exit));          // the previous turn left run/status.json and turn.json
+    const k = statusJson(ctx).ledger.seq;
+    const holder = ctx.sleeper();
+    w(path.join(ctx.root, 'run', 'run.lock'), JSON.stringify(lockRec(holder)));
+    const r = reconcile(ctx);
+    assertLine(r, 75);                                         // this turn's reconcile exits 75: no status printed
+    assert.equal(r.json.result?.status, undefined);
+    const before = snapshotTree(ctx.root);
+    assertLine(endturn(ctx, k), 75);                           // endturn busy too: the turn ends, nothing written
+    assert.deepEqual(snapshotTree(ctx.root), before);
+    holder.kill();
+    fs.rmSync(path.join(ctx.root, 'run', 'run.lock'), { force: true });
+    const j = endturn(ctx, k);                                 // lock free: K from status.json is accepted
+    assert.ok([0, 1].includes(j.exit), `endturn after 75: ${j.stdout}`);
+    assert.ok(!hasReason(j.json, 'acked-ahead') && !hasReason(j.json, 'acked-backwards') && !hasReason(j.json, 'turn-stale'), JSON.stringify(j.json?.reasons));
+    assert.equal(J(ackedPath(ctx)).acked_seq, k);
+  });
+});
+
+// FX-W4 (FIX-wake FX-W4 steps 2-3; this test reads the unarmed-turn counter FX-W3 writes): the dead-man alerts
+// when no alarm of the ce is alive for two runs, once per onset, and again after the cause cleared for one run.
+// Written against the design; FX-W4 (B1-4, unit W4) had not landed when S2.1 was built, so it is a todo. Whichever
+// of W4 and S2.1 lands second drops the `todo` once it passes.
+test('S2.1 FX-W4 dead-man: no live alarm for two runs alerts once; an alarm alive for one run clears the onset', { todo: 'FX-W4 (unit W4) not landed: status --deadman is an empty stub' }, async () => {
+  await withRoot({}, async (ctx) => {
+    meterLine(ctx.root);
+    liveWatcher(ctx);
+    const dm = () => run(ctx.root, ['--deadman', '--root', ctx.root, '--now', NOW]);
+    const file = path.join(ctx.root, 'run', 'deadman.json');
+    const first = dm();
+    assert.equal(J(file).runs_no_alarm, 1, 'one run with no alarm: counted, no alert yet');
+    assert.ok(!/alert/.test(first.stdout) || first.json?.result?.alert === false);
+    const second = dm();
+    assert.equal(J(file).runs_no_alarm, 2);
+    assert.ok(second.json?.result?.alert || (second.json?.reasons ?? []).length > 0, 'two runs: alert');
+    const third = dm();
+    assert.ok(!third.json?.result?.alert && !(third.json?.reasons ?? []).some((r) => r.code === 'runs-no-alarm'), 'once per onset: no second alert');
+    liveAlarm(ctx);
+    dm();
+    assert.equal(J(file).runs_no_alarm, 0, 'an alarm alive: the count clears');
+  });
+});
