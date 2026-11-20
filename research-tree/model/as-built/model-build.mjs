@@ -474,11 +474,22 @@ const closeTargets = (n, f) => { const t = n.T[f]; return n.S.filter((s) => s.f 
 // S2.2: a session whose counted close record its row's stop verify needs (BLD_VERIFY_RECORDS, BLD_CLOSE_IDGAP): nameable
 // (claim holder or a folder transcript) and of a fenced row's older attempt or a stop-requested committed row's last one
 function needsRecord(n, s) { const t = n.T[s.f]; if (!(s.ch || s.tv)) return false; return (t.st === ST.A && t.step === STEP.FENCED && s.ep < t.ep) || (t.st === ST.C && t.cl === 2 && s.ep === t.ep); }
+// S2.2 (CLOSE's id gap, lib.mjs:4152-4165 orphanAct): a folder session that step 7 counts (no counted record), outside its
+// attempt's pending stop and not the current attempt's waiting session. The planner's close-session leaves its record
+// under the app's id ("uncounted"), and its act is then `owner`: the owner's relayed `closed` (merged into one owner act)
+function orphanUncounted(n, s, P) {
+  const t = n.T[s.f];
+  if (!P.FX_CLAIM || s.dn || s.ch || !s.tv || !(s.al || P.FX_R5_DEADCOUNT)) return false;
+  return s.ep < t.ep ? !(t.st === ST.A && t.step === STEP.FENCED && s.ep === t.ep - 1) : t.st !== ST.A;
+}
 // S2.2 (Q5): the status view shows a start due for the row (admit and start, a restart, or an admitted row's start)
 function startDue(n, t, P) { return t.st === ST.P || (t.st === ST.A && (t.step === STEP.FENCED || t.step === STEP.STOPPED || (t.step === STEP.ADMITTED && !t.sj && !(P.FX_CLAIM && t.cm === 1)))); }
 function ownerRow(n, f, P) {
   const t = n.T[f];
   if (!P.FX_PLAN || t.vr < 3) return false;
+  // S2.2 (BLD_VERIFY_RECORDS): closesMissing is computed only for a stop-requested row (lib.mjs:4222-4230), and
+  // verify_rounds is reset only by a fence (lib.mjs:1906), so a stale count waits for the next stop request
+  if (P.BLD_VERIFY_RECORDS && !((t.st === ST.A && t.step === STEP.FENCED && (t.sq || !P.AB_STOP_HELD)) || (t.st === ST.C && t.cl === 2))) return false;
   if (!P.FX_PLAN_OWNEREND) return true;
   return closeTargets(n, f).some((s) => (s.al || (P.BLD_VERIFY_RECORDS && (s.ch || s.tv))) && !s.dn);
 }
@@ -686,6 +697,8 @@ function verifyFenced(n, f, P, L) {
 function closeCommitted(res, f, P, L) {
   const t0 = res[0].n.T[f];
   const qs = []; res[0].n.S.forEach((s, q) => { if (s.f === f && s.ep === t0.ep && s.al && !s.dn && !s.z) qs.push(q); });
+  // S2.2 (BLD_VERIFY_RECORDS): a dead nameable session of the committed attempt: "no such session", recorded (see stop)
+  if (P.BLD_VERIFY_RECORDS && !P.BLD_CLOSE_IDGAP) for (const v of res) for (const s of v.n.S) if (s.f === f && s.ep === t0.ep && !s.al && (s.ch || s.tv) && !s.dn) { s.dn = 1; if (L) v.lab += ` f${f}e${s.ep}: no such session (close record);`; }
   for (const q of qs) {
     const nv = [];
     for (const v of res) {
@@ -839,6 +852,10 @@ function runOp(st, i, P, L) {
     }
     for (const v of vs) {
       const tt = v.n.T[f];
+      // S2.2 (BLD_VERIFY_RECORDS): a dead nameable session of the fenced attempt gets the stop tool too; it answers "no
+      // such session" and the hook records that as its close (FX-CGATE step 6(b)), which verify counts; under the id gap
+      // (BLD_CLOSE_IDGAP) the record is under the app's id and counts nothing, so it waits for the owner's `closed`
+      if (P.BLD_VERIFY_RECORDS && !P.BLD_CLOSE_IDGAP) for (const s of v.n.S) if (s.f === f && s.ep < tt.ep && !s.al && (s.ch || s.tv) && !s.dn) { s.dn = 1; if (L) v.lab += ` stop f${f}e${s.ep}: no such session (close record);`; }
       if (HELD) { // as built: stop request + the closes + the growth sample; verify needs stop_verify_deltas ticks later
         tt.sq = 1; tt.vt = 0; next(v.n);
         out.push({ lab: L && `${who} stop.mjs request f${f}:${v.lab || ' nothing live to close;'} sample taken (verify after ${2} watcher ticks)`, n: v.n, fault: v.fault, viol: sv }); continue;
@@ -1411,7 +1428,7 @@ export function successors(st, P, L) {
   // `closed`; the coordinator relays it with a quote file (merged: the premise of a true relay, at once). Fault w: the
   // coordinator relays `closed` for a session the owner did not close
   if (P.BLD_CLOSE_IDGAP) st.S.forEach((s, q) => {
-    if (s.dn || !needsRecord(st, s) || st.T[s.f].vr < 1) return;
+    if (s.dn || !((needsRecord(st, s) && st.T[s.f].vr >= 1) || orphanUncounted(st, s, P))) return;
     const n = clone(st); n.S[q].al = 0; n.S[q].dn = 1; n.S[q].z = 0;
     if (P.BQ5_OWNER_TURN && n.C[n.ce] && n.C[n.ce].pc === null) n.C[n.ce].om = 1;
     wake(n, n.ce);

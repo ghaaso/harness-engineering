@@ -35,14 +35,21 @@ add('BQ5-NOSJ', 'Q5 rule, a refused start writes nothing (the app refuses before
 add('BQ5-X', 'ablation of the owner step: the Q5 rule with an owner who never types (starts rest on the owner)', { ...C_Q5, BQ5_NO_OWNER: true }, 'BQ5-NOSJ');
 
 // 3. CLAIM's window (refute/CLAIM.md:52): a session stuck before its first call lets the lease expire, then claims
-const C_LEASE = { ...C_D4B, ...R5, ...BUILT_FENCE };
+// FX_LEASE_NOBOUND, reading (ii): the lease may run out while the session lives unclaimed (a start slower than the
+// 10-minute lease); under reading (i) the window is unreachable (the lease waits for every live unclaimed session)
+// One field: reading (ii) at two fields fills 1800 MB before 13 M states; the lease act is per row (S2.2 runs, MAP-build.md)
+const C_LEASE = { ...C_D4B, ...R5, ...BUILT_FENCE, FX_LEASE_NOBOUND: true, FIELDS: 1 };
 add('LEASE-B', 'the lease act as built: --if-unclaimed checked first, a claim may land before the tombstone (window)', C_LEASE, 'LEASE-ORDER');
 add('LEASE-ORDER', 'the closing order: refusals, tombstone, slot (the tombstone create decides)', { ...C_LEASE, BLD_LEASE_ORDER: true }, 'LEASE-B');
+add('LEASE-NOWIN', 'ablation of the window: --if-unclaimed read in the same instant as the tombstone (the design, rev 5)', { ...C_LEASE, BLD_LEASE_WINDOW: false }, 'LEASE-B');
 add('LEASE-X', 'ablation: the lease act without --if-unclaimed (the R57 model)', { ...C_LEASE, BLD_IF_UNCLAIMED: false, BLD_LEASE_WINDOW: false }, 'LEASE-B');
 
 // 4. CLOSE's id gap (departures/CLOSE.md 1, units/CLOSE/result.md:76): every close through the owner's relayed `closed`
 const C_GAP = { ...C_CLOSE, AB_READY_SPLIT: true, FX_OUT: true, ...BUILT_FENCE };
-add('IDGAP-W', 'the id gap with fault w: the coordinator relays closed for a session the owner did not close', { ...C_GAP, BUD: { ...K2, k: 1, w: 1 } }, 'FN-OUT-CLOSE-K2-B');
+// fault w needs a session alive at the verify: with the close facts' other value (stop interrupts, archive waits) it is
+// one; under the first value only a zombie (z) is, so IDGAP-WZ runs k=2,z=1,w=1
+add('IDGAP-W', 'the id gap with fault w: the coordinator relays closed for a live session the owner did not close', { ...C_GAP, BLD_STOP_INTERRUPT_ONLY: true, BLD_ARCHIVE_APPROVAL: true, BUD: { ...K2, k: 1, w: 1 } }, 'CLOSE-APPROVAL');
+add('IDGAP-WZ', 'the id gap with fault w on a zombie (the close does not end it)', { ...C_GAP, BUD: { ...K2, k: 2, z: 1, w: 1 } }, 'FN-OUT-CLOSE-K2-B');
 add('IDGAP-X', 'ablation: no id gap (the hook records count), verify by records as built', { ...C_GAP, BLD_CLOSE_IDGAP: false }, 'FN-OUT-CLOSE-K2-B');
 
 // 5. the unrecorded close facts, the other value of each (the -B configurations run the first): stop_session only
