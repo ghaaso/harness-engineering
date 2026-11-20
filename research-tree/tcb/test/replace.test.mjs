@@ -1615,18 +1615,24 @@ test('FX-W3 not-armed: start and fence first exit 6 not-armed, nothing written, 
 });
 
 // FIX-wake FX-W3 (RevocationNeverGated): every other fence reason and the stop revoke work and are never
-// gated by the arm: with no turn.json they act as before.
+// gated by the arm: with no turn.json they act as before. The loop is every reason of lib.REASONS but
+// `first` (the one fence that creates work), so a gate on any one revocation fails its own case here.
 const STOP_SCRIPT = path.join(HERE, '..', 'stop.mjs');
-test('FX-W3 revocation never gated: with no turn.json, fence hang, crash and handover act, and stop request after each', async (t) => {
-  for (const reason of ['hang', 'crash', 'handover']) {
+const REVOCATIONS = lib.REASONS.filter((x) => x !== 'first');
+test('FX-W3 revocation never gated: with no turn.json, a fence of every reason but first acts (stall, hang, loop, crash, tainted, memory, handover, cut, drop), and stop request after each', async (t) => {
+  assert.deepEqual(REVOCATIONS, ['stall', 'hang', 'loop', 'crash', 'tainted', 'memory', 'handover', 'cut', 'drop'], 'every reason but first, as the title names them');
+  for (const reason of REVOCATIONS) {
     await t.test(reason, async (t2) => {
       const w = mk({ armed: false });
       t2.after(w.cleanup);
       const { root } = w;
       table(root, [boundRow()]);
-      const j = run(root, 'fence', { task: RES, epoch: 1, reason, boot: BOOT_A, ...(reason === 'handover' ? {} : { tick: 3 }) });
+      if (reason === 'drop') led(root, 'owner', { data: { act: 'drop', subject: RES, quote: 'drop this task' } }); // T10: a drop needs the owner's line
+      const tick = lib.FAILURE_REASONS.includes(reason) ? { tick: 3 } : {}; // T11: a failure reason needs the tick
+      const j = run(root, 'fence', { task: RES, epoch: 1, reason, boot: BOOT_A, ...tick });
       expectExit(j, 0);
-      assert.equal(getRow(root, RES).epoch, 2);
+      const f = getRow(root, RES);
+      assert.deepEqual([f.epoch, f.step, f.reason], [2, 'fenced', reason]);
       const r = spawnSync(process.execPath, [STOP_SCRIPT, 'request', '--root', root, '--ce', '1', '--task', RES, '--epoch', '2', '--now', NOW], { encoding: 'utf8', cwd: root, windowsHide: true, timeout: 180000 });
       const s = JSON.parse(r.stdout.trim().split('\n').pop());
       assert.equal(s.exit, 0, r.stdout + r.stderr);
