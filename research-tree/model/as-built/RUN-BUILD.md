@@ -1,6 +1,6 @@
 # RUN-BUILD: the run list of the model as built (S2.2 for S2.3, task r57-0507 slice 2)
 
-Draft by S2.2 successor 1, 2026-11-20. Items W6-6 (age cap) and REDO are not built yet: their runs are missing (section 7).
+Final, S2.2 successor 2, 2026-11-20: 28 runs in sections 1-8, each measured or estimated well below 1,400 s.
 
 **How to run.** From the S2.2 worktree's `research-tree/` folder (or `build` after the landing), one run per call,
 through MAIN's lane, each under 1,400 s:
@@ -87,8 +87,30 @@ failures (ABLATION-fence.md:71 for the first and the last), with or without the 
 | CLOSE-APPROVAL | k=1,cd=1 | 2500 | 1,725,799 / 16 | every property holds | `CLOSE-APPROVAL__k=1,cd=1.json` |
 | CLOSE-APPROVAL-R5 | k=0 | 800 | 167,145 / 2 | **Slots F 16**: the fence group has no FX-CLOSE (the R57 split), so its verify confirms on no growth while the interrupted session lives and its slot is reused. On `build` FX-CLOSE's verify waits for a close-done record, so this is the split's, unless the hook records a close for a stop that only interrupts (not recorded: a pilot fact) | `CLOSE-APPROVAL-R5__k=0.json` |
 
-## 7. Not in this draft
+## 7. W6 item 6 (refute/W4.md:100-125): the age cap as built; an acknowledgement is a continue
 
-W6 item 6 (an acknowledgement is a continue and re-arms the age cap; property "an attempt whose coordinator only
-acknowledges reaches the owner"), REDO (a row committed at `started` gets no started redo; property
-StartedLineRecorded), and one run per branch S0.3 changed beyond rows 1 (Q5) and 6 (R1, FXW-5-B).
+The FXW-5-B group (FX-W5 with the act-due keys, the Q5 rule) with the age cap and fault m, a child at bound that
+imitates activity. AgeCapReachesOwner fails in AGE-B by construction: that gap goes back to FX-W6 (S2.4). AGE-STUCK, the
+design's second leg (not built), is the run that shows the property is not vacuous.
+
+| ID | part | M (share) | expected states / s | expected outcome | output |
+|---|---|---|---|---|---|
+| AGE-B | whole (k=1) | 800 (4 %) | 434,359 / 3 | **AgeCapReachesOwner F 16** (raised, read, acknowledged, re-armed, raised again: the owner is never told), AlwaysCanResolve F 3; EventuallyResolves F 5, as AGE-STUCK's below (at k=1,m=1 it is F 16, the age cap's own) | `AGE-B.json` |
+| AGE-B | k=2,m=1,o=1 | 600 (3 %) | 62,123 / 1 | AgeCapReachesOwner F 16, EventuallyResolves F 16, AlwaysCanResolve F 3 | `AGE-B__k=2,m=1,o=1.json` |
+| AGE-STUCK (the design leg) | whole (k=1) | 800 (4 %) | 476,122 / 3 | AgeCapReachesOwner holds; EventuallyResolves F 5, also at k=2,m=1,u=1 (294,544 states) and not at k=2,m=1,o=1: fault u's process-list artefact (ABLATION-wake.md:55), not the age cap (its trace not read) | `AGE-STUCK.json` |
+| AGE-STUCK | k=2,m=1,o=1 | 600 (3 %) | 162,074 / 1 | every property holds: a turn that skips its acts still acknowledges, and the stuck path still reaches the owner | `AGE-STUCK__k=2,m=1,o=1.json` |
+
+Measured at k=1,m=1 (model-build.test.mjs): AGE-B 23,819 states, AGE-STUCK 65,582. **Uncovered**: three faults with m.
+
+## 8. REDO (refute/W4.md:126-137): a started line lost by a dying reconcile, and FX-REDO
+
+FN-OUT-CLOSE-K2-B (the close group, where a row may be committed at started) with fault g. Fault x is needed too:
+without it a row is bound in the turn that starts it, no reconcile moves it, and k=2,g=2 stays at k=0's 99,748 states.
+
+| ID | part | M (share) | expected states / s | expected outcome | output |
+|---|---|---|---|---|---|
+| REDO-B | k=3,x=1,g=2 | 2500 (12 %) | 795,051 / 7 | every property holds; StartedLineRecorded holds because each act follows, in its own turn, a reconcile that completed, whose FX-REDO writes the line first | `REDO-B__k=3,x=1,g=2.json` |
+| REDO-X (ablation) | k=2,x=1,g=1 | 1500 (7 %) | 673,945 / 6 | **StartedLineRecorded F 6**: with no FX-REDO the next turn binds the row with its line missing | `REDO-X__k=2,x=1,g=1.json` |
+
+REDO-B at k=2,x=1,g=1: 574,250 states, every property holds. **Uncovered**: g with the close group's other faults
+(cd, z, t) at three faults.
