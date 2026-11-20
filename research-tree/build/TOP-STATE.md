@@ -219,3 +219,50 @@ Tempest-Zero); records and this file on the working branch `transfer/2026-11-16-
 touch `docs/program/pipeline-diagram/` (the owner's own session). Do not merge or push `build`. Start nothing else: the
 research run waits for one plan with the router's models, put to him with `approve:` and `cap:` after these pieces
 (r57-0007). He wants plain words, the answer first, short; results on a page (CLAUDE.md rule 6).
+
+## Top session 4 (started by top session 3; Opus, kind orchestrate), progress, 2026-11-20
+Its notes until 14:30 UTC are in the shared folder
+`side-session-notes/local_7181a103-c014-45de-bce9-8c950eb0b2e0/top4-progress.md`; in short:
+- 13:36 UTC: meter 82 % all models, 53 % Fable. The build's orchestration document is `research-tree/ORCHESTRATION.md`;
+  the EMS folder's `docs/ORCHESTRATION-DESIGN-2026-10.md` is byte for byte this repository's (cmp).
+- 13:40 UTC: started the router (`briefs/ROUTER.md`) and the faults audit (`briefs/FAULTS.md`), Opus analyse each.
+- 13:52 UTC: COMPLEXITY.md version 2 landed (path e2); started running without the typed go (`briefs/UNATTENDED.md`,
+  Opus) and the tree (`briefs/TREE.md`, Sonnet). The tree done at 13:55: `research-tree/build/tree/` (1.37 M).
+- The router: 8.0 M to its context line, finished by a second helper (`briefs/ROUTER-2.md`, 6.7 M); review
+  `refute/ROUTER.md` CORRECT 11 (7.27 M), all accepted (`briefs/ROUTER-fold.md`); fold running.
+- The faults audit: 12.19 M; review `refute/FAULTS.md` CORRECT 16 (14.08 M), all accepted (`briefs/FAULTS-fold.md`);
+  fold running.
+- Running without the typed go: 18.6 M (at its limit, "Left to do" minor for e2, not extended, r57-0038); review
+  running (`briefs/UNATTENDED-refute.md`).
+- 14:36 UTC: top session 3 closed at 14:30; top session 4 is the one writer of this file and the journal. Complexity
+  page: https://claude.ai/artifact/JQsXXJ43jk7CJBgbJCZeG9 (`reports/complexity.html`).
+- The faults fold returned (3.35 M): `FAULTS.md` version 2, version 1 kept as `FAULTS-v1.md` (same sha256). At least 56
+  faults: glue 23, borrowed design with a step missed or changed 16, planned part never written 6, made here where a
+  proven one existed 4, borrowed design whose assumption fails 3, two units clashing at landing 2, test 1, guess 1.
+  COMPLEXITY.md lines 269-273 leave out three checks path e2 drops (fencing a replaced helper, a restart limit, hang
+  detection): named on the page, file not edited. Tally of the cap: 71.6 M of helpers so far, plus own.
+- The router fold returned (about 4.2 M): `ROUTER.md` version 2, version 1 as `ROUTER-v1.md`. Worth it but small: on
+  e2 13-49 M of 986 M tokens, 0.7-2.7 of 13-17 points; the provider's documented pattern (one model per session,
+  helpers on cheaper models, effort lowered first); a session cannot switch its own model (the app refuses it); the
+  largest lever a waiting Fable coordinator waking at least hourly to keep its cache. Its own recomputations differ
+  from the review's in four places (stated in its changes list); accepted. Tally: about 75.8 M of helpers, plus own.
+- 14:58 UTC: the review of running without the typed go returned "CORRECT: 14 findings" (18.40 M, at its limit); all 14
+  accepted (`briefs/UNATTENDED-fold.md`, fold not started). The cap: counted by tokens-self.mjs at 14:58, helpers
+  95.8 M (router 8.47 + 6.73, faults 12.50, unattended 18.6 by its report, tree 1.48, reviews 14.24 + 7.57 + 18.40,
+  folds 3.61 + 4.23) and this session 12.65 M: 108.5 M against the 106 M cap. No new start; `cap:` put to the owner
+  for 120 M (left: the third fold about 3.5 M, the page about 1 M, records and commits, own turns; expected about 9 M).
+- About 15:05 UTC: the `cap:` question was cancelled before an answer; the owner then typed: "What's up? Stopped? What
+  happened? Uh, If it's not done yet, to reach the gap to 120 million, I suppose, don't stop here." Read as his word
+  for a cap of 120 M for the four pieces. Fold of the third review started.
+- About 15:40 UTC: the third fold returned (about 2.1 M): `UNATTENDED.md` version 2. The page helper (3.61 M, over its
+  2 M limit) published the four pieces on the complexity page, version 2 of
+  https://claude.ai/artifact/JQsXXJ43jk7CJBgbJCZeG9 (`reports/complexity.html`); top session 4 looked at its
+  screenshots. One command of that helper, taskkill on msedge.exe (it would have closed the owner's Edge windows), was
+  refused by the permission system and not run. `NEXT-STEP.md`: one plan for the research run (path e2 with the
+  router's models, from the reset), put to him with approve: and cap: 1.2 B. Records r57-0045, r57-0175 to r57-0179,
+  r57-0421, r57-0422, r57-0614, r57-0711 and the board's lines. Commits: dcbb8be4 on build (briefs, outputs, reviews,
+  tree, page) through hb; records and this file on the working branch.
+- Tally of the cap of 120 M: helpers 101.5 M (analyses 46.3, reviews 40.2, folds 9.9, tree 1.5, page 3.6), this
+  session 17.6 M to 15:40 UTC: about 119 M, with the last calls about 120 M.
+- Top session 4 done (15:40 UTC). Next: his answer to approve: and cap: for the research run (r57-0422). Start nothing
+  else before it.
