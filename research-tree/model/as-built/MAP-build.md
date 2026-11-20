@@ -34,10 +34,21 @@ when a `BQ5_*` or `BLD_*` flag is on (`BX`, MB:45).
 - W4 item 6, re-alert period 6 (the code) against the model's 2: dead-man steps are untimed and weakly fair, so the
   period changes no verdict; the model keeps 2 (checkpoint 1, decided by the first helper).
 
+- W4 item 2 (a run whose alarm records are absent, of another ce, corrupt or marked counts with the process list
+  down): the model's dead-man does not count such a run, so it alerts later or not at all: pessimistic for liveness
+  (a liveness verdict that holds carries over), no effect on safety (the dead-man only alerts).
+- W4 item 4 (the dead-man's counts restart at a new ce): a later alert in an untimed, weakly fair model changes no verdict.
+- PLAN item 4 (close-session's place in the first match): the orphan's close is merged into the tombstone stop
+  (`FX_R5_ORPHAN`, MB tombstone block of OP.S) and its `owner` fallback into `orphanUncounted`; revocations, bind and
+  commit are not held up by it in the model either.
+- PLAN item 7 (the watcher's zombieOver is a sum; the torn-fence retry and the lease act wait for no slot): the
+  model's fence op checks no slot, and an owner row gets no coordinator act (`ownerRow` in the plan).
+
 ## 3. Not modelled (say why in departures/S2.2.md)
 
-FX-W3 and FX-W7 are in no model (branches.md thin item 6). Not yet compared with the code (left to the successor):
-W4 items 2 and 4, PLAN items 4 and 7, W1 item 9, W6 item 6 (age cap), REDO.
+FX-W3 and FX-W7 are in no model (branches.md thin item 6). W1 item 9 changes an actor and needs a flag (left): on
+`build` a corrupt `alarm.json` is the anomaly `state-corrupt` and a dead source, not exit 67, while the model's fault y
+(`AB_ARM_SPLIT`) still exits 67 until an alarm registers again. Left to the successor: W6 item 6 (age cap), REDO.
 
 ## 4. Disagreements with the round's own files (listed, not edited there)
 
