@@ -6,11 +6,81 @@ successor (or this root after a compaction) reads `research-tree/build/ROOT-STAR
 nothing listed as running before reading that unit's branch and result file. Times are UTC, from `date -u` and the
 helpers' transcripts (the B1-1 clock times written before 19:44 were guesses; corrected here from the transcripts).
 
-## NOW (2026-11-20 05:30 UTC): slice 2 done; verdict SEND BACK: FX-W6; QUIET POINT; a fresh root for the fix round is due
+## NOW (2026-11-20 07:20 UTC): the FX-W6 fix round is done; the build is done through the model check
+
+- **Done:** FX-W6's fix landed on `build` (96bc34cc); the age-cap check holds on the fixed model (AGE-B, AGE-STUCK;
+  the ablation AGE-REARM fails, so not vacuous); suite 6 and the e2e pass; the blind review passes. Records commit on
+  `build` through `hb` (next lines); report `reports/fx-w6.md` and `reports/fx-w6.html`. The pilot (slice 3) has its
+  own plan and cap and starts only on the owner's word (r57-0007). Nothing merged into another branch, nothing pushed.
+- **Round counts:** builder 13.64 M (plan 11.7 M, limit 29.2 M; 83 calls, 21 min); refuter 13.25 M (plan 5.4 M,
+  limit 15.6 M; 77 calls, 19 min); root 3 about 14 M (63 calls at 07:15, context 290 K); about 41 M against the
+  25-35 M estimate. Model runs 21 s, landing 99.5 s, suite 6 164 s + e2e. Wall 06:27-07:20. Meter 79 % to 80 %.
+
+## Then (2026-11-20 06:30 UTC): root 3 runs the FX-W6 fix round (stop line 81 %)
+
+- **Root 3** (CLI session 873082b7-e3fa-405e-b735-bb96ac23d210, app local_f7dc42a2, Opus, kind orchestrate, main
+  checkout), started by root 2 on the owner's typed "Start it". Read: board, ROOT-START, ORCHESTRATION 0, 2, 3, 5-9,
+  13, GATE-USE, this file, VERDICT.md sections 1 and 6, refute/W4.md 100-125, departures/W6.md. Context 178 K at the
+  first work call. Meter 79 %, Fable 53 % (06:27, usage line written); keep-awake asked (session idle).
+- **How the gate orders the round:** W6 has no review of its own; `refute: W6` is refused, and the combined review
+  `refute: W4` needs W6 landed (plan.json, refute row W4, deps W6, REDO, CLOSE). So: builder, landing, then the blind
+  review of this round's commits; a breaking finding goes back to the builder and lands again.
+- **One builder for code and model:** the model's age-cap flag must follow the fixed code and cite its lines, so the
+  W6 builder also takes line 1015 and the flag change (one orientation, one landing, one review). Brief
+  `briefs/FX-W6.md`. `u/W6` fast-forwarded from 5b5ede1d to the `build` tip d655547f in `.claude/worktrees/W6`
+  (it was merged, so nothing is lost; land.mjs merges `u/<unit>`).
+- **Cap check for the builder:** 79 + 0 running + its limit 29.2 M (0.73 points at 40 M a point; slice 2 moved the
+  meter 1 point for about 107 M) = 79.7 <= 81. Protected line 100 - 0.21 x 77.5 h = 83.7, not binding.
+- **W6 builder RUNNING since 06:33** (`build-invariant: W6 age cap fix round`, opus, agent aa635d89d1071e041; the
+  plan gate allowed it; limit 29.2 M; done file `units/W6/fix-result.md`, checkpoint `units/W6/fix-checkpoint.md`).
+  Wake timer armed for 7,500 s (3 x Q3 of a builder's 41.6 min), fires about 08:38. On its result: land `u/W6`
+  through `hb` (its test files), then `refute: W4 FX-W6 fix blind review` beside the model rows of RUN-BUILD's new
+  section (background lane commands), then suite 6 with the e2e, records commit, report.
+- **06:53: W6 builder DONE** (13.64 M of 29.2 M, 83 calls, 21 min, context 253 K; `units/W6/fix-result.md`):
+  `u/W6` cfdd10c4 (5 commits on d655547f: tests first 27e3a5e1, the deletion 1c5a6633, brief line 7b + spec +
+  CONTRACT 2323e351, model 4748c275, RUN-BUILD section 9 + MAP cfdd10c4). On the old code both new tests fail
+  (`W6-fix-oldcode`: watch.test.mjs:1733 age_base 3 not 0; :1761 exit 0 not 17 at tick 18); fixed: watch 82 pass 4
+  skipped, status + handover 67 pass 5 skipped, model-build 37 pass, guard-hook (outside `.claude/`) 28 pass 3
+  skipped. Model at k=1,m=1: AGE-B = AGE-STUCK 65,582 states, all hold; ablation AGE-REARM 23,819, AgeCapReachesOwner
+  F 16; FN-N2-B k=1,u=1 619,856, EventuallyResolves F 9; FN-N2-B reads no other changed flag, so R3 stands for k=2.
+  Departures `departures/W6-fix.md` (7; "stop it" = fence 5a then close 5c; place 9 moved to coordinator.md:177-180).
+- **06:54: landing RUNNING** (bz173mt0i, `land.mjs W6` with watch, status, handover, guard-hook, model-build; log
+  scratchpad `fxw6/land-W6.log`) and **model chain M RUNNING** (bwd8m35k3: the 7 rows of RUN-BUILD section 9 from
+  `.claude/worktrees/W6/research-tree`, outputs `MAIN/research-tree/model/results-build/fx-w6/`, log `fxw6/chain-M.log`;
+  driver `fxw6/run-chain.sh`, root 2's with the folder, output and labels changed). Meter 80 % (06:56).
+- **Root 3's context 248 K at 06:56**, inside the measured hand-over range (247-273 K). Not handing over: what is
+  left (landing, review, suite 6, commit, report) is about 6-10 wakes, and a successor starts only on the owner's
+  typed turn, so a hand-over now would stall the round; the cost curve is flat there (section 5). Reads kept small,
+  under the 368 K compaction.
+- **06:55: model chain M DONE** (7 runs, all exit 0, 21 s summed, free memory 13.1-13.7 GB; model-build.mjs
+  1aee7329): AGE-B whole 476,122 states, AgeCapReachesOwner and AlwaysCanResolve hold, EventuallyResolves F 5 (the
+  decided cycle of VERDICT section 3 row 7); AGE-B k=2,m=1,o=1 162,074, every property holds; AGE-STUCK the same states
+  and properties; ablation AGE-REARM 434,359 / 62,123, AgeCapReachesOwner F 16, AlwaysCanResolve F 3 (vacuity shown);
+  FN-N2-B k=1,u=1 619,856, EventuallyResolves F 9 (VERDICT section 6). States, transitions and properties equal
+  S2.3's: new AGE-B = old AGE-STUCK, AGE-REARM = old AGE-B. **The age-cap check holds on the fixed model.**
+- **06:57: W6 LANDED** (land.mjs exit 0): `build` = 96bc34cc (pre d655547f): watch 82 pass 4 skipped, status 47/2,
+  handover 20/3, guard-hook 28/3, model-build 37/0; 0 fail; 99.5 s in one lane call.
+- **06:58: refuter RUNNING** (`refute: W4 FX-W6 fix blind review`, opus, agent ae2eec68aed8c8fde, limit 15.6 M; the
+  gate allowed it now that W6 has landed; verdict `refute/W6-fix.md`). **Suite 6 + e2e RUNNING** beside it
+  (background: suite.sh in `hb` on 96bc34cc, then the e2e; outputs `suites/6/`; the e2e's two output files copied
+  there and restored in `hb`). Meter 80 %; cap 80 + 0.39 = 80.4 <= 81.
+- **07:01: SUITE 6 PASS** (06:57-07:01, on 96bc34cc in `hb`): others 1088 tests, 1037 pass, 0 fail, 51 skipped;
+  shards 29 pass, 2 skipped; wall 164 s (`suites/6/summary.txt`); the flaky stop.test subtest passed this time.
+  **e2e 239/239** (`suites/6/e2e.log`, its two output files copied there and restored; `hb` clean). Next: the
+  refuter's verdict, then the records commit on `build` through `hb` and the report.
+- **07:15: refuter DONE, PASS** (`refute/W6-fix.md`; 13.25 M, 77 calls, 19 min; scratch worktree rW6 removed):
+  nine mutations, every one caught (code: the re-arm restored, moved into the re-raise, the age cap left out of the
+  re-raise, out of `stuck`, `stuck` one raise late; model: the as-built flag re-arming in the model and in the
+  configs, line 1015 put back, the dead-man step's gate); the old-code failures reproduce; the fx-w6 outputs match
+  RUN-BUILD section 9; R3 stands for FN-N2-B's k=2. Non-breaking finding and small items: on the End list below.
+
+## Then (2026-11-20 05:30 UTC): slice 2 done; verdict SEND BACK: FX-W6; QUIET POINT; a fresh root for the fix round is due
 
 - **05:24: S2.4 DONE**: `model/results-build/VERDICT.md`, first line `SEND BACK: FX-W6: AgeCapReachesOwner (AGE-B)`, one fix only: a bare acknowledgement re-arms the age cap (watch.mjs:1199-1204), so FX-W5's stuck count restarts and the dead-man never alerts the owner; smallest change: delete that re-arm (AGE-STUCK, its model, holds AgeCapReachesOwner and AlwaysCanResolve). R1: NoFalseSuspicion holds, so B1 stands; its four failures are byte-equal to FXW-5-B and R57's FXW-6-3000 (decided). R2: all 43 k=2 close parts hold. R3: 75 parts, 97.6 M states, only decided failures; NoDeadlock and AlwaysCanResolve hold in every part. S2.2's model should take the variant's line 1015 (touches only FN-N2 and FN-N2-B). Successor 72 calls, **9.66 M against its 6 M limit** (it did not stop at the limit: a departure, the pool being spent, inside the cap). S2.4 unit 26.9 M (plan 8.0 M, limit 18.6 M).
 - **Slice 2 counts:** helpers 87.4 M (S2.2 59.49 M = 15.11 + 26.20 + 18.18; S2.3 reader 1.05 M; S2.4 26.91 M = 17.25 + 9.66) against 34.8 M planned (2.5x); root 2 19.92 M over 88 calls; model runs 4,989 s in 47 min wall. Meter 79 %, Fable 53 % (05:24). Wall 02:05-05:25.
 - **Reported:** private Artifact https://claude.ai/artifact/9A6ANsETdkJs7Ug4LHDD3k (`reports/slice-2.html`; not screenshot-checked), record `reports/slice-2.md`. **QUIET POINT:** no helper, no background command (timer blko9m9nz ended); records committed on `build` through `hb` (next line).
+- **05:30: records commit d655547f on `build`** (124 files: 118 new, 6 changed; records only; `hb` clean). The newer lines of this file and usage.jsonl after it are in MAIN only.
+- **05:36: the owner typed "Start it"** (the next-step box: "Start a fresh root session for the FX-W6 fix round?"). **Root 3 STARTED** by root 2 on that turn: session local_f7dc42a2-7023-45a7-a7b7-2478d955dc1d, `orchestrate: build root 3, FX-W6 fix round`, Opus, main checkout (no worktree), fresh context, brief pointing at ROOT-START, this file, VERDICT.md section 1 and 6, refute/W4.md, departures/W6.md. The tier hook refused the first start (a title without the kind of job); the second, with the kind and the model named, started. Root 2 stops here: no helper, no background command, no timer.
 - **Next (the plan's S2.4 row: one more round for that fix only):** the FX-W6 fix round, by a fresh root (root 2 at 306 K context, past its 247-273 K hand-over point; a root starts only on the owner's typed turn). Contents: delete the re-arm, a test that fails on the old code, the coordinator brief's idle-child / age-cap line (refute/W4.md), S2.2's model takes line 1015 (units/S2.4/variant/), AGE-B and FN-N2-B run again, a blind refuter, the landing, then the last full suite with the e2e. Estimate 25-35 M (builder about 15-25 M, refuter about 9 M, reader 1 M); cap check against 81 % first (meter 79 %). Gate: `build-invariant: W6 age cap fix` passes (W6's batch is done, no W6 helper runs). Then the build is done through the model check; the pilot (slice 3) has its own plan and cap.
 
 ## Then (2026-11-20 02:10 UTC): successor root 2 runs slice 2 (stop line 81 %)
@@ -676,6 +746,14 @@ https://claude.ai/artifact/LQBLR8RtqcZ8Wud54mKY3n, not screenshot-checked; the r
   (`suites/5/stop-alone.log`). Fix: own ids per test file, or a fake process list.
 - Records of the build (`research-tree/build/` files written by the root and its helpers) are not committed yet:
   commit them onto `build` (through `hb`) at a quiet point.
+- FX-W6 fix round refute (`refute/W6-fix.md`): the brief line's "answer the child" (coordinator.md:162-163) is an act
+  the hook refuses (the coordinator's profile lists no tool that messages a session; tool-not-allowed,
+  guard-hook.mjs:468); its source is FIX-wake.md:343 and `briefs/FX-W6.md`; an unanswered idle child still reaches
+  `stuck` and the dead-man. Also: the coordinator cannot read the child's transcripts, so "unless it is making
+  progress" has nothing to go on; no fence reason is named for that stop, and the fitting ones are charged;
+  AgeCapReachesOwner checks only that `stuck` is reached; no test pins place 7b; RUN-BUILD section 9 names the F 5
+  cause differently from VERDICT row 7; `--set` accepts any flag name. Not built in the round: a "continue" act that
+  re-arms the cap; the model of a coordinator that stops an age-capped attempt.
 
 ## Notices read
 

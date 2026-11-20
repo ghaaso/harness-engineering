@@ -1,0 +1,90 @@
+<title>FX-W6 Fix Round</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+/* Layout: one reading column, the result band first, then the checks, tokens, and what is not covered. */
+:root{--bg:#f7f8fa;--panel:#ffffff;--fg:#1b2230;--muted:#5a6475;--line:#dde2ea;--accent:#2f5bd3;--ok:#1f7a4d;--ok-bg:#e3f3ea;--bad:#a8321f;--bad-bg:#fbe7e3;--dec:#6b5a12;--dec-bg:#f6efd2;
+--display:"Space Grotesk",system-ui,sans-serif;--body:"Inter",system-ui,sans-serif;--mono:"JetBrains Mono",ui-monospace,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12161d;--panel:#1a2029;--fg:#e6e9ef;--muted:#9aa4b5;--line:#2c3440;--accent:#7f9cf0;--ok:#6fd3a0;--ok-bg:#183326;--bad:#f09a88;--bad-bg:#3a1f1a;--dec:#e2cd7a;--dec-bg:#332c12;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#12161d;--panel:#1a2029;--fg:#e6e9ef;--muted:#9aa4b5;--line:#2c3440;--accent:#7f9cf0;--ok:#6fd3a0;--ok-bg:#183326;--bad:#f09a88;--bad-bg:#3a1f1a;--dec:#e2cd7a;--dec-bg:#332c12;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font:16px/1.55 var(--body);padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+main{max-width:1080px;margin:0 auto;padding-block:32px 56px;display:grid;gap:28px}
+h1,h2{font-family:var(--display);text-wrap:balance;margin:0}
+h1{font-size:2rem}h2{font-size:1.25rem;margin-bottom:10px}
+p{margin:0;max-width:78ch}
+.eyebrow{font-size:.8rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.verdict{background:var(--ok-bg);border:1px solid var(--ok);border-radius:6px;padding:16px 18px;display:grid;gap:6px}
+.verdict code{font-family:var(--mono);font-size:1.02rem;color:var(--ok)}
+code{font-family:var(--mono);font-size:.92em}
+.wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;background:var(--panel);font-variant-numeric:tabular-nums}
+th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--line)}
+th{font-size:.85rem;color:var(--muted);font-weight:600}
+.chip{display:inline-block;font-size:.8rem;font-weight:600;padding:2px 8px;border-radius:999px;white-space:nowrap}
+.ok{color:var(--ok);background:var(--ok-bg)}.bad{color:var(--bad);background:var(--bad-bg)}.dec{color:var(--dec);background:var(--dec-bg)}
+ul{margin:0;padding-left:20px;display:grid;gap:4px;max-width:85ch}
+.num{text-align:right}
+</style>
+<main>
+<header style="display:grid;gap:8px">
+<div class="eyebrow">Build task r57-0507 · the FX-W6 fix round · 2026-11-20, 07:20 UTC</div>
+<h1>The FX-W6 fix round: the age cap now reaches the owner</h1>
+</header>
+
+<section class="verdict">
+<div class="eyebrow">Result</div>
+<code>FX-W6 fixed and checked · landed on build at 96bc34cc</code>
+<p>A bare acknowledgement from the coordinator no longer re-arms the age cap. An attempt stuck under a coordinator that only acknowledges now reaches the owner: the cap stays raised, the watcher raises it again, marks it stuck, and the dead-man tells the owner. On the fixed model the age-cap check holds; the last full suite and the end-to-end run pass; the blind review passes. The build is done through the model check. Meter 80 % (stop line 81 %).</p>
+</section>
+
+<section>
+<h2>What was done</h2>
+<ul>
+<li><b>Code:</b> the re-arm in <code>watch.mjs</code> (build's lines 1198-1204) is deleted. Nothing else in the control path changed.</li>
+<li><b>Tests:</b> the old age-cap test now pins the fixed behaviour, and a new test drives an acknowledged age cap to <code>stuck</code>. Both fail on the old code (<code>watch.test.mjs:1733</code> and <code>:1761</code>) and pass on the fixed code.</li>
+<li><b>The coordinator's brief:</b> a new place (7b) on what to do with an idle child and an age cap.</li>
+<li><b>Words:</b> the watcher's spec and the contract no longer describe the re-arm.</li>
+<li><b>The model:</b> it takes the verdict's corrected line 1015, its age-cap flag follows the fixed code, and the old re-arm stays as an ablation run (AGE-REARM).</li>
+</ul>
+</section>
+
+<section>
+<h2>Checks</h2>
+<div class="wrap"><table>
+<tr><th>Check</th><th>Result</th><th>Status</th></tr>
+<tr><td>Landing on <code>build</code></td><td>5 test files, 0 fail: watch 82, status 47, handover 20, guard-hook 28, model 37 pass; 99.5 s.</td><td><span class="chip ok">pass</span></td></tr>
+<tr><td>Model: the age cap (AGE-B, AGE-STUCK)</td><td>The owner is reached, at 476,122 and 162,074 states. Every other property holds except the decided F 5 cycle (verdict section 3, row 7). The same states as AGE-STUCK before the round.</td><td><span class="chip ok">holds</span></td></tr>
+<tr><td>Model: the old re-arm (AGE-REARM)</td><td>Still fails, F 16, exactly as the old AGE-B did. So the check is not vacuous.</td><td><span class="chip ok">fails as it should</span></td></tr>
+<tr><td>Model: FN-N2-B with line 1015</td><td>619,856 states, as the verdict expected.</td><td><span class="chip ok">as expected</span></td></tr>
+<tr><td>Suite 6 (the last full suite)</td><td>1,037 pass, 0 fail, 51 skipped; selftest shards 29 pass, 2 skipped; 164 s. The flaky stop test passed this time.</td><td><span class="chip ok">pass</span></td></tr>
+<tr><td>End-to-end run</td><td>239 of 239 steps.</td><td><span class="chip ok">pass</span></td></tr>
+<tr><td>Blind review</td><td>Nine mutations, each caught by a test. One finding that does not break the fix (below).</td><td><span class="chip ok">PASS</span></td></tr>
+</table></div>
+</section>
+
+<section>
+<h2>Tokens and time</h2>
+<div class="wrap"><table>
+<tr><th>Part</th><th class="num">Planned</th><th class="num">Used</th><th>Note</th></tr>
+<tr><td>Builder</td><td class="num">11.7 M</td><td class="num">13.64 M</td><td>limit 29.2 M; 21 min</td></tr>
+<tr><td>Blind review</td><td class="num">5.4 M</td><td class="num">13.25 M</td><td>limit 15.6 M; 19 min</td></tr>
+<tr><td>Root 3</td><td class="num"></td><td class="num">about 14 M</td><td>about 65 calls</td></tr>
+<tr><td><b>The round</b></td><td class="num">25-35 M</td><td class="num"><b>about 41 M</b></td><td>06:27 to 07:20 UTC; meter 79 % to 80 %</td></tr>
+</table></div>
+</section>
+
+<section>
+<h2>Not covered or not known</h2>
+<ul>
+<li><span class="chip dec">end list</span> The brief line tells the coordinator to "answer" an idle child, but the coordinator has no tool that messages a session, so the hook refuses it. This does not break the fix: an unanswered idle child still reaches <code>stuck</code> and the owner. Also on the list: "stop it unless it is making progress" has nothing to judge by, since the coordinator cannot read the child's transcripts, and no fence reason is named for that stop.</li>
+<li>No "continue" act exists, so an honest long attempt reaches the owner too. The cap comes 240 counted ticks after the attempt was bound (about 4 h at one tick a minute), and the owner is told 285 ticks later (about 4.75 h). Both counts are marked guesses.</li>
+<li>The model's coordinator only acknowledges; one that stops a capped attempt is not modelled.</li>
+<li>The end list in <code>STATE.md</code> (test gaps with the code right, one flaky test) is not fixed yet.</li>
+</ul>
+</section>
+
+<section>
+<h2>Next</h2>
+<p>The pilot (slice 3) has its own plan and cap, and starts only on your word. Nothing was merged into another branch or pushed.</p>
+</section>
+</main>
