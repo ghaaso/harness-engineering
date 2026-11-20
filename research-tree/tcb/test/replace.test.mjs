@@ -170,8 +170,14 @@ function walkRel(dir, base = dir, out = []) {
 }
 const treeHash = (dir) => sha(JSON.stringify(walkRel(dir).map((r) => [r, sha(fs.readFileSync(path.join(dir, ...r.split('/'))))])));
 
-function mk() {
+// FX-W3: a start and a fence `first` create work, so they need an armed turn (lib.armedState: run/turn.json
+// of the caller's ce, arm confirmed, slots with no exit marker; files only, no process list). A root here
+// is a coordinator's armed turn, as the brief's call 2 leaves it, unless `armed: false`.
+const SLOT_PT = { pid: 4242, start_time: '2026-11-20T00:00:00.0000000Z' };
+const armedTurn = (ce = 1, o = {}) => ({ ce, turn_seq: 1, read_seq: 0, arm: 'confirmed', slots: [{ k: 1, ...SLOT_PT }], unarmed_turns: 0, ...o });
+function mk({ armed = true } = {}) {
   const h = helpers.makeRoot({ ce: 1 });
+  if (armed) putJ(h.root, 'run/turn.json', armedTurn(1));
   return { root: h.root, cleanup: () => h.cleanup() };
 }
 
@@ -1551,6 +1557,88 @@ test('T24 any writing mode while another process holds run.lock -> exit 75 after
       assert.ok(lockBytes.equals(read(root, 'run/run.lock')), 'the lock of the other process is untouched');
       assert.ok(tb.equals(read(root, 'run/tasks.json')));
       assert.deepEqual(j.ledger_seq, []);
+    });
+  }
+});
+
+// =================================================================== FX-W3: armed
+// FIX-wake FX-W3: an act that creates work (start, fence first) needs an armed turn; otherwise exit 6
+// not-armed, thrown in the hold before the act (withRunLock's requireArmed), so nothing is written: no
+// ledger line, no incident, no row change, no folder. A dry run checks the same files and gives the same 6.
+test('FX-W3 not-armed: start and fence first exit 6 not-armed, nothing written, for no turn.json, an unconfirmed or spent arm, another ce, an exited slot; a dry run gives the same 6; armed, both pass', async (t) => {
+  const w = mk({ armed: false });
+  t.after(w.cleanup);
+  const { root } = w;
+  world(root);
+  const FIRST = 'f1-second';
+  table(root, [startRow(), row(FIRST)]);
+  await seal(root);
+  const marker = `run/arm/exited-${lib.markerKey(SLOT_PT.pid, SLOT_PT.start_time)}.json`;
+  const states = [
+    ['no turn.json', null, { why: 'no-turn' }],
+    ['arm unconfirmed', armedTurn(1, { arm: 'unconfirmed', slots: [] }), { why: 'arm', arm: 'unconfirmed' }],
+    ['arm spent (after endturn)', armedTurn(1, { arm: 'spent' }), { why: 'arm', arm: 'spent' }],
+    ['a turn of another ce', armedTurn(2), { why: 'other-ce', turn_ce: 2 }],
+    ['the slot\'s alarm exited', armedTurn(1), { why: 'slot-exited', pid: SLOT_PT.pid }, true],
+  ];
+  const calls = [
+    ['start', 'start', { task: RES, epoch: 1, ...START }],
+    ['fence first', 'fence', { task: FIRST, epoch: 0, reason: 'first', boot: BOOT_A }],
+  ];
+  for (const [name, turn, detail, mark] of states) {
+    fs.rmSync(at(root, 'run/turn.json'), { force: true });
+    if (turn) putJ(root, 'run/turn.json', turn);
+    if (mark) putJ(root, marker, { ce: 1, exit: 30, at: NOW });
+    const tb = read(root, 'run/tasks.json');
+    const n = ledgerLines(root).length;
+    for (const [what, mode, o] of calls) {
+      for (const dry of [false, true]) {
+        const k = `${name}, ${what}${dry ? ', dry run' : ''}`;
+        const j = run(root, mode, { ...o, dry });
+        expectExit(j, 6, 'not-armed');
+        assert.equal(j.code, 'deferred');
+        assert.deepEqual(j.reasons.find((r) => r.code === 'not-armed').detail, { ce: 1, ...detail }, k);
+        assert.ok(tb.equals(read(root, 'run/tasks.json')), `${k}: row unchanged`);
+        assert.equal(ledgerLines(root).length, n, `${k}: no ledger line, no incident`);
+        assert.equal(has(root, `wt/${RES}-e1`), false, `${k}: no folder`);
+        assert.equal(has(root, `wt/${FIRST}-e1`), false, `${k}: no folder`);
+      }
+    }
+  }
+  // armed (call 2 of the turn exited 0): the same calls pass
+  fs.rmSync(at(root, marker));
+  putJ(root, 'run/turn.json', armedTurn(1));
+  expectExit(run(root, 'start', calls[0][2]), 0);
+  assert.ok(has(root, `wt/${RES}-e1`), 'the start made its folder');
+  expectExit(run(root, 'fence', calls[1][2]), 0);
+  assert.equal(getRow(root, FIRST).epoch, 1);
+});
+
+// FIX-wake FX-W3 (RevocationNeverGated): every other fence reason and the stop revoke work and are never
+// gated by the arm: with no turn.json they act as before. The loop is every reason of lib.REASONS but
+// `first` (the one fence that creates work), so a gate on any one revocation fails its own case here.
+const STOP_SCRIPT = path.join(HERE, '..', 'stop.mjs');
+const REVOCATIONS = lib.REASONS.filter((x) => x !== 'first');
+test('FX-W3 revocation never gated: with no turn.json, a fence of every reason but first acts (stall, hang, loop, crash, tainted, memory, handover, cut, drop), and stop request after each', async (t) => {
+  assert.deepEqual(REVOCATIONS, ['stall', 'hang', 'loop', 'crash', 'tainted', 'memory', 'handover', 'cut', 'drop'], 'every reason but first, as the title names them');
+  for (const reason of REVOCATIONS) {
+    await t.test(reason, async (t2) => {
+      const w = mk({ armed: false });
+      t2.after(w.cleanup);
+      const { root } = w;
+      table(root, [boundRow()]);
+      if (reason === 'drop') led(root, 'owner', { data: { act: 'drop', subject: RES, quote: 'drop this task' } }); // T10: a drop needs the owner's line
+      const tick = lib.FAILURE_REASONS.includes(reason) ? { tick: 3 } : {}; // T11: a failure reason needs the tick
+      const j = run(root, 'fence', { task: RES, epoch: 1, reason, boot: BOOT_A, ...tick });
+      expectExit(j, 0);
+      const f = getRow(root, RES);
+      assert.deepEqual([f.epoch, f.step, f.reason], [2, 'fenced', reason]);
+      const r = spawnSync(process.execPath, [STOP_SCRIPT, 'request', '--root', root, '--ce', '1', '--task', RES, '--epoch', '2', '--now', NOW], { encoding: 'utf8', cwd: root, windowsHide: true, timeout: 180000 });
+      const s = JSON.parse(r.stdout.trim().split('\n').pop());
+      assert.equal(s.exit, 0, r.stdout + r.stderr);
+      assert.ok(!s.reasons.some((x) => x.code === 'not-armed'));
+      assert.equal(getRow(root, RES).step, 'stop-requested');
+      assert.equal(has(root, 'run/turn.json'), false, 'nothing armed the turn');
     });
   }
 });

@@ -1533,14 +1533,15 @@ function logOrphans(root, handle, ctx, ce, now) {
 
 /**
  * Acquire run.lock, check ce inside it (when given), run fn(handle), release in finally.
- * `requireArmed: true` (FX-W3) runs armedCheck(root, handle) after the ce check, before fn.
+ * `requireArmed: true` (FX-W3) runs armedCheck(root, handle, o.ce) after the ce check, before fn:
+ * not armed (lib.armedState; no ce given counts as not armed) is exit 6 `not-armed`.
  */
 export async function withRunLock(root, opts, fn) {
   const o = opts || {};
   const handle = acquireLock(root, 'run.lock', o);
   try {
     if (o.ce !== undefined && o.ce !== null) checkCe(root, o.ce);
-    if (o.requireArmed === true) armedCheck(root, handle);
+    if (o.requireArmed === true) armedCheck(root, handle, o.ce);
     return await fn(handle);
   } finally {
     handle.release();
@@ -4275,11 +4276,51 @@ export function exitMarkers(root) {
 }
 
 /**
- * armedCheck(root, handle): run by withRunLock inside the hold when `requireArmed` is true (FX-W3:
- * "armed" is a confirmed turn.json of the caller's ce whose slots have no exit marker; otherwise
- * exit 6 `not-armed`). Empty step until FX-W3.
+ * armedState(root, ce, io) -> {armed: true, turn_seq} | {armed: false, why, ...detail} (FX-W3, FIX-wake
+ * FX-W3 "Armed"): the one file predicate of withRunLock's `requireArmed` and of the guard hook (no
+ * process list, no lock). Armed when run/turn.json is of this ce, its arm is `confirmed`, and its slots
+ * (at least one, each an integer pid > 0 and a string start time) have no exit marker
+ * run/arm/exited-<pt>.json. Every other case is not armed (fail closed): why `no-turn` (absent),
+ * `turn-unreadable`, `other-ce` {turn_ce}, `arm` {arm: unconfirmed | spent | ...}, `no-slots`,
+ * `bad-slot`, `slot-exited` {pid}. `io` {readJson, exists}: the guard hook passes its own; lib's by default.
  */
-function armedCheck(root, handle) { // eslint-disable-line no-unused-vars
+export function armedState(root, ce, io = {}) {
+  const readJ = io && typeof io.readJson === 'function' ? io.readJson : readJson;
+  const exists = io && typeof io.exists === 'function' ? io.exists : (p) => fs.existsSync(p);
+  const P = paths(root);
+  let t;
+  try {
+    t = readJ(P.turn);
+  } catch (e) {
+    return { armed: false, why: e && e.code === 'missing' ? 'no-turn' : 'turn-unreadable' };
+  }
+  if (!t || typeof t !== 'object' || Array.isArray(t)) return { armed: false, why: 'turn-unreadable' };
+  if (!Number.isInteger(ce) || t.ce !== ce) return { armed: false, why: 'other-ce', turn_ce: Number.isInteger(t.ce) ? t.ce : null };
+  if (t.arm !== 'confirmed') return { armed: false, why: 'arm', arm: typeof t.arm === 'string' ? t.arm : null };
+  if (!Array.isArray(t.slots) || t.slots.length === 0) return { armed: false, why: 'no-slots' };
+  for (const s of t.slots) {
+    if (!s || typeof s !== 'object' || !Number.isInteger(s.pid) || s.pid <= 0 || typeof s.start_time !== 'string') return { armed: false, why: 'bad-slot' };
+    if (exists(P.armExited(s.pid, s.start_time))) return { armed: false, why: 'slot-exited', pid: s.pid };
+  }
+  return { armed: true, turn_seq: Number.isInteger(t.turn_seq) ? t.turn_seq : null };
+}
+
+/** checkArmed(root, ce): armedState, or throw exit 6 `not-armed` {ce, why, ...} (FX-W3; nothing written). */
+export function checkArmed(root, ce) {
+  const v = armedState(root, ce);
+  if (v.armed) return v;
+  const { armed, ...detail } = v; // eslint-disable-line no-unused-vars
+  throw err('not-armed', 6, { ce: ce ?? null, ...detail });
+}
+
+/**
+ * armedCheck(root, handle, ce): run by withRunLock inside the hold when `requireArmed` is true, after the
+ * ce check and before fn (FX-W3; FIX-JOIN point 11: first in the fence hold). Not armed: exit 6
+ * `not-armed`, thrown before fn, so the refused act writes nothing (no ledger line, no incident).
+ */
+function armedCheck(root, handle, ce) {
+  if (handle) handle.assertHeld();
+  checkArmed(root, ce);
 }
 
 /**

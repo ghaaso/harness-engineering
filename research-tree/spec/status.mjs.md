@@ -108,7 +108,12 @@ alarm has exited confirms nothing. The status is still built and written and the
 `result` adds `arm`, `turn_seq`, `slots`. A dry run computes the same and writes none of it.
 Reconcile starts and kills nothing; endturn's `acked.json` write re-arms a live alarm (M1).
 
-**--endturn.** 1 Under `withRunLock(ce)`: K > ledger head seq → exit 1 `acked-ahead`; K < the
+**--endturn.** 1 Under `withRunLock(ce)` (FX-W3 A3, built; FIX-JOIN 2b row 9): `run/turn.json` absent,
+unreadable or of another ce → exit 1 `turn-stale` {ce, turn_ce}, nothing written; K > ledger head seq → exit
+1 `acked-ahead`; K > turn.json's `read_seq` (or no integer read_seq) → exit 1 `acked-ahead` {acked_seq,
+read_seq}; turn.json of this ce is rewritten `arm: 'spent'` in every case, a refused K included; step 2's
+report follows a refusal too (N2: reasons the refusal first, then the sources'; exit 1; result `acked_seq`
+null, `written` false); K < the
 stored acked_seq → exit 1 `acked-backwards`; write `acked.json` {ce, acked_seq: K, at: now}.
 2 Wake sources (FX-W1 step 3; R6-b), outside every lock: the records are read first (loosely: a
 corrupt one counts as absent, not 67), then the process list is taken. watcher = `watcher.json` of
@@ -134,7 +139,7 @@ subject that is a task in the table (else 1 `no-task`); append `owner` {act, sub
 **meter.** Append `meter` {pct, self_reported: true}.
 
 ## Exit codes
-0; 1 `acked-ahead`, `acked-backwards`, `watcher-missing`, `alarm-missing` (endturn),
+0; 1 `turn-stale`, `acked-ahead`, `acked-backwards`, `watcher-missing`, `alarm-missing` (endturn),
 `arm-unconfirmed` (reconcile, FX-W2), `intent-differs`, `no-task`; 2 `proc-unavailable` (endturn: none dead, some unknown), `missing`, `schema-version`; 3 `run-from-attempt`; 64;
 65 (reconcile CAS); 66; 67 (tasks, coord, acked or an intent file corrupt; a corrupt watcher or alarm
 record is the anomaly `state-corrupt`, FX-W1); 70; 75.

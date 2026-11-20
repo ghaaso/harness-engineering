@@ -220,7 +220,10 @@ only through `hookCreate` (strict create, 0b), after every read-only check of th
   a fenced log → deny `attempt-fenced`, the same ready slot or a new one → allow, a bad log → deny
   `outcome-tamper`, no `outcome/` → deny `no-parent`). Coordinator:
   `coordinatorSteps`, in order `stepBind` (FX-CGATE 2), `stepCurrentSession` (FX-CGATE 3), `stepArmed`
-  (FX-W3), `stepRowAtAdmitted` (FX-CGATE 4, read-only), `stepStartRecord` (FX-CGATE 4), `stepStopIntent`
+  (FX-W3, built: for the session-start tool only, `lib.armedState` at coord.json's ce through the hook's io;
+  not armed → deny `not-armed` `ce N: <why> {detail}`, before the row check and the start record, so nothing
+  is written; the stop tools and every other call are never gated by it; tested in FX-W3 hook and G4),
+  `stepRowAtAdmitted` (FX-CGATE 4, read-only), `stepStartRecord` (FX-CGATE 4), `stepStopIntent`
   (FX-CGATE 5); a step that returns `'allow'` ends them.
 - FX-CGATE as built. Names: a caller is the hook input's `session_id`, a lowercase UUID (`SESSION_ID_RE`); a stop
   target is an app id `local_<uuid>` (`APP_SESSION_ID_RE`); anything else (`self`, a CLI id, a path) is `bad-target`

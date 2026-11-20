@@ -1238,6 +1238,11 @@ test('G3 close targets: only an app id local_<uuid> is a target; a forged one is
   });
 });
 
+// FX-W3: "armed" is run/turn.json of the bound ce with arm confirmed and slots with no exit marker
+// (lib.armedState, files only); the brief's call 2 leaves it so before any start.
+const ARM_SLOT = { k: 1, pid: 4242, start_time: '2026-11-20T00:00:00.0000000Z' };
+const armedTurn = (o = {}) => ({ ce: 1, turn_seq: 3, read_seq: 5, arm: 'confirmed', slots: [ARM_SLOT], unarmed_turns: 0, ...o });
+
 test('G4 the start tool: exactly <root>/wt/<T>-e<E> in a fresh local session without a worktree, its row active/admitted at E; start.json by (session, tool_use_id); nothing written on a deny', async () => {
   await withWorld({}, async (w) => {
     const table = cgRead(w.P('run', 'tasks.json'));
@@ -1247,6 +1252,7 @@ test('G4 the start tool: exactly <root>/wt/<T>-e<E> in a fresh local session wit
     const a = mkAttempt(w.root, 'f1-start', 1);
     mkAttempt(w.root, 'f1-parked', 1);
     fs.writeFileSync(w.P('run', 'watcher.json'), JSON.stringify({ schema_version: 1, ce: 1, ticks_total: 7 }));
+    fs.writeFileSync(w.P('run', 'turn.json'), JSON.stringify(armedTurn())); // FX-W3: a start comes in an armed turn
     const ok = { cwd: a, use_worktree: false, prompt: 'p', title: 't' };
     const st = (n, input, expect, opt = {}) => cgCall(w, n, T_START, input, expect, opt);
     const denies = [
@@ -1278,6 +1284,66 @@ test('G4 the start tool: exactly <root>/wt/<T>-e<E> in a fresh local session wit
     const rec = cgRead(path.join(a, 'start.json'));
     assert.deepEqual([rec.kind, rec.session, rec.tool_use_id, rec.tick], ['start', SESSION, 'toolu_1', 7]);
     assert.ok(!Number.isNaN(Date.parse(rec.at)), 'at is an ISO time');
+  });
+});
+
+// FX-W3 (FIX-wake FX-W3; FIX-JOIN point 9): the hook gates the start tool by lib.armedState at coord.json's
+// ce, after the caller is found current and before the row check and the start record, so a denied start
+// writes nothing; the stop tools (revocations) are never gated by the arm.
+test('FX-W3 hook: the start tool unarmed is denied not-armed for each why with nothing written, after the stale check and before the row check; armed it passes and writes start.json; the stop tools pass unarmed', async () => {
+  await withWorld({}, async (w) => {
+    closeDirs(w);
+    const table = cgRead(w.P('run', 'tasks.json'));
+    table.tasks.push(row('child', { task: 'f1-start', step: 'admitted' }));
+    writeTable(w.root, table.tasks, 2);
+    const a = mkAttempt(w.root, 'f1-start', 1);
+    fs.writeFileSync(w.P('run', 'watcher.json'), JSON.stringify({ schema_version: 1, ce: 1, ticks_total: 7 }));
+    const ok = { cwd: a, use_worktree: false, prompt: 'p', title: 't' };
+    const turnFile = w.P('run', 'turn.json');
+    const marker = w.P('run', 'arm', `exited-${ARM_SLOT.pid}-${ARM_SLOT.start_time.replace(/[^0-9A-Za-z]/g, '')}.json`);
+    const startJson = path.join(a, 'start.json');
+    const states = [
+      ['no turn.json', null, 'ce 1: no-turn'],
+      ['turn.json not JSON', '{ not json', 'ce 1: turn-unreadable'],
+      ['turn.json an array', [], 'ce 1: turn-unreadable'],
+      ['a turn of another ce', armedTurn({ ce: 2 }), 'ce 1: other-ce {"turn_ce":2}'],
+      ['arm unconfirmed', armedTurn({ arm: 'unconfirmed', slots: [] }), 'ce 1: arm {"arm":"unconfirmed"}'],
+      ['arm spent (after endturn)', armedTurn({ arm: 'spent' }), 'ce 1: arm {"arm":"spent"}'],
+      ['confirmed with no slots', armedTurn({ slots: [] }), 'ce 1: no-slots'],
+      ['a slot without a pid', armedTurn({ slots: [{ k: 1, start_time: ARM_SLOT.start_time }] }), 'ce 1: bad-slot'],
+      ['the slot\'s alarm exited', armedTurn(), 'ce 1: slot-exited {"pid":4242}', true],
+    ];
+    for (const [n, content, detail, mark] of states) {
+      fs.rmSync(turnFile, { force: true });
+      if (content !== null) fs.writeFileSync(turnFile, typeof content === 'string' ? content : JSON.stringify(content));
+      if (mark) {
+        fs.mkdirSync(path.dirname(marker), { recursive: true });
+        fs.writeFileSync(marker, JSON.stringify({ ce: 1, exit: 30, at: '2026-11-20T00:00:01.000Z' }));
+      }
+      const before = content === null ? null : fs.readFileSync(turnFile);
+      const c = { ...cgCall(w, n, T_START, ok, 'not-armed', { more: { tool_use_id: 'toolu_u' } }), detail };
+      assert.deepEqual(await runCases(w, [c], 1), []);
+      assert.equal(fs.existsSync(startJson), false, `${n}: no start.json`);
+      if (before) assert.ok(before.equals(fs.readFileSync(turnFile)), `${n}: turn.json only read`);
+      else assert.equal(fs.existsSync(turnFile), false, `${n}: no turn.json made`);
+    }
+    // the order (FIX-JOIN point 9): stale-coordinator before the arm, the arm before the row check
+    fs.rmSync(turnFile, { force: true });
+    assert.deepEqual(await runCases(w, [
+      cgCall(w, 'a stale session, unarmed', T_START, ok, 'stale-coordinator', { session: NEW_SESSION }),
+      { ...cgCall(w, 'a row not admitted, unarmed', T_START, { ...ok, cwd: w.att('f1-research') }, 'not-armed'), detail: 'ce 1: no-turn' },
+      // revocations are never gated: the stop tools pass with no turn.json
+      cgCall(w, 'stop_session unarmed', T_STOP, { session_id: appId(1) }, 0, { more: { tool_use_id: 'toolu_s1' } }),
+      cgCall(w, 'archive_session unarmed', T_ARCHIVE, { session_id: appId(1) }, 0, { more: { tool_use_id: 'toolu_a1' } }),
+    ], 1), []);
+    assert.equal(fs.existsSync(startJson), false);
+    assert.deepEqual(closeNames(w), [`intent/${appId(1)}.json`], 'the stop wrote its close intent');
+    // armed: the same start passes and writes its start record
+    fs.rmSync(marker, { force: true });
+    fs.writeFileSync(turnFile, JSON.stringify(armedTurn()));
+    assert.deepEqual(await runCases(w, [cgCall(w, 'the start, armed', T_START, ok, 0, { more: { tool_use_id: 'toolu_1' } })], 1), []);
+    const rec = cgRead(startJson);
+    assert.deepEqual([rec.kind, rec.session, rec.tool_use_id], ['start', SESSION, 'toolu_1']);
   });
 });
 

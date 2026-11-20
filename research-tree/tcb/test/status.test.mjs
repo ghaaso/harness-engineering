@@ -281,6 +281,11 @@ function liveWatcher(ctx, { ce = 1, recCe = ce } = {}) {
 // FX-W2: the ensure's slot record run/arm/slot-<k>.json {ce, pid, start_time, nonce}.
 const slotPath = (ctx, k = 1) => path.join(ctx.root, 'run', 'arm', `slot-${k}.json`);
 const turnPath = (ctx) => path.join(ctx.root, 'run', 'turn.json');
+// FX-W3 (A3): endturn checks K against run/turn.json, which the turn's reconcile writes (hold 1: ce, turn_seq,
+// read_seq = the ledger head its status showed). A test of endturn's other steps writes the record as that
+// reconcile leaves it: arm unconfirmed, no slots (hold 2 confirms; endturn reads only ce and read_seq).
+const putTurn = (ctx, readSeq, { ce = 1, turnSeq = 1, arm = 'unconfirmed', slots = [] } = {}) =>
+  w(turnPath(ctx), { ce, turn_seq: turnSeq, read_seq: readSeq, arm, slots, unarmed_turns: 0 });
 const putSlot = (ctx, rec, { ce = 1, k = 1, nonce = crypto.randomBytes(16).toString('hex') } = {}) => w(slotPath(ctx, k), { ce, pid: rec.pid, start_time: rec.start_time, nonce });
 // a live alarm as an ensure registers it (S1): alarm.json and slot 1 name the same sleeper
 function liveAlarm(ctx, { ce = 1 } = {}) {
@@ -591,6 +596,7 @@ test('T10 endturn: K equal to the ledger head with a live watcher and a live ala
     meterLine(ctx.root, 10); meterLine(ctx.root, 20); meterLine(ctx.root, 30);
     liveWatcher(ctx);
     liveAlarm(ctx);
+    putTurn(ctx, 3);
     assertLine(endturn(ctx, 3), 0);
     const a = J(ackedPath(ctx));
     assert.equal(a.acked_seq, 3);
@@ -603,6 +609,7 @@ test('T11 endturn without an alarm exits 1 alarm-missing and still writes acked.
   await withRoot({}, async (ctx) => {
     meterLine(ctx.root); meterLine(ctx.root);
     liveWatcher(ctx);
+    putTurn(ctx, 2);
     const j = assertLine(endturn(ctx, 2), 1);
     assert.ok(hasReason(j, 'alarm-missing'));
     assert.ok(!hasReason(j, 'watcher-missing'));
@@ -615,6 +622,7 @@ test('T11 endturn with a watcher record of an older ce exits 1 watcher-missing',
     addLine(ctx.root, { kind: 'meter', ce: 2, data: { pct: 10, self_reported: true } });
     liveWatcher(ctx, { ce: 2, recCe: 1 });
     liveAlarm(ctx, { ce: 2 });
+    putTurn(ctx, 1, { ce: 2 });
     const j = assertLine(endturn(ctx, 1, [], { ce: 2 }), 1);
     assert.ok(hasReason(j, 'watcher-missing'));
     assert.ok(!hasReason(j, 'alarm-missing'));
@@ -629,6 +637,7 @@ test('T11 endturn with a live watcher.json but watcher.lock absent, or naming an
     meterLine(ctx.root);
     liveWatcher(ctx);
     const alarm = liveAlarm(ctx);
+    putTurn(ctx, 1);
     const lockFile = path.join(ctx.root, 'run', 'watcher.lock');
     fs.rmSync(lockFile, { force: true });
     const j1 = assertLine(endturn(ctx, 1), 1);
@@ -645,6 +654,7 @@ test('T12 endturn: K above the head exits 1 acked-ahead; K below the stored valu
   await withRoot({}, async (ctx) => {
     meterLine(ctx.root); meterLine(ctx.root); meterLine(ctx.root);
     w(ackedPath(ctx), { schema_version: 1, ce: 1, acked_seq: 2, at: NOW });
+    putTurn(ctx, 3);
     const before = fs.readFileSync(ackedPath(ctx));
     const ahead = assertLine(endturn(ctx, 5), 1);
     assert.ok(hasReason(ahead, 'acked-ahead'));
@@ -978,6 +988,7 @@ test('M1 endturn re-arms a live alarm by writing the token (acked.json); alarm.j
     const before = fs.readFileSync(alarmFile);
     const tokenOf = () => (fs.existsSync(ackedPath(ctx)) ? sha(fs.readFileSync(ackedPath(ctx))) : null);
     const t0 = tokenOf();
+    putTurn(ctx, 1);
     const j = endturn(ctx, 1);
     assert.ok([0, 1].includes(j.exit), j.stdout);
     assert.ok(!hasReason(j.json, 'alarm-missing'), 'the live alarm is seen');
@@ -1012,6 +1023,7 @@ test('FX-W1 endturn with the list unavailable: unmarked sources are unknown (exi
   await withRoot({ thr: NO_LIST }, async (ctx) => {
     meterLine(ctx.root);
     const { ar } = wakeRecords(ctx);
+    putTurn(ctx, 1);
     const j = assertLine(endturn(ctx, 1), 2);
     assert.deepEqual(j.result.sources, { watcher: 'unknown', alarm: 'unknown' });
     assert.equal(j.result.watcher, false);
@@ -1037,6 +1049,7 @@ test('FX-W1 a corrupt watcher.json or alarm.json is the anomaly state-corrupt (b
     assert.deepEqual(st.anomalies.filter((a) => a.code === 'state-corrupt').map((a) => a.detail.file).sort(), ['alarm.json', 'watcher.json']);
     assert.equal(st.watcher.alive, false);
     assert.equal(st.alarm.alive, false);
+    putTurn(ctx, 1);
     const j = assertLine(endturn(ctx, 1), 1);
     assert.deepEqual(j.result.sources, { watcher: 'dead', alarm: 'dead' });
     assert.ok(hasReason(j, 'watcher-missing') && hasReason(j, 'alarm-missing'), JSON.stringify(j.reasons));
@@ -1144,5 +1157,56 @@ test('FX-W2 a second reconcile of a confirmed turn keeps it confirmed in hold 1 
 
 // ------------------------------------------------ cannot be tested without the app
 const NEEDS_APP = 'needs the app';
+// ------------------------------------------------ FX-W3: endturn step 1 (A3; N2 with E1)
+// FIX-wake FX-W3 A3 and FIX-JOIN part 2b row 9: K is checked against run/turn.json of this ce, whose read_seq
+// is the head the turn's status showed; absent or of another ce is turn-stale with nothing written. Every
+// endturn of this ce spends the turn's arm, a refused K included (between turns nothing is armed); the
+// wake sources are reported after a refusal too (N2), so the coordinator acts on them before it ends.
+test('FX-W3 endturn: turn-stale writes nothing; K above read_seq is acked-ahead; a refused and a passing K both spend the arm; the same K twice exits alike; the sources are reported after a refusal', async () => {
+  await withRoot({}, async (ctx) => {
+    meterLine(ctx.root); meterLine(ctx.root); meterLine(ctx.root);
+    liveWatcher(ctx);
+    const slots = [{ k: 1, pid: 4242, start_time: '2026-11-20T00:00:00.0000000Z' }];
+    const codesOf = (j) => j.reasons.map((r) => r.code);
+    // no turn.json (no reconcile this turn): turn-stale, nothing written; the missing alarm is reported beside it
+    let before = snapshotTree(ctx.root);
+    let j = assertLine(endturn(ctx, 3), 1);
+    assert.deepEqual(codesOf(j), ['turn-stale', 'alarm-missing']);
+    assert.deepEqual(j.reasons[0].detail, { ce: 1, turn_ce: null });
+    assert.deepEqual([j.result.acked_seq, j.result.written], [null, false]);
+    assert.deepEqual(snapshotTree(ctx.root), before, 'turn-stale writes nothing');
+    // a turn of another ce: turn-stale, its turn.json untouched
+    putTurn(ctx, 3, { ce: 2, arm: 'confirmed', slots });
+    before = snapshotTree(ctx.root);
+    j = assertLine(endturn(ctx, 3), 1);
+    assert.deepEqual(j.reasons[0], { code: 'turn-stale', detail: { ce: 1, turn_ce: 2 } });
+    assert.deepEqual(snapshotTree(ctx.root), before, 'nothing written, the other ce\'s arm kept');
+    // this ce's turn showed head 2: K 3 (the head now) is acked-ahead; no acked.json, the arm spent all the same
+    putTurn(ctx, 2, { arm: 'confirmed', slots });
+    j = assertLine(endturn(ctx, 3), 1);
+    assert.deepEqual(codesOf(j), ['acked-ahead', 'alarm-missing']);
+    assert.deepEqual(j.reasons[0].detail, { acked_seq: 3, read_seq: 2 });
+    assert.equal(fs.existsSync(ackedPath(ctx)), false, 'a refused K writes no acked.json');
+    assert.equal(J(turnPath(ctx)).arm, 'spent', 'a refused K spends the arm');
+    // K 2: acked.json written and the arm spent; every other field of turn.json kept
+    putTurn(ctx, 2, { arm: 'confirmed', slots });
+    const a = assertLine(endturn(ctx, 2), 1);
+    assert.deepEqual(codesOf(a), ['alarm-missing']);
+    assert.deepEqual([a.result.acked_seq, a.result.written, a.result.sources], [2, true, { watcher: 'alive', alarm: 'dead' }]);
+    assert.equal(J(ackedPath(ctx)).acked_seq, 2);
+    assert.deepEqual(J(turnPath(ctx)), { ce: 1, turn_seq: 1, read_seq: 2, arm: 'spent', slots, unarmed_turns: 0 });
+    // the same K again (a retried endturn): the same exit, reasons and result
+    const b = assertLine(endturn(ctx, 2), 1);
+    assert.deepEqual([b.reasons, b.result], [a.reasons, a.result]);
+    // K below the stored value: acked-backwards, acked.json unchanged, the arm spent
+    putTurn(ctx, 2, { arm: 'confirmed', slots });
+    const ack = fs.readFileSync(ackedPath(ctx));
+    j = assertLine(endturn(ctx, 1), 1);
+    assert.deepEqual(codesOf(j), ['acked-backwards', 'alarm-missing']);
+    assert.ok(ack.equals(fs.readFileSync(ackedPath(ctx))));
+    assert.equal(J(turnPath(ctx)).arm, 'spent');
+  });
+});
+
 test('NA1 a real session transcript appears in projectDirName(folder) with that cwd soon after start', { skip: `${NEEDS_APP}: item 7, needs a real session` }, () => {});
 test('NA2 the watcher and alarm exits reach the coordinator', { skip: `${NEEDS_APP}: item 5, needs the harness's background commands` }, () => {});

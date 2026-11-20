@@ -381,9 +381,12 @@ function newNonce() {
   return crypto.randomBytes(16).toString('hex');
 }
 
-// FX-W3: the path of the coordinator's brief, tcb/briefs/coordinator.md, in the brief line (FIX-JOIN 2c).
+// FX-W3: the path of the coordinator's brief, tcb/briefs/coordinator.md (beside this script), in the
+// brief line (FIX-JOIN 2c): its acts, in order, every turn. Forward slashes; a path with a blank quoted.
+// The coordinator's read prefixes hold tcb/briefs/, so a Read of it passes before the bind.
 function briefPathPart(root) { // eslint-disable-line no-unused-vars
-  return '';
+  const f = path.join(path.dirname(fileURLToPath(import.meta.url)), 'briefs', 'coordinator.md').replace(/\\/g, '/');
+  return ` Then act every turn as ${/\s/.test(f) ? `"${f}"` : f} says, in its order.`;
 }
 
 // A refusal (exit 6) of raise: one `incident` line under the lock, unless dry-run.

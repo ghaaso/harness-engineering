@@ -37,7 +37,14 @@ function claimAt(root, e, v) {
   lib.createExclusive(path.join(dir, 'claim.json'), v, { strict: true });
 }
 
-function makeRoot(rows, dirs) {
+// FX-W3: a start creates work, so its hold needs an armed turn (lib.armedState: run/turn.json of the caller's
+// ce, arm confirmed, slots with no exit marker). `armed: true` writes the turn the brief's call 2 leaves, the
+// record replace.test.mjs's root helper writes: the root of a start's death at admitted is a coordinator's
+// armed turn. The other roots stay unarmed: fence, stop, bind and reconcile need no arm (RevocationNeverGated).
+const SLOT_PT = { pid: 4242, start_time: '2026-11-20T00:00:00.0000000Z' };
+const armedTurn = (ce = 1) => ({ ce, turn_seq: 1, read_seq: 0, arm: 'confirmed', slots: [{ k: 1, ...SLOT_PT }], unarmed_turns: 0 });
+
+function makeRoot(rows, dirs, { armed = false } = {}) {
   const root = fs.mkdtempSync(path.join(TMP, 'redo-'));
   dirs.push(root);
   for (const d of ['tcb', 'run', 'run/stop-sample', 'store/objects', 'store/commits', 'store/status', 'plan/frozen', 'completeness', 'views', 'wt', 'transcripts']) {
@@ -53,6 +60,7 @@ function makeRoot(rows, dirs) {
   fs.writeFileSync(path.join(root, 'run', 'coord.json'), JSON.stringify({ schema_version: 1, ce: 1, started_at: '2026-11-17T09:00:00.000Z', tcb_commit: '0'.repeat(40) }));
   fs.writeFileSync(path.join(root, 'run', 'tasks.json'), JSON.stringify({ schema_version: 1, rev: 1, tasks: rows }));
   for (const r of rows) for (const a of r.attempts ?? []) if (a && a.session && a.bound_at) claimAt(root, a.epoch, lib.claimRecord(a.session));
+  if (armed) fs.writeFileSync(path.join(root, 'run', 'turn.json'), JSON.stringify(armedTurn(1), null, 1));
   return root;
 }
 
@@ -193,7 +201,7 @@ test('FX-REDO: each repeat call completes a missing ledger line only at the exac
   });
 
   await t.test('replace start at admitted with a manifest: the admit line (the row as a death leaves it)', () => {
-    const C = makeRoot([row({ step: 'admitted', attempts: [att(1, { folder: `wt/${T}-e1`, manifest: M0, settings_sha: Z64 })] })], dirs);
+    const C = makeRoot([row({ step: 'admitted', attempts: [att(1, { folder: `wt/${T}-e1`, manifest: M0, settings_sha: Z64 })] })], dirs, { armed: true });
     const start = () => run(C, 'replace', ['start', '--root', C, '--ce', '1', '--now', NOW, '--task', T, '--epoch', '1', '--free-mb', '99999']);
     assert.ok(missing(C).includes(`${T}-e1:admit`));
     let j = start();

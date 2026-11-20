@@ -230,11 +230,13 @@ function noteIncident(env, handle, e, task, epoch) {
 
 /**
  * Runs fn(handle) under run.lock with the ce check; dry-run checks ce without the lock and passes null.
- * `requireArmed` (FX-W3) reaches withRunLock only when true.
+ * `requireArmed` (FX-W3) reaches withRunLock only when true; a dry run checks the same predicate
+ * (lib.checkArmed, files only) after the ce, so it gives the real run's exit 6 `not-armed`.
  */
 async function underLock(env, fn, task = null, epoch = null, { requireArmed } = {}) {
   if (env.dry) {
     lib.checkCe(env.root, env.ce);
+    if (requireArmed === true) lib.checkArmed(env.root, env.ce);
     return fn(null);
   }
   const armed = requireArmed === true ? { requireArmed } : {};
@@ -489,9 +491,10 @@ async function modeFence(env, flags) {
 // until its fix fills it. The hold's order: withRunLock's requireArmed (FX-W3, reason `first` only),
 // FX-OUT steps 1-5, FX-CLAIM's tombstone, then lib.fence (its callback FX-OUT, its nostart FX-CLAIM).
 
-// FX-W3: does this act create work, so that its hold needs "armed"? (start, and fence `first`.)
-function armedFor(mode, reason) { // eslint-disable-line no-unused-vars
-  return false;
+// FX-W3: does this act create work, so that its hold needs "armed"? (start, and fence `first`.) Every
+// other fence reason is a revocation and is never gated (FIX-wake FX-W3, RevocationNeverGated).
+function armedFor(mode, reason) {
+  return mode === 'start' || (mode === 'fence' && reason === 'first');
 }
 
 // FX-OUT steps 1-5 in the fence's hold: the refusals, the ready check, the fenced slot (FIX-fence.md

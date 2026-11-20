@@ -220,8 +220,11 @@ a real session's transcript `cwd` equals the folder named in `bind` (item 7).
 
 ## Round-3 skeleton (S0.5): the fence hold and the armed gate
 - `underLock(env, fn, task, epoch, {requireArmed})` passes `requireArmed` to `withRunLock` only when true;
-  `armedFor(mode, reason)` (false until FX-W3: `start`, and `fence` with reason `first`) gives it for
-  `modeStart` and `modeFence`.
+  `armedFor(mode, reason)` (FX-W3, built: `start`, and `fence` with reason `first`; every other reason is
+  a revocation and is never gated) gives it for `modeStart` and `modeFence`. Not armed is exit 6
+  `not-armed` {ce, why, ...} from `withRunLock`, before the act: no ledger line, no incident, no folder. A
+  dry run runs `lib.checkArmed(root, ce)` after the ce check (files only), so it gives the real run's 6.
+  Tested in `tcb/test/replace.test.mjs` (FX-W3 not-armed, FX-W3 revocation never gated).
 - `modeFence`'s hold, in order (FIX-JOIN point 11): `fenceOutcomeSteps(env, handle, hold)` (FX-OUT steps
   1-5, built; the M6 block is gone into it, Q6 b); `fenceTombstone(env, handle, hold)` (FX-CLAIM); then
   `lib.fence` with `readyCheck` = an uncommitted ready slot in a log that is not fenced. `hold` = {task,

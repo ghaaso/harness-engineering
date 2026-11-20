@@ -20,7 +20,11 @@ exit 2); on unknown, start nothing.
 
 ### 0b. On exit 30, an `unarmed` record when `turn_seq` has not moved (FX-W3)
 
-(empty until FX-W3)
+An alarm whose period ends (exit 30) first reads `run/turn.json`'s `turn_seq`. When it still equals the
+`turn_seq_at_reg` its slot record took at registration, no reconcile ran in a whole alarm period, and it creates
+`run/arm/unarmed-<pid>-<start>.json` {ce, turn_seq} before its exit marker. The dead-man (FX-W4) alerts the owner
+when two such records of the current ce carry one `turn_seq`. Nothing to do for it: begin the turn with calls 1 and
+2 (places 2 and 3), which move `turn_seq`.
 
 ### 0c. The owner wakes the coordinator after the dead-man's alert (FX-W4)
 
@@ -59,7 +63,13 @@ without `--arm-nonces` and keeps a `confirmed` arm (B1.4). Exit 75: place 8.
 
 ## 4. Restart a dead watcher (FX-W1, FIX-JOIN point 1; on exit 2, start nothing)
 
-(empty until FX-W1)
+After call 2, read the status reconcile printed (`result.status`, the same as `run/status.json`). When
+`watcher.alive` is false (no watcher record, a dead one: anomaly `watcher-dead`) or `watcher.ce` is not your ce
+(anomaly `watcher-stale-ce`), start the watcher as a background command: `node <root>/tcb/watch.mjs --root <root>
+--ce <ce>`. Do the same when endturn exits 1 with `watcher-missing` (place 9). When `watcher.alive` is null (the
+process list could not tell) or endturn exits 2 `proc-unavailable`, start nothing: the old watcher may live and hold
+`watcher.lock`, and the dead-man alerts the owner while the list keeps failing. Starting the watcher creates no work
+and is never gated by the arm.
 
 ## 5. Revocations, always (FIX-JOIN part 2b row 5)
 
@@ -103,7 +113,24 @@ open: tell the owner, who records it with `status.mjs owner --act closed --subje
 
 ## 6. Acts that create work, only when call 2 confirmed the arm (FX-W3; a session start only on a turn the owner typed, Q5a)
 
-(empty until FX-W3)
+Only after call 2 exited 0 in this turn (arm `confirmed`), and only the acts status names for a row (`next`):
+- `replace-start`, and `replace-fence` of a planned row (reason `first`): `node <root>/tcb/replace.mjs start --task
+  T --epoch E --root <root> --ce <ce>` (or `fence ... --reason first`). Not armed: exit 6 `not-armed`, nothing
+  written; the act stays due.
+- `start-session` (the row active at admitted, epoch E), **only on a turn the owner typed** (his own words began
+  it). On a turn begun by an alarm's or the watcher's exit, a helper's notice or a session's message the app
+  refuses a start: do not call the tool, leave the act due (the watcher raises it again; the owner's next typed turn
+  takes it). The call: `mcp__ccd_session__start_session` with `initiation` `user_asked`, `cwd` exactly the absolute
+  folder `<root>\wt\<T>-e<E>`, `use_worktree` false, `context` `fresh` (or left out), a `title`, the child's brief
+  as `prompt`, and `background` (at least 80 characters); `target` only `local` or left out, and never `host`,
+  `preset`, `environment`, `repository`, `proposal_id`, `source_branch` or `branch_name`. The hook denies the start
+  when the turn is not armed (`not-armed`), the row is not active at admitted at E (`wrong-step`), the folder or
+  an input is any other (`bad-target`), or another start of the attempt is recorded (`start-issued`); a denied
+  start writes nothing. Bind once the claim exists (place 7).
+
+Armed means: `run/turn.json` of your ce, arm `confirmed`, and no exit marker for its slots. It lasts until endturn
+(arm `spent`) or until the confirmed alarm exits: an alarm that fires mid-turn leaves its marker and ends the arm
+for the rest of the turn. Revocations (place 5) and the watcher's start (place 4) are never gated.
 
 ## 7. Bind a session: `replace bind --session` once a claim exists (FX-CLAIM)
 
@@ -119,10 +146,26 @@ with arguments are run with exactly those words: `replace-fence --reason <r>` (a
 not finish) and `replace-fence --reason crash --if-unclaimed` (a start lease that ran out; exit 5 `claimed-late`:
 the next act is `bind`).
 
-## 8. Any script exits 75: end the turn, retry nothing (FX-W3)
+## 8. Any script exits 75: retry nothing, then endturn (FX-W3; N2 in place of "end the turn")
 
-(empty until FX-W3)
+A script that exits 75 (`lock-busy`): retry nothing. The turn still ends with endturn (place 9), its last call
+after a 75 as after anything else. If endturn itself exits 75, end the turn.
 
 ## 9. The last call, always: endturn (FX-W3; N2, E1)
 
-(empty until FX-W3)
+Every turn's last call, also after `handover` exit 2, after any exit 75 and after an unarmed reconcile:
+`node <root>/tcb/status.mjs --endturn --acked-seq K --root <root> --ce <ce>`. K is the turn's `read_seq`: the
+`result.status.ledger.seq` of this turn's reconcile, or, when no reconcile of this turn printed a status (it exited
+75), the `ledger.seq` of `run/status.json`. Endturn acknowledges K only while `run/turn.json` is of your ce and K is
+neither above its `read_seq` nor below the stored `acked_seq`; otherwise it exits 1 `acked-ahead`,
+`acked-backwards`, or `turn-stale` (no reconcile of your ce wrote the turn), and nothing is acknowledged. It spends
+the arm (`spent`) and, in every case, reports the two wake sources alive, dead or unknown. Act on its exit 1
+**once**, then end the turn:
+- `alarm-missing`: ensure again (place 2's call, a new nonce);
+- `watcher-missing`: start the watcher (place 4);
+- `acked-ahead`, `acked-backwards` or `turn-stale` alone: nothing more (the lines stay unacknowledged and are
+  raised again).
+
+Exit 2 `proc-unavailable` (none dead, some unknown): start nothing. Exit 75: end the turn. Do not run endturn again
+to check that act; a second endturn with the same K is accepted. A turn that ends without endturn (it died, or the
+call was omitted) is not recovered at once: the dead-man (FX-W4) alerts the owner (E1).

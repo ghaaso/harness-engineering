@@ -941,8 +941,20 @@ function stepCurrentSession(pass) {
   throw new Deny('stale-coordinator', `session ${oneLine(String(pass.hook.session_id ?? '(none)'))} is not the one bound at ce ${coord ? coord.ce : '(unreadable)'}`);
 }
 
-// FX-W3: an act that creates work (session start, replace start, fence first) needs "armed".
-function stepArmed(pass) { // eslint-disable-line no-unused-vars
+// FX-W3: an act that creates work needs "armed". The hook gates the session-start tool (replace start
+// and fence first are gated by the scripts' requireArmed): lib.armedState, the one file predicate
+// withRunLock reads, at coord.json's ce, the ce stepCurrentSession found the caller bound at (never a
+// ce from the input; FIX-JOIN part 2c). Read-only, before the row check and the start record (point
+// 9), so a denied start writes no start.json. The stop tools and every other call are never gated.
+function stepArmed(pass) {
+  if (!isSessionTool(pass, 'start')) return;
+  const coord = coordOf(pass);
+  if (!coord) throw new Deny('not-armed', 'run/coord.json unreadable');
+  const v = lib.armedState(pass.root, coord.ce, { readJson: pass.io.readJson, exists: pass.io.exists });
+  if (!v.armed) {
+    const { armed, why, ...rest } = v; // eslint-disable-line no-unused-vars
+    throw new Deny('not-armed', `ce ${coord.ce}: ${why}${Object.keys(rest).length ? ` ${JSON.stringify(rest)}` : ''}`);
+  }
 }
 
 // FX-CGATE step 4, its read-only part: the session-start target's row is active/admitted at E.
