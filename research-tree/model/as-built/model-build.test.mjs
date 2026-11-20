@@ -35,7 +35,7 @@ const SMALL = {
   'FN-N2-B': ['k=0'], 'BQ5-SJ': ['k=1,q=1'], 'BQ5-NOSJ': ['k=1,q=1'], 'BQ5-X': ['k=1,q=1'],
   'LEASE-B': ['k=0', 120], 'LEASE-ORDER': ['k=0', 120], 'LEASE-NOWIN': ['k=0', 120], 'LEASE-X': ['k=0', 120],
   'IDGAP-W': ['k=1,w=1'], 'IDGAP-WZ': ['k=2,z=1,w=1'], 'IDGAP-X': ['k=0'], 'CLOSE-APPROVAL': ['k=0'], 'CLOSE-APPROVAL-R5': ['k=0'],
-  'AGE-B': ['k=1,m=1'], 'AGE-STUCK': ['k=1,m=1'], 'REDO-B': ['k=2,x=1,g=1', 1500], 'REDO-X': ['k=2,x=1,g=1', 1500],
+  'AGE-B': ['k=1,m=1'], 'AGE-STUCK': ['k=1,m=1'], 'AGE-REARM': ['k=1,m=1'], 'REDO-B': ['k=2,x=1,g=1', 1500], 'REDO-X': ['k=2,x=1,g=1', 1500],
 };
 const small = (id) => run(id, SMALL[id][0], { mem: SMALL[id][1] ?? 600 });
 const FINAL = ['SMOKE', 'FN-R5', 'FN-OUT-CLOSE-K2', 'FXW-4R', 'FXW-5', 'FXW-6', 'FN-N2', 'FX-CLAIM', 'FX-CLOSE'];
@@ -107,11 +107,26 @@ describe('model-build', { concurrency: 4 }, () => {
     assert.ok(j.fails.includes('Slots'));
   });
 
-  test('W6 item 6: the age cap as built never reaches the owner; the design leg (BLD_AGE_STUCK) does (k=1,m=1)', async () => {
-    const [built, stuck, nocap] = await Promise.all([small('AGE-B'), small('AGE-STUCK'), run('AGE-B', 'k=1,m=1', { set: 'BLD_AGE_CAP=0' })]);
-    for (const p of ['AgeCapReachesOwner', 'EventuallyResolves', 'AlwaysCanResolve']) assert.ok(built.fails.includes(p), p);
-    assert.deepEqual(stuck.fails, []);
-    assert.notEqual(built.states, stuck.states); assert.notEqual(built.states, nocap.states); assert.ok(!('AgeCapReachesOwner' in nocap.props));
+  // FX-W6 fix round (S2.4 VERDICT section 1): the age cap as built is no longer re-armed by an acknowledgement
+  test('W6 item 6 after the fix round: the age cap as built reaches the owner; the re-arm ablation never does (k=1,m=1)', async () => {
+    const [built, stuck, rearm, nocap] = await Promise.all([small('AGE-B'), small('AGE-STUCK'), small('AGE-REARM'), run('AGE-B', 'k=1,m=1', { set: 'BLD_AGE_CAP=0' })]);
+    assert.ok('AgeCapReachesOwner' in built.props); assert.deepEqual(built.fails, []);
+    for (const p of ['AgeCapReachesOwner', 'EventuallyResolves', 'AlwaysCanResolve']) assert.ok(rearm.fails.includes(p), p);
+    assert.equal(built.states, 65582, 'AGE-B explores what AGE-STUCK, the design leg, explored before the fix round');
+    assert.equal(rearm.states, 23819, 'AGE-REARM explores what AGE-B explored before the fix round');
+    assert.equal(stuck.states, built.states, 'AGE-STUCK has AGE-B\'s flags now: the same states');
+    assert.notEqual(built.states, rearm.states, 'AB_AGE_REARM changes the states');
+    assert.notEqual(built.states, nocap.states, 'BLD_AGE_CAP changes the states'); assert.ok(!('AgeCapReachesOwner' in nocap.props));
+  });
+
+  // S2.4 VERDICT section 6: line 1015 sends a refused hand-over (handover.mjs:274, 287, 353) to endturn under
+  // FIX_ENDTURN_ALWAYS, as the code does; FN-N2-B k=1,u=1 had 623,250 states without it (S2.3)
+  test('line 1015, N2 after a refused hand-over: FN-N2-B k=1,u=1 explores 619,856 states, EventuallyResolves F 9', async () => {
+    const j = await run('FN-N2-B', 'k=1,u=1', { mem: 800 });
+    assert.equal(j.complete, true);
+    assert.equal(j.states, 619856);
+    assert.deepEqual(j.fails, ['EventuallyResolves']);
+    assert.equal(j.props.EventuallyResolves.trace.length, 9);
   });
 
   test('REDO: FX-REDO writes a lost started line before the row moves on; without it the line is lost (k=2,x=1,g=1)', async () => {

@@ -1714,22 +1714,65 @@ test('FX-W6 idle child: act-due idle-child at idle_ticks, never a charged hang; 
   });
 });
 
-test('FX-W6 age cap: act-due age-cap at attempt_max_ticks, uncharged; acknowledged, it re-arms for another cap', async () => {
+// FX-W6 fix round (S2.4 VERDICT section 1): an acknowledgement does not re-arm the age cap. The condition
+// stays present, FX-W5 raises it again at its interval, and its `stuck` count reaches watcher.json.stuck.
+test('FX-W6 age cap: act-due age-cap at attempt_max_ticks, uncharged; acknowledged, it stays due and is raised again, never re-armed', async () => {
   await withRoot({ thr: { attempt_max_ticks: 2, coalesce_ticks: 0 } }, async (ctx) => {
     const t = singleTask(ctx);
     setTasks(ctx, [t.row]);
+    const ident = `17|${t.task}:age-cap|1`;
     assertLine(tick(ctx), 0);
     assertLine(tick(ctx), 0);
-    const j = assertLine(tick(ctx), 17);
+    const j = assertLine(tick(ctx), 17); // tick 3: age 2, the cap
     assert.ok(j.reasons.some((x) => x.detail.act === 'age-cap' && x.detail.age_ticks === 2));
-    const caps = () => ledgerLines(ctx.root, 'event').filter((l) => l.data.detail && l.data.detail.act === 'age-cap');
+    const caps = () => actEvents(ctx, 'age-cap');
     assert.equal(caps().length, 1);
-    w(path.join(ctx.root, 'run', 'acked.json'), { schema_version: 1, ce: 1, acked_seq: caps()[0].seq, at: NOW });
-    assertLine(tick(ctx), 0); // the acknowledgement lets the attempt continue: re-armed
-    assert.equal(watcherJson(ctx).tasks[t.task].age_base, 3);
+    ackUpTo(ctx, caps()[0].seq);
+    assertLine(tick(ctx), 0); // tick 4: acknowledged, inside FX-W5's first interval: quiet, still due
+    const wj = watcherJson(ctx);
+    assert.equal(wj.tasks[t.task].age_base, 0, 'the acknowledgement does not re-arm the cap');
+    assert.ok(Object.keys(wj.active).some((k) => k.startsWith(`${ident}|`)), 'the age cap stays in the active set');
+    jumpTo(ctx, 3 + 15 - 1);
     assertLine(tick(ctx), 0);
-    assertLine(tick(ctx), 17); // another attempt_max_ticks: asked again with a new event line
+    const r = assertLine(tick(ctx), 17); // tick 18: raised again, 15 ticks after the onset
+    assert.ok(r.reasons.some((x) => x.detail.act === 'age-cap' && x.detail.reraise === 1));
     assert.equal(caps().length, 2);
+    assert.equal(caps().at(-1).data.detail.reraise, 1);
+    assert.equal(keyTick(caps().at(-1)), 18);
+    assert.equal(watcherJson(ctx).reraise[ident], 1);
+    assert.equal(watcherJson(ctx).tasks[t.task].age_base, 0);
+    assert.equal(eventsOf(ctx.root, 'hang', 21).length, 0, 'never a charged hang');
+  });
+});
+
+test('FX-W6 age cap stuck: a coordinator that only acknowledges the cap; the 6th raise, 285 ticks after the onset, is stuck', async () => {
+  await withRoot({ thr: { attempt_max_ticks: 2, coalesce_ticks: 0, stuck_raises: 3 } }, async (ctx) => {
+    const t = singleTask(ctx);
+    setTasks(ctx, [t.row]);
+    const ident = `17|${t.task}:age-cap|1`;
+    assertLine(tick(ctx), 0); // tick 1: the epoch's first tick counts nothing (FX-W6 step 1)
+    assertLine(tick(ctx), 0); // tick 2: age 1
+    assertLine(tick(ctx), 17); // tick 3: age 2, the onset
+    let at = 3;
+    for (const [i, gap] of [15, 30, 60, 60, 60, 60].entries()) {
+      ackUpTo(ctx, actEvents(ctx, 'age-cap').at(-1).seq); // the endturn acknowledges; no other act
+      jumpTo(ctx, at + gap - 1);
+      assertLine(tick(ctx), 0);
+      assertLine(tick(ctx), 17); // the raise of the acknowledged cap (FX-W5 step 2)
+      at += gap;
+      const ev = actEvents(ctx, 'age-cap');
+      assert.equal(ev.length, i + 2);
+      assert.equal(ev.at(-1).data.detail.reraise, i + 1);
+      assert.equal(keyTick(ev.at(-1)), at);
+      const wj = watcherJson(ctx);
+      assert.equal(wj.tasks[t.task].age_base, 0, 'never re-armed');
+      assert.deepEqual(wj.stuck, i + 1 >= 6 ? [ident] : [], `raise ${i + 1}`);
+    }
+    assert.equal(at - 3, 285, 'stuck 285 ticks after the onset (FIX-wake.md:54)');
+    ackUpTo(ctx, actEvents(ctx, 'age-cap').at(-1).seq);
+    jumpTo(ctx, at + 1);
+    assertLine(tick(ctx), 0); // acknowledged again, inside the interval: still stuck for FX-W4's dead-man
+    assert.deepEqual(watcherJson(ctx).stuck, [ident]);
     assert.equal(eventsOf(ctx.root, 'hang', 21).length, 0, 'never a charged hang');
   });
 });

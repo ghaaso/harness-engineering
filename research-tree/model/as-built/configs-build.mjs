@@ -57,11 +57,14 @@ add('IDGAP-X', 'ablation: no id gap (the hook records count), verify by records 
 add('CLOSE-APPROVAL', 'FN-OUT-CLOSE-K2-B with stop_session interrupt-only and archive_session approval', { ...C_GAP, BLD_STOP_INTERRUPT_ONLY: true, BLD_ARCHIVE_APPROVAL: true }, 'FN-OUT-CLOSE-K2-B');
 add('CLOSE-APPROVAL-R5', 'FN-R5-B with stop_session interrupt-only and archive_session approval', { ...byId('FN-R5').over, ...BUILT_FENCE, BLD_STOP_INTERRUPT_ONLY: true, BLD_ARCHIVE_APPROVAL: true }, 'FN-R5-B');
 
-// 6. W6 item 6 (refute/W4.md:100-125): the age cap as built, an acknowledgement is a continue that re-arms the cap; fault m,
-// a child at bound that imitates activity (no detector fires, no READY); the coordinator only acknowledges (no brief line)
+// 6. W6 item 6 (refute/W4.md:100-125) after the FX-W6 fix round (S2.4 VERDICT section 1): the age cap as built, never
+// re-armed by an acknowledgement; fault m, a child at bound that imitates activity (no detector fires, no READY); the
+// coordinator only acknowledges. AGE-STUCK, once the design leg, is now the code: the same flags and states as AGE-B.
+// AGE-REARM is the ablation, the re-arm the fix round deleted, and fails AgeCapReachesOwner (the check is not vacuous).
 const C_AGE = { ...byId('FXW-5').over, ...BUILT, BLD_AGE_CAP: true, BUD: { ...byId('FXW-5').over.BUD, k: 1, m: 1 } };
-add('AGE-B', 'the age cap as built: acknowledged = continue, re-armed; FX-W5 and its stuck count never see it', C_AGE, 'AGE-STUCK');
-add('AGE-STUCK', 'the design leg (not built): FX-W5 raises the acknowledged age cap again, stuck, the dead-man reaches the owner', { ...C_AGE, BLD_AGE_STUCK: true }, 'AGE-B');
+add('AGE-B', 'the age cap as built: acknowledged, FX-W5 raises it again, stuck, the dead-man reaches the owner', C_AGE, 'AGE-REARM');
+add('AGE-STUCK', 'the design leg, built by the FX-W6 fix round: the same flags as AGE-B (kept as the record names it)', { ...C_AGE }, 'AGE-REARM');
+add('AGE-REARM', 'ablation: the re-arm on an acknowledgement (build d655547f); FX-W5 and its stuck count never see the cap', { ...C_AGE, AB_AGE_REARM: true }, 'AGE-B');
 
 // 7. REDO (refute/W4.md:132-137): fault g, a reconcile dies between a row's started write and its started line; FX-REDO
 // writes it at the next reconcile while the row is at started; the close group, where a row may be committed at started

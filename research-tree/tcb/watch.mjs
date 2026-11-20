@@ -700,7 +700,7 @@ async function evaluate(env, state, facts, counted) {
     rowActs += 1;
     conds.push({ cls: 17, task: row.task, epoch: row.epoch, act, detail: { act } });
   }
-  actDueIdleAgeCap(env, state, conds, { rows, tick, lines, ackedSeq });
+  actDueIdleAgeCap(env, state, conds, { rows, tick });
   if (runFlags.draining === true && used === 0) conds.push({ cls: 17, act: 'handover', detail: { act: 'handover' } });
   if (rows.length > 0 && rowActs === 0 && rows.every((r) => TERMINAL.has(r.state))) {
     conds.push({ cls: 17, act: 'run-terminal', detail: { act: 'run-terminal' } });
@@ -1177,10 +1177,13 @@ function alarmExitMarker(reg, exit) {
 // FX-W6: the act-due `idle-child` (idle_ticks) and `age-cap` (attempt_max_ticks) for the coordinator,
 // added to the act-due set after the row acts; they are not row acts. Both are uncharged and fence
 // nothing. idle-child: the main transcript's kind is `idle` for idle_ticks counted ticks (step 4).
-// age-cap: age_ticks - age_base >= attempt_max_ticks (step 5); the coordinator's acknowledgement of
-// its event line (seq <= acked_seq, the endturn) lets the attempt continue and re-arms the cap
-// (age_base = age_ticks). A READY of the current epoch (class 11 or 12) voids both, as it voids hang.
-function actDueIdleAgeCap(env, state, conds, { rows, lines = [], ackedSeq = 0 }) {
+// age-cap: age_ticks - age_base >= attempt_max_ticks (step 5). An acknowledgement of its event line
+// (the endturn) does not re-arm it: the condition stays present, so FX-W5 raises it again at its
+// interval and counts it towards `stuck` (reraiseStuck), which FX-W4's dead-man reads. No script sets
+// age_base (0 from freshTaskState): it is where an explicit "continue" act would re-arm the cap, and
+// none is built (refute/W4.md:113-115). A READY of the current epoch (class 11 or 12) voids both, as
+// it voids hang.
+function actDueIdleAgeCap(env, state, conds, { rows }) {
   let idleMax;
   let ageMax;
   for (const row of rows) {
@@ -1194,13 +1197,6 @@ function actDueIdleAgeCap(env, state, conds, { rows, lines = [], ackedSeq = 0 })
     const base = { cls: 17, task: row.task, epoch: e };
     if (ts.kind === 'idle' && num(ts.hang_ticks) >= idleMax) {
       conds.push({ ...base, act: 'idle-child', detail: { act: 'idle-child', idle_ticks: ts.hang_ticks } });
-    }
-    const ident = `17|${row.task}:age-cap|${e}`;
-    const key = Object.keys(state.active ?? {}).find((k) => k.slice(0, k.lastIndexOf('|')) === ident);
-    if (key) {
-      let seq;
-      for (const l of lines) if (l.kind === 'event' && l.data && l.data.key === key) seq = l.seq;
-      if (Number.isInteger(seq) && seq <= ackedSeq) ts.age_base = num(ts.age_ticks);
     }
     if (num(ts.age_ticks) - num(ts.age_base) >= ageMax) {
       conds.push({ ...base, act: 'age-cap', detail: { act: 'age-cap', age_ticks: ts.age_ticks, attempt_max_ticks: ageMax } });

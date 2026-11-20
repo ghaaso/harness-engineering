@@ -481,7 +481,8 @@ than max(1, ceil(2 x alarm_ms / 5 min)) followed it).
 `watcher.json`: `{ce, pid, start_time, ticks_total, last_tick_at, intake: {pid, start_time}?,
 active: {<key>: onset_tick}, pending: [{key, class, task?, first_tick}] (non-urgent, coalescing),
 tasks: {<task>: {epoch, calls, stall_calls, hang_ticks, V, V_min, loop: {sig, run}, spend, window,
-zombie_tokens, kind, deadline, age_ticks, age_base (FX-W6), files: {<path relative to transcripts_root>:
+zombie_tokens, kind, deadline, age_ticks, age_base (FX-W6; age_base stays 0: no script sets it, it is where an
+explicit "continue" act would re-arm the age cap), files: {<path relative to transcripts_root>:
 parse-state, which also keeps the transcript's `tail` and `kind` (FX-W6, §4.8)}}}, coord_file:
 {<relpath>: parse-state}?}`. Counters are continued by any later watcher; a new epoch resets that
 task's counters. A class instance's **key** is `<class>|<task or ->|<epoch or ->|<onset_tick>`:
