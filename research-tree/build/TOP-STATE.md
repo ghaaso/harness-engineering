@@ -376,3 +376,4 @@ Count: `node <scratchpad>/selfcount.mjs` (this session plus its helpers, as toke
 - Records r57-0184, r57-0424 (replaces r57-0423), r57-0524 (NEXT, replaces r57-0523), r57-0617, r57-0713; board lines.
 - Next: his approve: (the widened run) and cap: (1.9 B). Then his go (form 1 at the reset or form 2 before it). At the
   run's end it writes closing/HAND-BACK.md and messages this session (run/TOP.md); on that message: brief step 7.
+- 07:02 UTC: he approved the widened run and its cap of 1.9 B (r57-0050, replaces r57-0046's 1.2 B); NEXT r57-0525: his go. Run folder 4 commits after 6cc0629 at most; CLAUDE.md names r57-0050.
