@@ -336,3 +336,43 @@ coordinator nor any field: he opens it with his go. Do not merge or push `build`
 - His page: https://claude.ai/artifact/J2EcMdZR1uSQ6KLp7VGJWu (what he types and when). Records r57-0180 to r57-0183,
   r57-0423, r57-0523 (NEXT), r57-0615, r57-0616, r57-0712 and the board's lines.
 - Top session 5 done (about 20:15 UTC). Next: his go (r57-0523), at the reset or before it in form 2. Start nothing else.
+
+## Top session 6 (app local_62806337-b942-4cf6-bf74-f2814f1b4188, name top-6-widen-run; Opus, kind orchestrate), progress, 2026-11-20
+Brief: `research-tree/build/briefs/TOP6-WIDEN-RUN.md` (from top session 2). The top session of the research run from now
+on and the one writer of the library, this file and the run folder. Round limit: about 30 M expected, stop at 45 M.
+Count: `node <scratchpad>/selfcount.mjs` (this session plus its helpers, as tokens-self.mjs counts).
+- 22:45 UTC: started. Meter 88 % all models, 54 % Fable (2d 13h to the reset 2026-11-23 12:00 UTC). Read the board,
+  the brief, the run's GO.md, CLAUDE.md, run/config.json, usage.log (one HOLD at 20:12 UTC, as it should).
+- 22:50 UTC: his rulings recorded: r57-0047 (the widened scope, his words verbatim), r57-0048 (this round, "Yes, start
+  it"), board lines added. Next: one design-and-apply helper (Opus, analyse) works the brief's step 2 and 3 in the run
+  folder and writes its derivations to `research-tree/build/WIDEN.md`; then a blind refuter; then the fold, the page,
+  the records, the commit, his two questions.
+- 22:56 UTC: meter read again (88 % / 54 %), then helper A started (analyse, Opus; brief
+  `research-tree/build/briefs/TOP6-A-WIDEN.md`; expected 10 M, limit 16 M): the design, the run folder's changes and the
+  recompute, its record `research-tree/build/WIDEN.md`. The refuter's brief is ready
+  (`research-tree/build/briefs/TOP6-R-REFUTE.md`), to start when A returns. Round so far about 3 M.
+- About 23:10 UTC: helper A returned LIMIT window (4.8 M, 235 K after reading): `research-tree/build/WIDEN.md` holds the
+  design D1-D7, the 15-item change list and the numbers (run 1,516 M expected, 1,275-1,750; with the preparation 110 M,
+  1,626 M; cap 1,860 M; 24.5 points of next week, Fable 2.9; 7.5-11.2 h at three at once; downloads about 1.12 GB);
+  nothing applied.
+- About 23:20 UTC: meter 89 % / 54 %; three apply helpers started at once on disjoint files (brief
+  `research-tree/build/briefs/TOP6-B-APPLY.md`; notes `research-tree/build/apply/S1.md` to `S3.md`): S1 scripts and
+  config (Opus), S2 field briefs (Sonnet), S3 coordinator, closing, CLAUDE.md, DOWNLOADS.md, GO.md, run/TOP.md (Opus).
+- Next, in order (for me or a successor): when all three return, the refuter (`TOP6-R-REFUTE.md`, Opus, fresh); fold
+  its breaking findings (an Opus helper, the run folder through tools/commit.mjs); the go page in place
+  (https://claude.ai/artifact/J2EcMdZR1uSQ6KLp7VGJWu, read first); records (a hypothesis for the widened run, a pointer,
+  the NEXT task replacing r57-0523, the board lines); `preparation_M` in run/config.json set to the measured 80 M +
+  this round; commit my files here (TOP-STATE.md, INDEX.md, the journal, WIDEN.md, refute/WIDEN.md, apply/, my briefs
+  TOP6-A, TOP6-B, TOP6-R); then ask him approve: (the widened run) and cap: (1.86 B or as recomputed).
+- 2026-11-21 about 05:25 UTC: he raised this round's limit from 45 M to 69 M (r57-0049), asked at 23:36 UTC at 37.6 M.
+- The review (`research-tree/build/refute/WIDEN.md`, 4.8 M): 3 breaking findings (a map restarted after its split never
+  done; the preparation and cap figures; hours that cannot occur) and 11 others. Folded by two helpers
+  (`research-tree/build/apply/FOLD.md`): all three breaking fixed and checked again by fold 2; the others fixed but O9
+  (left, why in FOLD.md). The run's tests 46 pass, 0 fail. Run folder commits d83da0d..6cc0629.
+- Final figures (GO.md, config, page): run 1,515 M (1,274-1,748); preparation measured 141.6 M (counted at most 150 M);
+  with it 1,665 M (1,424-1,898); cap 1,900 M; 24.4 points of next week (20.5-28.2), Fable 2.7 (2.1-3.4); 7.5-11.2 h at
+  three units at once; downloads about 1.12 GB. The page https://claude.ai/artifact/J2EcMdZR1uSQ6KLp7VGJWu version 2
+  (source `research-tree/build/page/go-page.html`), looked at in the pane at 1870 px.
+- Records r57-0184, r57-0424 (replaces r57-0423), r57-0524 (NEXT, replaces r57-0523), r57-0617, r57-0713; board lines.
+- Next: his approve: (the widened run) and cap: (1.9 B). Then his go (form 1 at the reset or form 2 before it). At the
+  run's end it writes closing/HAND-BACK.md and messages this session (run/TOP.md); on that message: brief step 7.
