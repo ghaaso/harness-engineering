@@ -382,3 +382,167 @@ Count: `node <scratchpad>/selfcount.mjs` (this session plus its helpers, as toke
 - 2026-11-23 16:08 UTC: the run's coordinator (local_981ddbec-3c90-4cd1-baed-7c7ec57c8ff3) sent the one message at 16:07:54 UTC: the run ended, closing/HAND-BACK.md written (about 40 leads); the message between sessions worked. Meter 25 % all models, 11 % Fable (reset 2026-11-30 12:00 UTC). A judge helper started (analyse, Opus; expected 10 M, limit 16 M): research-tree/build/JUDGE-HANDBACK.md and a new page. My window 313 K: I relay only; a successor top session takes the next round.
 - 16:25 UTC: the hand-back judged (research-tree/build/JUDGE-HANDBACK.md; page https://claude.ai/artifact/4xJK7qBdthigouzz5BAW2S, looked at in the pane at 1870 px): the run used 807.6 M of about 1,515 M expected in about 4.75 h; graphs widest (20 of 24 keys, 21 of 58 leads); 14 keys over the part bounds unread; test first: seven replays over records on disk (37.6 M). Records r57-0185 to r57-0188, r57-0328, r57-0426, r57-0527 to r57-0529 (NEXT). My window about 335 K: a fresh top session takes the next round from r57-0529 and JUDGE-HANDBACK.md.
 - 16:39 UTC: he approved the seven replays (cap 87 M) and the 14 unread keys (4 parts, cap 600 M); the 24 GB card not known yet. Records and NEXT as printed by next-rec.mjs; brief for top session 7 (Fable): research-tree/build/briefs/TOP7-TESTS-AND-KEYS.md. Top session 6 ends here (window about 345 K).
+
+## Top session 7 (Fable, kind orchestrate-deep), progress, 2026-11-23
+Brief: `research-tree/build/briefs/TOP7-TESTS-AND-KEYS.md` (from top session 6). The one writer of the library and this
+file from now on. Two caps: the seven replays 87 M (r57-0053), the 14 unread keys 600 M (r57-0054).
+- 16:46 UTC: meter 25 % all models, 11 % Fable (reset 2026-11-30 12:00 UTC), read twice, the second time before the
+  fan-out. At the caps both jobs are 687 M, about 11.1 points at 62 M a point; with his own use protected at 0.21
+  points an hour to the reset (about 34 points) the week ends near 70 %: fits. My window 170 K after orientation.
+- Briefs written: `briefs/TOP7-REPLAYS.md` (rules, scoring first, the seven units; expected 4.7 M and limit 10 M each,
+  replay-L6 9.4 M and 20 M; limits sum to 80 M, 7 M left for my share under the 87 M cap) and
+  `briefs/TOP7-WAVE2-PREP.md` (build-invariant, Opus, expected 10 M, limit 16 M: the four parts' units, briefs, limits
+  from the measured parts, the gate, `RUN:run/WAVE2.md` for me; no part starts in the preparation).
+- Started together (r57-0006): seven replay helpers (analyse, Opus; results in `research-tree/build/replays/<unit>/`)
+  and the wave's preparation. Width: helpers run inside this session's process, the scans are light on the processor,
+  the token window fits, ready work is 8 (r57-0414): 8 at once.
+- Next: at each replay's return note its line here; when the preparation returns read `RUN:run/WAVE2.md`, read the
+  meter, run the gate, start the four parts together; at their return the closing unit; then judge, records, his page.
+- 16:52 UTC: replay-L2 DONE (2.50 M, 25 calls; `replays/replay-L2/RESULT.md`): over 1,071 transcripts and 68,556 calls the
+  prefix is a median 58,045 tokens (helpers 55-58 K, FixFlow helpers 72 K, sessions 78-91 K); its fresh part is 61.2 M of
+  472.8 M fresh tokens, 12.9 % (10.2-19.5 % by project), 5.5 points of it rewrites after a lapse or compaction (L24's
+  lever); tool schemas about 70 % of a helper's prefix; the skill listing (6-10 K) unused in 996 of 1,029 files; ceiling
+  on the meter 15.6 % for a radical lean prefix, 1.9 % for dropping the unused listings. Not tested: schema sizes per
+  family (fitted, about 20 % off), quality and turns under a lean prefix. replay-L6 returned early at 16:50 with no
+  reviewer run (2.62 M) and was resumed with SendMessage (a helper orchestrator must poll, r57-0157).
+- 16:53 UTC: replay-L38 DONE (about 3.2 M with three judges; `replays/replay-L38/RESULT.md`): no conclusion worked out
+  again in 57 judged pairs of a later helper against its closest earlier report or record (18 continuations, 10
+  independent checks by design, 29 different questions), from 949 helpers in four groups; 95 % upper bound about 100 of
+  949 helpers (10.5 %); 486 library lookups already in transcripts. A null for one form: main sessions (65-83 % of
+  tokens in FixFlow and clinic), his typed questions, pairs below cosine 0.3 and hand-overs as records were not tested;
+  premise coverage and file against fact invalidation could not be scored (nothing returned to score on).
+- 16:55 UTC: replay-L24 DONE (2.96 M, 28 calls; `replays/replay-L24/RESULT.md`): cache lapses rewrote 151.5 M of 927.4 M
+  fresh tokens, 16.3 % (0.62 % of all tokens), in 703 of 121,284 calls over 4,438 transcripts (FixFlow 19.8 %, clinic
+  24.1 %, harness 8.3 %, run 6.1 %; helpers 87.9 M, sessions 63.6 M); prefix breaks 21 calls, 2.6 M, 0.28 % (the scoring
+  was amended, old line kept: 112 of 133 first-rule breaks were lapses by request age); helpers waiting 5-10 min are
+  46.2 M; a keep-alive nets 7.9-8.1 % on the meter at a 2 h cap; a 1-hour cache for helpers loses unless its write
+  weighs under 1.14; siblings share the prefix in 2,672 of 3,053 starts; false alarms 0 of 1,892. Not tested: whether
+  the app allows a keep-alive, the 1-hour write weight, per-model weights. To reconcile when judging: L2 counts 472.8 M
+  fresh over 1,071 transcripts, L24 927.4 M over 4,438 (different sets). replay-L8 paused on its own background work.
+- 16:55 UTC: replay-L11 DONE (4.07 M, 36 calls; `replays/replay-L11/RESULT.md`): "done" claims that reached a later gate or
+  refuter were contradicted in 79 of 94 clinic gate reviews (84 %, 25 at P1), 7 of 20 unit results of this
+  repository's build (35 %), 6 of 50 FixFlow PR reviews (12 %); the narrow rule (accept done only with a passing check
+  after the last edit) would have caught about 1 of 92 contradicted code claims (all 7 build units had passing lane
+  tests; 78 of 79 clinic contradictions were found by reading) and held 84 of 183 code-helper DONE reports (46 %),
+  about 6.6 h of check time; what caught contradictions here was a stronger check (full suite at the merged head,
+  guard mutations, a model check, probes on copies). Not tested: whether any check could show the clinic's defects,
+  the reviewers' own false findings, 11 helpers that said DONE after a red last check (found by pattern, not read),
+  FixFlow's CI runs as checks, exact check plus reconstruction.
+- 16:57 UTC: replay-L5 DONE (3.6 M, 34 calls; `replays/replay-L5/RESULT.md`; no model run; 3,339 windows, about 22.17 B
+  context tokens): 1,855 of 35,569 content reads (5.2 %) went stale while held, 6.42 % of read tokens carried, 1.24 % of
+  context; 88 % by the window's own edit; stale reads the window could not see 217, 0.15 % of context (harness 0.80 %,
+  run 0.00 %, FixFlow 0.94 %, clinic 0.52 % of read tokens carried); 24 of 15,386 own edits were made on such a read;
+  dropping stale reads at the edit saves 271 M cache reads and rewrites 77 M, a net loss on the meter in every project
+  (-93 M fresh-token equivalents at 1.25x, -151 M at 2x); L4 re-fetch under 0.01 % of context against S14's 0.5-1.5 %;
+  reads not followed by an own edit of the file 89 % of read tokens carried (not the source's 73.4 % measure). Not
+  tested: edits through the shell or the owner's editor (unseen staleness undercounted), symbol-level ranges, any
+  quality effect, a notice-only form that does not rewrite the cache.
+- 17:00 UTC: replay-L6 LIMIT at about 19.3 M of 20 M with 10 of 74 reviewer calls run and no case in both arms: no result
+  on L6. Its plan gave case building no cost: three Sonnet builders 12.40 M, its window about 5.1 M, ten Opus reviewers
+  1.79 M (about 180 K each, mostly fixed prefix). Built and reusable: 50 clinic cases (25 overstated, 25 accurate), 37
+  with a second version on record, blinded case files for both arms, the key, the reviewer brief, tally.mjs. Decided
+  (r57-0038): the 64 remaining reviewer calls run as unit replay-L6b (orchestrate, Opus; expected 13 M, limit 16 M; no
+  rebuild, the scoring unchanged), inside the 87 M cap (at the limits: 35.6 done + L8 10 + 16 + my share about 5 =
+  about 67 M). Meter before it: 27 % all models, 11 % Fable.
+- Same time: the owner sent a note on procedural creep (reviews of reviews, specs for follow-ups nobody asked for, hours
+  with nothing delivered). Held to: no review round on the replays, none of the helpers' proposed follow-up
+  measurements started (they are reported, not run), the four parts start the moment the preparation returns.
+- 17:01 UTC: the wave's preparation DONE (9.09 M; run folder commit 87581cc; 59 of 59 tests): units f2e (4 graph keys,
+  graph grounding first; 51.1 / 76.8 M), f3c (5 encoder keys; 56.8 / 84.0), f3d (1 encoder key; 32.3 / 56.9), f4c (4
+  memory keys; 51.1 / 76.8), closing2 (35.8 / 53.6), my share 7.6 / 13.0; at the limits 377.1 M of 600, expected about
+  244 M (each wave-1 part rescaled to k keys; median and Q3 + 1.5 IQR of the 12). The sheet: `RUN:run/WAVE2.md`. Meter
+  27 % / 11 %; gate START three times; f2e, f3c, f4c started, f3d at the first return (three parts at once, the run's
+  rule). No blind review of the preparation: its check was the tests, the gate lines and the brief diff. Safety timer set.
+- 17:05 UTC: f4c returned HELD at step 1 (0.68 M): every reader start refused with "Concurrent subagent limit reached";
+  the app allows 20 helpers at once in one session and helpers of helpers count. My mistake: the sheet said to start
+  no part while the replays ran, I found no recorded limit and started three parts beside replay-L8 and replay-L6b
+  (16 reviewers a batch). Now: replay-L6b told to run 4 reviewers at once and to retry refused starts; f2e and f3c run
+  (6 each at their peak); f4c restarts (its one restart, RETURN.md moved first) when replay-L8 and replay-L6b are back
+  or a part returns, f3d after it. Cost: the wave ends up to about 35 min later; no work lost (f4c's 13 briefs are filled).
+- 17:12 UTC: replay-L6b DONE (about 14.2 M; the whole L6 replay about 33.7 M against 9.4 M expected; `replays/replay-L6/RESULT.md`):
+  all 74 verdicts in, 37 cases paired. One version: 4 of 17 overstated caught (23.5 %), 1 false alarm in 20 accurate.
+  Two versions: 2 of 17 (11.8 %), 3 false alarms in 20. Paired: on overstated B-only 0, A-only 2 (exact p 0.50); on
+  accurate B-only 2, A-only 0: not significant, both lean against two versions. The fixed rule: do not pilot L6; both
+  arms caught under a quarter, so reading the report is not the lever on S4 here. Not tested: reviewers with access
+  to code, tests or evidence; other projects; the 13 cases with no second version; about 20 cases a class is low power.
+  Then: meter 28 % / 12 %; f4c restarted (gate START); my window 234 K, coordinator2 6.51 M of its 13 M limit.
+- 17:44 UTC: f3c DONE (57.41 M of 84 M): five encoder keys read, refuted, folded; 89 claims (56 confirmed, 23 in part, 4
+  refuted, 6 unchecked), 20 lead rows; its answer: a learned model gains only where it adds a signal the baseline
+  lacks (a learned co-change ranker +4.3-10.2 % relative; untrained forms first); no source measures an encoder on an
+  agent's tokens. Meter 30 % / 12 %; gate START; f3d started (limit 56.9 M). Tokens: f2e 46.47 M, f4c 32.17 M,
+  coordinator2 8.92 M of 13 M (it will pass 13 M before the closing returns; the wave stands at 217 M of 600 M with
+  f3d counted, so the coordinator's share is extended to 20 M inside the cap, r57-0038). My window 244 K: the judging,
+  the records' draft and the page go to helpers that work from the files; state is in this file and RUN:run/STATE.md.
+  replay-L8 still out (it has paused on its own background work four times; 2.82 M-second run time, about 172 K window).
+- 17:53 UTC: replay-L8 LIMIT at 10.50 M of 10 M with every count finished (`replays/replay-L8/RESULT.md`): 0 diagnostics
+  lines after 30,336 Edit/Write calls in 4,443 transcripts (Claude Code's edit diagnostics never ran here); the
+  clinic's own ruff 0.13.3 and mypy 1.19.1 strict on 317 commit trees flagged 0 of the 10 located fix-made defects (0
+  of 9 defect-making commits); false flags 2 of 84 fix commits with no recorded defect, 7 of 256 overall; every
+  committed state had already passed the project's check, which runs the same tools. Not located: 5 of S2's 15 defects
+  (made and fixed inside one uncommitted round); shell (no shellcheck here); tsc (no S2 defect in TypeScript). By its
+  scoring L8 is not piloted on S2 in this project. Correction of the line above: replay-L8 ran about 47 min, not
+  "2.82 M-second".
+- All seven replays are back: helpers about 60.6 M (L2 2.50, L38 3.2, L24 2.96, L11 4.07, L5 3.6, L6 33.7, L8 10.6)
+  of the 87 M cap. Started one helper (analyse, Opus; expected 5 M, limit 9 M; no helpers of its own) to judge the seven
+  together and draft the records: `replays/JUDGE-REPLAYS.md`, `replays/records-draft.jsonl`. No refuter on it.
+- 17:55 UTC: f2e DONE (57.98 M of 76.8 M): the four graph keys (graph grounding against hallucination, incremental
+  GraphRAG, temporal code graphs, cross-repository graphs) read, refuted, folded; 111 claims (75 confirmed, 33 in part,
+  3 refuted); leads: dependency context plus a check of names, imports and signatures after generation; pinned-version
+  API documents retrieved on low confidence; graph token effects go both ways (measure net). Open: one paper behind a
+  bot check (Jigsaw-LightRAG, IOP 10.1088/3050-287X/ae4a3e, for the owner's sign-in), five not opened, no source
+  measures a bitemporal code graph on agent tokens; the fold proposes corrections to x09-0129 and x09-0303.
+  Running: f4c, f3d; the replays' judge. closing2 after both parts.
+- 17:59 UTC: the replays judged (3.60 M; `replays/JUDGE-REPLAYS.md`, 112 lines; `replays/records-draft.jsonl`, 40 records
+  without ids). Quality: L11's narrow gate, L8's ruff and mypy after each edit and L6's two-version reviewer all "do not
+  pilot", each a null for one form; every recorded defect was caught by a second party that had the code or ran a
+  stronger check: that form, with D1 Phase A, is next. Router: lapses 16.3 % of fresh, helpers waiting 5-10 min 46.2 M;
+  L25 moves ahead of L2's pilot (first the 1-hour write weight and whether helper waits stay under 270 s); L24's break
+  guard dropped; L2: the skill listing off (his word). Graph: L5, L4 not piloted; D2 Phase A stays next. Library: L38
+  0 returns in 57 pairs, one form, upper bound about 10 %. Found by the judge: replay-L2 and replay-L38 scanned only
+  subagents/*.jsonl and missed 3,048 workflow helpers (435.7 M fresh); on L24's denominator L2's prefix fresh share is
+  19.8 %, not 12.9 % (its 30.1 % re-read share and ceilings 15.6 % and 1.9 % are on the subset, not recomputed); L38's
+  main-session share about 44 % FixFlow and 74 % clinic, not 65-83 %; L2's 5.5 points lie inside L24's lapses (not
+  additive); L11's "1 of 92" counts contradictions an existing check showed; five figures have no raw output behind them.
+- Left for me after closing2: ids and append of the records (the 40 and the wave's), board lines, NEXT, the commit, the
+  page (a Sonnet build helper from JUDGE-REPLAYS.md section 5 and the wave's hand-back additions).
+- 18:05 UTC: f4c DONE on its restart (54.85 M of 76.8 M): the four memory keys (further memory systems, semantic caches,
+  self-hosted KV-cache reuse, neural memory); 101 claims (53 confirmed, 43 in part, 2 refuted, 3 unchecked), 12 leads,
+  the first: keep the provider's prompt cache warm across idle gaps (the same lever replay-L24 sized here at 16.3 % of
+  fresh tokens). Open: two sources with a public route untried; 22 records kept but not passed by the check (ids in its
+  check.md); readers committed their own files mid-run. Running: f3d. closing2 after it.
+- 18:18 UTC: f3d DONE (23.73 M of 56.9 M): the best training form of KG embeddings; 74 claims (45 confirmed, 18 in part,
+  1 refuted, 10 unchecked); its answer: the earlier embeddings test (E2) already used most of the best form and lacked
+  N3 at the published weight, rank above 512 and a selection that tells settings apart; leads: a rule-learner arm
+  (AnyBURL kind), then E2 again at the published N3 weight and rank 1000-2000; all fit 12 GB; none linked to sinks S14
+  or S15 yet. All four parts are back: f2e 58.21, f3c 57.76, f3d 24.04, f4c 55.30 = 195.3 M (expected 191.3 M);
+  coordinator2 12.53 M; with the preparation 9.09 M the wave stands at about 217 M of 600 M. Meter 31 % / 12 %; gate
+  START; closing2 started (limit 53.6 M). My window 265 K.
+- 18:51 UTC: closing2 DONE (36.19 M of 53.6 M); the wave ended at about 18:57 UTC. RUN:closing/HAND-BACK.md holds 17 new
+  leads L59-L75 (graph grounding first; L59 gated pinned-version API documents, replicated), 14 changed blocks (L34:
+  SweRank's table had been read one row off; L13 up to independent; L12 down to mixed; L65 no longer waits on D2's
+  gate), negatives N16-N23, a new test D4 (the ranker test with each family's best form, fits 12 GB, 18.8 M, a
+  judgment), "Not covered, after wave 2" (all 14 keys read), "Open after wave 2". Intake: 169 records sampled, 153 hold,
+  15 partly, 1 fails; the refuter checked 94 claims: 66 hold, 9 wrong, 17 overstated, 2 uncited, all folded. Wave 2:
+  f2e 58.21, f3c 57.76, f3d 24.04, f4c 55.30, closing2 36.19, coordinator2 14.99, preparation 9.09 = 255.6 M of the
+  600 M cap (expected about 244 M); the run's total 1,055.74 M. Replays: helpers 60.6 M and the judgment 3.6 M of the
+  87 M cap (this session's own tokens are counted once, as coordinator2). Timer deleted; run folder commit 118a872.
+  The replays' 40 records are in `library/journal/2026-11-23/t7.jsonl` (prefix t7: the r57 fact range has 10 ids left).
+  Running: the page helper (build, Sonnet; `research-tree/build/page/top7-page.html`). Left: publish, the wave's
+  records and NEXT, the board lines, the commit.
+- 18:56 UTC: the page is published: https://claude.ai/artifact/DRsMBPmYnn6HGLyJjbvLTH (source
+  `research-tree/build/page/top7-page.html`, built by a Sonnet helper, read in full by me, one line corrected; looked at
+  in the pane at 1870 px: no element wider than the page, no table scrolling sideways; only the top was looked at as a
+  picture). Records: the wave's and the round's facts t7-0129, t7-0130, the pointer t7-0700, NEXT r57-0531 (replaces
+  r57-0530). MISTAKE (t7-0607): my id script lost a backslash in a heredoc and appended three records under ids in use
+  (a second t7-0100, a second t7-0101, a second r57-0500); they are void and restated under the ids above; nothing was
+  removed from the journal. Not done: the commit in this repository (it waits for his word; the commit check may refuse
+  the duplicate ids, and removing the three void lines needs his word too, rule 1). Top session 7 ends here; a
+  successor reads the board, this section and r57-0531.
+- 18:58 UTC: he answered "Yes, remove and commit" (r57-0055). The three void lines are removed (t7.jsonl lines 41 and 42,
+  r57.jsonl line 14; each checked by id and opening words first; no id is used twice now; t7-0800). Committed on this
+  branch: the library (INDEX.md, r57.jsonl, t7.jsonl), this file, the two briefs, the page's source and the replays'
+  folder without three intermediates over 1 MB that their scripts rebuild from the transcripts (replay-L38/helpers.json
+  7.5 MB and edits.json 1.6 MB, replay-L11/claims.jsonl 1.5 MB). Not pushed.
+- 18:59 UTC: the commit check refused the first commit: "note" out of field order in r57-0531 and t7-0130. Both lines
+  (mine, of today, uncommitted) had the field moved to its place, values confirmed unchanged by script (t7-0801); told
+  to the owner. Then committed.
