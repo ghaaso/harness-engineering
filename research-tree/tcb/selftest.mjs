@@ -59,9 +59,9 @@ const MAX_JOBS = 2;
 const CLOSE_GRACE_MS = 3000;
 
 const TASK_ROLES = ['child', 'child-reviewing', 'fresh-reviewer', 'control', 'stpa', 'fmea', 'mapper', 'canary'];
-const PROFILE_ROLES = [...TASK_ROLES, 'coordinator', 'reader', 'checker'];
+const PROFILE_ROLES = [...TASK_ROLES, 'coordinator', 'reader', 'checker', 'scorer'];
 const PROFILE_KEYS = ['role', 'tools_allow', 'tools_deny', 'read_prefixes', 'write_prefixes', 'agent_types', 'fetch', 'bash'];
-const AGENT_TOOLS = { reader: ['WebSearch', 'WebFetch'], checker: ['Read'] };
+const AGENT_TOOLS = { reader: ['WebSearch', 'WebFetch'], checker: ['Read'], scorer: ['Read'] };
 const USER_DENY_DIRS = ['tcb', 'run', 'store', 'sealed', 'review-in', 'wt/*/.claude'];
 
 // Contract defaults, used only when thresholds.json lacks the name (param-missing).

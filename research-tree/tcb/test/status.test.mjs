@@ -1504,9 +1504,9 @@ test('PA-1 status carries each row\'s route from its tier and each helper type\'
   await withRoot({}, async (ctx) => {
     const q = ['f1-a-01'];
     setTasks(ctx, [
-      row('f1-admitted', { step: 'admitted', question_ids: q, tier: 'orchestrate' }),
-      row('f1-plan', { state: 'planned', step: 'none', epoch: 0, question_ids: q, tier: 'test' }),
-      row('f1-odd', { state: 'planned', step: 'none', epoch: 0, question_ids: q, tier: 'sonnet' }),
+      { ...row('f1-admitted', { step: 'admitted', question_ids: q }), tier: 'orchestrate' },
+      { ...row('f1-plan', { state: 'planned', step: 'none', epoch: 0, question_ids: q }), tier: 'test' },
+      { ...row('f1-odd', { state: 'planned', step: 'none', epoch: 0, question_ids: q }), tier: 'sonnet' },
     ]);
     assertLine(build(ctx), 0);
     let st = statusJson(ctx);
