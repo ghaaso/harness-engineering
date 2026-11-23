@@ -434,6 +434,7 @@ async function computeStatus(root, th, ce, pre, facts, table, anomalies) {
   if (aNow.corrupt) anomalies.push({ code: 'state-corrupt', detail: { file: 'alarm.json' } });
 
   const tr = pre.tr;
+  const routes = lib.tierRoutes(root); // FX-PILOT unit PA: a row's tier -> {kind, model}
   const spentOf = (task, e) => pre.spend.get(`${task}|${e}`)?.total ?? 0;
   const windowOf = (task, e) => pre.spend.get(`${task}|${e}`)?.window ?? null;
 
@@ -499,6 +500,7 @@ async function computeStatus(root, th, ce, pre, facts, table, anomalies) {
       hard: Math.floor(hardFrac * eTask),
       window: e >= 1 ? windowOf(row.task, e) : null,
       next: nextOf(root, row, { blocked, zombieOver, lines, plan }),
+      route: lib.routeOf(routes, row.tier),
     });
   }
 
@@ -589,6 +591,7 @@ async function computeStatus(root, th, ce, pre, facts, table, anomalies) {
     halted: flags.halted === true,
     draining: flags.draining === true,
     tasks,
+    helper_routes: helperRoutes(routes),
     watcher: {
       alive: wAlive,
       ce: watcher ? watcher.ce ?? null : null,
@@ -600,6 +603,15 @@ async function computeStatus(root, th, ce, pre, facts, table, anomalies) {
     not_run: notRun,
     anomalies: anomaliesOut,
   };
+}
+
+// FX-PILOT unit PA: the route of each helper type of the table's `agents` (the coordinator's checker and
+// scorer starts take their kind and model from here); {} without a table.
+function helperRoutes(routes) {
+  const out = {};
+  const a = routes && routes.agents && typeof routes.agents === 'object' ? routes.agents : {};
+  for (const type of Object.keys(a).sort()) out[type] = lib.agentRouteOf(routes, type);
+  return out;
 }
 
 // The row's next action (spec Steps, "first match"): FX-PLAN's lib.planAct over lib.planFacts, the

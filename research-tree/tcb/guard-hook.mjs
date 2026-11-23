@@ -977,7 +977,26 @@ function stepRowAtAdmitted(pass) {
   if (!row || row.epoch !== target.epoch || row.state !== 'active' || row.step !== 'admitted') {
     throw new Deny('wrong-step', row ? `${target.task} row epoch ${row.epoch} state ${row.state} step ${row.step}, start at e${target.epoch}` : `no row ${target.task}`);
   }
+  const why = startRouteProblem(pass, row);
+  if (why) throw new Deny('bad-route', why);
   pass.start = target;
+}
+
+// FX-PILOT unit PA: the start carries the row's route, read before the start record is written, so a
+// start the tier hook beside this one would refuse leaves no start.json (the two hooks run side by
+// side). The title begins with the kind of the row's tier and a colon, and the model is that kind's
+// model in tcb/tier-routes.json. Without a readable table nothing is checked here: the tier hook then
+// refuses every start itself (its routes file cannot be read).
+function startRouteProblem(pass, row) {
+  const routes = lib.tierRoutes(pass.root, pass.io.readJson);
+  if (!routes) return null;
+  const route = lib.routeOf(routes, row.tier);
+  if (!route) return `row ${row.task} tier ${oneLine(JSON.stringify(row.tier ?? null))} is no kind of tcb/tier-routes.json`;
+  const inp = pass.toolInput;
+  const m = /^([a-z-]+)\s*:/i.exec(String(inp.title ?? '').trim());
+  if (!m || m[1].toLowerCase() !== route.kind) return `title must begin with "${route.kind}:" (row ${row.task})`;
+  if (lib.modelFamily(inp.model) !== route.model) return `model must be ${route.model} (row ${row.task}, kind ${route.kind}), not ${oneLine(JSON.stringify(inp.model ?? null))}`;
+  return null;
 }
 
 function startTarget(pass) {

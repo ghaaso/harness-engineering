@@ -599,6 +599,43 @@ export function thresholds(root) {
   };
 }
 
+// FX-PILOT unit PA (PILOT-PLAN s4 unit 1): the one route table, `tcb/tier-routes.json`, a copy of the
+// repository's `.claude/hooks/tier-routes.json` that the tier hook beside it (`tcb/tier-hook.mjs`) reads,
+// plus `agents` (helper type -> kind). A row's `tier` names a kind; its model is the kind's first model.
+// The model reaches the coordinator through status (a row's `route`, `helper_routes`) and a child's
+// readers through the manifest (`agents[].kind`, `.model`), never through a brief.
+const MODEL_FAMILIES = ['haiku', 'sonnet', 'opus', 'fable', 'mythos'];
+
+/** tierRoutes(root, readJsonFn?) -> the table, or null when it is absent or not an object with `kinds`. */
+export function tierRoutes(root, readJsonFn = readJson) {
+  try {
+    const v = readJsonFn(path.join(path.resolve(root), 'tcb', 'tier-routes.json'));
+    return v && typeof v === 'object' && !Array.isArray(v) && v.kinds && typeof v.kinds === 'object' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** routeOf(routes, kind) -> {kind, model} for a kind with a model list, else null. */
+export function routeOf(routes, kind) {
+  if (!routes || typeof kind !== 'string' || !Object.prototype.hasOwnProperty.call(routes.kinds, kind)) return null;
+  const k = routes.kinds[kind];
+  const model = k && Array.isArray(k.models) && typeof k.models[0] === 'string' && k.models[0] ? k.models[0] : null;
+  return model ? { kind, model } : null;
+}
+
+/** agentRouteOf(routes, type) -> the route of a helper type through `agents`, else null. */
+export function agentRouteOf(routes, type) {
+  const a = routes && routes.agents && typeof routes.agents === 'object' ? routes.agents : null;
+  return a && typeof type === 'string' && Object.prototype.hasOwnProperty.call(a, type) ? routeOf(routes, a[type]) : null;
+}
+
+/** modelFamily(model) -> the family the tier hook reads from a model name ('' when none). */
+export function modelFamily(model) {
+  const m = typeof model === 'string' ? model.toLowerCase() : '';
+  return MODEL_FAMILIES.find((f) => m.includes(f)) || m;
+}
+
 /** Append one `incident` line (R58). The tamper form: cls 'refusal', detail {tamper: true, script, code}. */
 export function recordIncident(root, handle, { ctx, ce, cls, detail, task, epoch, now } = {}) {
   return appendLedger(root, handle, {

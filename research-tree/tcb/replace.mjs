@@ -862,13 +862,15 @@ function buildAttempt(env, info) {
   lib.writeAtomic(settingsPath, settings);
   const settingsSha = lib.sha256hex(settings);
   const agents = [];
+  const routes = lib.tierRoutes(root); // FX-PILOT unit PA: each helper's kind and model, for the session's Agent starts
   for (const type of agentTypes) {
     if (typeof type !== 'string' || !TYPE_RE.test(type)) throw tcbError('missing', 2, { what: 'agent', type: type ?? null });
     const bytes = readBytesOrMissing(path.join(tcb, 'agents', `${type}.md`), 'agent');
     const dst = path.join(claudeDir, 'agents', `${type}.md`);
     guardUnder(dst, dir);
     lib.writeAtomic(dst, bytes);
-    agents.push({ type, sha256: lib.sha256hex(bytes) });
+    const route = lib.agentRouteOf(routes, type);
+    agents.push(route ? { type, sha256: lib.sha256hex(bytes), kind: route.kind, model: route.model } : { type, sha256: lib.sha256hex(bytes) });
   }
   agents.sort((a, b) => (a.type < b.type ? -1 : a.type > b.type ? 1 : 0));
 
