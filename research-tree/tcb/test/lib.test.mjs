@@ -3118,8 +3118,11 @@ dt('T98 fakeTranscript output parses into exactly the calls and tool uses given'
 test('S0.5 round-3 skeleton: threshold keys marked guesses, stub signatures, not-built, formats', () => {
   const th = JSON.parse(fs.readFileSync(path.join(HERE, '..', 'thresholds.json'), 'utf8').replace(/^\uFEFF/, ''));
   const keys = ['H_nostart', 'start_lease_ticks', 'start_lease_ms', 'stop_verify_ms', 'ensure_query_ms', 'release_ms',
-    'arm_confirm_ms', 'alarm_slots', 'realert_runs', 'stuck_raises', 'idle_ticks', 'attempt_max_ticks',
+    'arm_confirm_ms', 'alarm_slots', 'realert_runs', 'stuck_raises', 'idle_ticks',
     'tool_slack_ticks', 'bg_wait_ticks', 'model_ticks', 'watcher_lock_try_ms', 'busy_alert_ticks'];
+  // FX-PILOT unit PC: attempt_max_ticks is computed from round 3's sessions (r57-0174), no longer a guess
+  assert.equal(th.params.attempt_max_ticks.source, 'measured', 'attempt_max_ticks is computed');
+  assert.ok(Number.isInteger(th.params.attempt_max_ticks.value) && th.params.attempt_max_ticks.value > 0, 'attempt_max_ticks has a positive integer value');
   for (const k of keys) {
     const p = th.params[k];
     assert.ok(p, `${k} exists`);
