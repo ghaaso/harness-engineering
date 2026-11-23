@@ -1308,6 +1308,7 @@ test('T20 start of a fresh-review task builds review-in/<task>/ once and copies 
   t.after(w.cleanup);
   const { root } = w;
   world(root, { protocolExtra: { fixed_files: ['notes/plan.md', 'notes/other.md'] } });
+  setThr(root, { f5_given: false });
   put(root, 'plan/our-work/notes/plan.md', 'ORIGINAL plan text\n');
   put(root, 'plan/our-work/notes/other.md', 'ORIGINAL other text\n');
   put(root, `sealed/plants/${REV}/notes/plan.md`, 'PLANTED plan text\n');

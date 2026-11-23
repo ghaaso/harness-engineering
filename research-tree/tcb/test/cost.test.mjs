@@ -925,7 +925,7 @@ test('TH1 thresholds.json: every param has value, unit, source, gate; the two ac
   assert.ok(!('audit_coord_turn_factor' in t.params));
   assert.deepEqual(t.params.weights.value, { read: 0.05, write: 1.25, out: 5 });
   const nulls = Object.entries(t.params).filter(([, p]) => p.value === null).map(([n]) => n).sort();
-  assert.deepEqual(nulls, ['B_tokens', 'W_star_child', 'coverage_floor', 'lean_baseline_tokens', 'lean_tolerance_tokens', 'plants_t', 'r_tokens', 'unverifiable_share_max']);
+  assert.deepEqual(nulls, ['W_star_child', 'coverage_floor', 'lean_baseline_tokens', 'lean_tolerance_tokens', 'plants_t', 'unverifiable_share_max']);
   const w = runCost(['compute']).json.result.coordinator.W_star;
   assert.equal(t.params.W_star_coord.value, Math.round(w / 100) * 100);
 });
