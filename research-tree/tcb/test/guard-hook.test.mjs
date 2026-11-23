@@ -496,9 +496,12 @@ function casesT6(w) {
     // PB2: Task is not in tools_deny (the app reads a deny of Task as a deny of all of Agent); the hook still refuses it
     list.push({ n: `${role} Task tool`, role, tool: 'Task', input: { subagent_type: 'reader', prompt: 'x' }, expect: 'tool-not-allowed' });
   }
-  for (const role of ['fresh-reviewer', 'control', 'stpa', 'fmea', 'mapper']) {
+  for (const role of ['fresh-reviewer', 'stpa', 'fmea', 'mapper']) {
     list.push({ n: `${role} Agent reader (Agent not in its tools)`, role, tool: 'Agent', input: { subagent_type: 'reader', prompt: 'x' }, expect: 'tool-not-allowed' });
   }
+  // FX-PILOT unit PC: the single-session arm (role control) starts no helper of any type
+  list.push({ n: 'control Agent reader (Agent denied: one session, no fan-out)', role: 'control', tool: 'Agent', input: { subagent_type: 'reader', prompt: 'x' }, expect: 'tool-denied' });
+  list.push({ n: 'control Task tool', role: 'control', tool: 'Task', input: { subagent_type: 'reader', prompt: 'x' }, expect: 'tool-denied' });
   list.push({ n: 'coordinator Agent checker', role: 'coordinator', tool: 'Agent', input: { subagent_type: 'checker', prompt: 'x' }, expect: 0 });
   list.push({ n: 'coordinator Agent scorer (PB)', role: 'coordinator', tool: 'Agent', input: { subagent_type: 'scorer', prompt: 'x' }, expect: 0 });
   list.push({ n: 'coordinator Task tool (PB2)', role: 'coordinator', tool: 'Task', input: { subagent_type: 'scorer', prompt: 'x' }, expect: 'tool-not-allowed' });
@@ -566,7 +569,11 @@ function casesT9(w) {
     wf('child without must_read.json', 'https://example.test/paper-a', 'fetch-not-witnessed', { task: 'f1-nomr' }),
     wf('child with an unparseable must_read.json', 'https://example.test/paper-a', 'fetch-not-witnessed', { task: 'f1-badmr' }),
     wf('fresh-reviewer fetches', 'https://example.test/paper-a', ['tool-not-allowed', 'fetch-none'], { role: 'fresh-reviewer' }),
-    wf('control fetches', 'https://example.test/paper-a', ['tool-not-allowed', 'fetch-none'], { role: 'control' }),
+    // FX-PILOT unit PC: the single-session arm has the readers' search and fetch (fetch any)
+    wf('control fetches a witnessed URL', 'https://example.test/paper-a', 0, { role: 'control' }),
+    wf('control fetches a URL that is not listed and not stored', 'https://example.test/other', 0, { role: 'control' }),
+    { n: 'control WebSearch', role: 'control', tool: 'WebSearch', input: { query: 'q' }, expect: 0 },
+    { n: 'control Write outside staging', role: 'control', tool: 'Write', input: { file_path: path.join(w.A('control'), 'in', 'x'), content: 'x' }, expect: 'write-outside-role' },
     wf('coordinator fetches', 'https://example.test/paper-a', ['tool-not-allowed', 'fetch-none'], { role: 'coordinator' }),
   ];
 }
@@ -737,7 +744,7 @@ test('T9 witnessed fetch: must_read.json plus a stored text snapshot; the hook d
   });
   // fetch none and fetch any, through profiles edited in a copy
   await withWorld({}, async (w) => {
-    editProfile(w, 'control', (p) => { p.tools_allow = [...p.tools_allow, 'WebFetch']; p.fetch = 'none'; });
+    editProfile(w, 'control', (p) => { p.tools_allow = [...new Set([...p.tools_allow, 'WebFetch'])]; p.fetch = 'none'; });
     editProfile(w, 'child-reviewing', (p) => { p.fetch = 'any'; });
     const f = await runCases(w, [
       { n: 'fetch none profile', role: 'control', tool: 'WebFetch', input: { url: 'https://example.test/paper-a', prompt: 'p' }, expect: 'fetch-none' },
@@ -1433,6 +1440,8 @@ test('G5 the Post mode: archived or already archived is stopped, not found is no
 // ---------------------------------------------------------------------------------------------
 const CHILDLIKE = { tools_allow: ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Agent', 'WebFetch', 'ToolSearch'], read_prefixes: ['{attempt}/'], write_prefixes: ['{attempt}/staging/'], agent_types: ['reader'], fetch: 'witnessed', bash: 'none' };
 const FRESHLIKE = { tools_allow: ['Read', 'Glob', 'Grep', 'Write'], read_prefixes: ['{attempt}/'], write_prefixes: ['{attempt}/staging/'], agent_types: [], fetch: 'none', bash: 'none' };
+// FX-PILOT unit PC: the single-session arm S1, S2 (role control): the readers' search and fetch, no helpers
+const SOLO = { tools_allow: ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'WebSearch', 'WebFetch', 'ToolSearch'], read_prefixes: ['{attempt}/'], write_prefixes: ['{attempt}/staging/'], agent_types: [], fetch: 'any', bash: 'none' };
 const COORD = {
   tools_allow: ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Agent', 'Bash', 'PowerShell', 'ToolSearch'],
   read_prefixes: ['{root}/run/status.json', '{root}/views/', '{root}/store/objects/x_', '{root}/completeness/gate.json', '{root}/plan/', '{root}/tcb/briefs/', '{root}/tcb/README.md'],
@@ -1448,7 +1457,7 @@ const EXPECT = {
   'child-reviewing': CHILDLIKE,
   canary: CHILDLIKE,
   'fresh-reviewer': FRESHLIKE,
-  control: FRESHLIKE,
+  control: SOLO,
   stpa: FRESHLIKE,
   fmea: FRESHLIKE,
   mapper: FRESHLIKE,
@@ -1517,6 +1526,7 @@ test('T14 shipped profiles, settings and agent files agree with each other and w
     if (role === 'reader') deny = deny.filter((t) => t !== 'WebSearch');
     // PB2: a role that starts helpers does not deny Task (the app reads it as a deny of the whole Agent tool)
     if (e.agent_types.length) deny = deny.filter((t) => t !== 'Task');
+    if (role === 'control') deny = [...deny.filter((t) => t !== 'WebSearch'), 'Agent'];
     if (JSON.stringify(sorted(p.tools_deny)) !== JSON.stringify(sorted(deny))) problems.push(`${role}: tools_deny ${JSON.stringify(p.tools_deny)}, want ${JSON.stringify(deny)}`);
     const both = p.tools_allow.filter((t) => matchTool(t, p.tools_deny));
     if (both.length) problems.push(`${role}: allowed and denied: ${both}`);

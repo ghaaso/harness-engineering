@@ -131,8 +131,13 @@ const SCRIPT = path.join(HERE, '..', 'stop.mjs');
 
 // ---------------------------------------------------------------- support
 const NOW = '2026-11-17T10:00:00.000Z';
-const SID1 = '11111111-1111-4111-8111-111111111111';
-const SID2 = '22222222-2222-4222-8222-222222222222';
+// FX-PILOT unit PC (r57-0521 item 2): verify reads the real process list, and a process of another test file that
+// names a fixed id on its command line (a script started with --session 1111...) was read as a survivor under load
+// (FX-CLOSE T1 (c)). The ids are this run's own: a random tail, with the first digit kept so their order is fixed.
+const RUN_HEX = crypto.randomBytes(16).toString('hex');
+const ownSid = (d) => `${d.repeat(8)}-${RUN_HEX.slice(0, 4)}-4${RUN_HEX.slice(4, 7)}-8${RUN_HEX.slice(7, 10)}-${RUN_HEX.slice(10, 22)}`;
+const SID1 = ownSid('1');
+const SID2 = ownSid('2');
 const T = 'f1-research';
 const SLUG = { 0: 'ok', 1: 'fail', 2: 'not-run', 3: 'tamper', 5: 'ready-wins', 6: 'deferred', 64: 'stale-ce', 65: 'stale-epoch', 66: 'usage', 67: 'table-corrupt', 70: 'internal', 75: 'lock-busy' };
 const M0 = 'm_' + '0'.repeat(16);
@@ -791,7 +796,7 @@ test('T15 both modes: stale --ce -> 64, --dry-run writes nothing, corrupt tasks.
 });
 
 // ================================================================ FX-CLOSE (FIX-fence section 4, rev 4 H3, rev 5 point 1)
-const SID3 = '33333333-3333-4333-8333-333333333333';
+const SID3 = ownSid('3');
 const LATER = (ms) => new Date(Date.parse(NOW) + ms).toISOString();
 const folderT = (root, sid) => fakeT(root, sid, folderAbs(root, T, 1), [u(100, 0, 0, 10)], `${lib.projectDirName(folderAbs(root, T, 1))}/${sid}.jsonl`);
 const claimAt = (root, v) => putJ(root, `wt/${T}-e1/claim.json`, v);
