@@ -1761,3 +1761,34 @@ test('FX-W1 allow list: production forms allowed, test seams refused for every s
   }
   assert.deepEqual([...new Set(missing)], []);
 });
+
+// FX-PILOT unit PA (PILOT-PLAN s4 unit 1): with tcb/tier-routes.json in place the start carries the row's
+// route: the title begins with the kind of the row's tier, the model is that kind's model; otherwise
+// bad-route with no start.json written (the tier hook beside this one would refuse the same start, and
+// the two run side by side). A tier that is no kind is bad-route.
+test('PA-3 the start tool with a route table: the title\'s kind and the model must be the row\'s route, else bad-route with nothing written', async () => {
+  await withWorld({}, async (w) => {
+    fs.copyFileSync(path.join(TCB, 'tier-routes.json'), w.P('tcb', 'tier-routes.json'));
+    const table = cgRead(w.P('run', 'tasks.json'));
+    table.tasks.push(row('child', { task: 'f1-start', step: 'admitted', tier: 'orchestrate' }));
+    table.tasks.push(row('child', { task: 'f1-odd', step: 'admitted', tier: 'sonnet' }));
+    writeTable(w.root, table.tasks, 2);
+    const a = mkAttempt(w.root, 'f1-start', 1);
+    const b = mkAttempt(w.root, 'f1-odd', 1);
+    fs.writeFileSync(w.P('run', 'watcher.json'), JSON.stringify({ schema_version: 1, ce: 1, ticks_total: 7 }));
+    fs.writeFileSync(w.P('run', 'turn.json'), JSON.stringify(armedTurn()));
+    const ok = { cwd: a, use_worktree: false, prompt: 'p', title: 'orchestrate: f1-start', model: 'opus' };
+    const st = (n, input, expect, opt = {}) => cgCall(w, n, T_START, input, expect, opt);
+    assert.deepEqual(await runCases(w, [
+      st('no model', { ...ok, model: undefined }, 'bad-route'),
+      st('a cheaper model', { ...ok, model: 'sonnet' }, 'bad-route'),
+      st('the caller\'s model', { ...ok, model: 'fable' }, 'bad-route'),
+      st('no kind in the title', { ...ok, title: 'f1-start' }, 'bad-route'),
+      st('another kind in the title', { ...ok, title: 'analyse: f1-start' }, 'bad-route'),
+      st('a tier that is no kind', { ...ok, cwd: b, title: 'read: f1-odd', model: 'sonnet' }, 'bad-route'),
+    ]), []);
+    for (const d of [a, b]) assert.equal(fs.existsSync(path.join(d, 'start.json')), false, 'nothing written on a deny');
+    assert.deepEqual(await runCases(w, [st('the start on its route', { ...ok, title: 'Orchestrate : f1-start', model: 'claude-opus-5-5' }, 0, { more: { tool_use_id: 'toolu_1' } })], 1), []);
+    assert.equal(cgRead(path.join(a, 'start.json')).tool_use_id, 'toolu_1');
+  });
+});

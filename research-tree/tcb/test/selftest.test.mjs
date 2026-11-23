@@ -230,7 +230,7 @@ function makeRoot({ fixtures = true, canary = false, extra = [] } = {}) {
     const src = path.join(TCB, name);
     if (fs.existsSync(src)) fs.cpSync(src, path.join(root, 'tcb', name), { recursive: true });
   }
-  for (const f of ['thresholds.json', 'cost-inputs.json', 'denylist.txt', 'README.md']) {
+  for (const f of ['thresholds.json', 'cost-inputs.json', 'denylist.txt', 'README.md', 'tier-routes.json', 'tier-hook.mjs']) { // FX-PILOT PA: the tier files
     const src = path.join(TCB, f);
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(root, 'tcb', f));
   }
@@ -1288,4 +1288,46 @@ test('needs-app 11: a real canary session\'s refusals, read by canary (hooks fir
 });
 test('needs-app 7: real transcripts carry a refusal as an error result with the hook\'s stderr text', (t) => {
   t.skip('needs-app: needs the app (the transcript shape is written by the harness)');
+});
+
+// FX-PILOT unit PA (PILOT-PLAN s4 unit 1; r57-0025, r57-0026): role-files fails when a settings file does
+// not put tcb/tier-hook.mjs on the helper and session starts, when the hook or its table is missing, or
+// when a helper type a profile may start has no route; the live tcb passes it.
+test('PA-4 role-files: the tier hook in every settings file, the hook and its table in tcb/, a route for every helper type', async () => {
+  const roleFiles = (r) => (r.json.reasons || []).find((x) => x.code === 'role-files');
+  await withRoot({}, async (R) => {
+    const r = await runSt(R, 'run', ['--only', 'render']);
+    assert.equal(roleFiles(r), undefined, `the live tcb passes role-files: ${JSON.stringify(r.json.reasons)}`);
+  });
+  const cases = [
+    ['a settings file without the tier hook', (R) => {
+      const f = R.p('tcb', 'settings', 'stpa.json');
+      const s = readJson(f);
+      s.hooks.PreToolUse = s.hooks.PreToolUse.filter((e) => e.matcher === '*');
+      fs.writeFileSync(f, JSON.stringify(s, null, 2));
+    }, 'settings/stpa.json: no tier hook (tcb/tier-hook.mjs) on Agent'],
+    ['a matcher that misses the session start', (R) => {
+      const f = R.p('tcb', 'settings', 'coordinator.json');
+      const s = readJson(f);
+      for (const e of s.hooks.PreToolUse) if (e.matcher !== '*') e.matcher = 'Agent|Task';
+      fs.writeFileSync(f, JSON.stringify(s, null, 2));
+    }, 'settings/coordinator.json: no tier hook (tcb/tier-hook.mjs) on mcp__ccd_session__start_session'],
+    ['a helper type with no route', (R) => {
+      const f = R.p('tcb', 'tier-routes.json');
+      const s = readJson(f);
+      delete s.agents.reader;
+      fs.writeFileSync(f, JSON.stringify(s, null, 2));
+    }, 'tier-routes.json: helper type reader has no route'],
+    ['no tier hook in tcb/', (R) => fs.rmSync(R.p('tcb', 'tier-hook.mjs')), 'tier-hook.mjs missing'],
+  ];
+  for (const [name, edit, want] of cases) {
+    await withRoot({}, async (R) => {
+      edit(R);
+      const r = await runSt(R, 'run', ['--only', 'render']);
+      assertLine(r, { exit: 1, mode: 'run' });
+      const rf = roleFiles(r);
+      assert.ok(rf && JSON.stringify(rf.detail).includes(want), `${name}: ${JSON.stringify(r.json.reasons)}`);
+      assert.deepEqual(ran(R), [], `${name}: no case runs after a failed check`);
+    });
+  }
 });

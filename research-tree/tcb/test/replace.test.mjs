@@ -1646,3 +1646,29 @@ test('FX-W3 revocation never gated: with no turn.json, a fence of every reason b
 // =================================================================== needs the app
 test('NA1 the rendered settings and agent files bind a session started in the folder', { skip: 'needs the app: which settings files a session started in an attempt folder obeys (CONTRACT 7 item 3)' }, () => {});
 test('NA2 a real session\'s transcript cwd equals the folder named in bind', { skip: 'needs the app: real transcripts match 4.8 (CONTRACT 7 item 7)' }, () => {});
+
+// FX-PILOT unit PA (PILOT-PLAN s4 unit 1): a child's readers get their kind and model through the
+// manifest (`agents[].kind`, `.model`, from tcb/tier-routes.json), and the rendered settings carry the
+// tier hook beside the guard hook.
+test('PA-2 start: the manifest gives each agent its route from tcb/tier-routes.json; the settings carry the tier hook', async (t) => {
+  const w = mk();
+  t.after(w.cleanup);
+  const { root } = w;
+  world(root);
+  const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  fs.copyFileSync(path.join(SRC, 'tier-routes.json'), path.join(root, 'tcb', 'tier-routes.json'));
+  fs.copyFileSync(path.join(SRC, 'settings', 'child.json'), path.join(root, 'tcb', 'settings', 'child.json'));
+  table(root, [startRow()]);
+  await seal(root);
+  expectExit(await started(root), 0);
+  const dir = `wt/${RES}-e1`;
+  const m = readJ(root, `${dir}/in/manifest.json`);
+  assert.deepEqual(m.agents, [{ type: 'reader', sha256: sha(read(root, 'tcb/agents/reader.md')), kind: 'collect', model: 'sonnet' }]);
+  const st = readJ(root, `${dir}/.claude/settings.json`);
+  const tier = st.hooks.PreToolUse.find((e) => e.matcher === 'Agent|Task|mcp__ccd_session__start_session');
+  assert.ok(tier, 'a PreToolUse entry for the starts');
+  const fwdRoot = root.replace(/\\/g, '/');
+  assert.equal(tier.hooks[0].command, `"${process.execPath}" "${fwdRoot}/tcb/tier-hook.mjs"`);
+  assert.ok(fs.readFileSync(at(root, `${dir}/.claude/settings.json`), 'utf8').includes('tier-hook.mjs'), 'the tier hook\'s folder check (r57-0026) finds it');
+  assert.equal(st.hooks.PreToolUse.filter((e) => e.matcher === '*').length, 1, 'the guard hook stays the one "*" entry');
+});

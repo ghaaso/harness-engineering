@@ -1496,3 +1496,29 @@ test('S2.1 FX-W4 dead-man: no live alarm for two runs alerts once; an alarm aliv
     assert.deepEqual(J(file).alerted, {}, 'and the onset ends');
   });
 });
+
+// FX-PILOT unit PA (PILOT-PLAN s4 unit 1): the model reaches the coordinator through the row's tier and
+// status, never a brief. A row whose tier is a kind of tcb/tier-routes.json gets {kind, model}, the
+// kind's first model; any other tier gets null; helper_routes gives each helper type of `agents` its route.
+test('PA-1 status carries each row\'s route from its tier and each helper type\'s route; no table: null and {}', async () => {
+  await withRoot({}, async (ctx) => {
+    const q = ['f1-a-01'];
+    setTasks(ctx, [
+      row('f1-admitted', { step: 'admitted', question_ids: q, tier: 'orchestrate' }),
+      row('f1-plan', { state: 'planned', step: 'none', epoch: 0, question_ids: q, tier: 'test' }),
+      row('f1-odd', { state: 'planned', step: 'none', epoch: 0, question_ids: q, tier: 'sonnet' }),
+    ]);
+    assertLine(build(ctx), 0);
+    let st = statusJson(ctx);
+    assert.equal(byTask(st, 'f1-admitted').route, null, 'no table: null');
+    assert.deepEqual(st.helper_routes, {});
+    fs.copyFileSync(path.join(TCB_SRC, 'tier-routes.json'), path.join(ctx.root, 'tcb', 'tier-routes.json'));
+    assertLine(build(ctx), 0);
+    st = statusJson(ctx);
+    assert.equal(byTask(st, 'f1-admitted').next, 'start-session');
+    assert.deepEqual(byTask(st, 'f1-admitted').route, { kind: 'orchestrate', model: 'opus' });
+    assert.deepEqual(byTask(st, 'f1-plan').route, { kind: 'test', model: 'haiku' });
+    assert.equal(byTask(st, 'f1-odd').route, null, 'a model name is no kind');
+    assert.deepEqual(st.helper_routes, { checker: { kind: 'read', model: 'sonnet' }, reader: { kind: 'collect', model: 'sonnet' }, scorer: { kind: 'read', model: 'sonnet' } });
+  });
+});

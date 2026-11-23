@@ -347,6 +347,45 @@ function parseAgentFile(text) {
   return { fm, body: text.slice(m[0].length) };
 }
 
+// FX-PILOT unit PA: the tools the tier hook must see in every settings file, and a hook matcher's reach
+// (the harness reads "*" as every tool, else the matcher as a regular expression over the whole name).
+const TIER_TOOLS = ['Agent', 'Task', 'mcp__ccd_session__start_session'];
+function matcherHits(matcher, tool) {
+  if (matcher === '*' || matcher === '') return true;
+  try {
+    return new RegExp(`^(?:${matcher})$`).test(tool);
+  } catch {
+    return false;
+  }
+}
+
+// FX-PILOT unit PA: tcb/tier-hook.mjs and tcb/tier-routes.json are in tcb/, the table has kinds with
+// models, and every helper type a profile may start has a route (its kind and model reach the starter
+// through status or the manifest, never through a brief).
+function tierRouteProblems(tcb, profiles) {
+  const probs = [];
+  if (!fs.existsSync(path.join(tcb, 'tier-hook.mjs'))) probs.push('tier-hook.mjs missing');
+  let routes = null;
+  try {
+    routes = JSON.parse(fs.readFileSync(path.join(tcb, 'tier-routes.json'), 'utf8').replace(/^﻿/, ''));
+  } catch {
+    probs.push('tier-routes.json missing or unreadable');
+    return probs;
+  }
+  const kinds = isPlainObject(routes) && isPlainObject(routes.kinds) ? routes.kinds : null;
+  if (!kinds) return [...probs, 'tier-routes.json: no kinds'];
+  for (const [k, v] of Object.entries(kinds)) {
+    if (!isPlainObject(v) || !Array.isArray(v.models) || !v.models.length || v.models.some((m) => typeof m !== 'string' || m === '')) probs.push(`tier-routes.json: kind ${k} has no models`);
+  }
+  const agents = isPlainObject(routes.agents) ? routes.agents : {};
+  const types = [...new Set(Object.values(profiles).flatMap((p) => p.agent_types))].sort();
+  for (const t of types) {
+    const k = Object.prototype.hasOwnProperty.call(agents, t) ? agents[t] : undefined;
+    if (typeof k !== 'string' || !Object.prototype.hasOwnProperty.call(kinds, k)) probs.push(`tier-routes.json: helper type ${t} has no route`);
+  }
+  return probs;
+}
+
 function roleFilesProblems(root) {
   const probs = [];
   const tcb = path.join(root, 'tcb');
@@ -430,6 +469,11 @@ function roleFilesProblems(root) {
     if (Array.isArray(deny)) for (const t of prof.tools_deny) if (!deny.includes(t)) probs.push(`settings/${f}: does not deny ${t}`);
     const pre = s && s.hooks && s.hooks.PreToolUse;
     const entries = Array.isArray(pre) ? pre : [];
+    // FX-PILOT unit PA (r57-0025, r57-0026): the tier hook on the helper and session starts of every role
+    const tierCmd = `"${T.node}" "${T.root}/tcb/tier-hook.mjs"`;
+    const tierOn = (tool) => entries.some((e) => e && typeof e.matcher === 'string' && matcherHits(e.matcher, tool) && Array.isArray(e.hooks)
+      && e.hooks.some((h) => h && h.type === 'command' && h.command === tierCmd && typeof h.timeout === 'number' && h.timeout > 0));
+    for (const tool of TIER_TOOLS) if (!tierOn(tool)) probs.push(`settings/${f}: no tier hook (tcb/tier-hook.mjs) on ${tool}`);
     const cmds = [];
     for (const e of entries) {
       if (!e || e.matcher !== '*' || !Array.isArray(e.hooks)) continue;
@@ -455,6 +499,7 @@ function roleFilesProblems(root) {
     } else if (toks.includes('--task') || toks.includes('--epoch')) probs.push(`settings/${f}: coordinator hook takes no task or epoch`);
     if (typeof h.timeout !== 'number' || !(h.timeout > 0)) probs.push(`settings/${f}: hook timeout`);
   }
+  probs.push(...tierRouteProblems(tcb, profiles));
   // user-level denies
   try {
     const u = JSON.parse(fs.readFileSync(path.join(setDir, 'user-deny.json'), 'utf8').replace(/^\uFEFF/, ''));
