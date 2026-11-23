@@ -36,6 +36,11 @@ say what was not tested, and do not rule a family of methods out after one exper
    not work from memory of it. Do no round of work he has not asked for. (Added 2026-11-18 after a
    round that broke this: `research-tree/START-HERE.md`.)
 
+8. **No procedural creep** (r57-0063, 2026-11-24; few big steps, r57-0062): build the deliverable, run targeted
+   tests, merge or run it once it meets its criteria. One review at most per deliverable, never a review of a review,
+   a repair round only for breaking findings (the rest listed at the end), no plan, spec, critique or page for work he
+   has not asked for, no rounds of small steps before the real work. Enforced by `.claude/hooks/creep-gate.mjs`.
+
 ## Where things are
 
 - **The research tree: read `research-tree/START-HERE.md` first.** Where it stands, what to open

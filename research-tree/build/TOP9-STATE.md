@@ -30,3 +30,4 @@ Meter line: 40 % (all models weekly; 36 % at the start, resets 2026-11-30 12:00 
 - Records: t9-0700 (pointer), t9-0200 (the check folded), r57-0533 (NEXT: his word on the 14 lines; r57-0531 waits on it); board NEXT line replaced.
 - Tally against the 80 M cap: 45.1 M (session 869a4ba2 36.3 M with its helpers, session ec3389d4 8.8 M with its helpers; transcripts, input + cache + output). Meter 38 % all models, 15 % Fable at the close.
 - Done. Nothing of the plan runs until his approve: and cap: lines.
+- 9b after the page: the owner's rulings r57-0062 (few big steps), r57-0063 (no procedural creep, enforced by .claude/hooks/creep-gate.mjs, CLAUDE.md rule 8), approval r57-0064 (merge, pilot, card run; cap 600 M; state RUN-BIG-STATE.md, brief briefs/RUN-BIG.md); handed to a fresh session.

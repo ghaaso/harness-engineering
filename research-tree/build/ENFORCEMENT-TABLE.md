@@ -154,6 +154,7 @@ Columns: rule (record) | enforced today by | what that cannot see | broken (reco
 | 0054 14 keys, cap 600 M | written | as R5c | held (255.6 M) | as R5c |
 | 0055 three void lines may be removed | one-time; RG did not see the `node -e` removal | shell rewrites | t7-0801 went beyond it | **being built (T8-JOURNAL)** makes such a removal impossible without the owner's own hand |
 | 0056 enforce the method; no next work past the ceiling | this piece | n/a | t7-0608 | T8-CEIL, T8-COUNT, T8-JOURNAL |
+| 0063 no procedural creep | `creep-gate.mjs` (PreToolUse Agent or Task, 2026-11-24): refuses a second review of one file, a review of a review, a fold or repair round unless the prompt says "breaking", a third refute start in a session; `owner: r57-NNNN` line passes | a review done inside one helper's own turns, a creep round made without a helper start, plans and pages the coordinator writes itself, a target named in no path | not yet recorded | `creep-gate.test.mjs` |
 
 ## Which remaining rules could get a check now (ranked: how often broken, then how cheap)
 Sizes are rough: lines of code plus self-tests. None is built; each needs its numbers from a record (r57-0002).
