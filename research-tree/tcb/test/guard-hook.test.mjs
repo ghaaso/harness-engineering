@@ -499,6 +499,8 @@ function casesT6(w) {
     list.push({ n: `${role} Agent reader (Agent not in its tools)`, role, tool: 'Agent', input: { subagent_type: 'reader', prompt: 'x' }, expect: 'tool-not-allowed' });
   }
   list.push({ n: 'coordinator Agent checker', role: 'coordinator', tool: 'Agent', input: { subagent_type: 'checker', prompt: 'x' }, expect: 0 });
+  list.push({ n: 'coordinator Agent scorer (PB)', role: 'coordinator', tool: 'Agent', input: { subagent_type: 'scorer', prompt: 'x' }, expect: 0 });
+  for (const role of ['child', 'fresh-reviewer']) list.push({ n: `${role} Agent scorer (PB: not its type)`, role, tool: 'Agent', input: { subagent_type: 'scorer', prompt: 'x' }, expect: role === 'child' ? 'agent-type' : 'tool-not-allowed' });
   list.push({ n: 'coordinator Agent mapper (U3-F8: not a coordinator agent type)', role: 'coordinator', tool: 'Agent', input: { subagent_type: 'mapper', prompt: 'x' }, expect: 'agent-type' });
   list.push({ n: 'coordinator Agent reader', role: 'coordinator', tool: 'Agent', input: { subagent_type: 'reader', prompt: 'x' }, expect: 'agent-type' });
   list.push({ n: 'coordinator Agent without type', role: 'coordinator', tool: 'Agent', input: { prompt: 'x' }, expect: 'agent-type' });
@@ -564,6 +566,33 @@ function casesT9(w) {
     wf('fresh-reviewer fetches', 'https://example.test/paper-a', ['tool-not-allowed', 'fetch-none'], { role: 'fresh-reviewer' }),
     wf('control fetches', 'https://example.test/paper-a', ['tool-not-allowed', 'fetch-none'], { role: 'control' }),
     wf('coordinator fetches', 'https://example.test/paper-a', ['tool-not-allowed', 'fetch-none'], { role: 'coordinator' }),
+  ];
+}
+
+// PB (PILOT-PLAN s4 unit 2): the coordinator's scorer helper, under its own profile
+function casesScorer(w) {
+  const R = (...s) => w.P(...s);
+  const sc = (n, tool, input, expect, extra = {}) => ({ n, role: 'coordinator', agent_type: 'scorer', tool, input, expect, ...extra });
+  const a = w.A('child');
+  return [
+    sc('scorer reads the blind index', 'Read', { file_path: R('views', 'blind', 'index.json') }, 0),
+    sc('scorer reads a blind item', 'Read', { file_path: R('views', 'blind', 'item-3.md') }, 0),
+    sc('scorer StructuredOutput', 'StructuredOutput', { scores: [] }, 0),
+    sc('scorer reads the blinding key in sealed/', 'Read', { file_path: R('sealed', 'blind', '0123456789ab.json') }, 'read-outside-role'),
+    sc('scorer reads another view', 'Read', { file_path: R('views', 'comparison.json') }, 'read-outside-role'),
+    sc('scorer reaches another view by ..', 'Read', { file_path: R('views', 'blind', '..', 'comparison.json') }, 'read-outside-role'),
+    sc('scorer reads a folder name that only starts like blind', 'Read', { file_path: R('views', 'blinder', 'index.json') }, 'read-outside-role'),
+    sc('scorer reads the plan', 'Read', { file_path: R('plan', 'analysis-plan.json') }, 'read-outside-role'),
+    sc('scorer reads the store', 'Read', { file_path: R('store', 'objects', 'c_x.json') }, 'read-outside-role'),
+    sc('scorer reads a queue batch', 'Read', { file_path: R('queue', 'b1-1', 'batch.json') }, 'read-outside-role'),
+    sc('scorer Write', 'Write', { file_path: R('views', 'blind', 'x.json'), content: '{}' }, 'tool-not-allowed'),
+    sc('scorer Glob', 'Glob', { pattern: '*', path: R('views', 'blind') }, 'tool-not-allowed'),
+    sc('scorer Grep', 'Grep', { pattern: 'x', path: R('views', 'blind') }, 'tool-not-allowed'),
+    sc('scorer WebFetch', 'WebFetch', { url: 'https://example.test/x', prompt: 'p' }, 'tool-not-allowed'),
+    sc('scorer Bash', 'Bash', { command: 'node tcb/status.mjs' }, 'tool-denied'),
+    sc('scorer Agent', 'Agent', { subagent_type: 'checker', prompt: 'x' }, 'tool-not-allowed'),
+    { n: 'scorer helper in a child folder', tool: 'Read', input: { file_path: path.join(a, 'in', 'brief.md') }, agent_type: 'scorer', expect: 'helper-type' },
+    { n: 'scorer helper in a fresh-reviewer folder', role: 'fresh-reviewer', tool: 'Read', input: { file_path: R('views', 'blind', 'index.json') }, agent_type: 'scorer', expect: 'helper-type' },
   ];
 }
 
@@ -691,6 +720,12 @@ test('T7 helper calls: the helper\'s own profile applies; a helper type the fold
 test('T8 checker reads: only a queue batch folder that holds batch.json', async () => {
   await withWorld({}, async (w) => {
     assert.deepEqual(await runCases(w, casesT8(w)), []);
+  });
+});
+
+test('PB scorer reads: only views/blind/, never sealed/, another view or the store; no write, search, shell or helper; only the coordinator may start it', async () => {
+  await withWorld({}, async (w) => {
+    assert.deepEqual(await runCases(w, casesScorer(w)), []);
   });
 });
 
@@ -1400,7 +1435,7 @@ const COORD = {
   tools_allow: ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Agent', 'Bash', 'PowerShell', 'ToolSearch'],
   read_prefixes: ['{root}/run/status.json', '{root}/views/', '{root}/store/objects/x_', '{root}/completeness/gate.json', '{root}/plan/', '{root}/tcb/briefs/', '{root}/tcb/README.md'],
   write_prefixes: ['{root}/plan/questions/', '{root}/plan/approaches.json', '{root}/plan/protocols/', '{root}/plan/analysis-plan.json', '{root}/plan/cost-inputs.json', '{root}/plan/tasks-plan.json', '{root}/plan/plant-candidates/', '{root}/plan/our-work/', '{root}/plan/notes/'],
-  agent_types: ['checker'],
+  agent_types: ['checker', 'scorer'],
   fetch: 'none',
   bash: 'tcb-node',
 };
@@ -1418,6 +1453,8 @@ const EXPECT = {
   coordinator: COORD,
   reader: { tools_allow: ['WebSearch', 'WebFetch', 'ToolSearch', 'StructuredOutput'], read_prefixes: [], write_prefixes: [], agent_types: [], fetch: 'any', bash: 'none' },
   checker: { tools_allow: ['Read', 'StructuredOutput'], read_prefixes: ['{root}/queue/{batch}/'], write_prefixes: [], agent_types: [], fetch: 'none', bash: 'none' },
+  // PB: the blinded scorer (PILOT-PLAN s4 unit 2): Read on views/blind/ only, like the checker on its batch
+  scorer: { tools_allow: ['Read', 'StructuredOutput'], read_prefixes: ['{root}/views/blind/'], write_prefixes: [], agent_types: [], fetch: 'none', bash: 'none' },
 };
 const sorted = (a) => [...a].sort();
 const matchTool = (name, list) => list.some((e) => (e.endsWith('*') ? name.startsWith(e.slice(0, -1)) : e === name));
@@ -1527,6 +1564,7 @@ test('T14 shipped profiles, settings and agent files agree with each other and w
     }
     if (role === 'coordinator') {
       if (!allow.includes('Bash(node tcb/*)')) sproblems.push('coordinator: allow lacks Bash(node tcb/*)');
+      for (const t of p.agent_types) if (!allow.includes(`Agent(${t})`)) sproblems.push(`coordinator: allow lacks Agent(${t})`);
     } else {
       if (p.tools_allow.includes('Read') && !allow.includes('Read(//C:/x/run1/wt/t1-e1/**)')) sproblems.push(`${role}: allow lacks Read(//{attempt}/**)`);
       if (p.tools_allow.includes('Edit') && !allow.includes('Edit(//C:/x/run1/wt/t1-e1/staging/**)')) sproblems.push(`${role}: allow lacks Edit(//{attempt}/staging/**)`);
@@ -1557,7 +1595,7 @@ test('T14 shipped profiles, settings and agent files agree with each other and w
 
   // agent files
   const aproblems = [];
-  for (const [name, toolsWant] of [['reader', ['WebSearch', 'WebFetch']], ['checker', ['Read']]]) {
+  for (const [name, toolsWant] of [['reader', ['WebSearch', 'WebFetch']], ['checker', ['Read']], ['scorer', ['Read']]]) {
     const f = path.join(TCB, 'agents', name + '.md');
     if (!fs.existsSync(f)) { aproblems.push(`${name}.md missing`); continue; }
     const { fm, body } = frontMatter(fs.readFileSync(f, 'utf8'));
