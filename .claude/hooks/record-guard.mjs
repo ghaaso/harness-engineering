@@ -7,10 +7,21 @@
 //      migration/source-manifest.json or migration/clinic-manifest.json, or one under docs/program/evidence/ that the
 //      checkout's own HEAD holds, may not be edited, overwritten, renamed or deleted. New files anywhere are allowed
 //      ("new work goes in new files"); a file under docs/program/evidence/ is new until it is committed.
-//   2. The library journal is only added to (library/README.md rule 1): a write of an existing
-//      library/journal/**.jsonl file must keep every existing byte and add after the end; an Edit's added text starts
-//      on a new line. git forms that drop working-tree changes (reset --hard, checkout -f, switch -f or
-//      --discard-changes, stash, restore, checkout -- <path>) are refused while the journal has uncommitted lines.
+//   2. The library journal is only added to, and only through `node tools/journal.mjs` (library/README.md rule 1 and
+//      "How to add records"; version 3, unit T8-JOURNAL of top session 8, 2026-11-24, ruling r57-0056, mistakes t7-0607,
+//      t7-0800, t7-0801): every other write under library/journal/ is refused, an append, a new file and a new folder's
+//      file included: Write, Edit, MultiEdit, NotebookEdit; shell redirections (>> too), tee (-a too), touch, sed -i,
+//      mv, cp, rm, patch, git apply/am, tar or unzip into it, PowerShell's *-Content (Add-Content too), Out-File (-Append
+//      too), New-Item, Export-*; file calls in inline code; a command run from inline code (judged as a command).
+//      A command that names the journal and writes to a path the guard cannot read (a variable it cannot fill, $(...),
+//      a loop variable, a path computed in inline code) is refused: the refusal costs one retry through the tool, a
+//      missed write breaks the record. A script file (node x.mjs, bash x.sh, powershell -File x.ps1) is read and its
+//      literal paths judged; what it computes is caught after the call by the journal watch (journal-watch.mjs).
+//      tools/journal.mjs itself, and reads (cat, grep, lookup.sh, git log, the tool's dry run), pass. git forms that drop
+//      working-tree changes (reset --hard, checkout -f, switch -f or --discard-changes, stash, restore,
+//      checkout -- <path>) are refused while the journal has uncommitted lines; git reset to another commit and git
+//      revert are refused when they would take journal lines out of the branch. The tool's seal in the git folder
+//      (journal-seal*, journal-tool.log) is written by no other route.
 //   3. No design questions to the owner (r57-0001, CLAUDE.md rule 7): every question of AskUserQuestion
 //      starts with the kind of word it asks for and a colon: "approve:" (his go for a run, install,
 //      download, spend, publish or commit), "cap:" (a token cap, CLAUDE.md rule 5) or "fact:" (a fact
@@ -27,10 +38,10 @@
 // ln, tee, truncate, dd, sed -i, perl -i, git rm/mv/checkout (and -f)/switch -f/stash/restore/reset --hard/clean, find -delete or -exec,
 // xargs, PowerShell's *-Content, *-Item, Out-File and Tee-Object, .NET file calls, and literal paths given to
 // file calls in inline node, python, perl or ruby code; it follows cd, git -C, sh -c, cmd /c, powershell -Command
-// and heredocs. Appending to a journal (>>, tee -a, Add-Content, appendFile) is allowed; restoring an archived file
-// from git's index or HEAD is allowed (it is the repair). What it cannot see: a path held in a variable it cannot
-// read, or written by a script file; a question asked in plain text; a design question given the wrong kind.
-// tools/check-commit.mjs catches changed records at commit.
+// and heredocs. Restoring an archived file from git's index or HEAD is allowed (it is the repair). What it cannot see:
+// a path held in a variable it cannot read in a command that does not name the journal, or computed by a script file
+// (the journal watch reports a journal change right after the call); a question asked in plain text; a design question
+// given the wrong kind. tools/check-commit.mjs refuses at commit any journal line the tool did not write.
 // Failure. A manifest that cannot be read refuses every change of an existing file in a checkout (fails closed); so
 // does a HEAD that cannot be read, for files under docs/program/evidence/. An
 // unreadable hook input, or an error of the guard itself, lets the call through and is logged.
@@ -237,49 +248,35 @@ function archivedBy(at) { // why the file at is archived evidence, or null
 }
 const isJournal = (rel) => /^library\/journal\/.+\.jsonl$/i.test(rel);
 const JOURNAL_FIX = 'A correction is a new record whose "supersedes" names the old one.';
+const JOURNAL_TOOL = 'journal files are only added to, and only through node tools/journal.mjs (records as JSON without ids: a dry run first, then --append; ' +
+  'library/README.md, "How to add records"). ' + JOURNAL_FIX;
+// whether a place of a checkout is library/journal or under it
+const inJournal = (at) => { const r = at.rel.toLowerCase(); return r === 'library/journal' || r.startsWith('library/journal/'); };
+// the seal tools/journal.mjs keeps in a git folder (tools/journal-rules.mjs)
+const isSealPath = (abs) => /[\\/]\.git[\\/](?:worktrees[\\/][^\\/]+[\\/])?journal-(?:seal|tool)/i.test(abs);
+const sealRefusal = (p) => new Refusal(String(p).slice(0, 200), `record guard (library/README.md rule 1, r57-0056): ${String(p).slice(0, 200)} is the seal of tools/journal.mjs, ` +
+  'by which the journal watch and the commit check tell its writes from others; only the tool writes it.');
+// Whether the command names the journal (set per tool call): a write it cannot place is then refused.
+let namesJournal = false;
+const quiet = (fn) => { const n = namesJournal; namesJournal = false; try { return fn(); } finally { namesJournal = n; } };
+const dynRefusal = (what) => new Refusal(String(what).slice(0, 120), `record guard (library/README.md rule 1, r57-0056): this command names the journal and writes to ${String(what).replace(/\u0001([^\u0001]*)\u0001/g, '$$$1').slice(0, 120)}, ` +
+  'a path the guard cannot read, so whether it writes under library/journal/ cannot be told. Records are added only through node tools/journal.mjs; ' +
+  'write anything else to a literal path.');
 
 // ---- Write, Edit, MultiEdit, NotebookEdit ----
-function appendEdit(text, e) { // the text after an Edit that only appends at the end, on a new line, or null
-  const o = String(e.old_string ?? ''), n = String(e.new_string ?? '');
-  const atEnd = o.length > 0 && (text.endsWith(o) || text.endsWith(o + '\n') || text.endsWith(o + '\r\n'));
-  if (e.replace_all || !atEnd || !n.startsWith(o) || text.indexOf(o) !== text.lastIndexOf(o)) return null;
-  const k = text.lastIndexOf(o), tail = text.slice(k + o.length), add = n.slice(o.length);
-  // what the Edit adds starts a new line, so nothing of the last line changes: it begins with a newline, unless
-  // old_string itself ends the file with one
-  if (add && !/^\r?\n/.test(add) && !(tail === '' && o.endsWith('\n'))) return null;
-  return text.slice(0, k) + n + tail;
-}
 function checkFileTool() {
   const p = ti.file_path || ti.notebook_path;
   if (!p) return;
   const abs = canonical(p, cwd0);
+  if (abs && isSealPath(abs)) throw sealRefusal(abs);
   const at = abs && locate(abs);
   if (!at || !at.rel) return;
+  if (inJournal(at)) throw new Refusal(at.rel, `record guard (library/README.md rule 1, r57-0056): ${named(at)} is under library/journal/; no ${tool} writes there: ` + JOURNAL_TOOL);
   if (!existsSync(abs)) return; // a new file is always allowed
   const src = archivedBy(at);
   if (src) {
     throw new Refusal(at.rel, `record guard (CLAUDE.md rule 1): ${named(at)} is archived evidence (${src}); it is never edited, renamed or normalised. ` +
       'Put new work in a new file.');
-  }
-  if (!isJournal(at.rel)) return;
-  const old = readFileSync(abs, 'utf8');
-  if (tool === 'Write') {
-    if (!String(ti.content ?? '').startsWith(old)) {
-      throw new Refusal(at.rel, `record guard (library/README.md rule 1): ${named(at)} is a journal file; it is only added to. This Write would change or drop existing lines. ` +
-        'Append new records after the last line; ' + JOURNAL_FIX);
-    }
-    return;
-  }
-  let ok = false;
-  if (tool === 'Edit') ok = appendEdit(old, ti) !== null;
-  else if (tool === 'MultiEdit' && Array.isArray(ti.edits) && ti.edits.length) {
-    let cur = old;
-    for (const e of ti.edits) { cur = cur === null ? null : appendEdit(cur, e || {}); }
-    ok = cur !== null;
-  }
-  if (!ok) {
-    throw new Refusal(at.rel, `record guard (library/README.md rule 1): ${named(at)} is a journal file; it is only added to. An ${tool} is allowed only as an append: ` +
-      'old_string is the end of the file, occurring once, and new_string starts with it (each edit in turn, for MultiEdit). ' + JOURNAL_FIX);
   }
 }
 
@@ -296,7 +293,7 @@ function holds(at, mode) { // what a folder (or the files a pattern names in it)
   if ((r === 'docs' || r === 'docs/program' || r === EVIDENCE || r.startsWith(EVIDENCE + '/')) && [...headEvidence(at.top, at.rel)].some(has)) {
     return `archived evidence committed under ${EVIDENCE}/`;
   }
-  if (journal && mode !== 'append') return 'journal files';
+  if (journal) return 'journal files';
   return null;
 }
 // whether journal files under rel (a file or folder of the checkout at top) have changes git has not committed
@@ -307,8 +304,10 @@ function journalDirty(top, rel, untracked) {
     return out.trim().length > 0;
   } catch { return true; } // cannot tell: treat as changed
 }
+// mode 'touch' (touch, New-Item without -Force): judged only under library/journal/, where it makes or changes a file
 function hit(w, mode, cwd, verb, opt = {}) {
-  if (!w || w.dyn || !w.v) return;
+  if (!w || (!w.v && !w.dyn)) return;
+  if (w.dyn) { if (namesJournal && mode !== 'restore') throw dynRefusal(w.v || 'a computed path'); return; }
   let v = w.v;
   if (/^(\/dev\/(null|stdout|stderr|tty)|nul|\$null|con)$/i.test(v)) return;
   const glob = w.glob;
@@ -317,8 +316,13 @@ function hit(w, mode, cwd, verb, opt = {}) {
     v = v.slice(0, Math.max(v.lastIndexOf('/', k), v.lastIndexOf('\\', k)) + 1) || '.';
   }
   const abs = canonical(v, cwd);
+  if (abs && isSealPath(abs) && mode !== 'restore') throw sealRefusal(abs);
   const at = abs && locate(abs);
   if (!at) return;
+  if (mode !== 'restore' && inJournal(at)) {
+    throw new Refusal(at.rel, `record guard (library/README.md rule 1, r57-0056): this command would ${verb} ${named(at)}, under library/journal/; ` + JOURNAL_TOOL);
+  }
+  if (mode === 'touch') return;
   let st;
   try { st = statSync(abs); } catch { return; } // nothing there: a new file, or nothing to remove
   const isDir = st.isDirectory() || glob;
@@ -347,10 +351,6 @@ function hit(w, mode, cwd, verb, opt = {}) {
   if (src) {
     throw new Refusal(at.rel, `record guard (CLAUDE.md rule 1): this command would ${verb} ${named(at)}, archived evidence (${src}); ` +
       'it is never edited, renamed, deleted or normalised. Put new work in a new file.');
-  }
-  if (isJournal(at.rel) && mode !== 'append') {
-    throw new Refusal(at.rel, `record guard (library/README.md rule 1): this command would ${verb} ${named(at)}, a journal file; it is only added to ` +
-      '(>>, tee -a, Add-Content). ' + JOURNAL_FIX);
   }
 }
 const word = (v) => ({ v, dyn: false, glob: false, q: false });
@@ -521,7 +521,7 @@ function expand(x, vars, cwd) {
   let dyn = x.dyn;
   const v = x.v.replace(/\u0001([^\u0001]*)\u0001/g, (_, name) => {
     const low = name.toLowerCase();
-    if (vars.has(name)) return vars.get(name);
+    if (vars.has(name)) { const x = vars.get(name); if (x == null) { dyn = true; return '$' + name; } return x; }
     if (low === 'pwd') return cwd;
     if (low === 'null') return '$null';
     if (low === 'home' && !process.env.HOME) return process.env.USERPROFILE || homedir();
@@ -600,9 +600,9 @@ function command(words, c, prev, ctx, cwd) {
   const { mode, vars, depth } = ctx;
   let w = words.slice();
   // assignments: NAME=value (sh), $name = value (PowerShell)
-  if (mode === 'ps' && w.length >= 3 && /^\$\w+$/.test(w[0].v) && w[1].v === '=') { if (!w[2].dyn) vars.set(w[0].v.slice(1), w[2].v); return cwd; }
+  if (mode === 'ps' && w.length >= 3 && /^\$\w+$/.test(w[0].v) && w[1].v === '=') { vars.set(w[0].v.slice(1), !w[2].dyn && w.length === 3 ? w[2].v : null); return cwd; }
   if (mode === 'ps' && w.length && /^\$(\w+)=(.*)$/.test(w[0].v)) { const m = /^\$(\w+)=(.*)$/.exec(w[0].v); if (!w[0].dyn) vars.set(m[1], m[2]); w.shift(); }
-  while (w.length && mode === 'sh' && /^[A-Za-z_]\w*=/.test(w[0].v)) { const e = w[0].v.indexOf('='); if (!w[0].dyn) vars.set(w[0].v.slice(0, e), w[0].v.slice(e + 1)); w.shift(); }
+  while (w.length && mode === 'sh' && /^[A-Za-z_]\w*=/.test(w[0].v)) { const e = w[0].v.indexOf('='); vars.set(w[0].v.slice(0, e), w[0].dyn ? null : w[0].v.slice(e + 1)); w.shift(); }
   // wrappers and keywords before the command itself
   for (let guard = 0; w.length && guard < 20; guard++) {
     const b = base(w[0].v);
@@ -634,6 +634,7 @@ function command(words, c, prev, ctx, cwd) {
     const k = args.findIndex((a) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(a.v));
     if (k >= 0 && args[k + 1]) judgeShell(args[k + 1].v, 'sh', cwd, depth + 1);
     else if (!operands(args).length) judgeShell(c.body || (prev.length ? prev[prev.length - 1].body : ''), 'sh', cwd, depth + 1);
+    else { const o = operands(args)[0]; if (o && !o.dyn) { const t = readScript(canonical(o.v, cwd)); if (t) quiet(() => judgeShell(t, 'sh', cwd, depth + 1)); } }
     return cwd;
   }
   if (name === 'eval') { judgeShell(args.map((a) => a.v).join(' '), 'sh', cwd, depth + 1); return cwd; }
@@ -651,7 +652,7 @@ function command(words, c, prev, ctx, cwd) {
         try { judgeShell(Buffer.from(args[k + 1].v, 'base64').toString('utf16le'), 'ps', cwd, depth + 1); } catch {}
         break;
       }
-      if (/^-(f|fi|fil|file)$/.test(a)) break;
+      if (/^-(f|fi|fil|file)$/.test(a)) { const o = args[k + 1]; if (o && !o.dyn) { const t = readScript(canonical(o.v, cwd)); if (t) quiet(() => judgeShell(t, 'ps', cwd, depth + 1)); } break; }
       if (!a.startsWith('-')) { judgeShell(args.slice(k).map((x) => x.v).join(' '), 'ps', cwd, depth + 1); break; }
       if (/^-(executionpolicy|ex|ep|windowstyle|w|outputformat|of|inputformat|if|configurationname|psconsolefile|version|v|workingdirectory|wd)$/.test(a)) k++;
     }
@@ -659,7 +660,7 @@ function command(words, c, prev, ctx, cwd) {
   }
   if (INTERP.has(name)) {
     const codes = [];
-    let script = null;
+    let script = null, scriptWord = null;
     for (let k = 0; k < args.length; k++) {
       const a = args[k].v;
       if (['-e', '--eval', '-p', '--print', '-c', '-E'].includes(a)) { if (args[k + 1]) codes.push(args[k + 1].v); k++; continue; }
@@ -667,8 +668,14 @@ function command(words, c, prev, ctx, cwd) {
       if (name === 'perl' && /^-[lnpa0-9]*i/.test(a)) { inPlace(args.slice(k + 1), cwd, 'perl'); }
       if (['-r', '--require', '--import', '--loader', '-m', '-M', '-I', '-x'].includes(a) && name !== 'perl') { k++; continue; }
       if (a.startsWith('-') && a !== '-') continue;
-      script = a; break;
+      script = a; scriptWord = args[k]; break;
     }
+    if (scriptWord && script !== '-' && !scriptWord.dyn) {
+      const sAbs = canonical(script, cwd), sAt = sAbs && locate(sAbs);
+      if (sAt && sAt.rel.toLowerCase() === 'tools/journal.mjs') return cwd; // the one writer of the journal
+      const text = readScript(sAbs);
+      if (text) quiet(() => checkCode(text, cwd, 'code'));
+    } else if (scriptWord && scriptWord.dyn && namesJournal) throw dynRefusal(scriptWord.v || 'a computed script');
     // node research-tree/tools/lane.mjs ... -- <command>
     if (script && /(^|[\\/])lane\.mjs$/i.test(script)) {
       const e = args.findIndex((a) => a.v === '--');
@@ -721,6 +728,7 @@ function command(words, c, prev, ctx, cwd) {
     return cwd;
   }
   if (name === 'rename') { for (const t of operands(args)) hit(t, 'delete', cwd, verb); return cwd; }
+  if (name === 'touch') { for (const t of operands(args, ['-r', '--reference', '-d', '--date', '-t'])) hit(t, 'touch', cwd, verb); return cwd; }
   if (name === 'sed') { inPlace(args, cwd, 'sed'); return cwd; }
   if (name === 'dd') { for (const a of args) if (a.v.startsWith('of=')) hit({ ...a, v: a.v.slice(3) }, 'overwrite', cwd, 'overwrite (dd)'); return cwd; }
   if (name === 'find') { findCmd(args, cwd); return cwd; }
@@ -745,7 +753,7 @@ function dest(srcs, d, cwd, verb) {
   let isDir = false;
   try { isDir = statSync(dAbs).isDirectory(); } catch {}
   if (!isDir && !/[\\/]$/.test(d.v)) { hit(d, 'overwrite', cwd, verb); return; }
-  if (!isDir) return;
+  // a folder named with a trailing slash that does not exist yet (mkdir -p x && cp f x/) is judged as the folder it will be
   for (const s of srcs) {
     if (s.dyn) continue;
     if (s.glob) {
@@ -839,6 +847,19 @@ function gitCmd(args, cwd) {
     for (const t of operands(rest, ['-s', '--source', '--pathspec-from-file', '--conflict'])) hit(t, m, gcwd, m === 'restore' ? 'restore (git restore)' : `overwrite with the copy from ${source} (git restore)`);
     return;
   }
+  if (sub === 'revert' || sub === 'reset') {
+    const revs = sub === 'revert' ? operands(rest, ['-m', '--mainline', '-S', '--gpg-sign', '--strategy', '-X', '--strategy-option', '--cleanup']).filter((a) => !isPath(a, gcwd))
+      : (rest.some((a) => a.v === '--') ? [] : operands(rest, ['--pathspec-from-file']).filter((a) => !isPath(a, gcwd)).slice(0, 1));
+    for (const r of revs) {
+      if (r.dyn) { if (namesJournal) throw dynRefusal(r.v); continue; }
+      if (sub === 'reset' && /^(HEAD|@)$/i.test(r.v)) continue;
+      const at = locate(gcwd);
+      if (!at) continue;
+      let out = 'unknown';
+      try { out = execFileSync('git', ['-C', at.top, 'diff', '--name-only', ...(sub === 'revert' ? [r.v + '^', r.v] : [r.v, 'HEAD']), '--', 'library/journal'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15000, windowsHide: true }); } catch {}
+      if (out.trim()) throw new Refusal(r.v, `record guard (library/README.md rule 1, r57-0056): git ${sub} ${r.v} would take journal lines out of the branch (${out === 'unknown' ? 'git cannot tell which files it changes' : out.trim().split('\n')[0]}); the journal is only added to, and git runs no commit check for a ${sub}. ` + JOURNAL_FIX);
+    }
+  }
   if (sub === 'reset' && opts.some((o) => o === '--hard' || o === '--merge' || o === '--keep')) {
     const at = locate(gcwd);
     if (at) hitPath(at.top, 'restore', gcwd, 'reset (git reset --hard)');
@@ -915,12 +936,13 @@ function psCommand(name, args, ctx, cwd, prev) {
   }
   if (['new-item', 'ni'].includes(name)) {
     const p = psParams(args, ['path', 'name'], ['itemtype', 'type', 'value', 'target', 'credential']);
-    if (!p.has('force') || p.has('whatif')) return cwd;
+    if (p.has('whatif')) return cwd;
+    const md = p.has('force') ? 'overwrite' : 'touch', vb = p.has('force') ? 'overwrite (New-Item -Force)' : 'make (New-Item)';
     const q = p.pos.slice();
     const at = p.pick(['path'])[0] || q.shift(), nm = p.pick(['name'])[0];
-    if (at && nm && !at.dyn) hitPath(join(canonical(at.v, cwd), nm.v), 'overwrite', cwd, 'overwrite (New-Item -Force)');
-    else if (at) hit(at, 'overwrite', cwd, 'overwrite (New-Item -Force)');
-    else if (nm) hit(nm, 'overwrite', cwd, 'overwrite (New-Item -Force)');
+    if (at && nm && !at.dyn) hitPath(join(canonical(at.v, cwd), nm.v), md, cwd, vb);
+    else if (at) hit(at, md, cwd, vb);
+    else if (nm) hit(nm, md, cwd, vb);
     return cwd;
   }
   if (name === 'git') gitCmd(args, cwd);
@@ -959,6 +981,31 @@ function splitArgs(code, k) { // k just after '('; returns [args text list, inde
   out.push(code.slice(start));
   return [out, k];
 }
+// A command run from inline code (child_process, os.system, subprocess) is judged as a shell command; one whose
+// text cannot be read is refused when the command names the journal.
+const EXEC_RE = /(?<![\w$])((?:child_process['"]?\)?|\bcp|\bchildProcess)\s*\.\s*)?(execSync|execFileSync|spawnSync|execFile|exec|spawn|os\.system|os\.popen|subprocess\.(?:run|call|check_call|check_output|Popen)|system)\s*\(/g;
+function execCalls(code, cwd, lang) {
+  const raw = lang === 'ps';
+  const consts = new Map();
+  let m;
+  EXEC_RE.lastIndex = 0;
+  while ((m = EXEC_RE.exec(code))) {
+    const fn = m[2];
+    if ((fn === 'exec' || fn === 'spawn' || fn === 'system') && !m[1] && code[m.index - 1] === '.') continue; // re.exec(...), not child_process
+    const [argv] = splitArgs(code, m.index + m[0].length);
+    const list = (t) => { const a = /^\s*\[([\s\S]*)\]\s*$/.exec(String(t || '')); if (!a) return null; const [ps] = splitArgs(a[1] + ')', 0); const vs = ps.filter((x) => x.trim()).map((x) => evalArg(x, consts, raw)); return vs.some((x) => x == null) ? undefined : vs; };
+    let words = list(argv[0]);
+    if (words === null) {
+      const f = evalArg(argv[0], consts, raw);
+      words = f == null ? undefined : [f];
+      if (words && /^(execFileSync|spawnSync|execFile|spawn)$/.test(fn) && argv[1] && !/^\s*\{/.test(argv[1])) { const more = list(argv[1]); words = more ? words.concat(more) : undefined; }
+    }
+    if (!words) { if (namesJournal) throw dynRefusal(`${fn}(${String(argv[0] || '').trim().slice(0, 60)}) in inline code`); continue; }
+    const text = words.length === 1 ? words[0] : words.map((x) => "'" + String(x).split("'").join("'\\''") + "'").join(' ');
+    judgeShell(text, 'sh', cwd, 1);
+  }
+}
+function readScript(abs) { try { if (abs && statSync(abs).isFile() && statSync(abs).size < 2000000) return readFileSync(abs, 'utf8'); } catch {} return null; }
 function evalArg(t, consts, raw, d = 0) {
   if (t == null || d > 4) return null;
   t = t.trim().replace(/^[A-Za-z_]\w*\s*=(?!=)\s*/, '');
@@ -981,6 +1028,7 @@ function evalArg(t, consts, raw, d = 0) {
 }
 function checkCode(code, cwd, lang) {
   if (!code || code.length > 200000) return;
+  execCalls(code, cwd, lang);
   const raw = lang === 'ps';
   const consts = new Map();
   const asg = /(?:\b(?:const|let|var)\s+|\$|(?:^|[;\n{])\s*)([A-Za-z_][\w]*)\s*=(?!=)\s*([^;\n]+)/g;
@@ -1007,11 +1055,13 @@ function checkCode(code, cwd, lang) {
       const fl = evalArg(argv[1], consts, raw);
       if (fl == null || !/[wax+]/.test(fl)) continue;
       const p = evalArg(argv[0], consts, raw);
+      if (p == null && namesJournal) throw dynRefusal(`open(${String(argv[0] || '').trim().slice(0, 60)}) in inline code`);
       if (p != null) hitPath(p, /^[a]b?$/.test(fl) ? 'append' : 'overwrite', cwd, `open for writing (inline code)`);
       continue;
     }
     for (const [idx, mode] of spec) {
       const p = evalArg(argv[idx], consts, raw);
+      if (p == null && namesJournal) throw dynRefusal(`${key.replace(/^::/, '')}(${String(argv[idx] || '').trim().slice(0, 60)}) in inline code`);
       if (p != null) hitPath(p, mode, cwd, `${mode === 'delete' ? 'remove' : mode === 'append' ? 'append to' : 'write'} (${key.replace(/^::/, '')} in inline code)`);
     }
   }
@@ -1022,6 +1072,7 @@ try {
   else if (tool === 'Write' || tool === 'Edit' || tool === 'MultiEdit' || tool === 'NotebookEdit') checkFileTool();
   else if (tool === 'Bash' || tool === 'PowerShell') {
     const cmd = String(ti.command || '');
+    namesJournal = /journal/i.test(cmd);
     judgeShell(cmd, tool === 'PowerShell' ? 'ps' : 'sh', cwd0, 0);
     if (tool === 'PowerShell') checkCode(cmd, cwd0, 'ps');
   }

@@ -67,7 +67,17 @@ results 0300 to 0399, hypotheses 0400 to 0499, open tasks 0500 to 0599, mistakes
 
 - Prefix: a short name for your session or task, lowercase letters and digits, not already a file name in `journal/` (`ls library/journal/*`). Use it for every id you write.
 - File: `journal/<date>/<prefix>.jsonl`, created by you, written only by you.
-- Number: the next free number in the range of the kind, among your own ids: `grep -rho '"id":"<prefix>-01[0-9]*"' library/journal | sort | tail -1`. A second prefix may reuse a number; ids stay distinct because the prefix differs.
+- How to add records: records are added only through `node tools/journal.mjs`; the record guard refuses every other write under
+  `library/journal/`, and the commit check refuses a line the tool did not write. Write the records as JSON without ids
+  (an array, one object, or one per line) and pipe them in or name the file: `node tools/journal.mjs records.json
+  --prefix <prefix>` prints what it would add (a dry run); add `--append` to write. The tool gives each record the next
+  free number in its kind's range for that prefix, across every date folder and every id it ever issued; fills `date`
+  (today) and `by` (the prefix); puts the fields in the order above; and refuses the whole input if one record breaks a
+  rule. To name another record of the same input, write `{#n}` (the n-th, from 1), for example `"see": ["{#1}"]`. A
+  correction is a new record whose `supersedes` names the old id. The tool never changes or removes a line; if a journal
+  file was changed by another route it refuses to append, the journal watch reports it after the call, and putting it
+  right needs the owner's word. `node tools/journal.mjs --check` reports whether every journal file is in a state the tool
+  wrote. `--adopt <file> --apply` is for lines written before the tool existed (2026-11-24) only.
 - Top session or child: the top session is the one the owner talks to. A session started by another session from a brief is a child. If unsure, you are a child.
 
 ## Worked examples (invented: prefix `demo`, not in the journal)
@@ -116,6 +126,21 @@ decision rests on one, read the place it cites (r57-0130).
   changes archived evidence. It catches what the hook cannot see: writes made through shell commands.
 - `node .claude/hooks/selftest.mjs` runs the hooks' self-tests. Blind spots: a question typed as plain text, a
   mislabelled question, and `git commit --no-verify`.
+
+Added 2026-11-24 (top session 8, r57-0056; records t8-0107 to t8-0117; every rule with what enforces it and what it
+cannot see: `research-tree/build/ENFORCEMENT-TABLE.md`). Each hook has a test file beside it, run with `node <file>`.
+- `tools/journal.mjs`, `tools/journal-rules.mjs`: the only way to add records (above). The record guard is version 3:
+  every other write under `library/journal/` is refused. `.claude/hooks/journal-watch.mjs` (PostToolUse on Bash and
+  PowerShell) reports a journal file changed by another route; `tools/check-commit.mjs` version 3 refuses a line the
+  tool did not write.
+- `.claude/hooks/window-ceiling.mjs` (PreToolUse, every tool): a notice and then a refusal of every call but the
+  hand-over ones once a session's context passes its line, read from the transcript (r57-0008, r57-0604).
+- `.claude/hooks/count-gate.mjs` (PreToolUse on Agent, Task, SendMessage): refuses a helper start past the app's limit
+  of 20 or a width declared in `research-tree/build/WIDTHS.md` (r57-0414).
+- `.claude/hooks/fanout-gate.mjs` (PreToolUse on Agent, Task): refuses a start whose token limit has no measured basis,
+  whose limits sum past the cap, or that follows no meter reading in an earlier message (r57-0038, r57-0614, r57-0615).
+- `.claude/hooks/owner-report.mjs` (PreToolUse on wrap_up and Artifact, PostToolUse on wrap_up, Stop): refuses record
+  ids, unit names, repository paths and money in what reaches the owner (r57-0017, r57-0027).
 
 ## Not done yet
 

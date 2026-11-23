@@ -39,6 +39,7 @@ try {
   g(main, 'add', '-A'); g(main, 'commit', '-q', '--no-verify', '-m', 'base without tools or manifests');
   const base = g(main, 'rev-parse', 'HEAD').trim();
   put(main, 'tools/check-commit.mjs', ''); copyFileSync(check, join(main, 'tools', 'check-commit.mjs'));
+  for (const f of ['journal-rules.mjs', 'journal.mjs']) { try { copyFileSync(join(dirname(check), f), join(main, 'tools', f)); } catch {} } // version 3 (T8-JOURNAL)
   put(main, 'tools/git-hooks/pre-commit', ''); copyFileSync(hook, join(main, 'tools', 'git-hooks', 'pre-commit'));
   try { chmodSync(join(main, 'tools', 'git-hooks', 'pre-commit'), 0o755); } catch {}
   put(main, 'migration/source-manifest.json', JSON.stringify([{ path: 'docs/program/evidence/x.md' }]));
@@ -71,8 +72,9 @@ try {
   refused(main, 'CB main: renaming a journal file (same writer, another day) is refused', () => {
     mkdirSync(join(main, 'library', 'journal', '2026-11-20'), { recursive: true }); g(main, 'mv', J, 'library/journal/2026-11-20/r57.jsonl');
   }, /never deleted or renamed/);
-  appendFileSync(join(main, J), rec('r57-0003')); g(main, 'add', '-A');
-  expect('main: an appended valid journal record commits', commit(main, 'append'), true);
+  refused(main, 'T8 main: a valid record appended by hand, not through tools/journal.mjs, is refused', () => { appendFileSync(join(main, J), rec('r57-0003')); g(main, 'add', '-A'); }, /not written by node tools.journal.mjs/);
+  spawnSync('node', [join(main, 'tools', 'journal.mjs'), '--append', '--date', '2026-11-19', '--prefix', 'r57'], { cwd: main, input: JSON.stringify({ kind: 'fact', status: 'measured', claim: 'test record' }), encoding: 'utf8' }); g(main, 'add', '-A');
+  expect('main: a valid journal record appended through tools/journal.mjs commits', commit(main, 'append'), true);
 
   // worktree cut from the base, which has no tools/ and no migration/
   put(wt, 'recovered/a.txt', 'changed\n'); g(wt, 'add', '-A');
@@ -84,8 +86,8 @@ try {
   put(wt, J, rec('r57-0009')); g(wt, 'add', '-A');
   expect('A9 worktree: a changed journal line is refused', commit(wt, 'x'), false, /only added to/, /MODULE_NOT_FOUND|Cannot find module/);
   g(wt, 'reset', '-q', '--hard');
-  appendFileSync(join(wt, J), rec('r57-0002')); g(wt, 'add', '-A');
-  expect('A9 worktree: an appended valid journal record commits', commit(wt, 'append'), true);
+  spawnSync('node', [join(main, 'tools', 'journal.mjs'), '--append', '--date', '2026-11-19', '--prefix', 'r57'], { cwd: wt, input: JSON.stringify({ kind: 'fact', status: 'measured', claim: 'test record' }), encoding: 'utf8' }); g(wt, 'add', '-A');
+  expect('A9 worktree: a valid journal record appended through tools/journal.mjs commits', commit(wt, 'append'), true);
   put(wt, 'notes2.md', 'n\n'); g(wt, 'add', '-A');
   expect('A9 worktree: an ordinary new file commits', commit(wt, 'new note'), true);
   refused(wt, 'F1 worktree at an old base: a change of a committed file under docs/program/evidence/ is refused (its own HEAD)', () => { put(wt, EV, 'changed\n'); g(wt, 'add', '-A'); }, /archived evidence/);

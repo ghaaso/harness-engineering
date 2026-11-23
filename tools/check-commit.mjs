@@ -1,21 +1,31 @@
-// Commit check (version 2, 2026-11-19; version 2 adds docs/program/evidence/, finding 1 of
-// research-tree/build/refute/P0-GATE.md). Run by tools/git-hooks/pre-commit (core.hooksPath = the absolute path of
-// tools/git-hooks, so every worktree runs the main checkout's copy). It reads the index of the checkout or worktree
-// being committed and the manifests of that worktree, with the main checkout's as well (a worktree cut from an old
-// base may have none); when neither copy of a manifest can be read it refuses the commit (fails closed).
+// Commit check (version 3, 2026-11-24, unit T8-JOURNAL of top session 8; version 2 of 2026-11-19 added
+// docs/program/evidence/, finding 1 of research-tree/build/refute/P0-GATE.md). Run by tools/git-hooks/pre-commit
+// (core.hooksPath = the absolute path of tools/git-hooks, so every worktree runs the main checkout's copy). It reads the
+// index of the checkout or worktree being committed and the manifests of that worktree, with the main checkout's as
+// well (a worktree cut from an old base may have none); when neither copy of a manifest can be read it refuses the
+// commit (fails closed).
 // Refuses a commit that
 //   1. changes, renames or deletes archived evidence: a file under recovered/ or docs/program/evidence/, or one listed
 //      in migration/source-manifest.json or migration/clinic-manifest.json (CLAUDE.md rule 1, AGENTS.md). What is
 //      changed, renamed or deleted is always a file the HEAD of the checkout being committed holds; added files commit;
 //   2. changes or drops a line of a library journal file, or renames or deletes one (library/README.md rule 1);
-//   3. adds a journal line that is not a valid record: one JSON object; id, kind, status and claim present;
-//      kind and status from library/README.md; fields in the README's order; an id whose writer prefix
-//      matches its file and is not already used anywhere in the journal.
-// This catches what the record guard hook cannot see: writes made through shell commands or by hand.
-// `git commit --no-verify` skips it; that is the owner's call, never a session's.
+//   3. adds a journal line that is not a valid record, by the rules tools/journal.mjs applies (tools/journal-rules.mjs:
+//      one JSON object; id, kind, status and claim present; kind and status from library/README.md; fields in the
+//      README's order and of their type; an id whose writer prefix matches its file and that no other line uses, read
+//      by JSON so spacing cannot hide it; "supersedes" and id-shaped "see" entries naming records that exist);
+//   4. (version 3) adds a journal line that tools/journal.mjs did not write (or adopt): every added line must be one the
+//      tool recorded in the seal (git common directory, journal-seal.json), so a line written by any other route, or
+//      rewritten after the tool wrote it (t7-0801: a field moved by `node -e`), is refused;
+//   5. (version 3) commits a journal file from which a line the tool appended since HEAD is missing, in the index and in
+//      the working tree alike (t7-0800: uncommitted lines removed by hand). Checked while HEAD is the commit the tool
+//      wrote at; once HEAD has moved, the journal watch has already reported such a loss when it happened.
+// `git commit --no-verify` skips it; that is the owner's call, never a session's. git runs no pre-commit hook for a
+// merge without conflicts, a revert, a cherry-pick or a rebase: the record guard refuses a revert or a reset that would
+// take journal lines out; the others are not checked here.
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
+import { isJournal, linesOf, idOfLine, parseLine, validateRecord, lineSha, findCheckout, readSeal, checkoutOf } from './journal-rules.mjs';
 
 const git = (...a) => execFileSync('git', a, { encoding: 'utf8', maxBuffer: 1 << 28 });
 const root = git('rev-parse', '--show-toplevel').trim();
@@ -25,7 +35,8 @@ try { mainRoot = dirname(git('rev-parse', '--path-format=absolute', '--git-commo
 const errors = [];
 
 let hasHead = true;
-try { git('rev-parse', '--verify', 'HEAD'); } catch { hasHead = false; }
+let head = null;
+try { head = git('rev-parse', '--verify', 'HEAD').trim(); } catch { hasHead = false; }
 
 const archivedSet = new Set();
 for (const [file, pick] of [['source-manifest.json', (m) => m], ['clinic-manifest.json', (m) => m.files || []]]) {
@@ -36,11 +47,6 @@ for (const [file, pick] of [['source-manifest.json', (m) => m], ['clinic-manifes
   if (!read) errors.push(`migration/${file} cannot be read in ${root}${mainRoot !== root ? ` or in ${mainRoot}` : ''}, so archived evidence cannot be told; the commit is refused (fails closed). Restore the manifest from git.`);
 }
 const isArchived = (p) => { const l = p.toLowerCase(); return l.startsWith('recovered/') || l.startsWith('docs/program/evidence/') || archivedSet.has(l); };
-const isJournal = (p) => /^library\/journal\/.+\.jsonl$/i.test(p);
-
-const ORDER = ['id', 'kind', 'status', 'claim', 'when', 'quote', 'evidence', 'see', 'note', 'handles', 'footprint', 'supersedes', 'date', 'by'];
-const KINDS = new Set(['ruling', 'fact', 'status', 'result', 'hypothesis', 'open', 'mistake', 'pointer', 'adjudication']);
-const STATUS = new Set(['owner', 'measured', 'observed', 'quoted', 'summary', 'textbook', 'reasoned', 'designed-only', 'open']);
 
 const staged = git('diff', '--cached', '--name-status', '-M', '-z').split('\0').filter(Boolean);
 const changes = [];
@@ -56,11 +62,16 @@ const ls = git('ls-files', '-z', '--', 'library/journal').split('\0').filter((p)
 for (const p of ls) {
   let txt = '';
   try { txt = git('show', ':' + p); } catch { continue; }
-  for (const line of txt.split(/\r?\n/)) {
-    const m = /^\{"id":"([^"]+)"/.exec(line);
-    if (m) { if (!idFiles.has(m[1])) idFiles.set(m[1], []); idFiles.get(m[1]).push(p); }
+  for (const line of linesOf(txt)) {
+    const id = idOfLine(line);
+    if (id) { if (!idFiles.has(id)) idFiles.set(id, []); idFiles.get(id).push(p); }
   }
 }
+
+// the seal of tools/journal.mjs for the checkout being committed
+const ck = findCheckout(root);
+const seal = ck ? readSeal(ck.common) : null;
+const sealed = seal && ck ? checkoutOf(seal, ck.key).files : {};
 
 for (const c of changes) {
   const src = c.from || c.path;
@@ -82,29 +93,29 @@ for (const c of changes) {
   }
   const stem = c.path.split('/').pop().replace(/\.jsonl$/i, '');
   const added = neu.slice(old.length).split(/\r?\n/);
+  const foreign = [];
   added.forEach((line, k) => {
     if (!line.trim()) return;
     const where = `${c.path} (added line ${k + 1})`;
-    let o;
-    try { o = JSON.parse(line); } catch { errors.push(`${where}: not one JSON object on one line.`); return; }
-    if (!o || typeof o !== 'object' || Array.isArray(o)) { errors.push(`${where}: not a JSON object.`); return; }
-    for (const f of ['id', 'kind', 'status', 'claim']) if (!o[f]) errors.push(`${where}: field "${f}" is missing.`);
-    if (o.kind && !KINDS.has(o.kind)) errors.push(`${where}: kind "${o.kind}" is not one of ${[...KINDS].join(', ')}.`);
-    if (o.status && !STATUS.has(o.status)) errors.push(`${where}: status "${o.status}" is not one of ${[...STATUS].join(', ')}.`);
-    let last = -1;
-    for (const key of Object.keys(o)) {
-      const at = ORDER.indexOf(key);
-      if (at < 0) { errors.push(`${where}: field "${key}" is not a record field (library/README.md, "A record").`); continue; }
-      if (at < last) { errors.push(`${where}: field "${key}" is out of the README's order (${ORDER.join(', ')}).`); break; }
-      last = at;
-    }
-    const id = String(o.id || '');
-    const m = /^([a-z0-9]+)-(\d{4})$/.exec(id);
-    if (!m) errors.push(`${where}: id "${id}" is not <prefix>-<four digits>.`);
-    else if (!stem.startsWith(m[1])) errors.push(`${where}: id "${id}" belongs to writer "${m[1]}", not to the file "${stem}" (one file per writer).`);
-    const files = idFiles.get(id) || [];
-    if (files.length > 1) errors.push(`${where}: id "${id}" is used more than once in the journal (${[...new Set(files)].join(', ')}); an id is never reused.`);
+    if (!seal || !seal.lines[lineSha(line)]) foreign.push(`${k + 1}${idOfLine(line) ? ' ' + idOfLine(line) : ''}`);
+    const p = parseLine(line, where);
+    if (p.error) { errors.push(p.error); return; }
+    errors.push(...validateRecord(p.o, { where, stem, uses: (id) => idFiles.get(id), exists: (id) => idFiles.has(id) }));
   });
+  if (foreign.length) {
+    errors.push(`${c.path}: ${foreign.length} added line(s) were not written by node tools/journal.mjs, or were changed after it wrote them (added line ${foreign.slice(0, 5).join(', ')}); ` +
+      'records are added only through the tool (library/README.md, "How to add records"). Lines written before the tool existed are adopted once: node tools/journal.mjs --adopt <file>, then --apply.');
+  }
+  const entry = sealed[c.path];
+  if (entry && hasHead && entry.head === head && Array.isArray(entry.pending) && entry.pending.length) {
+    const have = new Set(linesOf(neu).map(lineSha));
+    try { for (const l of linesOf(readFileSync(resolve(root, c.path), 'utf8'))) have.add(lineSha(l)); } catch {}
+    const lost = entry.pending.filter(([s]) => !have.has(s)).map(([, id]) => id || '?');
+    if (lost.length) {
+      errors.push(`${c.path}: ${lost.length} line(s) tools/journal.mjs appended since the last commit are gone from it (${lost.slice(0, 6).join(', ')}); a journal line is never removed (library/README.md rule 1). ` +
+        'The tool\'s last state of the file is kept in the git folder (journal-seal.d); putting it back needs the owner\'s word.');
+    }
+  }
 }
 
 if (errors.length) {

@@ -54,6 +54,9 @@ say what was not tested, and do not rule a family of methods out after one exper
   repository's sessions by its settings (r57-0036); not used here.
 - `.claude/hooks/` and `tools/check-commit.mjs`: what enforces the tier routes, the library's rules, rule 1 and rule
   7 (`library/README.md`, "What enforces these rules"). A new clone runs `git config core.hooksPath tools/git-hooks`.
+- `.claude/hooks/` also hold the checks of 2026-11-24: the window ceiling, the count of helpers at once, the limit-basis
+  and meter gate, the owner-report check, the journal tool's watch (records are added only by `tools/journal.mjs`);
+  every rule with what enforces it and what it cannot see: `research-tree/build/ENFORCEMENT-TABLE.md`.
 
 ## This machine
 

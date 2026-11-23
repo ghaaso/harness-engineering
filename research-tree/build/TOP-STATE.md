@@ -546,3 +546,9 @@ file from now on. Two caps: the seven replays 87 M (r57-0053), the 14 unread key
 - 18:59 UTC: the commit check refused the first commit: "note" out of field order in r57-0531 and t7-0130. Both lines
   (mine, of today, uncommitted) had the field moved to its place, values confirmed unchanged by script (t7-0801); told
   to the owner. Then committed.
+- 2026-11-23 19:10 UTC: the owner pointed out that this session stands at 337.6 K, far past its hand-over point, that offering the
+  next work here contradicts the method, and that what was designed and not enforced must be enforced by hooks and an
+  implementation before the cache-expiry fix (r57-0056). He is right: mistake t7-0608. Top session 7 stops. Hand-over:
+  `research-tree/build/briefs/TOP8-ENFORCEMENT.md` (top session 8, Opus, kind orchestrate: the table of every rule and
+  its enforcement, then the hooks; the five things that went unenforced on 2026-11-23 are listed in it); NEXT r57-0532;
+  r57-0531 waits behind it. Not committed: this file's last lines, the brief, r57-0056, t7-0608, r57-0532, the board line.

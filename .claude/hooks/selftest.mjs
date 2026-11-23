@@ -5,6 +5,9 @@
 // record guard in a made-up repository with worktrees in a temporary folder, which is removed at the end. The cases
 // marked F1-F5, GA and GB (unit FIX-GUARD) test findings 1-4 and non-breaking item 8 of
 // research-tree/build/refute/P0-GATE.md, and its mutants GA and GB (invariants no case guarded before).
+// The cases marked T8 (unit T8-JOURNAL, 2026-11-24, r57-0056) test version 3: every write under library/journal/ other
+// than through node tools/journal.mjs is refused, appends included; nine cases that expected an append to pass now expect
+// a refusal (each fails on version 2).
 // --guard names the record guard to test (default record-guard.mjs), so the same cases can be run on an old copy.
 import { spawnSync, execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, appendFileSync, copyFileSync, rmSync, symlinkSync, existsSync } from 'node:fs';
@@ -41,9 +44,13 @@ expect('fact: question passes', run(guard, pre('AskUserQuestion', { questions: [
 expect('edit of archived evidence is refused', run(guard, pre('Edit', { file_path: resolve(repo, archivedFile), old_string: 'a', new_string: 'b' })), 2, /archived/);
 expect('write over archived evidence is refused', run(guard, pre('Write', { file_path: resolve(repo, archivedFile), content: 'x' })), 2, /archived/);
 expect('a new file under evidence passes', run(guard, pre('Write', { file_path: resolve(repo, 'docs/program/evidence/selftest-new-file.md'), content: 'x' })), 0);
-expect('a journal Write that appends passes', run(guard, pre('Write', { file_path: jfile, content: jtext + '{"id":"r57-9999"}\n' })), 0);
+expect('T8 a journal Write that appends is refused (only through tools/journal.mjs)', run(guard, pre('Write', { file_path: jfile, content: jtext + '{"id":"r57-9999"}\n' })), 2, /tools\/journal\.mjs/);
 expect('a journal Write that drops a line is refused', run(guard, pre('Write', { file_path: jfile, content: lines.slice(1).join('\n') + '\n' })), 2, /only added to/);
-expect('a journal Edit that appends at the end passes', run(guard, pre('Edit', { file_path: jfile, old_string: lastLine, new_string: lastLine + '\n{"id":"r57-9999"}' })), 0);
+expect('T8 a journal Edit that appends at the end is refused', run(guard, pre('Edit', { file_path: jfile, old_string: lastLine, new_string: lastLine + '\n{"id":"r57-9999"}' })), 2, /tools\/journal\.mjs/);
+expect('T8 reading the journal with lookup.sh passes', run(guard, pre('Bash', { command: 'bash library/lookup.sh -f r57-0056 | cut -c1-80' })), 0);
+expect('T8 running the hooks\' self-test passes', run(guard, pre('Bash', { command: 'node .claude/hooks/selftest.mjs' })), 0);
+expect('T8 the journal tool passes, its records naming the journal', run(guard, pre('Bash', { command: "node tools/journal.mjs --append <<'EOF'\n{\"kind\":\"fact\",\"claim\":\"x\",\"evidence\":[\"library/journal/2026-11-23/t7.jsonl\"]}\nEOF" })), 0);
+expect('T8 the journal tool by its absolute path passes', run(guard, pre('PowerShell', { command: `node "${resolve(repo, 'tools', 'journal.mjs')}" --check` })), 0);
 expect('a journal Edit inside a line is refused', run(guard, pre('Edit', { file_path: jfile, old_string: lines[0].slice(0, 40), new_string: lines[0].slice(0, 40) + 'X' })), 2, /only added to/);
 expect('an ordinary edit passes', run(guard, pre('Edit', { file_path: resolve(repo, 'CLAUDE.md'), old_string: 'a', new_string: 'b' })), 0);
 expect('a path outside the repository passes', run(guard, pre('Write', { file_path: 'C:/Windows/Temp/x.txt', content: 'x' })), 0);
@@ -130,7 +137,7 @@ try {
   expect('A4 edit of a clinic-manifest file in a worktree outside the repository is refused', F('Edit', edit(at('case-studies/clinic/a.py', wtOut))), 2, /clinic-manifest/);
   expect('A4 a journal Write that drops a line in a worktree is refused', F('Write', { file_path: at(J, wtOut), content: '{"id":"r57-0002"}\n' }), 2, /only added to/);
   expect('A4 a journal Edit inside a line in a worktree is refused', F('Edit', { file_path: at(J, wtIn), old_string: '0001', new_string: '0009' }), 2, /only added to/);
-  expect('A4 a journal append in a worktree passes', F('Write', { file_path: at(J, wtIn), content: FILES[J] + '{"id":"r57-0003"}\n' }), 0);
+  expect('T8 A4 a journal append in a worktree is refused', F('Write', { file_path: at(J, wtIn), content: FILES[J] + '{"id":"r57-0003"}\n' }), 2, /tools\/journal\.mjs/);
   expect('A4 an ordinary edit in a worktree passes', F('Edit', edit(at('notes.md', wtOut))), 0);
   expect('A4 a new file in a worktree passes', F('Write', { file_path: at('recovered/new.js', wtOut), content: 'x' }), 0);
   expect('A4 a copy that is no worktree passes', F('Edit', edit(at('recovered/a.js', copy))), 0);
@@ -155,7 +162,7 @@ try {
 
   // A11: MultiEdit
   expect('A11 MultiEdit of archived evidence is refused', F('MultiEdit', { file_path: ra, edits: [{ old_string: 'a', new_string: 'b' }] }), 2, /archived/);
-  expect('A11 MultiEdit appending to a journal passes', F('MultiEdit', { file_path: at(J), edits: [{ old_string: '{"id":"r57-0003"}', new_string: '{"id":"r57-0003"}\n{"id":"r57-0004"}' }] }), 0);
+  expect('T8 A11 MultiEdit appending to a journal is refused', F('MultiEdit', { file_path: at(J), edits: [{ old_string: '{"id":"r57-0003"}', new_string: '{"id":"r57-0003"}\n{"id":"r57-0004"}' }] }), 2, /tools\/journal\.mjs/);
   expect('A11 MultiEdit changing a journal line is refused', F('MultiEdit', { file_path: at(J), edits: [{ old_string: '{"id":"r57-0003"}', new_string: '{"id":"r57-0003"}\n{"id":"r57-0004"}' }, { old_string: 'r57-0001', new_string: 'r57-0009' }] }), 2, /only added to/);
 
   // A11: writes made through Bash and PowerShell (cwd: the made-up repository)
@@ -174,7 +181,7 @@ try {
   for (const c of bashRefused) expect(`A11 Bash refused: ${c.replace(/\n/g, '\\n').slice(0, 70)}`, F('Bash', { command: c }), 2, /record guard/);
   const bashPassed = [
     'grep -rn a recovered/ 2>/dev/null | head -5', 'cat recovered/a.js > notes2.md', 'cp recovered/a.js "$TEMP/x.js"', 'cp notes.md recovered/',
-    'ls recovered; wc -l recovered/a.js', "sed -n '1p' recovered/a.js", `echo '{"id":"r57-0003"}' >> ${J}`, `tee -a ${J} < notes.md`,
+    'ls recovered; wc -l recovered/a.js', "sed -n '1p' recovered/a.js",
     'git diff -- recovered/a.js; git log --oneline -1 -- recovered', 'git checkout -- recovered/a.js', 'git restore --staged recovered/a.js',
     "cat > newfile.md <<'EOF'\nrm -rf recovered\nsed -i x recovered/a.js > recovered/a.js\nEOF",
     `node -e "console.log(require('fs').readFileSync('recovered/a.js','utf8'))"`,
@@ -190,7 +197,7 @@ try {
   ];
   for (const c of psRefused) expect(`A11 PowerShell refused: ${c.slice(0, 70)}`, F('PowerShell', { command: c }), 2, /record guard/);
   const psPassed = [
-    'Get-Content recovered\\a.js | Select-Object -First 3', "Add-Content library\\journal\\2026-11-19\\r57.jsonl '{\"id\":\"r57-0003\"}'",
+    'Get-Content recovered\\a.js | Select-Object -First 3',
     'Copy-Item recovered\\a.js $env:TEMP\\x.js', 'Remove-Item recovered -Recurse -WhatIf', 'Set-Content -Path notes3.md -Value x',
   ];
   for (const c of psPassed) expect(`A11 PowerShell passes: ${c.slice(0, 70)}`, F('PowerShell', { command: c }), 0);
@@ -246,8 +253,48 @@ try {
   expect('F3 a journal Edit that adds text onto the last line is refused', F('Edit', { file_path: at(J), old_string: last, new_string: last + ' {"id":"r57-9998"}' }), 2, /only added to/);
   expect('F3 a journal Edit that adds one character to the last line is refused', F('Edit', { file_path: at(J), old_string: last, new_string: last + 'x' }), 2, /only added to/);
   expect('F3 a MultiEdit whose second edit adds onto the new last line is refused', F('MultiEdit', { file_path: at(J), edits: [{ old_string: last, new_string: last + '\n{"id":"r57-0004"}' }, { old_string: '{"id":"r57-0004"}', new_string: '{"id":"r57-0004"},' }] }), 2, /only added to/);
-  expect('F3 a journal Edit that adds a line after the last one passes', F('Edit', { file_path: at(J), old_string: last, new_string: last + '\n{"id":"r57-0004"}' }), 0);
-  expect('F3 a journal Edit whose old_string ends with the final newline passes', F('Edit', { file_path: at(J), old_string: last + '\n', new_string: last + '\n{"id":"r57-0004"}\n' }), 0);
+  expect('T8 F3 a journal Edit that adds a line after the last one is refused', F('Edit', { file_path: at(J), old_string: last, new_string: last + '\n{"id":"r57-0004"}' }), 2, /tools\/journal\.mjs/);
+  expect('T8 F3 a journal Edit whose old_string ends with the final newline is refused', F('Edit', { file_path: at(J), old_string: last + '\n', new_string: last + '\n{"id":"r57-0004"}\n' }), 2, /tools\/journal\.mjs/);
+
+  // ---- T8: every route into library/journal/ other than tools/journal.mjs ----
+  const scriptDir = join(tmp, 'scripts'); mkdirSync(scriptDir, { recursive: true });
+  writeFileSync(join(scriptDir, 'appender.mjs'), `require('fs').appendFileSync('${J}', 'x')\n`);
+  writeFileSync(join(scriptDir, 'appender.sh'), `echo x >> ${J}\n`);
+  writeFileSync(join(scriptDir, 'reader.mjs'), `console.log(require('fs').readFileSync('${J}', 'utf8').length)\n`);
+  writeFileSync(join(scriptDir, 'fix.patch'), `--- a/${J}\n+++ b/${J}\n@@ -1 +1 @@\n-x\n+y\n`);
+  const sd = scriptDir.replace(/\\/g, '/');
+  const t8Refused = [
+    `echo '{"id":"r57-0003"}' >> ${J}`, `tee -a ${J} < notes.md`, `printf x | tee -a ${J}`, `cat >> ${J} <<'EOF'\n{}\nEOF`,
+    'touch library/journal/2026-11-24/t8.jsonl', 'cp notes.md library/journal/2026-11-24/t8.jsonl', 'mkdir -p library/journal/x && cp notes.md library/journal/x/',
+    `node -e "require('fs').appendFileSync('${J}','x')"`,
+    `node -e "const p=require('path').join('library','journal',process.argv[1]);require('fs').appendFileSync(p,'x')" 2026-11-19/r57.jsonl`,
+    "node - <<'EOF'\nconst fs=require('fs');for (const f of fs.readdirSync('library/journal')) fs.appendFileSync(f,'x')\nEOF",
+    `python -c "import sys;open(sys.argv[1],'a').write('x')" ${J}`,
+    'for f in library/journal/*/*.jsonl; do echo x >> "$f"; done', 'F=$(ls library/journal/*/r57.jsonl); sed -i 1d "$F"',
+    `node -e "require('child_process').execSync('echo x >> ${J}')"`, `node -e "require('child_process').execSync(process.argv[1])" "echo x >> ${J}"`,
+    `node ${sd}/appender.mjs`, `bash ${sd}/appender.sh`, 'echo x > .git/journal-seal.json',
+  ];
+  for (const c of t8Refused) expect(`T8 Bash refused: ${c.replace(/\n/g, '\\n').slice(0, 80)}`, F('Bash', { command: c }), 2, /record guard/);
+  const t8PsRefused = [
+    "Add-Content library\\journal\\2026-11-19\\r57.jsonl '{\"id\":\"r57-0003\"}'", "'x' | Out-File -Append library\\journal\\2026-11-19\\r57.jsonl",
+    'New-Item library\\journal\\2026-11-24\\t8.jsonl -ItemType File', '$p = Join-Path library\\journal x.jsonl; Add-Content $p x',
+    "$p = Join-Path library\\journal x.jsonl; [IO.File]::AppendAllText($p, 'x')",
+  ];
+  for (const c of t8PsRefused) expect(`T8 PowerShell refused: ${c.slice(0, 80)}`, F('PowerShell', { command: c }), 2, /record guard/);
+  expect('T8 a new file under library/journal by Write is refused', F('Write', { file_path: at('library/journal/2026-11-24/t8.jsonl'), content: '{}' }), 2, /tools\/journal\.mjs/);
+  expect('T8 a Write of the tool\'s seal in the git folder is refused', F('Write', { file_path: join(fake, '.git', 'journal-seal.json'), content: '{}' }), 2, /seal/);
+  expect('T8 git revert of a commit that touched the journal is refused', B('Bash', { command: 'git revert --no-edit HEAD' }), 2, /take journal lines out/);
+  const t8Passed = [
+    `cat ${J}`, `grep -c id ${J}`, `head -1 ${J} | cut -c1-40`, 'git log --oneline -- library/journal', 'mkdir -p library/journal/2026-11-24',
+    `node -e "console.log(require('fs').readFileSync('${J}','utf8').length)"`,
+    `node -e "const s=require('fs').readFileSync('${J}','utf8'); require('fs').writeFileSync('out.txt', s)"`,
+    `node -e "const m=/id/.exec(require('fs').readFileSync('${J}','utf8')); console.log(m)"`,
+    `cp ${J} "$TEMP/copy.jsonl"`, 'node tools/journal.mjs --append < recs.json', 'node tools/journal.mjs', `node ${sd}/reader.mjs`,
+    'echo x > "$(mktemp)"', 'git revert --abort',
+  ];
+  for (const c of t8Passed) expect(`T8 Bash passes: ${c.replace(/\n/g, '\\n').slice(0, 80)}`, F('Bash', { command: c }), 0);
+  expect('T8 PowerShell reading the journal passes', F('PowerShell', { command: "Get-Content library\\journal\\2026-11-19\\r57.jsonl | Select-String r57" }), 0);
+  expect('T8 git apply of a patch passes the guard only when it names no journal file (this one does: refused by the watch after, not here)', F('Bash', { command: `git apply --check ${sd}/fix.patch` }), 0);
   // GA: appendEdit without its startsWith test; new_string replaces the last line, though what follows starts a new line
   expect('GA a journal Edit whose new_string does not start with old_string is refused', F('Edit', { file_path: at(J), old_string: last, new_string: 'X'.repeat(last.length) + '\n{"id":"r57-0004"}' }), 2, /only added to/);
   // GB: holds() without its journal line
