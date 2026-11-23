@@ -1530,7 +1530,13 @@ test('T14 shipped profiles, settings and agent files agree with each other and w
     try { s = JSON.parse(subst(fs.readFileSync(f, 'utf8'))); } catch (err) { sproblems.push(`${role}: does not parse after substitution: ${err.message}`); continue; }
     const p = profiles[role];
     const pre = s.hooks?.PreToolUse;
-    if (!Array.isArray(pre) || pre.length !== 1 || pre[0].matcher !== '*' || !Array.isArray(pre[0].hooks) || pre[0].hooks.length !== 1) { sproblems.push(`${role}: hooks.PreToolUse shape`); continue; }
+    // FX-PILOT unit PA: the guard hook's one "*" entry, then the tier hook's entry for the starts
+    if (!Array.isArray(pre) || pre.length !== 2 || pre[0].matcher !== '*' || !Array.isArray(pre[0].hooks) || pre[0].hooks.length !== 1) { sproblems.push(`${role}: hooks.PreToolUse shape`); continue; }
+    const tierE = pre[1];
+    if (tierE.matcher !== 'Agent|Task|mcp__ccd_session__start_session' || !Array.isArray(tierE.hooks) || tierE.hooks.length !== 1
+      || tierE.hooks[0].type !== 'command' || tierE.hooks[0].command !== '"C:/nodejs/node.exe" "C:/x/run1/tcb/tier-hook.mjs"' || tierE.hooks[0].timeout !== 30) {
+      sproblems.push(`${role}: hooks.PreToolUse[1] is not the tier hook on the starts`);
+    }
     const h = pre[0].hooks[0];
     const want = role === 'coordinator'
       ? '"C:/nodejs/node.exe" "C:/x/run1/tcb/guard-hook.mjs" --root "C:/x/run1" --role coordinator'
