@@ -1148,3 +1148,22 @@ test('T23b CONTRACT 1.1: --ce is checked again inside the run lock; a ce changed
 test('T25a needs-app: real token fields and helper linking (tokens.complete on real transcripts)', { skip: 'needs the app: CONTRACT section 7 item 7' }, () => {});
 test('T25b needs-app: whether quiet_gaps separate real PC sleep from idle time', { skip: 'needs the app: CONTRACT section 7 items 6 and 8, the pilot induces sleep' }, () => {});
 test('T25c needs-app: whether the owner page reads well on the owner screen', { skip: 'needs the app: a person looks at the page' }, () => {});
+
+test('T28 FX-REDO: with a redone line (data.redo) in the set, a task starts at its bind or started line of the lowest epoch', () => {
+  const time = (redo) => {
+    const W = miniWorld();
+    for (const c of W.cardsQ) confirm(W.root, c);
+    commitMini(W);
+    addLedger(W.root, 'bind', { session: W.S, boot: 'b' }, { task: 'f1-research', epoch: 2, ts: at(0) });
+    addLedger(W.root, 'bind', { session: W.S, boot: 'b', ...(redo ? { redo: true } : {}) }, { task: 'f1-research', epoch: 1, ts: at(30) });
+    addLedger(W.root, 'intake', { objects: [], rejected: [], flagged: [] }, { task: 'f1-research', epoch: 2, ts: at(60) });
+    shape(render(W.root), 0);
+    return readJ(W.root, 'views/measures.json').by_task['f1-research'].time;
+  };
+  const plain = time(false);
+  assert.equal(plain.first_ts, at(0), 'no redo line: the first by seq');
+  assert.equal(plain.wall_s, 3600);
+  const redone = time(true);
+  assert.equal(redone.first_ts, at(30), 'a redo line: the start of the lowest epoch');
+  assert.equal(redone.wall_s, 1800);
+});

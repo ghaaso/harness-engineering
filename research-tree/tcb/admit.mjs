@@ -13,7 +13,6 @@ const PROTOCOL_STAGES = new Set(['research', 'review', 'fresh-review', 'control'
 const GATE_A_STAGES = new Set(['review', 'fresh-review']);
 const RUNNABLE_STATES = new Set(['active', 'parked']);
 const PENDING_STEPS = new Set(['admitted', 'started']);
-const HARD_CEILING = 3; // R10: never above 3 live child processes
 
 // ---------------------------------------------------------------------------------------------
 // Small helpers (no library code is copied here; these only adapt calls to the contract's API).
@@ -221,14 +220,14 @@ export function decide(facts) {
   const nMax = num(thValue(th, 'N_max'));
   const nCeil = num(thValue(th, 'N_ceiling'));
   if (nMax === null) add('param-missing', { name: 'N_max' });
-  else if ((nCeil !== null && nMax > nCeil) || nMax > HARD_CEILING) add('ceiling', { N_max: nMax, N_ceiling: nCeil });
+  else if (nCeil !== null && nMax > nCeil) add('ceiling', { N_max: nMax, N_ceiling: nCeil });
   const slots = f.slots;
   if (slots === null || slots === undefined) add('slots-unknown', null);
   else if (nMax !== null) {
     const live = num(slots.live) ?? 0;
     const unknown = num(slots.unknown) ?? 0;
     const unconfirmed = num(slots.unconfirmed) ?? 0;
-    const cap = Math.min(nMax, nCeil ?? nMax, HARD_CEILING);
+    const cap = Math.min(nMax, nCeil ?? nMax);
     if (live + unknown + unconfirmed >= cap) add('slots-full', { live, unknown, unconfirmed, N_max: nMax });
   }
 
@@ -467,7 +466,7 @@ export function gatherFacts(root, { task, now = null, freeMb = null, procList = 
   }
 
   // slots and pending sessions (F6: count live processes, not table state)
-  const slots = procList === null || procList === undefined ? null : lib.slotCount(rows, procList, transcriptsRoot);
+  const slots = procList === null || procList === undefined ? null : lib.slotCount(rows, procList, transcriptsRoot, { root });
   let pending = 0;
   for (const r of rows) {
     if (!r || r.state !== 'active' || !PENDING_STEPS.has(r.step)) continue;
@@ -569,7 +568,7 @@ async function main(ctx) {
   const cache = {};
   const decisions = [];
   const notRun = [];
-  let slots = procList === null ? null : lib.slotCount(rows, procList, transcriptsRoot);
+  let slots = procList === null ? null : lib.slotCount(rows, procList, transcriptsRoot, { root });
   for (const row of candidates) {
     const facts = gatherFacts(root, { task: row.task, now: edge.now, freeMb: edge.freeMb, procList, ce: null, spentOf, table, cache });
     const d = decide(facts);

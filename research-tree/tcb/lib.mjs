@@ -162,14 +162,32 @@ function fsOf(opts) {
 const SHARING = new Set(['EPERM', 'EACCES', 'EBUSY']);
 const WRITE_RETRIES = 40;
 
-/** Retry an fs operation that failed for a Windows sharing reason (section 4.3): 40 times, 25-100 ms. */
-export function fsRetry(op) {
+// A retry budget is a span of time, read on the monotonic clock (never the wall clock).
+const monoNow = () => performance.now();
+function budgetEnd(budget) {
+  if (budget === undefined || budget === null) return Infinity;
+  if (typeof budget !== 'number' || Number.isNaN(budget)) throw err('bad-budget', 70, { budget: String(budget) });
+  return monoNow() + Math.max(0, budget);
+}
+const budgetSpent = (detail) => err('budget-spent', 2, detail);
+
+/**
+ * Retry an fs operation that failed for a Windows sharing reason (section 4.3): 40 times, 25-100 ms.
+ * `budget` (0b(c), FIX-fence §0b): the milliseconds left for the caller's whole work (the hook passes
+ * the time left until `hook_deadline_ms` from its start). The operation is tried once at least; a
+ * retry is made only when its sleep ends inside the budget, else `budget-spent` 2 (detail: the last
+ * error code, the tries). Without a budget the 40 retries stand.
+ */
+export function fsRetry(op, budget) {
+  const end = budgetEnd(budget);
   for (let i = 0; ; i++) {
     try {
       return op();
     } catch (e) {
       if (!e || !SHARING.has(e.code) || i >= WRITE_RETRIES) throw e;
-      sleepMs(jitter(25, 100));
+      const wait = jitter(25, 100);
+      if (monoNow() + wait > end) throw budgetSpent({ code: e.code, syscall: e.syscall || null, tries: i + 1, budget_ms: budget });
+      sleepMs(wait);
     }
   }
 }
@@ -185,13 +203,14 @@ function hasTempSibling(F, file) {
 }
 
 /** Read bytes; EPERM/EACCES and an ENOENT while a rename is in flight are retried 5 times, 20 ms apart. */
-function readBytes(file, F = FS) {
+function readBytes(file, F = FS, end = Infinity) {
   for (let i = 0; ; i++) {
     try {
       return F.readFileSync(file);
     } catch (e) {
       const transient = e && (SHARING.has(e.code) || (e.code === 'ENOENT' && hasTempSibling(F, file)));
       if (!transient || i >= 5) throw e;
+      if (monoNow() + 20 > end) throw budgetSpent({ path: file, code: e.code, tries: i + 1 });
       sleepMs(20);
     }
   }
@@ -532,6 +551,22 @@ export function paths(root) {
     wt: j('wt'),
     attempt: (task, e) => j('wt', `${task}-e${e}`),
     attemptRel: (task, e) => `wt/${task}-e${e}`,
+    // the round-3 runtime files (RUNTIME_FILES)
+    outcomeDir: (task, e) => j('wt', `${task}-e${e}`, 'outcome'),
+    outcomeSlot: (task, e, k) => j('wt', `${task}-e${e}`, 'outcome', `${k}.json`),
+    claim: (task, e) => j('wt', `${task}-e${e}`, 'claim.json'),
+    startRecord: (task, e) => j('wt', `${task}-e${e}`, 'start.json'),
+    coordSession: (ce) => j('run', `coord-session-${ce}.json`),
+    closeIntent: (sid) => j('run', 'close', 'intent', `${sid}.json`),
+    closeDone: (sid) => j('run', 'close', 'done', `${sid}.json`),
+    arm: j('run', 'arm'),
+    armSlot: (k) => j('run', 'arm', `slot-${k}.json`),
+    armNonce: (nonce) => j('run', 'arm', `${nonce}.json`),
+    armExited: (pid, startTime) => j('run', 'arm', `exited-${markerKey(pid, startTime)}.json`),
+    armUnarmed: (pid, startTime) => j('run', 'arm', `unarmed-${markerKey(pid, startTime)}.json`),
+    turn: j('run', 'turn.json'),
+    deadman: j('run', 'deadman.json'),
+    watcherBusy: j('run', 'watcher-busy.json'),
     tmp: j('tmp'),
     gitignore: j('.gitignore'),
     gitattributes: j('.gitattributes'),
@@ -655,29 +690,49 @@ export function objectId(prefix, value) {
   return `${prefix}_${sha256hex(canonicalize(value)).slice(0, 16)}`;
 }
 
-/** Exclusive create of `buf` at `file`: 'created' | 'identical' | 'different'. Atomic (temp + link). */
-function exclusiveWrite(file, buf, F = FS) {
-  F.mkdirSync(path.dirname(file), { recursive: true });
+const NO_HARDLINK = ['ENOTSUP', 'EINVAL', 'EXDEV', 'ENOSYS', 'EMLINK'];
+
+/**
+ * Exclusive create of `buf` at `file`: 'created' | 'identical' | 'different'. Atomic (temp + link).
+ * `opts` (0b, FIX-fence §0b): `strict` takes neither weak path: no folder is made (a missing parent
+ * throws `no-parent` 2) and no `wx` fallback where hard links are unsupported (`no-hardlink` 3), so
+ * the name never exists without its bytes. `budget`: the milliseconds left for the whole create;
+ * spent before the first write or before the link → `budget-spent` 2 with nothing at the name; every
+ * retry stays inside it.
+ */
+function exclusiveWrite(file, buf, F = FS, { strict = false, budget } = {}) {
+  const end = budgetEnd(budget);
+  const left = () => (end === Infinity ? undefined : Math.max(0, end - monoNow()));
+  if (left() === 0) throw budgetSpent({ path: file, tries: 0 });
+  if (!strict) F.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = tempName(file);
   let fd = null;
   try {
-    fd = fsRetry(() => F.openSync(tmp, 'wx'));
+    try {
+      fd = fsRetry(() => F.openSync(tmp, 'wx'), left());
+    } catch (e) {
+      // The temp's name is fresh, so ENOENT or ENOTDIR can only mean that its folder is missing.
+      if (strict && e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) throw err('no-parent', 2, { path: file, code: e.code });
+      throw e;
+    }
     writeAll(F, fd, buf);
     F.fsyncSync(fd);
     F.closeSync(fd);
     fd = null;
+    if (left() === 0) throw budgetSpent({ path: file, tries: 0, before: 'link' });
     let linked = false;
     try {
-      fsRetry(() => F.linkSync(tmp, file));
+      fsRetry(() => F.linkSync(tmp, file), left());
       linked = true;
     } catch (e) {
       if (e && e.code === 'EEXIST') {
         // fall through to the comparison below
-      } else if (e && ['ENOTSUP', 'EINVAL', 'EXDEV', 'ENOSYS', 'EMLINK'].includes(e.code)) {
+      } else if (e && NO_HARDLINK.includes(e.code)) {
+        if (strict) throw err('no-hardlink', 3, { path: file, code: e.code });
         // No hard links here: exclusive create with wx (not atomic against a crash mid-write).
         let fd2 = null;
         try {
-          fd2 = fsRetry(() => F.openSync(file, 'wx'));
+          fd2 = fsRetry(() => F.openSync(file, 'wx'), left());
           writeAll(F, fd2, buf);
           F.fsyncSync(fd2);
           linked = true;
@@ -691,7 +746,7 @@ function exclusiveWrite(file, buf, F = FS) {
       }
     }
     if (linked) return 'created';
-    const have = readBytes(file, F);
+    const have = readBytes(file, F, end);
     return have.equals(buf) ? 'identical' : 'different';
   } finally {
     if (fd !== null) {
@@ -702,7 +757,8 @@ function exclusiveWrite(file, buf, F = FS) {
       }
     }
     try {
-      fsRetry(() => F.unlinkSync(tmp));
+      // tried once at least, even with the budget spent
+      fsRetry(() => F.unlinkSync(tmp), left());
     } catch {
       // the temp may not exist
     }
@@ -813,10 +869,14 @@ export function removeFile(p, opts) {
   }
 }
 
-/** Exclusive create: 'created' | 'identical'; different bytes at the path: exists-different 1. */
-export function createExclusive(p, data) {
+/**
+ * Exclusive create: 'created' | 'identical'; different bytes at the path: exists-different 1.
+ * `opts` = {strict, budget} (0b, every hook write): see exclusiveWrite.
+ */
+export function createExclusive(p, data, opts) {
   const buf = toBuffer(data);
-  const r = exclusiveWrite(p, buf);
+  const o = opts && typeof opts === 'object' ? opts : {};
+  const r = exclusiveWrite(p, buf, FS, { strict: !!o.strict, budget: o.budget });
   if (r === 'different') throw err('exists-different', 1, { path: p });
   return r;
 }
@@ -1293,6 +1353,10 @@ export function acquireLock(root, name, opts = {}) {
   record.acquired_at = now === undefined ? null : now instanceof Date ? now.toISOString() : now;
   const bytes = Buffer.from(JSON.stringify(record), 'utf8');
   const judged = new Map(); // nonce -> alive verdict, so one holder costs one process query
+  // FX-W7 step 1: watcher.json as it was when the watcher.lock holder was judged (read before the
+  // judgement), so the break under the run lock can see whether the holder wrote since.
+  const stateFile = name === 'watcher.lock' ? path.join(runDir, 'watcher.json') : null;
+  const judgedState = new Map(); // nonce -> stateSnapshot(stateFile)
 
   const tryCreate = () => {
     let fd;
@@ -1316,6 +1380,7 @@ export function acquireLock(root, name, opts = {}) {
     if (!proc || typeof proc.alive !== 'function' || !held || !Number.isInteger(held.pid)) return false;
     const key = String(held.nonce);
     if (!judged.has(key)) {
+      if (stateFile) judgedState.set(key, stateSnapshot(stateFile));
       let a = null;
       try {
         a = proc.alive(held.pid, held.start_time ?? null);
@@ -1364,9 +1429,16 @@ export function acquireLock(root, name, opts = {}) {
       if (missing) {
         if (++spins < 1000) continue; // released between our create and read
       } else if (held && seen > judgeAfter && isStale(held)) {
-        const out = breakStale(file, held, heldBytes, nonce, bytes);
+        const key = String(held.nonce);
+        const out = breakStep({ root: R, name, file, heldBytes, stateFile, state: judgedState.get(key), lockOpts: { script, ce, proc, now, retries, retryMs, ctx } },
+          () => breakStale(file, held, heldBytes, nonce, bytes));
         if (out === 'held') return finish(held);
-        if (++spins < 1000) continue;
+        if (out === 'progress') {
+          // The holder wrote watcher.json after it was judged dead: judge it again after a new run of sightings.
+          judged.delete(key);
+          lastSeen = null;
+          seen = 0;
+        } else if (++spins < 1000) continue;
       } else if (!held && heldBytes && retries >= LOCK_UNREADABLE_MIN_RETRIES && seen > retries) {
         // Unchanged and unreadable for the whole retry budget: no holder ever finished writing it.
         const out = breakStale(file, null, heldBytes, nonce, bytes);
@@ -1459,12 +1531,17 @@ function logOrphans(root, handle, ctx, ce, now) {
   }
 }
 
-/** Acquire run.lock, check ce inside it (when given), run fn(handle), release in finally. */
+/**
+ * Acquire run.lock, check ce inside it (when given), run fn(handle), release in finally.
+ * `requireArmed: true` (FX-W3) runs armedCheck(root, handle, o.ce) after the ce check, before fn:
+ * not armed (lib.armedState; no ce given counts as not armed) is exit 6 `not-armed`.
+ */
 export async function withRunLock(root, opts, fn) {
   const o = opts || {};
   const handle = acquireLock(root, 'run.lock', o);
   try {
     if (o.ce !== undefined && o.ce !== null) checkCe(root, o.ce);
+    if (o.requireArmed === true) armedCheck(root, handle, o.ce);
     return await fn(handle);
   } finally {
     handle.release();
@@ -1782,7 +1859,21 @@ export function fence(root, handle, o = {}) {
     const isHost = failure && reason !== 'tainted' && host === true;
     let limit = false;
     let charged = false;
-    if (failure) {
+    // FX-CLAIM step 2 (N7): for a failure reason, not host, the attempt's claim decides. A tombstone (no
+    // session ever passed a tool call) is a no-start fence: uncharged while nostart < H_nostart, and
+    // nostart counts it (capped at H_nostart); past that it is charged like a failure. A session claim
+    // resets nostart to 0. No claim (no manifest, rev 4 H1) leaves nostart and the charge as before.
+    let free = false;
+    if (failure && !isHost) {
+      const kind = fenceClaimKind(root, row, task, e);
+      const ns = Number.isInteger(row.nostart) ? row.nostart : 0;
+      const Hns = Number.isInteger(o.Hnostart) ? o.Hnostart : hNostart(root);
+      if (kind === 'tombstone') {
+        free = ns < Hns;
+        row.nostart = Math.min(Hns, ns + 1);
+      } else if (kind === 'session' && ns !== 0) row.nostart = 0;
+    }
+    if (failure && !free) {
       const restarts = Number.isInteger(row.restarts) ? row.restarts : 0;
       if (restarts >= Rmax) limit = true;
       else if (!isHost) {
@@ -1812,6 +1903,7 @@ export function fence(root, handle, o = {}) {
     row.step = 'fenced';
     row.reason = reason;
     row.session = null;
+    if ('verify_rounds' in row) row.verify_rounds = 0; // FX-CLOSE: the next stop's rounds start at 0 (the model's t.vr = 0)
     if (!row.attempts.some((a) => a && a.epoch === e + 1)) row.attempts.push(newAttempt(task, e + 1));
     info = { from: e, to: e + 1, restartCharged: charged, limit };
     return row;
@@ -2488,9 +2580,11 @@ function hidden(obj, key, value) {
  * Entries keep the contract's shapes; two extras are non-enumerable (absent from JSON and deep
  * equality): `line` on every tool use, tool result and structured entry (the 1-based line of the
  * parse, the file's line when fromByte is 0; harvest's `source.line`), and `open: true` on a turn end
- * that the end of the file closed rather than a user record.
+ * that the end of the file closed rather than a user record. Two more are non-enumerable (FX-W6):
+ * `tail`, the tail state (tailState), continued from the option `tail` when the parse resumes at
+ * fromByte without a reset, and `kind`, the kind of the tail (transcriptKind).
  */
-export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
+export function parseTranscript(file, { fromByte = 0, lastCall = null, tail = null } = {}) {
   let start = Number.isInteger(fromByte) && fromByte > 0 ? fromByte : 0;
   let reset = false;
   try {
@@ -2515,6 +2609,7 @@ export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
   let firstCall = true;
   let lineNo = 0; // 1-based line of the parse (the file's line number when fromByte is 0)
   const prevId = start > 0 && lastCall && typeof lastCall.id === 'string' ? lastCall.id : null;
+  const tl = tailState(start > 0 ? tail : null); // FX-W6: continued only when the parse resumes
 
   const closeRun = (open) => {
     if (!run) return;
@@ -2587,6 +2682,7 @@ export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
         }
         firstCall = false;
       }
+      tailOnAssistant(tl, id, msg, content);
       const key = id ?? `line:${lineNo}`;
       if (!run) run = { lastId: key, ts, texts: [] };
       if (run.lastId !== key) {
@@ -2618,11 +2714,13 @@ export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
           }
         }
       }
+      tailOnUser(tl, rec, msg.content);
       if (!isToolResult) closeRun(false);
       return;
     }
     if (rec.type === 'attachment') {
       const a = rec.attachment;
+      tailOnAttachment(tl, a);
       if (a && typeof a === 'object' && a.type === 'structured_output') {
         const item = { data: a.data === undefined ? null : a.data };
         const tid = a.toolUseID ?? a.toolUseId ?? a.tool_use_id;
@@ -2670,6 +2768,8 @@ export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
     }
   }
   closeRun(true);
+  hidden(res, 'tail', tl);
+  hidden(res, 'kind', transcriptKind(res));
   return res;
 }
 
@@ -3056,7 +3156,8 @@ export function reservation(rows, spentOf) {
  * procList null (PowerShell failed) -> unknown; matched processes alive -> live; the current attempt
  * of a row active at step admitted, started or bound, or the last attempt of a committed row ->
  * unknown (always one slot); a transcript of the attempt exists -> unknown; else nothing.
- * `opts.root` (optional, not in the contract's signature) resolves a relative attempt folder; without
+ * Signature slotCount(rows, procList, transcriptsRoot, {root} = {}): `{root}` is part of it since
+ * round 3 (S0.5; FX-CLAIM's callers pass it). `root` (optional) resolves a relative attempt folder; without
  * it a relative folder is matched in command lines as written, and its transcripts are found by
  * session id or by a project folder whose first `cwd` ends with that relative folder.
  */
@@ -3098,7 +3199,87 @@ export function slotCount(rows, procList, transcriptsRoot, opts = {}) {
       if (attemptHasTranscript(transcriptsRoot, a.session, folderAbs, folderAbs ? null : folderRel)) out.unknown++;
     }
   }
+  out.unconfirmed += folderSessionSlots(rows, procList, transcriptsRoot, root, opts && Array.isArray(opts.counted) ? opts.counted : null);
   return out;
+}
+
+/**
+ * FX-CLAIM step 7: one `unconfirmed` slot for every folder session (a transcript whose first `cwd` is
+ * an attempt folder, any row but planned, any attempt) that has no counting close-done record and is
+ * not its attempt's own session: the claim holder, or the recorded `session` when the attempt holds no
+ * session claim (counted by the attempt above while it is not stop-confirmed). A close-done record
+ * counts when its outcome is `stopped` or `owner`; a `no-such-session` counts only when this
+ * coordinator made the start (the attempt's start.json `session` equals the record's `by`) or the
+ * process list matches nothing for the folder or the session (rev 4, H3). Needs an absolute folder:
+ * a relative folder without `root` is not scanned.
+ */
+// FX-PLAN: `counted` (optional, slotCount's opts.counted) receives one entry per counted session,
+// {task, epoch, session, claim: the attempt's claim kind, done: 'none' | 'uncounted'}, for planFacts.
+function folderSessionSlots(rows, procList, transcriptsRoot, root, counted = null) {
+  let n = 0;
+  const seen = new Set();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row || row.state === 'planned') continue;
+    for (const a of Array.isArray(row.attempts) ? row.attempts : []) {
+      if (!a || !Number.isInteger(a.epoch)) continue;
+      const rel = typeof a.folder === 'string' && a.folder ? a.folder : `wt/${row.task}-e${a.epoch}`;
+      const abs = path.isAbsolute(rel) ? rel : root ? path.resolve(root, rel) : null;
+      if (!abs) continue;
+      let found = [];
+      try {
+        found = transcriptsForFolder(transcriptsRoot, abs) ?? [];
+      } catch {
+        found = [];
+      }
+      if (found.length === 0) continue;
+      let own = typeof a.session === 'string' ? a.session : null;
+      let ck = 'none';
+      try {
+        const c = readClaim(abs);
+        ck = c.kind;
+        if (c.kind === 'session') own = c.session_id;
+      } catch {
+        // an invalid claim (tamper) names no holder: every folder session but the recorded one counts
+        ck = 'invalid';
+      }
+      let start;
+      for (const f of found) {
+        const sid = f && typeof f.sessionId === 'string' ? f.sessionId : null;
+        if (!sid || sid === own || seen.has(sid)) continue;
+        seen.add(sid);
+        if (root) {
+          if (start === undefined) start = readJsonOrNull(path.join(abs, 'start.json'));
+          if (closeDoneCounts(root, sid, start, procList, abs)) continue;
+        }
+        n++;
+        if (counted) {
+          const done = root ? readJsonOrNull(path.join(path.resolve(root), 'run', 'close', 'done', `${sid}.json`)) : null;
+          counted.push({ task: row.task, epoch: a.epoch, session: sid, claim: ck, done: done ? 'uncounted' : 'none' });
+        }
+      }
+    }
+  }
+  return n;
+}
+
+function readJsonOrNull(p) {
+  try {
+    return readJson(p);
+  } catch {
+    return null;
+  }
+}
+
+// FX-CLAIM step 7 with rev 4's H3 rule: does the close-done record of session sid release its slot?
+// Exported for FX-CLOSE: stop verify (a), (b) count a close by the same rule.
+export function closeDoneCounts(root, sid, start, procList, folderAbs) {
+  const done = readJsonOrNull(path.join(path.resolve(root), 'run', 'close', 'done', `${sid}.json`));
+  if (!done || typeof done !== 'object' || done.kind !== 'close-done') return false;
+  if (done.outcome === 'stopped' || done.outcome === 'owner') return true;
+  if (done.outcome !== 'no-such-session') return false;
+  if (start && typeof start.session === 'string' && start.session !== '' && start.session === done.by) return true;
+  if (!Array.isArray(procList)) return false;
+  return attemptProcesses(procList, { folder: folderAbs, sessionId: sid }).matched.length === 0;
 }
 
 /** A transcript of an attempt: by session id, by the absolute folder, or (no root) by a folder suffix. */
@@ -3607,4 +3788,714 @@ export function checkerVerdicts(parsed, itemIds) {
 /** sha256hex(canonicalize(readSet)) (section 3.16). */
 export function readSetSha(readSet) {
   return sha256hex(canonicalize(readSet));
+}
+
+// =============================================================================================
+// Round-3 skeleton (build unit S0.5): fixed signatures, runtime file formats, empty steps
+// =============================================================================================
+//
+// The round-3 fixes (model/as-built/FIX-fence.md, FIX-wake.md, joined in FIX-JOIN.md) share places in
+// the scripts. Each shared place is a named function, here or in its script, that exactly one fix
+// fills, so no two fixes edit the same lines. Until its fix lands, an API function below throws
+// `not-built` (exit 70, detail {fn, fix}) and an empty step returns its neutral value: behaviour is
+// unchanged. The order is FIX-JOIN point 11, "Build order across lib".
+
+const notBuilt = (fn, fix) => err('not-built', 70, { fn, fix });
+
+/**
+ * The 13 runtime files of the round-3 fixes. `path` is relative to the root (`<pt>` is
+ * markerKey(pid, start_time)); `helper` names its function in paths(root); `fix` the fix that
+ * writes it; `writer` the script step; `fields` its bytes. Every file is a strict create (0b) unless
+ * `rewritten` (an atomic rewrite). A reader checks that `kind` matches the folder and that a session
+ * file's `session` equals its name (FIX-fence.md, FX-CGATE "Name validation").
+ */
+export const RUNTIME_FILES = Object.freeze([
+  {
+    path: 'wt/<T>-e<E>/outcome/<j>.json', helper: 'outcomeSlot', fix: 'FX-OUT', rewritten: false,
+    writer: 'guard-hook stepReadySlot (ready); replace fence fenceOutcomeSteps (fenced); replace start makes the folder',
+    fields: "{kind:'ready', task, epoch, step} | {kind:'fenced', task, epoch, reason}",
+  },
+  {
+    path: 'wt/<T>-e<E>/claim.json', helper: 'claim', fix: 'FX-CLAIM', rewritten: false,
+    writer: 'guard-hook stepClaim (session); replace fence fenceTombstone (tombstone)',
+    fields: "{kind:'session', session_id} | {kind:'tombstone', task, epoch}",
+  },
+  {
+    path: 'wt/<T>-e<E>/start.json', helper: 'startRecord', fix: 'FX-CGATE', rewritten: false,
+    writer: 'guard-hook stepStartRecord (coordinator, CGATE step 4)',
+    fields: "{kind:'start', session, tool_use_id|null, tick, at}",
+  },
+  {
+    path: 'run/coord-session-<ce>.json', helper: 'coordSession', fix: 'FX-CGATE', rewritten: false,
+    writer: 'guard-hook stepBind (coordinator, CGATE step 2)',
+    fields: '{session_id}',
+  },
+  {
+    path: 'run/close/intent/<sid>.json', helper: 'closeIntent', fix: 'FX-CGATE', rewritten: false,
+    writer: 'guard-hook stepStopIntent (coordinator, PreToolUse, CGATE step 5)',
+    fields: "{kind:'close-intent', session, by, tool_use_id}",
+  },
+  {
+    path: 'run/close/done/<sid>.json', helper: 'closeDone', fix: 'FX-CGATE', rewritten: false,
+    writer: 'guard-hook, PostToolUse (coordinator, CGATE step 6)',
+    fields: "{kind:'close-done', session, outcome:'stopped'|'no-such-session'|'owner', by}",
+  },
+  {
+    path: 'run/arm/slot-<k>.json', helper: 'armSlot', fix: 'FX-W2', rewritten: true,
+    writer: 'watch --alarm --ensure, hold 1: alarmRegisterSlot (FX-W2), alarmSlotTurnSeq (FX-W3)',
+    fields: '{ce, pid, start_time, nonce, turn_seq_at_reg}',
+  },
+  {
+    path: 'run/arm/<nonce>.json', helper: 'armNonce', fix: 'FX-W2', rewritten: true,
+    writer: 'watch --alarm --ensure (started, registered, present); status --reconcile (abandoned)',
+    fields: "{state:'started'|'registered'|'present'|'abandoned', k?, pid?}",
+  },
+  {
+    path: 'run/arm/exited-<pt>.json', helper: 'armExited', fix: 'FX-W1', rewritten: false,
+    writer: 'watch --alarm alarmExitMarker (every exit after registration, no lock)',
+    fields: '{ce, exit, at}',
+  },
+  {
+    path: 'run/arm/unarmed-<pt>.json', helper: 'armUnarmed', fix: 'FX-W3', rewritten: false,
+    writer: 'watch --alarm alarmUnarmedRecord (exit 30 only)',
+    fields: '{ce, turn_seq}',
+  },
+  {
+    path: 'run/turn.json', helper: 'turn', fix: 'FX-W2, FX-W3', rewritten: true,
+    writer: 'status --reconcile (r8-r13 hold; hold 2: hold2ArmSlots); the endturn (arm spent)',
+    fields: "{ce, turn_seq, read_seq, arm:'unconfirmed'|'confirmed'|'spent', slots:[{k, pid, start_time}], unarmed_turns}",
+  },
+  {
+    path: 'run/deadman.json', helper: 'deadman', fix: 'FX-W4', rewritten: true,
+    writer: 'status --deadman deadmanRun (single writer, writeAtomic, no lock; a dry run writes nothing)',
+    fields: '{schema_version, ce, runs, at, boot, runs_no_alarm, runs_no_watcher, list_hist[<=5], alerted:{cause: runs}, gap}',
+  },
+  {
+    path: 'run/watcher-busy.json', helper: 'watcherBusy', fix: 'FX-W7', rewritten: true,
+    writer: 'watch, a tick whose hold found the run lock busy',
+    fields: '{ce, busy_ticks}',
+  },
+].map((f) => Object.freeze(f)));
+
+/**
+ * The file-name key of a process for the arm markers (`exited-<pt>`, `unarmed-<pt>`): `<pid>-<start>`,
+ * where <start> is the start time with every character but [0-9A-Za-z] removed (an ISO time holds
+ * ':', which Windows refuses in a file name). Writer and readers take the start time from the slot
+ * record, so both build the same key.
+ */
+export function markerKey(pid, startTime) {
+  return `${pid}-${String(startTime ?? '').replace(/[^0-9A-Za-z]/g, '')}`;
+}
+
+// FX-OUT (FIX-fence.md section 1; CONTRACT §3.23): the outcome log of one attempt, one write-once
+// slot per file, `outcome/<j>.json`, j = 0, 1, 2 ...; every slot is a strict create (0b).
+const OUTCOME_NAME_RE = /^([0-9]+)\.json$/i;
+const OUTCOME_SLOT_RE = /^(?:0|[1-9][0-9]{0,8})\.json$/;
+const OUTCOME_TASK_RE = /^[a-z][a-z0-9-]{1,39}$/;
+const OUTCOME_STEP_RE = /^[a-z][a-z0-9-]{0,39}$/;
+const OUTCOME_APPEND_TRIES = 64;
+
+const outcomeTamper = (attemptDir, why, detail) => err('outcome-tamper', 3, { attempt: path.basename(String(attemptDir)), why, ...(detail || {}) });
+
+/**
+ * The bytes of a slot: the canonical JSON of its own fields only, so that a repeat READY of a step
+ * has identical bytes. Ready `{kind, task, epoch, step}`; fenced `{kind, task, epoch, reason}`.
+ */
+export function outcomeSlotBytes(slot) {
+  const s = slot !== null && typeof slot === 'object' && !Array.isArray(slot) ? slot : {};
+  const base = OUTCOME_TASK_RE.test(String(s.task)) && Number.isInteger(s.epoch) && s.epoch >= 1;
+  if (base && s.kind === 'ready' && typeof s.step === 'string' && OUTCOME_STEP_RE.test(s.step)) {
+    return canonicalize({ kind: 'ready', task: s.task, epoch: s.epoch, step: s.step });
+  }
+  if (base && s.kind === 'fenced' && REASONS.includes(s.reason)) {
+    return canonicalize({ kind: 'fenced', task: s.task, epoch: s.epoch, reason: s.reason });
+  }
+  throw err('usage', 66, { what: 'outcome slot', kind: s.kind ?? null });
+}
+
+/**
+ * outcomeState(attemptDir, row) -> {present, fenced, slots, ready, next} (FX-OUT; FIX-fence.md
+ * "Reading rules" R-a to R-c). `present`: `outcome/` exists (an attempt started before the fix, or
+ * never admitted, has none: an empty log); `fenced`: the reason of the fenced slot, else null (R-a);
+ * `slots`: [{j, kind, task, epoch, step | reason}] in j order; `ready`: the steps of ready slots whose
+ * step is not in row.commits (R-b), in j order; `next`: the first free j. Only names `<j>.json` are
+ * slots (a create's temp file is not); a slot must be a regular file (lstat) whose bytes parse to a
+ * slot of this folder's task and epoch (R-c). Anything else is tamper, `outcome-tamper` 3: a slot that
+ * is not a file or does not parse, a name with leading zeros, a gap, a slot after the fenced one, a
+ * slot of another task or epoch, and an `outcome` that is not a real folder. The one reader for
+ * commit, the fence, the hook, the planners and fsck.
+ */
+export function outcomeState(attemptDir, row) {
+  const dir = path.join(String(attemptDir), 'outcome');
+  const own = /^(.+)-e([1-9][0-9]*)$/.exec(path.basename(path.resolve(String(attemptDir))));
+  const task = own ? own[1] : row && typeof row.task === 'string' ? row.task : null;
+  const epoch = own ? Number(own[2]) : null;
+  const empty = { present: false, fenced: null, slots: [], ready: [], next: 0 };
+  let st;
+  try {
+    st = fsRetry(() => FS.lstatSync(dir));
+  } catch (e) {
+    if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return empty;
+    throw e;
+  }
+  if (st.isSymbolicLink() || !st.isDirectory()) throw outcomeTamper(attemptDir, 'not-a-folder');
+  const byJ = new Map();
+  for (const name of fsRetry(() => FS.readdirSync(dir))) {
+    const m = OUTCOME_NAME_RE.exec(name);
+    if (!m) continue;
+    if (!OUTCOME_SLOT_RE.test(name)) throw outcomeTamper(attemptDir, 'slot-name', { name });
+    const file = path.join(dir, name);
+    const fst = fsRetry(() => FS.lstatSync(file));
+    if (fst.isSymbolicLink() || !fst.isFile()) throw outcomeTamper(attemptDir, 'slot-not-file', { name });
+    let v;
+    try {
+      v = JSON.parse(stripBom(readBytes(file)).toString('utf8'));
+    } catch (e) {
+      if (e && e.code === 'budget-spent') throw e;
+      throw outcomeTamper(attemptDir, 'slot-unparseable', { name });
+    }
+    let bytes = null;
+    try {
+      bytes = outcomeSlotBytes(v);
+    } catch {
+      bytes = null;
+    }
+    if (bytes === null || canonicalize(v) !== bytes) throw outcomeTamper(attemptDir, 'slot-shape', { name });
+    if ((task !== null && v.task !== task) || (epoch !== null && v.epoch !== epoch)) {
+      throw outcomeTamper(attemptDir, 'slot-owner', { name, task: v.task, epoch: v.epoch });
+    }
+    byJ.set(Number(m[1]), v);
+  }
+  const slots = [];
+  let fenced = null;
+  for (let j = 0; j < byJ.size; j++) {
+    const v = byJ.get(j);
+    if (!v) throw outcomeTamper(attemptDir, 'gap', { missing: j });
+    if (fenced !== null) throw outcomeTamper(attemptDir, 'after-fenced', { j });
+    if (slots.length && v.epoch !== slots[0].epoch) throw outcomeTamper(attemptDir, 'slot-owner', { j, epoch: v.epoch });
+    slots.push({ j, ...v });
+    if (v.kind === 'fenced') fenced = v.reason;
+  }
+  const commits = row && row.commits && typeof row.commits === 'object' ? row.commits : {};
+  const ready = slots.filter((s) => s.kind === 'ready' && !Object.prototype.hasOwnProperty.call(commits, s.step)).map((s) => s.step);
+  return { present: true, fenced, slots, ready, next: slots.length };
+}
+
+/**
+ * outcomeAppend(attemptDir, slot, opts) -> {result: 'created'|'identical'|'fenced', j, state}: the
+ * test-and-set on the log (FX-OUT). Reads the log (outcomeState); a fenced log takes nothing more
+ * (`fenced`, j null); `opts.check(state)` runs on every read before any write and may throw (the
+ * fence's ready check); a slot with the same bytes already there is `identical`; otherwise the slot is
+ * created at the first free j by `opts.create(file, bytes)` -> 'created'|'identical'|'different'
+ * (default: the strict create of 0b, no budget; the hook passes its own, inside its deadline). A name
+ * another writer took first (`different`) reads the log again. `opts.row` is passed to outcomeState.
+ */
+export function outcomeAppend(attemptDir, slot, opts) {
+  const o = opts !== null && typeof opts === 'object' ? opts : {};
+  const bytes = outcomeSlotBytes(slot);
+  const create = typeof o.create === 'function' ? o.create : (file, data) => exclusiveWrite(file, toBuffer(data), FS, { strict: true });
+  for (let i = 0; i < OUTCOME_APPEND_TRIES; i++) {
+    const state = outcomeState(attemptDir, o.row ?? null);
+    if (state.fenced !== null) return { result: 'fenced', j: null, state };
+    if (typeof o.check === 'function') o.check(state);
+    const same = state.slots.find((s) => {
+      const { j, ...fields } = s; // eslint-disable-line no-unused-vars
+      return outcomeSlotBytes(fields) === bytes;
+    });
+    if (same) return { result: 'identical', j: same.j, state };
+    const r = create(path.join(String(attemptDir), 'outcome', `${state.next}.json`), bytes);
+    if (r === 'created' || r === 'identical') return { result: r, j: state.next, state };
+    if (r !== 'different') throw err('internal', 70, { what: 'outcome create', result: String(r) });
+  }
+  throw err('internal', 70, { what: 'outcome append', tries: OUTCOME_APPEND_TRIES });
+}
+
+/**
+ * readClaim(attemptDir) -> {kind: 'none'|'session'|'tombstone', session_id} (FX-CLAIM): the
+ * attempt's `claim.json`; 'none' when it is absent; session_id is null unless kind is 'session'.
+ */
+export function readClaim(attemptDir) {
+  const file = path.join(attemptDir, 'claim.json');
+  let v;
+  try {
+    v = readJson(file);
+  } catch (e) {
+    if (e && e.code === 'missing') return { kind: 'none', session_id: null };
+    // made by strict create (0b), so never torn: bytes that do not parse are tamper
+    if (e && e.code === 'unparseable') throw err('claim-invalid', 3, { path: file });
+    throw e;
+  }
+  if (v && v.kind === 'session' && typeof v.session_id === 'string' && v.session_id !== '') {
+    return { kind: 'session', session_id: v.session_id };
+  }
+  if (v && v.kind === 'tombstone') {
+    return { kind: 'tombstone', session_id: null, task: v.task ?? null, epoch: v.epoch ?? null };
+  }
+  throw err('claim-invalid', 3, { path: file });
+}
+
+/** claimRecord(sessionId) -> {kind:'session', session_id}, the claim's bytes (FX-CLAIM, the hook). */
+export function claimRecord(sessionId) {
+  return { kind: 'session', session_id: sessionId };
+}
+
+/** tombstoneRecord(task, epoch) -> {kind:'tombstone', task, epoch} (FX-CLAIM, the fence). */
+export function tombstoneRecord(task, epoch) {
+  return { kind: 'tombstone', task, epoch };
+}
+
+/**
+ * startLeaseExpired(start, ticksTotal, nowMs, lease) -> bool (FX-CLAIM, the lease N3; read by FX-PLAN).
+ * A start record `{tick, at}` expires only when both hold: `ticksTotal >= start.tick +
+ * start_lease_ticks` and `nowMs >= Date.parse(start.at) + start_lease_ms` (`at` is the hook's wall
+ * clock; a number is taken as epoch ms). A missing or unreadable part never expires the lease: a
+ * subject that advances the ticks alone, or a wall jump alone, cannot expire it.
+ */
+export function startLeaseExpired(start, ticksTotal, nowMs, lease = {}) {
+  if (!start || typeof start !== 'object') return false;
+  const lt = lease.start_lease_ticks;
+  const lm = lease.start_lease_ms;
+  if (!Number.isInteger(start.tick) || !Number.isInteger(ticksTotal) || !Number.isInteger(lt) || lt < 0) return false;
+  const at = typeof start.at === 'number' ? start.at : typeof start.at === 'string' ? Date.parse(start.at) : NaN;
+  if (!Number.isFinite(at) || typeof nowMs !== 'number' || !Number.isFinite(nowMs) || typeof lm !== 'number' || !(lm >= 0)) return false;
+  return ticksTotal >= start.tick + lt && nowMs >= at + lm;
+}
+
+// FX-CLAIM: the claim kind of attempt e of a row ('none' | 'session' | 'tombstone'), for lib.fence.
+function fenceClaimKind(root, row, task, e) {
+  const a = (Array.isArray(row.attempts) ? row.attempts : []).find((x) => x && x.epoch === e) ?? null;
+  const rel = a && typeof a.folder === 'string' && a.folder ? a.folder : `wt/${task}-e${e}`;
+  return readClaim(path.resolve(root, rel)).kind;
+}
+
+// FX-CLAIM: thresholds `H_nostart` (default 2 when the file or the entry is absent).
+function hNostart(root) {
+  try {
+    const th = thresholds(root);
+    const v = th.has('H_nostart') ? th.get('H_nostart') : null;
+    return Number.isInteger(v) && v >= 0 ? v : 2;
+  } catch {
+    return 2;
+  }
+}
+
+/**
+ * planAct(row, facts) -> one act, 'none' and 'owner' included (FX-PLAN; FIX-fence.md section 6 with
+ * rev 4 P1, P2 and rev 5 points 1, 2; branches rows 1 (Q5a acts only) and 16). A pure function of the
+ * row and its facts (`planFacts`); watch's rowAct and status's nextOf both call it (FIX-JOIN 10, 11).
+ * First match wins. An act with arguments carries them as the script's words: `replace-fence --reason
+ * <r>` (a torn fence), `replace-fence --reason crash --if-unclaimed` (the start lease), `close-session
+ * <sid>` (a counted folder session no stop is closing). Bare `replace-fence` is the first fence.
+ */
+export function planAct(row, facts) {
+  const f = facts && typeof facts === 'object' ? facts : {};
+  const { state, step } = row;
+  const e = row.epoch;
+  // 0. The owner's: today's conditions, a tampered log, and verify_rounds >= 3 while a close that
+  //    verify needs is not recorded (rev 4 P1: the rule ends once every needed close counts).
+  if (state === 'failed' || row.limit === true || f.zombieOver === true || f.tamper === true) return 'owner';
+  if ((Number.isInteger(row.verify_rounds) ? row.verify_rounds : 0) >= 3 && f.closesMissing === true) return 'owner';
+  // 1. A torn fence: attempt E's log is fenced and the row is still at E (FX-OUT). Its retry, with the
+  //    log's reason, or `owner` where the retry would be refused (N1 rest).
+  if (typeof f.fenced === 'string') return fenceRetryRefused(row, f.fenced, f.Hmax) ? 'owner' : `replace-fence --reason ${f.fenced}`;
+  const orphan = () => orphanAct(row, f.sessions);
+  // 2. Today's first fence and restart (the orphan's close first: it frees the slot a start needs).
+  if (state === 'planned') return step === 'none' ? (f.blocked ? 'none' : 'replace-fence') : 'owner';
+  if ((state === 'active' || state === 'parked') && step === 'stopped') return orphan() ?? (f.blocked ? 'none' : 'replace-start');
+  // 3. Fenced, or committed at started or bound -> stop-request (b).
+  if (step === 'fenced') return state === 'active' || state === 'parked' ? 'stop-request' : 'owner';
+  if (state === 'committed' && (step === 'started' || step === 'bound')) return 'stop-request';
+  // 4. Today's stop-requested block (Q5a: stop-session, never owner).
+  if (step === 'stop-requested') {
+    if (state !== 'active' && state !== 'parked' && state !== 'committed') return 'owner';
+    const k = state === 'committed' ? e : e - 1;
+    const a = (Array.isArray(row.attempts) ? row.attempts : []).find((x) => x && x.epoch === k) ?? null;
+    const stop = a && a.stop ? a.stop : 'none';
+    if (stop === 'unconfirmed' || f.sample === true) return 'stop-verify';
+    return stop === 'none' || stop === 'requested' ? 'stop-session' : 'stop-verify';
+  }
+  if (step === 'stopped') return orphan() ?? 'none'; // committed, cut, dropped: ended rows
+  if (state !== 'active') return 'owner'; // no script moves it (a pair no script makes)
+  // 5, 6. Admitted, or started with no claim (rev 4 P2): a claim -> bind; start.json -> wait while the
+  //    lease runs, then the lease act (rev 5 point 2); no start.json -> start-session (admitted, Q5a)
+  //    or owner (started: a hand start or a lost record). A tombstone with no fenced log, or a claim
+  //    that does not parse, -> owner.
+  if (step === 'admitted' || step === 'started') {
+    if (f.claim === 'session') return 'bind';
+    if (f.claim !== 'none' && f.claim !== undefined) return 'owner';
+    if (f.start) return f.leaseExpired === true ? 'replace-fence --reason crash --if-unclaimed' : 'none';
+    return step === 'admitted' ? orphan() ?? 'start-session' : 'owner';
+  }
+  // 7. Today's bound rule.
+  if (step === 'bound') {
+    if (f.readyPending === true) return f.audited === true ? 'commit' : 'audit';
+    return orphan() ?? 'none';
+  }
+  return 'owner'; // active at none
+}
+
+// FX-PLAN step 1: would the retry of a torn fence be refused? predictFence's and lib.fence's refusals
+// for a row still at its epoch: wrong-step, and hmax for handover and memory.
+function fenceRetryRefused(row, reason, Hmax) {
+  if (!REASONS.includes(reason) || reason === 'first') return true;
+  const st = row.state;
+  const ok = (st === 'active' && ['bound', 'started', 'admitted'].includes(row.step)) || (st === 'parked' && row.step === 'stopped');
+  if (!ok) return true;
+  const n = (Number.isInteger(row.handovers) ? row.handovers : 0) + (Number.isInteger(row.parks) ? row.parks : 0);
+  return (reason === 'handover' || reason === 'memory') && n >= (Number.isInteger(Hmax) ? Hmax : 2);
+}
+
+// FX-PLAN rev 5 point 1: `close-session <sid>` for the first counted folder session (step 7) of this
+// row that no stop is closing; skipped: an attempt whose stop is requested or unconfirmed, and the
+// current attempt while it waits for its claim (admitted or started, the lease decides). A session
+// whose done record does not count (H3) is the owner's; `owner` only when no other can be closed.
+function orphanAct(row, sessions) {
+  const atts = Array.isArray(row.attempts) ? row.attempts : [];
+  let owner = false;
+  for (const s of Array.isArray(sessions) ? sessions : []) {
+    if (!s || typeof s.session !== 'string' || !s.session) continue;
+    const a = atts.find((x) => x && x.epoch === s.epoch);
+    if (!a || a.stop === 'requested' || a.stop === 'unconfirmed') continue;
+    const waiting = s.epoch === row.epoch && row.state === 'active' && (row.step === 'admitted' || row.step === 'started');
+    if (waiting && s.claim !== 'session') continue;
+    if (s.done === 'uncounted') owner = true;
+    else return `close-session ${s.session}`;
+  }
+  return owner ? 'owner' : null;
+}
+
+/**
+ * planFacts(root, row, ctx) -> planAct's facts for one row (FX-PLAN), one reader for status and the
+ * watcher. From the attempt folder of the row's epoch: claim ('none' | 'session' | 'tombstone' |
+ * 'invalid'), start (start.json present; one that does not parse counts as present, so it never
+ * orders a second start), leaseExpired (`startLeaseExpired` with ctx.ticksTotal, ctx.nowMs,
+ * ctx.lease), fenced and readyPending (the outcome log; tamper on a bad log); from run/: sample (the
+ * stop sample of the target attempt), closesMissing (stop-requested: the claim holder or another
+ * folder session of the target attempt has no counting done record, H3 with ctx.procList); sessions:
+ * this row's entries of ctx.counted (slotCount's step-7 sessions, `{counted}`). Copied from ctx:
+ * zombieOver, blocked, audited, Hmax.
+ */
+export function planFacts(root, row, ctx = {}) {
+  const c = ctx && typeof ctx === 'object' ? ctx : {};
+  const atts = Array.isArray(row.attempts) ? row.attempts : [];
+  const dirOf = (k) => {
+    const a = atts.find((x) => x && x.epoch === k) ?? null;
+    const rel = a && typeof a.folder === 'string' && a.folder ? a.folder : `wt/${row.task}-e${k}`;
+    return { a, dir: path.resolve(root, rel) };
+  };
+  const claimOf = (dir) => {
+    try {
+      return readClaim(dir);
+    } catch (x) {
+      if (x && x.exit === 3) return { kind: 'invalid', session_id: null };
+      throw x;
+    }
+  };
+  const e = row.epoch;
+  const { dir } = dirOf(e);
+  const out = {
+    zombieOver: c.zombieOver === true, blocked: c.blocked === true, audited: c.audited === true, Hmax: c.Hmax,
+    claim: 'none', start: false, leaseExpired: false, fenced: null, tamper: false, readyPending: false,
+    sample: false, closesMissing: false, sessions: [],
+  };
+  if (Number.isInteger(e) && e >= 1) {
+    out.claim = claimOf(dir).kind;
+    let start = null;
+    try {
+      start = readJson(path.join(dir, 'start.json'));
+      out.start = true;
+    } catch (x) {
+      if (!(x && x.code === 'missing')) out.start = true;
+    }
+    out.leaseExpired = out.start && startLeaseExpired(start, c.ticksTotal, c.nowMs, c.lease ?? {});
+    try {
+      const log = outcomeState(dir, row);
+      out.fenced = typeof log.fenced === 'string' ? log.fenced : null;
+      out.readyPending = log.fenced === null && log.ready.length > 0;
+    } catch (x) {
+      if (x && x.exit === 3) out.tamper = true;
+      else throw x;
+    }
+  }
+  const mine = (Array.isArray(c.counted) ? c.counted : []).filter((s) => s && s.task === row.task);
+  out.sessions = mine.slice().sort((x, y) => x.epoch - y.epoch || (x.session < y.session ? -1 : x.session > y.session ? 1 : 0));
+  if (row.step === 'stop-requested') {
+    const k = row.state === 'committed' ? e : e - 1;
+    out.sample = fs.existsSync(path.join(path.resolve(root), 'run', 'stop-sample', `${row.task}-e${k}.json`));
+    const t = dirOf(k);
+    const cl = claimOf(t.dir);
+    const holder = cl.kind === 'session' ? cl.session_id : cl.kind === 'none' && t.a && typeof t.a.session === 'string' ? t.a.session : null;
+    const startK = readJsonOrNull(path.join(t.dir, 'start.json'));
+    const holderMissing = holder !== null && !closeDoneCounts(root, holder, startK, c.procList ?? null, t.dir);
+    out.closesMissing = holderMissing || mine.some((s) => s.epoch === k);
+  }
+  return out;
+}
+
+/**
+ * liveness(rec, proc, markers) -> 'alive' | 'dead' | 'unknown' (FX-W1; FIX-wake.md FX-W1 step 1):
+ * dead when an exit marker names (rec.pid, rec.start_time); otherwise proc.alive: true alive, false
+ * dead, null unknown. Never called inside a run-lock hold. `markers`: the keys of the exit markers
+ * present (exitMarkers(root)), anything with has(key), or an array; `proc`: anything with
+ * alive(pid, start_time) -> true | false | null (the provider, or a reader's adapter over one list).
+ * A record that is not an object names no process: dead. A throwing or absent alive() is unknown.
+ */
+export function liveness(rec, proc, markers) {
+  if (!rec || typeof rec !== 'object' || Array.isArray(rec)) return 'dead';
+  const key = markerKey(rec.pid, rec.start_time);
+  const has = markers && typeof markers.has === 'function' ? (k) => markers.has(k)
+    : Array.isArray(markers) ? (k) => markers.includes(k) : () => false;
+  if (has(key)) return 'dead';
+  let v = null;
+  try {
+    v = proc && typeof proc.alive === 'function' ? proc.alive(Number(rec.pid), rec.start_time ?? null) : null;
+  } catch {
+    v = null;
+  }
+  return v === true ? 'alive' : v === false ? 'dead' : 'unknown';
+}
+
+/**
+ * exitMarkers(root) -> Set of the keys (markerKey) of the alarms' exit markers present in `run/arm/`
+ * (FX-W1 step 2): names `exited-<key>.json` only; a missing folder gives an empty set. File names
+ * only, no parse: a marker exists or not (its strict create is all or nothing).
+ */
+export function exitMarkers(root) {
+  let names = [];
+  try {
+    names = fs.readdirSync(path.join(path.resolve(root), 'run', 'arm'));
+  } catch {
+    names = [];
+  }
+  const out = new Set();
+  for (const n of names) {
+    const m = /^exited-([0-9A-Za-z-]+)\.json$/.exec(n);
+    if (m) out.add(m[1]);
+  }
+  return out;
+}
+
+/**
+ * armedState(root, ce, io) -> {armed: true, turn_seq} | {armed: false, why, ...detail} (FX-W3, FIX-wake
+ * FX-W3 "Armed"): the one file predicate of withRunLock's `requireArmed` and of the guard hook (no
+ * process list, no lock). Armed when run/turn.json is of this ce, its arm is `confirmed`, and its slots
+ * (at least one, each an integer pid > 0 and a string start time) have no exit marker
+ * run/arm/exited-<pt>.json. Every other case is not armed (fail closed): why `no-turn` (absent),
+ * `turn-unreadable`, `other-ce` {turn_ce}, `arm` {arm: unconfirmed | spent | ...}, `no-slots`,
+ * `bad-slot`, `slot-exited` {pid}. `io` {readJson, exists}: the guard hook passes its own; lib's by default.
+ */
+export function armedState(root, ce, io = {}) {
+  const readJ = io && typeof io.readJson === 'function' ? io.readJson : readJson;
+  const exists = io && typeof io.exists === 'function' ? io.exists : (p) => fs.existsSync(p);
+  const P = paths(root);
+  let t;
+  try {
+    t = readJ(P.turn);
+  } catch (e) {
+    return { armed: false, why: e && e.code === 'missing' ? 'no-turn' : 'turn-unreadable' };
+  }
+  if (!t || typeof t !== 'object' || Array.isArray(t)) return { armed: false, why: 'turn-unreadable' };
+  if (!Number.isInteger(ce) || t.ce !== ce) return { armed: false, why: 'other-ce', turn_ce: Number.isInteger(t.ce) ? t.ce : null };
+  if (t.arm !== 'confirmed') return { armed: false, why: 'arm', arm: typeof t.arm === 'string' ? t.arm : null };
+  if (!Array.isArray(t.slots) || t.slots.length === 0) return { armed: false, why: 'no-slots' };
+  for (const s of t.slots) {
+    if (!s || typeof s !== 'object' || !Number.isInteger(s.pid) || s.pid <= 0 || typeof s.start_time !== 'string') return { armed: false, why: 'bad-slot' };
+    if (exists(P.armExited(s.pid, s.start_time))) return { armed: false, why: 'slot-exited', pid: s.pid };
+  }
+  return { armed: true, turn_seq: Number.isInteger(t.turn_seq) ? t.turn_seq : null };
+}
+
+/** checkArmed(root, ce): armedState, or throw exit 6 `not-armed` {ce, why, ...} (FX-W3; nothing written). */
+export function checkArmed(root, ce) {
+  const v = armedState(root, ce);
+  if (v.armed) return v;
+  const { armed, ...detail } = v; // eslint-disable-line no-unused-vars
+  throw err('not-armed', 6, { ce: ce ?? null, ...detail });
+}
+
+/**
+ * armedCheck(root, handle, ce): run by withRunLock inside the hold when `requireArmed` is true, after the
+ * ce check and before fn (FX-W3; FIX-JOIN point 11: first in the fence hold). Not armed: exit 6
+ * `not-armed`, thrown before fn, so the refused act writes nothing (no ledger line, no incident).
+ */
+function armedCheck(root, handle, ce) {
+  if (handle) handle.assertHeld();
+  checkArmed(root, ce);
+}
+
+/**
+ * breakStep(c, doBreak) -> doBreak() or 'gone' | 'changed' | 'progress': acquireLock's break of a lock
+ * judged stale. run.lock: doBreak() at once. watcher.lock (FX-W7 step 1, lock fencing): the holder was
+ * judged dead outside every lock; the waiter now takes run.lock (c.lockOpts: the caller's retries, so
+ * a busy run lock ends in lock-busy 75), re-reads watcher.lock and watcher.json, and breaks only when
+ * both are byte-for-byte as they were at the judgement (c.heldBytes, c.state). A watcher writes
+ * watcher.json only inside a run-lock hold after its assertHeld, so a holder broken here cannot write
+ * again. 'progress': watcher.json changed, the holder is judged again. The unreadable-lock break
+ * (LR-4) does not pass here and keeps its rule.
+ */
+function breakStep(c, doBreak) {
+  if (c.name !== 'watcher.lock') return doBreak();
+  const run = acquireLock(c.root, 'run.lock', c.lockOpts);
+  try {
+    const cur = readLockRecord(c.file);
+    if (cur.missing) return 'gone';
+    if (!cur.bytes || !c.heldBytes || !cur.bytes.equals(c.heldBytes)) return 'changed';
+    if (!sameSnapshot(c.state, stateSnapshot(c.stateFile))) return 'progress';
+    run.assertHeld();
+    return doBreak();
+  } finally {
+    run.release();
+  }
+}
+
+/** {ok: true, bytes: Buffer | null (absent)} of a file, or {ok: false} when it cannot be read. */
+function stateSnapshot(file) {
+  try {
+    return { ok: true, bytes: readBytes(file) };
+  } catch (e) {
+    return e && e.code === 'ENOENT' ? { ok: true, bytes: null } : { ok: false };
+  }
+}
+
+/** Two snapshots are the same only when both were read and hold the same bytes (or both absent). */
+function sameSnapshot(a, b) {
+  if (!a || !b || !a.ok || !b.ok) return false;
+  if (a.bytes === null || b.bytes === null) return a.bytes === b.bytes;
+  return a.bytes.equals(b.bytes);
+}
+
+/**
+ * The 27 top-level record types seen in the transcripts, by count (facts/WH5-Wturn.md, measured
+ * 2026-11-19 over 68 project folders). parseTranscript reads assistant, user and attachment and
+ * skips the rest; kept for FX-W6's kind.
+ */
+export const TRANSCRIPT_RECORD_TYPES = Object.freeze([
+  'assistant', 'user', 'attachment', 'api-request', 'api-request-blob', 'custom-title', 'last-prompt',
+  'atis-latch', 'agent-name', 'queue-operation', 'mode', 'pr-link', 'relocated', 'api-request-shape',
+  'file-history-delta', 'system', 'started', 'result', 'tools-used', 'file-history-snapshot', 'frame-link',
+  'launched', 'cost-state', 'failed', 'artifact-autoreact-ledger', 'artifact-comment-monitor', 'session-owner',
+]);
+
+/**
+ * The kinds of the transcript tail (FX-W6, FIX-wake.md): `tool` (deadline: the declared timeout +
+ * tool_slack_ticks), `bg-wait` (bg_wait_ticks), `model` (model_ticks; also an unreadable transcript),
+ * `idle` (never a charged hang; act-due `idle-child` at idle_ticks).
+ */
+export const TRANSCRIPT_KINDS = Object.freeze(['tool', 'bg-wait', 'model', 'idle']);
+
+/**
+ * transcriptKind(res) -> one of TRANSCRIPT_KINDS: the kind of the parse's tail (FX-W6), read from
+ * `res.tail`. parseTranscript sets it as the non-enumerable `kind` of its result (absent from JSON
+ * and deep equality). In order: no conversation record read (an empty or unreadable transcript) ->
+ * `model`; a tool use of the last call without its result -> `tool`; the turn ended -> `bg-wait`
+ * while a background task it launched has not ended, else `idle`; anything else (a prompt, a
+ * notification or a tool result awaiting the model, a call still streaming) -> `model`.
+ */
+function transcriptKind(res) {
+  const t = res && res.tail;
+  if (!t || !(t.n > 0)) return 'model';
+  if (Object.keys(t.pending).length) return 'tool';
+  if (t.last === 'end') return Object.keys(t.bg).length ? 'bg-wait' : 'idle';
+  return 'model';
+}
+
+/**
+ * The tail state of a transcript (FX-W6), a plain JSON object the watcher stores in each file's
+ * parse-state: {n, last, msg, pending, bg}. Only the conversation records move it: `assistant` and
+ * `user` (each adds 1 to `n`). The other 25 known record types (attachment and the 24 that
+ * parseTranscript skips: TRANSCRIPT_RECORD_TYPES), and any unknown type, never change `n`, `last`
+ * or `pending`; they are not "unreadable". Only an attachment's `queued_command` prompt is read, for
+ * the task notifications it delivers (bg).
+ * - `last`: `call` (an assistant record whose stop_reason is null, tool_use or pause_turn), `end`
+ *   (an assistant record with any other stop_reason, or a user record that is only an interrupt
+ *   notice "[Request interrupted by user..."), `input` (any other user record), or null.
+ * - `msg`: the message id of the last call; a new id ends the last call's tool uses.
+ * - `pending`: {<tool_use id>: declared timeout in ms, 0 when none}: tool uses of the last call
+ *   without a tool_result. The declared timeout is the input's `timeout`, else `timeout_ms`.
+ * - `bg`: {<tool_use id>: task id}: background tasks launched (a tool result whose record's
+ *   toolUseResult has a string `backgroundTaskId` or `taskId`, or `isAsync` true with `agentId`)
+ *   that have not ended. A task ends at a `<task-notification>` naming its tool use id or its task id
+ *   (in a user record or an attachment's `queued_command` prompt), or at a TaskStop, KillShell or
+ *   KillBash tool use whose input names its task id.
+ */
+function tailState(prev) {
+  const ok = !!prev && typeof prev === 'object';
+  const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? { ...v } : {});
+  return {
+    n: ok && Number.isInteger(prev.n) && prev.n >= 0 ? prev.n : 0,
+    last: ok && ['call', 'end', 'input'].includes(prev.last) ? prev.last : null,
+    msg: ok && typeof prev.msg === 'string' ? prev.msg : null,
+    pending: ok ? obj(prev.pending) : {},
+    bg: ok ? obj(prev.bg) : {},
+  };
+}
+
+const TURN_GOES_ON = new Set(['tool_use', 'pause_turn']);
+const STOP_TOOLS = new Set(['TaskStop', 'KillShell', 'KillBash']);
+const INTERRUPT_RE = /^\[Request interrupted by user/;
+const NOTIFIED_RE = /<(tool-use-id|task-id)>([^<\s]{1,200})<\/\1>/g;
+
+function declaredTimeoutMs(input) {
+  for (const k of ['timeout', 'timeout_ms']) {
+    const v = input[k];
+    if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v;
+  }
+  return 0;
+}
+
+function notifiedIds(s) {
+  if (typeof s !== 'string' || !s.includes('<task-notification>')) return [];
+  return [...s.matchAll(NOTIFIED_RE)].map((m) => m[2]);
+}
+
+function endBackground(tl, ids) {
+  if (!ids.length) return;
+  const set = new Set(ids);
+  for (const [k, v] of Object.entries(tl.bg)) if (set.has(k) || (typeof v === 'string' && v && set.has(v))) delete tl.bg[k];
+}
+
+function textsOf(content) {
+  if (typeof content === 'string') return [content];
+  if (!Array.isArray(content)) return [];
+  return content.filter((b) => b && b.type === 'text' && typeof b.text === 'string').map((b) => b.text);
+}
+
+function tailOnAssistant(tl, id, msg, content) {
+  tl.n += 1;
+  if (id !== null && id !== tl.msg) {
+    tl.pending = {};
+    tl.msg = id;
+  }
+  for (const b of content) {
+    if (!b || b.type !== 'tool_use' || typeof b.id !== 'string') continue;
+    const input = b.input && typeof b.input === 'object' ? b.input : {};
+    tl.pending[b.id] = declaredTimeoutMs(input);
+    if (STOP_TOOLS.has(b.name)) endBackground(tl, Object.values(input).filter((v) => typeof v === 'string'));
+  }
+  const sr = msg.stop_reason;
+  tl.last = typeof sr === 'string' && sr !== '' && !TURN_GOES_ON.has(sr) ? 'end' : 'call';
+}
+
+function tailOnUser(tl, rec, content) {
+  tl.n += 1;
+  const texts = textsOf(content);
+  for (const s of texts) endBackground(tl, notifiedIds(s));
+  let results = 0;
+  for (const b of Array.isArray(content) ? content : []) {
+    if (!b || b.type !== 'tool_result' || typeof b.tool_use_id !== 'string') continue;
+    results += 1;
+    delete tl.pending[b.tool_use_id];
+    const r = rec.toolUseResult;
+    if (!r || typeof r !== 'object' || Array.isArray(r)) continue;
+    let task = null;
+    if (typeof r.backgroundTaskId === 'string') task = r.backgroundTaskId;
+    else if (typeof r.taskId === 'string') task = r.taskId;
+    else if (r.isAsync === true) task = typeof r.agentId === 'string' ? r.agentId : '';
+    if (task !== null) tl.bg[b.tool_use_id] = task;
+  }
+  tl.last = results === 0 && texts.length > 0 && texts.every((s) => INTERRUPT_RE.test(s)) ? 'end' : 'input';
+}
+
+function tailOnAttachment(tl, a) {
+  if (a && typeof a === 'object' && a.type === 'queued_command') for (const s of textsOf(a.prompt)) endBackground(tl, notifiedIds(s));
 }

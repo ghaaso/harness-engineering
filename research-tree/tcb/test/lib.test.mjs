@@ -862,6 +862,72 @@ dt('T22 createExclusive creates, accepts identical bytes and refuses different b
   await throwsTcb(() => lib.createExclusive(f, 'two'), 'exists-different', 1);
   assert.equal(fs.readFileSync(f, 'utf8'), 'one');
 });
+dt('T22b createExclusive strict (0b): no folder made (no-parent 2), no fallback without hard links (no-hardlink 3), a spent budget makes nothing (budget-spent 2)', async (d) => {
+  const tmps = () => fs.readdirSync(d).filter((n) => n.endsWith('.tmp'));
+  const f = path.join(d, 'x.json');
+  assert.equal(lib.createExclusive(f, 'one', { strict: true }), 'created');
+  assert.equal(lib.createExclusive(f, 'one', { strict: true }), 'identical');
+  await throwsTcb(() => lib.createExclusive(f, 'two', { strict: true }), 'exists-different', 1);
+  assert.equal(fs.readFileSync(f, 'utf8'), 'one');
+  const g = path.join(d, 'no', 'such', 'y.json');
+  await throwsTcb(() => lib.createExclusive(g, 'y', { strict: true }), 'no-parent', 2);
+  assert.equal(fs.existsSync(path.join(d, 'no')), false, 'strict makes no folder');
+  assert.equal(lib.createExclusive(g, 'y'), 'created', 'without strict the parent is made, as before');
+  for (const code of ['ENOTSUP', 'EINVAL', 'EXDEV', 'ENOSYS', 'EMLINK']) {
+    const h = path.join(d, `h-${code}.json`);
+    const a = failing('linkSync', argHas(norm(d)), [code], { forever: true });
+    try {
+      const e = await throwsTcb(() => lib.createExclusive(h, 'z', { strict: true, budget: 5000 }), 'no-hardlink', 3);
+      assert.equal(e.detail.code, code);
+      assert.equal(fs.existsSync(h), false, `${code}: nothing at the name`);
+      assert.deepEqual(tmps(), [], `${code}: no temp file left`);
+      assert.equal(lib.createExclusive(h, 'z'), 'created', `${code}: without strict the wx fallback still creates it`);
+    } finally {
+      a.restore();
+    }
+    assert.equal(fs.readFileSync(h, 'utf8'), 'z');
+  }
+  const before = fs.readdirSync(d).sort();
+  const k = path.join(d, 'k.json');
+  await throwsTcb(() => lib.createExclusive(k, 'k', { strict: true, budget: 0 }), 'budget-spent', 2);
+  await throwsTcb(() => lib.createExclusive(k, 'k', { strict: true, budget: -5 }), 'budget-spent', 2);
+  assert.deepEqual(fs.readdirSync(d).sort(), before, 'a spent budget touches no file');
+  const o = failing('openSync', (args) => argHas(norm(d))(args) && String(args[0]).endsWith('.tmp'), ['EPERM'], { forever: true });
+  let ms;
+  try {
+    const t0 = performance.now();
+    const e = await throwsTcb(() => lib.createExclusive(k, 'k', { strict: true, budget: 150 }), 'budget-spent', 2);
+    ms = performance.now() - t0;
+    assert.equal(e.detail.code, 'EPERM');
+  } finally {
+    o.restore();
+  }
+  assert.ok(o.state.failed >= 2 && o.state.failed <= 40, `tries ${o.state.failed}`);
+  assert.ok(ms < 700, `the create gave up after ${Math.round(ms)} ms, not inside its 150 ms budget`);
+  assert.deepEqual(fs.readdirSync(d).sort(), before, 'nothing made');
+});
+test('T22c fsRetry(op, budget) (0b): one try at budget 0, retries that stop inside the budget, a non-sharing error at once, a bad budget is bad-budget 70', async () => {
+  const eperm = () => Object.assign(new Error('EPERM: simulated sharing violation'), { code: 'EPERM', syscall: 'open' });
+  let n = 0;
+  let e = await throwsTcb(() => lib.fsRetry(() => { n++; throw eperm(); }, 0), 'budget-spent', 2);
+  assert.equal(n, 1, 'budget 0: one try, no retry');
+  assert.deepEqual([e.detail.code, e.detail.tries], ['EPERM', 1]);
+  n = 0;
+  const t0 = performance.now();
+  e = await throwsTcb(() => lib.fsRetry(() => { n++; throw eperm(); }, 150), 'budget-spent', 2);
+  const ms = performance.now() - t0;
+  assert.ok(n >= 2 && n <= 40, `tries ${n}`);
+  assert.equal(e.detail.tries, n);
+  assert.ok(ms <= 150 + 100, `gave up after ${Math.round(ms)} ms with a 150 ms budget`);
+  n = 0;
+  assert.equal(lib.fsRetry(() => { if (++n <= 3) throw eperm(); return 'v'; }, 5000), 'v');
+  assert.equal(n, 4);
+  n = 0;
+  const raw = await tcbErr(() => lib.fsRetry(() => { n++; throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); }, 5000));
+  assert.deepEqual([raw.code, n], ['ENOENT', 1]);
+  for (const bad of ['5', Number.NaN, {}]) await throwsTcb(() => lib.fsRetry(() => 1, bad), 'bad-budget', 70);
+  assert.equal(lib.fsRetry(() => 'u', undefined), 'u');
+});
 dt('T23 readJson of a missing file is missing 2, of a bad file unparseable 2', async (d) => {
   await throwsTcb(() => lib.readJson(path.join(d, 'none.json')), 'missing', 2);
   const f = path.join(d, 'bad.json');
@@ -1087,6 +1153,46 @@ rt('T30 a lock whose holder is dead is broken, no .stale file is left and a lock
   const w = await lib.acquireLock(root, 'watcher.lock', lo({ proc: p }));
   await w.release();
   assert.equal((await ledger(root)).length, n);
+});
+rt('W7a FX-W7 step 1: a dead watcher.lock holder is broken only under the run lock and only while watcher.json is unchanged', async (root) => {
+  const wl = lockFile(root, 'watcher.lock');
+  const wj = P(root, 'run', 'watcher.json');
+  fs.writeFileSync(wj, '{"ticks_total":1}\n');
+  const dead = putLock(root, mkRec({ script: 'watch' }), 'watcher.lock');
+  const before = fs.readFileSync(wl);
+  const alive = (pid) => pid !== dead.pid;
+  const runCreates = () => failing('openSync', (args) => argHas('/run/run.lock')(args) && JSON.stringify(args.slice(1)).includes('wx'), []);
+  // 1. The run lock is held by a live holder: the waiter cannot take it, so nothing is broken.
+  putLock(root, mkRec({ pid: 999002, script: 'other' }));
+  const runBefore = fs.readFileSync(lockFile(root));
+  await throwsTcb(() => lib.acquireLock(root, 'watcher.lock', lo({ proc: fproc({ alive }), retries: 2, retryMs: 1 })), 'lock-busy', 75);
+  assert.deepEqual(fs.readFileSync(wl), before, 'watcher.lock untouched');
+  assert.deepEqual(fs.readFileSync(lockFile(root)), runBefore, 'the run lock untouched');
+  fs.rmSync(lockFile(root));
+  // 2. The holder writes watcher.json after the waiter read it and while it judges the holder: under
+  // the run lock the waiter sees the change (progress) and breaks nothing.
+  const writer = fproc({ alive: (pid) => { if (pid === dead.pid) fs.writeFileSync(wj, `{"ticks_total":${Date.now()}}\n`); return alive(pid); } });
+  const spy2 = runCreates();
+  try {
+    await throwsTcb(() => lib.acquireLock(root, 'watcher.lock', lo({ proc: writer, retries: 5, retryMs: 1 })), 'lock-busy', 75);
+  } finally {
+    spy2.restore();
+  }
+  assert.ok(spy2.state.matched >= 1, 'the waiter took the run lock to check');
+  assert.deepEqual(fs.readFileSync(wl), before, 'watcher.lock untouched after progress');
+  assert.equal(fs.existsSync(lockFile(root)), false, 'the run lock released');
+  // 3. Run lock free and watcher.json unchanged since the judgement: broken under the run lock.
+  const spy3 = runCreates();
+  let h;
+  try {
+    h = await lib.acquireLock(root, 'watcher.lock', lo({ proc: fproc({ alive }), retries: 5, retryMs: 1 }));
+  } finally {
+    spy3.restore();
+  }
+  assert.ok(spy3.state.matched >= 1, 'the break ran under the run lock');
+  assert.equal(JSON.parse(fs.readFileSync(wl, 'utf8')).nonce, h.nonce);
+  assert.equal(fs.existsSync(lockFile(root)), false, 'the run lock released');
+  await h.release();
 });
 rt('T31 a lock whose pid is alive with another start time is stale and is broken', async (root) => {
   const stale = putLock(root, mkRec({ pid: process.pid, start_time: '2000-01-01T00:00:00.0000000Z' }));
@@ -3003,4 +3109,372 @@ dt('T98 fakeTranscript output parses into exactly the calls and tool uses given'
   assert.deepEqual(p.toolUses[2].input, { pattern: 'p' });
   assert.ok(!p.torn);
   assert.equal(countOf(p.badLines), 0);
+});
+
+// ------------------------------------------------------------------ S0.5: the round-3 skeleton
+// spec/lib.md "Round-3 skeleton": the 17 threshold keys of the round-3 fixes exist, non-null, each
+// marked a guess; the API stubs keep their fixed signatures and throw not-built (exit 70) until their
+// fix fills them; the runtime file table, its path helpers and the transcript kind are in place.
+test('S0.5 round-3 skeleton: threshold keys marked guesses, stub signatures, not-built, formats', () => {
+  const th = JSON.parse(fs.readFileSync(path.join(HERE, '..', 'thresholds.json'), 'utf8').replace(/^\uFEFF/, ''));
+  const keys = ['H_nostart', 'start_lease_ticks', 'start_lease_ms', 'stop_verify_ms', 'ensure_query_ms', 'release_ms',
+    'arm_confirm_ms', 'alarm_slots', 'realert_runs', 'stuck_raises', 'idle_ticks', 'attempt_max_ticks',
+    'tool_slack_ticks', 'bg_wait_ticks', 'model_ticks', 'watcher_lock_try_ms', 'busy_alert_ticks'];
+  for (const k of keys) {
+    const p = th.params[k];
+    assert.ok(p, `${k} exists`);
+    assert.equal(p.source, 'guess', `${k} is marked a guess`);
+    assert.ok(Number.isInteger(p.value), `${k} has an integer value`);
+    assert.match(p.unit, /guess/, `${k}'s unit says it is a guess`);
+  }
+  const stubs = { readClaim: 1, claimRecord: 1, tombstoneRecord: 2 }; // FX-PLAN built planAct (its tests: FX-PLAN T1-T3)
+  // FX-CLAIM built readClaim, claimRecord, tombstoneRecord (their tests: T96z): the arity stays, not-built goes
+  for (const [name, n] of [['readClaim', 1], ['claimRecord', 1], ['tombstoneRecord', 2]]) { assert.equal(lib[name].length, n, name); delete stubs[name]; }
+  for (const [name, n] of Object.entries(stubs)) {
+    assert.equal(typeof lib[name], 'function', name);
+    assert.equal(lib[name].length, n, `${name} takes ${n} arguments`);
+    assert.throws(() => lib[name](), (e) => e instanceof lib.TcbError && e.code === 'not-built' && e.exit === 70 && e.detail.fn === name);
+  }
+  assert.equal(lib.RUNTIME_FILES.length, 13);
+  assert.deepEqual(lib.TRANSCRIPT_KINDS, ['tool', 'bg-wait', 'model', 'idle']);
+  assert.equal(new Set(lib.TRANSCRIPT_RECORD_TYPES).size, 27);
+  const P = lib.paths(path.join(os.tmpdir(), 's05-root'));
+  for (const f of lib.RUNTIME_FILES) assert.equal(typeof P[f.helper], f.path.includes('<') ? 'function' : 'string', f.helper);
+  assert.doesNotMatch(path.basename(P.armExited(12, '2026-11-19T10:00:00.1234567Z')), /:/);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 's05-'));
+  try {
+    const f = path.join(dir, 't.jsonl');
+    fs.writeFileSync(f, JSON.stringify({ type: 'user', message: { content: 'hi' } }) + '\n');
+    const res = lib.parseTranscript(f);
+    const d = Object.getOwnPropertyDescriptor(res, 'kind');
+    assert.ok(d && d.enumerable === false && d.value === 'model', 'kind: non-enumerable; a prompt awaiting the model (FX-W6)');
+    assert.ok(!('kind' in JSON.parse(JSON.stringify(res))));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// FX-W1 (FIX-wake.md FX-W1 step 1, spec/lib.md "liveness"): an exit marker beats any answer of the
+// list; otherwise the list's true/false/null is alive/dead/unknown; a list that throws or has no
+// alive() is unknown; a record that is not an object is dead. exitMarkers reads only exited-*.json.
+test('FX-W1 liveness: tri-state with exit markers; exitMarkers reads only the exit markers', () => {
+  const rec = { pid: 4242, start_time: '2026-11-19T10:00:00.1234567Z' };
+  const key = lib.markerKey(rec.pid, rec.start_time);
+  const says = (v) => ({ alive: () => v });
+  assert.equal(lib.liveness(rec, says(true), new Set()), 'alive');
+  assert.equal(lib.liveness(rec, says(false), new Set()), 'dead');
+  assert.equal(lib.liveness(rec, says(null), new Set()), 'unknown');
+  assert.equal(lib.liveness(rec, says(undefined), []), 'unknown');
+  assert.equal(lib.liveness(rec, says(true), new Set([key])), 'dead', 'a marker beats alive');
+  assert.equal(lib.liveness(rec, says(null), [key]), 'dead', 'a marker beats unknown (array form)');
+  assert.equal(lib.liveness(rec, says(true), new Set([lib.markerKey(rec.pid, 'other')])), 'alive', 'another start time is another process');
+  assert.equal(lib.liveness(rec, { alive: () => { throw new Error('boom'); } }, null), 'unknown');
+  assert.equal(lib.liveness(rec, {}, null), 'unknown');
+  assert.equal(lib.liveness(rec, null, undefined), 'unknown');
+  assert.equal(lib.liveness(null, says(true), new Set()), 'dead');
+  assert.equal(lib.liveness('x', says(true), new Set()), 'dead');
+  let seen = null;
+  lib.liveness({ pid: '77', start_time: 's' }, { alive: (p, s) => { seen = [p, s]; return true; } }, []);
+  assert.deepEqual(seen, [77, 's'], 'alive() gets the pid as a number and the start time');
+  assert.equal(lib.liveness.length, 3);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fxw1-'));
+  try {
+    assert.deepEqual([...lib.exitMarkers(root)], [], 'no run/arm folder: empty');
+    const P = lib.paths(root);
+    fs.mkdirSync(path.dirname(P.armExited(1, 'a')), { recursive: true });
+    fs.writeFileSync(P.armExited(rec.pid, rec.start_time), '{}');
+    fs.writeFileSync(P.armUnarmed(5, 'b'), '{}');
+    fs.writeFileSync(path.join(path.dirname(P.armExited(1, 'a')), 'slot-1.json'), '{}');
+    fs.writeFileSync(P.armExited(9, 'c') + '.tmp', '{}');
+    assert.deepEqual([...lib.exitMarkers(root)], [key]);
+    assert.equal(lib.liveness(rec, says(true), lib.exitMarkers(root)), 'dead');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------- FX-CLAIM
+const CL = (i) => `11111111-0000-4000-8000-00000000000${i}`;
+test('T96z FX-CLAIM readClaim and the claim records: none, a session claim made once by strict create, a tombstone that loses to it, an unparseable claim is tamper 3', (t) => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'cl0-'));
+  t.after(() => fs.rmSync(d, { recursive: true, force: true }));
+  const f = path.join(d, 'claim.json');
+  assert.deepEqual(lib.readClaim(d), { kind: 'none', session_id: null });
+  assert.equal(lib.createExclusive(f, lib.claimRecord(CL(1)), { strict: true }), 'created');
+  assert.equal(lib.createExclusive(f, lib.claimRecord(CL(1)), { strict: true }), 'identical');
+  assert.throws(() => lib.createExclusive(f, lib.tombstoneRecord('x', 1), { strict: true }), (e) => e.code === 'exists-different');
+  assert.deepEqual(lib.readClaim(d), { kind: 'session', session_id: CL(1) });
+  assert.deepEqual(lib.tombstoneRecord('x', 1), { kind: 'tombstone', task: 'x', epoch: 1 });
+  fs.writeFileSync(f, '{ not json');
+  assert.throws(() => lib.readClaim(d), (e) => e.code === 'claim-invalid' && e.exit === 3);
+});
+
+test('T96y FX-CLAIM the start lease (N3) expires only when both the ticks and the wall time have passed', () => {
+  const start = { kind: 'start', session: CL(9), tool_use_id: null, tick: 5, at: '2026-11-20T10:00:00.000Z' };
+  const L = { start_lease_ticks: 10, start_lease_ms: 600000 };
+  const t0 = Date.parse(start.at);
+  assert.equal(lib.startLeaseExpired(start, 15, t0 + 600000, L), true);
+  assert.equal(lib.startLeaseExpired(start, 14, t0 + 600000, L), false, 'ticks short');
+  assert.equal(lib.startLeaseExpired(start, 1000, t0 + 599999, L), false, 'a subject advancing the ticks alone');
+  assert.equal(lib.startLeaseExpired(start, 14, t0 + 1e12, L), false, 'a wall jump alone');
+  assert.equal(lib.startLeaseExpired({ ...start, at: 'not a time' }, 1000, t0 + 1e12, L), false);
+  assert.equal(lib.startLeaseExpired(null, 1000, t0 + 1e12, L), false);
+});
+
+test('T96x FX-CLAIM slotCount step 7: a folder session that is not its attempt\'s own counts one unconfirmed slot until a close-done record counts (H3)', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cl7-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const tr = path.join(root, 'transcripts');
+  const folder = path.join(root, 'wt', 'x-e1');
+  fs.mkdirSync(folder, { recursive: true });
+  const tx = (sid) => {
+    const dir = path.join(tr, lib.projectDirName(folder));
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${sid}.jsonl`), JSON.stringify({ type: 'user', cwd: folder, sessionId: sid, timestamp: '2026-11-20T10:00:00.000Z', message: { role: 'user', content: 'x' } }) + '\n');
+  };
+  tx(CL(1));
+  tx(CL(2));
+  fs.writeFileSync(path.join(folder, 'claim.json'), JSON.stringify(lib.claimRecord(CL(1))));
+  const rows = [{ task: 'x', state: 'active', step: 'fenced', epoch: 2, attempts: [{ epoch: 1, folder: 'wt/x-e1', stop: 'confirmed' }, { epoch: 2, folder: 'wt/x-e2', stop: 'none' }] }];
+  const done = (o) => {
+    fs.mkdirSync(path.join(root, 'run', 'close', 'done'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'run', 'close', 'done', `${CL(2)}.json`), JSON.stringify({ kind: 'close-done', session: CL(2), by: CL(8), ...o }));
+  };
+  // the claim holder (its attempt's stop confirmed) is not counted; the duplicate is
+  assert.deepEqual(lib.slotCount(rows, [], tr, { root }), { live: 0, unknown: 0, unconfirmed: 1 });
+  done({ outcome: 'stopped' });
+  assert.equal(lib.slotCount(rows, [], tr, { root }).unconfirmed, 0);
+  // "no such session" for another coordinator's start: counts only when the process list matches nothing
+  done({ outcome: 'no-such-session' });
+  fs.writeFileSync(path.join(folder, 'start.json'), JSON.stringify({ kind: 'start', session: CL(7), tool_use_id: null, tick: 1, at: '2026-11-20T10:00:00.000Z' }));
+  const proc = [{ pid: 4242, ppid: 1, name: 'node.exe', cmdline: `node child.mjs --cwd "${folder}"` }];
+  assert.equal(lib.slotCount(rows, proc, tr, { root }).unconfirmed, 1);
+  assert.equal(lib.slotCount(rows, [], tr, { root }).unconfirmed, 0);
+  // this coordinator's own start: the record counts whatever the process list says
+  fs.writeFileSync(path.join(folder, 'start.json'), JSON.stringify({ kind: 'start', session: CL(8), tool_use_id: null, tick: 1, at: '2026-11-20T10:00:00.000Z' }));
+  assert.equal(lib.slotCount(rows, proc, tr, { root }).unconfirmed, 0);
+});
+
+// ------------------------------------------------------------------ FX-PLAN: the planner (FIX-fence section 6)
+// T1, the total table (FIX-JOIN point 13): every (state, step) of the tasks schema x claim {none, session,
+// tombstone} x start record x lease, Q5a only (branches row 1), gives exactly one act of the planner's set;
+// each script act is accepted by its script's guard (a dry run in a run root: no wrong-step, stale-epoch,
+// usage or not-claimed). committed at started -> stop-request is accepted since FX-CLOSE step 3 (its own test).
+const PLAN_ACT_RE = /^(none|owner|replace-fence|replace-start|stop-request|stop-session|stop-verify|start-session|bind|audit|commit|replace-fence --reason crash --if-unclaimed|close-session [0-9a-f-]{36})$/;
+const PLAN_STATES = ['planned', 'active', 'parked', 'committed', 'cut', 'failed', 'dropped'];
+const PLAN_STEPS = ['none', 'fenced', 'stop-requested', 'stopped', 'admitted', 'started', 'bound'];
+const planRow = (state, step, o = {}) => {
+  const epoch = state === 'planned' ? 0 : step === 'fenced' || step === 'stop-requested' || step === 'stopped' ? 2 : 1;
+  const attempts = Array.from({ length: epoch }, (_, i) => ({ ...att('f1-research', i + 1, { stop: i + 1 < epoch ? 'requested' : 'none' }), folder: `wt/f1-research-e${i + 1}` }));
+  return mkRow({ state, step, epoch, reason: epoch ? 'first' : null, attempts, ...(state === 'committed' ? { commits: { pack: Z64 } } : {}), ...o });
+};
+test('FX-PLAN T1 total table: one act per (state, step, claim, start, lease); planAct takes 2 arguments', () => {
+  assert.equal(lib.planAct.length, 2);
+  for (const state of PLAN_STATES) for (const step of PLAN_STEPS) for (const claim of ['none', 'session', 'tombstone']) {
+    for (const start of [false, true]) for (const leaseExpired of [false, true]) {
+      const a = lib.planAct(planRow(state, step), { claim, start, leaseExpired, fenced: null, sessions: [] });
+      assert.match(a, PLAN_ACT_RE, `${state}/${step}/${claim}/${start}/${leaseExpired}: ${a}`);
+      if (state === 'failed') assert.equal(a, 'owner');
+      if (state === 'active' && (step === 'admitted' || step === 'started')) {
+        const want = claim === 'session' ? 'bind' : claim === 'tombstone' ? 'owner'
+          : start ? (leaseExpired ? 'replace-fence --reason crash --if-unclaimed' : 'none') : step === 'admitted' ? 'start-session' : 'owner';
+        assert.equal(a, want, `${step}/${claim}/${start}/${leaseExpired}`);
+      }
+    }
+  }
+});
+const planScriptCase = async (state, step, claim, act) => {
+  const row = planRow(state, step, step === 'started' || step === 'bound' ? { session: SID } : {});
+  const h = await helpers.makeRoot({ tasks: [row] });
+  try {
+    const dir = P(h.root, 'wt', `f1-research-e${row.epoch}`);
+    fs.mkdirSync(dir, { recursive: true });
+    if (claim === 'session') wj(P(dir, 'claim.json'), lib.claimRecord(SID));
+    const base = ['--ce', '1', '--task', 'f1-research', '--epoch', String(row.epoch), '--dry-run'];
+    const args = act === 'bind' ? ['replace', ['bind', ...base, '--session', SID, '--boot', 'BOOT-A']]
+      : act === 'stop-request' ? ['stop', ['request', ...base]]
+        : act === 'replace-fence' ? ['replace', ['fence', ...base, '--reason', 'first']]
+          : ['replace', ['fence', ...base, '--tick', '5', ...act.split(' ').slice(1)]];
+    const r = helpers.runScript(args[0], args[1], { root: h.root });
+    assert.ok(![64, 65, 66].includes(r.exit) && !(act === 'bind' && [1, 6].includes(r.exit)), `${act} on ${state}/${step}/${claim}: exit ${r.exit} ${r.stderr}`);
+  } finally {
+    await h.cleanup();
+  }
+};
+test('FX-PLAN T1 total table: the script guard accepts each script act', async () => {
+  const seen = new Set();
+  for (const state of PLAN_STATES) for (const step of PLAN_STEPS) for (const claim of ['none', 'session']) for (const leaseExpired of [false, true]) {
+    if (state === 'committed' && step === 'started') continue; // its own test below (FX-CLOSE step 3)
+    const act = lib.planAct(planRow(state, step), { claim, start: true, leaseExpired, fenced: null, sessions: [] });
+    if (!['bind', 'stop-request', 'replace-fence', 'replace-fence --reason crash --if-unclaimed'].includes(act)) continue;
+    const key = `${act}|${state}|${step}|${claim}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    await planScriptCase(state, step, claim, act);
+  }
+  assert.ok(seen.size >= 6, `script cases: ${[...seen].join(', ')}`);
+});
+test('FX-PLAN T1 total table: committed at started -> stop-request, accepted by FX-CLOSE step 3', async () => {
+  assert.equal(lib.planAct(planRow('committed', 'started'), { claim: 'session', sessions: [] }), 'stop-request');
+  await planScriptCase('committed', 'started', 'session', 'stop-request');
+});
+
+// T2: first-match rules beyond the table: a torn fence (step 1), verify_rounds (step 0, rev 4 P1), halted.
+test('FX-PLAN T2 a torn fence is retried with its reason or is the owner\'s; verify_rounds asks the owner only while a close is missing', () => {
+  const bound = planRow('active', 'bound', { session: SID });
+  assert.equal(lib.planAct(bound, { claim: 'session', fenced: 'stall', sessions: [] }), 'replace-fence --reason stall');
+  assert.equal(lib.planAct({ ...bound, handovers: 1, parks: 1 }, { claim: 'session', fenced: 'handover', Hmax: 2, sessions: [] }), 'owner', 'hmax would refuse the retry');
+  assert.equal(lib.planAct({ ...bound, handovers: 1 }, { claim: 'session', fenced: 'handover', Hmax: 2, sessions: [] }), 'replace-fence --reason handover');
+  assert.equal(lib.planAct(bound, { claim: 'session', tamper: true }), 'owner');
+  const sr = planRow('active', 'stop-requested', { verify_rounds: 3 });
+  assert.equal(lib.planAct(sr, { closesMissing: true, sessions: [] }), 'owner');
+  assert.equal(lib.planAct(sr, { closesMissing: false, sessions: [] }), 'stop-session', 'every needed close recorded: the rule ends');
+  assert.equal(lib.planAct({ ...sr, verify_rounds: 2 }, { closesMissing: true, sessions: [] }), 'stop-session');
+  assert.equal(lib.planAct(planRow('active', 'stopped'), { blocked: true, sessions: [] }), 'none');
+});
+
+// T3 (rev 5 point 1): close-session for a counted folder session no stop is closing, through slotCount's
+// counted list and planFacts; owner once its done record does not count (H3); none once it counts; never
+// for the session of an attempt still waiting for its claim.
+rt('FX-PLAN T3 close-session for a late session after a confirmed stop; owner when its close does not count', async (root) => {
+  const S2 = '22222222-2222-4222-8222-222222222222';
+  const row = mkRow({ state: 'committed', step: 'stopped', epoch: 1, reason: 'first', commits: { pack: Z64 }, attempts: [{ ...att('f1-research', 1, { stop: 'confirmed', session: SID }), folder: 'wt/f1-research-e1' }] });
+  const dir = P(root, 'wt', 'f1-research-e1');
+  fs.mkdirSync(dir, { recursive: true });
+  wj(P(dir, 'claim.json'), lib.claimRecord(SID));
+  const tr = P(root, 'transcripts');
+  for (const s of [SID, S2]) await helpers.fakeTranscript(P(tr, lib.projectDirName(dir), `${s}.jsonl`), { sessionId: s, cwd: dir, calls: [] });
+  const plan = async (procList) => {
+    const counted = [];
+    await lib.slotCount([row], procList, tr, { root, counted });
+    return lib.planAct(row, lib.planFacts(root, row, { counted, procList }));
+  };
+  assert.equal(await plan(null), `close-session ${S2}`, 'the holder is not counted; the late session is');
+  wj(P(root, 'run', 'close', 'done', `${S2}.json`), { kind: 'close-done', session: S2, outcome: 'no-such-session', by: SID });
+  assert.equal(await plan(null), 'owner', 'no-such-session, no start of ours, no process list: owner');
+  wj(P(root, 'run', 'close', 'done', `${S2}.json`), { kind: 'close-done', session: S2, outcome: 'owner', by: null });
+  assert.equal(await plan(null), 'none', 'the owner\'s closed counts');
+  const adm = mkRow({ state: 'active', step: 'admitted', epoch: 1, reason: 'first', attempts: [{ ...att('f1-research', 1), folder: 'wt/f1-research-e1' }] });
+  fs.rmSync(P(dir, 'claim.json'));
+  fs.rmSync(P(root, 'run', 'close', 'done', `${S2}.json`));
+  const counted = [];
+  await lib.slotCount([adm], [], tr, { root, counted });
+  assert.ok(counted.length >= 1, 'both sessions counted: no claim yet');
+  assert.equal(lib.planAct(adm, lib.planFacts(root, adm, { counted })), 'start-session', 'a waiting attempt\'s sessions are not closed');
+});
+
+// FX-W3 (FIX-wake FX-W3 "Armed"): armedState, the one file predicate of withRunLock's requireArmed and of the
+// guard hook (no process list, no lock): armed only for run/turn.json of the caller's ce with arm confirmed
+// and at least one well-formed slot, none with an exit marker; every other case is not armed (fail closed).
+rt('FX-W3 armedState: each why of not armed; armed with turn_seq; the hook\'s io; checkArmed exit 6 not-armed; withRunLock requireArmed refuses before fn and releases', async (root) => {
+  const P = lib.paths(root);
+  fs.mkdirSync(path.dirname(P.armSlot(1)), { recursive: true });
+  const slot = { k: 1, pid: 4242, start_time: '2026-11-20T00:00:00.0000000Z' };
+  const turn = (o = {}) => ({ ce: 1, turn_seq: 3, read_seq: 5, arm: 'confirmed', slots: [slot], unarmed_turns: 0, ...o });
+  const put = (v) => fs.writeFileSync(P.turn, typeof v === 'string' ? v : JSON.stringify(v));
+  const not = (why, more = {}) => ({ armed: false, why, ...more });
+  assert.deepEqual(lib.armedState(root, 1), not('no-turn'));
+  put('{ not json');
+  assert.deepEqual(lib.armedState(root, 1), not('turn-unreadable'));
+  for (const v of [[], 'null', '7']) {
+    put(v);
+    assert.deepEqual(lib.armedState(root, 1), not('turn-unreadable'), JSON.stringify(v));
+  }
+  put(turn());
+  assert.deepEqual(lib.armedState(root, 2), not('other-ce', { turn_ce: 1 }));
+  assert.deepEqual(lib.armedState(root, undefined), not('other-ce', { turn_ce: 1 }), 'no ce given is not armed');
+  put(turn({ ce: '1' }));
+  assert.deepEqual(lib.armedState(root, 1), not('other-ce', { turn_ce: null }));
+  for (const arm of ['unconfirmed', 'spent']) {
+    put(turn({ arm }));
+    assert.deepEqual(lib.armedState(root, 1), not('arm', { arm }));
+  }
+  put(turn({ arm: undefined }));
+  assert.deepEqual(lib.armedState(root, 1), not('arm', { arm: null }));
+  for (const slots of [[], undefined, {}]) {
+    put(turn({ slots }));
+    assert.deepEqual(lib.armedState(root, 1), not('no-slots'), JSON.stringify(slots));
+  }
+  for (const bad of [null, 7, { k: 1, pid: 0, start_time: slot.start_time }, { k: 1, pid: 1.5, start_time: slot.start_time }, { k: 1, pid: 12 }]) {
+    put(turn({ slots: [slot, bad] }));
+    assert.deepEqual(lib.armedState(root, 1), not('bad-slot'), JSON.stringify(bad));
+  }
+  put(turn());
+  assert.deepEqual(lib.armedState(root, 1), { armed: true, turn_seq: 3 });
+  assert.deepEqual(lib.checkArmed(root, 1), { armed: true, turn_seq: 3 });
+  fs.writeFileSync(P.armExited(slot.pid, slot.start_time), JSON.stringify({ ce: 1, exit: 30, at: NOW }));
+  assert.deepEqual(lib.armedState(root, 1), not('slot-exited', { pid: 4242 }));
+  // the guard hook passes its own io: the predicate reads through it only
+  const seen = [];
+  const io = { readJson: (p) => { seen.push(p); return turn(); }, exists: (p) => { seen.push(p); return false; } };
+  assert.deepEqual(lib.armedState(root, 1, io), { armed: true, turn_seq: 3 });
+  assert.deepEqual(seen, [P.turn, P.armExited(slot.pid, slot.start_time)]);
+  // checkArmed: exit 6 not-armed {ce, why, ...detail}, nothing written
+  const e = await throwsTcb(() => lib.checkArmed(root, 1), 'not-armed', 6);
+  assert.deepEqual(e.detail, { ce: 1, why: 'slot-exited', pid: 4242 });
+  // withRunLock requireArmed: after the ce check, before fn; the lock released
+  let called = 0;
+  const e2 = await throwsTcb(() => lib.withRunLock(root, { script: 'test', ce: 1, proc: fproc(), now: NOW, requireArmed: true }, () => { called++; }), 'not-armed', 6);
+  assert.deepEqual(e2.detail, { ce: 1, why: 'slot-exited', pid: 4242 });
+  await throwsTcb(() => lib.withRunLock(root, { script: 'test', ce: 2, proc: fproc(), now: NOW, requireArmed: true }, () => { called++; }), 'stale-ce', 64);
+  await throwsTcb(() => lib.withRunLock(root, { script: 'test', proc: fproc(), now: NOW, requireArmed: true }, () => { called++; }), 'not-armed', 6);
+  assert.equal(called, 0, 'fn was not called');
+  assert.equal(fs.existsSync(lockFile(root)), false, 'released after the refusal');
+  fs.rmSync(P.armExited(slot.pid, slot.start_time));
+  await lib.withRunLock(root, { script: 'test', ce: 1, proc: fproc(), now: NOW, requireArmed: true }, () => { called++; });
+  assert.equal(called, 1, 'armed: fn runs');
+});
+
+// ------------------------------------------------------------------ FX-CLOSE (FIX-fence section 4; B1-3)
+// The facts verify and the planner read from the files (refute/PLAN.md finding 2): the log's fenced
+// reason, a tampered log, an invalid claim, and closesMissing with H3; lib.fence resets verify_rounds.
+rt('FX-CLOSE T2 planFacts reads the fenced reason, a tampered log, an invalid claim and closesMissing from the files; lib.fence resets verify_rounds', async (root) => {
+  const dirOf = (e) => P(root, 'wt', `f1-research-e${e}`);
+  const a1 = (o = {}) => ({ ...att('f1-research', 1, o), folder: 'wt/f1-research-e1' });
+  fs.mkdirSync(P(dirOf(1), 'outcome'), { recursive: true });
+  const bound = mkRow({ state: 'active', step: 'bound', epoch: 1, reason: 'first', session: SID, attempts: [a1({ session: SID })] });
+  wj(P(dirOf(1), 'claim.json'), lib.claimRecord(SID));
+  lib.outcomeAppend(dirOf(1), { kind: 'fenced', task: 'f1-research', epoch: 1, reason: 'stall' }, { row: bound });
+  let f = lib.planFacts(root, bound, {});
+  assert.equal(f.fenced, 'stall', 'the fenced reason is read from the log');
+  assert.equal(lib.planAct(bound, f), 'replace-fence --reason stall');
+  fs.writeFileSync(P(dirOf(1), 'outcome', '1.json'), '{');
+  f = lib.planFacts(root, bound, {});
+  assert.deepEqual([f.tamper, f.fenced, lib.planAct(bound, f)], [true, null, 'owner'], 'a slot that does not parse is tamper');
+  fs.rmSync(P(dirOf(1), 'outcome'), { recursive: true });
+  fs.writeFileSync(P(dirOf(1), 'claim.json'), '{');
+  const adm = mkRow({ state: 'active', step: 'admitted', epoch: 1, reason: 'first', attempts: [a1()] });
+  f = lib.planFacts(root, adm, {});
+  assert.deepEqual([f.claim, lib.planAct(adm, f)], ['invalid', 'owner'], 'a claim that does not parse');
+  // closesMissing of a stop-requested row (target e - 1 = 1): the claim holder, then another folder session (H3)
+  wj(P(dirOf(1), 'claim.json'), lib.claimRecord(SID));
+  const S2 = CL(2);
+  const sr = mkRow({ state: 'active', step: 'stop-requested', epoch: 2, reason: 'stall', verify_rounds: 3, attempts: [a1({ session: SID, stop: 'unconfirmed' }), { ...att('f1-research', 2), folder: 'wt/f1-research-e2' }] });
+  const tr = P(root, 'transcripts');
+  for (const x of [SID, S2]) await helpers.fakeTranscript(P(tr, lib.projectDirName(dirOf(1)), `${x}.jsonl`), { sessionId: x, cwd: dirOf(1), calls: [] });
+  const done = (x, o) => wj(P(root, 'run', 'close', 'done', `${x}.json`), { kind: 'close-done', session: x, by: null, ...o });
+  const facts = async (procList) => {
+    const counted = [];
+    await lib.slotCount([sr], procList, tr, { root, counted });
+    return lib.planFacts(root, sr, { counted, procList });
+  };
+  assert.equal((await facts([])).closesMissing, true, 'no close recorded');
+  assert.equal(lib.planAct(sr, await facts([])), 'owner', 'three rounds with a close missing: owner');
+  done(SID, { outcome: 'owner' });
+  assert.equal((await facts([])).closesMissing, true, 'the holder counts, the other folder session does not');
+  done(S2, { outcome: 'no-such-session', by: CL(8) });
+  assert.equal((await facts(null)).closesMissing, true, 'no-such-session, not our start, no process list: missing');
+  assert.equal((await facts([])).closesMissing, false, 'no-such-session and a list that matches nothing: counts');
+  wj(P(dirOf(1), 'start.json'), { kind: 'start', session: CL(8), tool_use_id: null, tick: 1, at: '2026-11-20T10:00:00.000Z' });
+  assert.equal((await facts(null)).closesMissing, false, 'no-such-session for our own start: counts');
+  assert.equal(lib.planAct(sr, await facts(null)), 'stop-verify', 'every close counted: the rule ends');
+  fs.rmSync(P(root, 'run', 'close', 'done', `${SID}.json`));
+  assert.equal((await facts(null)).closesMissing, true, 'the holder close missing again');
+  // lib.fence: every fence that moves the epoch resets verify_rounds (the model's t.vr = 0); no field, none added
+  await seedRows(root, [{ ...boundRow(), verify_rounds: 3 }, boundRow('f1-other')]);
+  await doFence(root, { reason: 'stall' });
+  await doFence(root, { task: 'f1-other', reason: 'stall' });
+  const r = await rowOf(root);
+  assert.deepEqual([r.epoch, r.step, r.verify_rounds], [2, 'fenced', 0]);
+  assert.equal('verify_rounds' in (await rowOf(root, 'f1-other')), false);
 });

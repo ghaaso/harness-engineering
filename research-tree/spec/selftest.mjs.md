@@ -73,6 +73,8 @@ expect file under `<root>/tcb/fixtures/selftest/`.
   cases: [{n, script, case, kind, fault_class, expect_exit, exit, pass, why?}] (sorted by script,
   case; only the cases that ran), checks: [{check, pass, detail}], failed: string[]}` by
   `lib.writeAtomic` under the lock.
+- The hard-link probe (step 2b): `run/` and `wt/` each get `selftest-link.<pid>.<nonce8>.a` and `.b`, removed at
+  once; no folder is made.
 - Ledger: `selftest` `{tcb_sha, result, failed}` and `check` `{check: "selftest", subject: tcb_sha,
   result, reasons}`; canary: one `check` `{check: "canary", subject: "canary:<session>", result,
   reasons: [{code: <probe>, detail: {outcome, tcb_sha}}]}` (subject a string, CONTRACT §3.7).
@@ -86,6 +88,14 @@ expect file under `<root>/tcb/fixtures/selftest/`.
    with profiles, agent files' tools and bodies) (`role-files`); every `watch` case is a one-tick case
    that starts nothing (`watch-case-loops`). Any failed static check: no case runs.
 3. `--dry-run`: print the case list and the static results; nothing run or written, no `tmp/` folder.
+2b. A full run only (neither `--dry-run` nor `--only`): check `hard-links` (0b(a), FIX-fence §0b, fact F-P12). In
+   each of `run/` and `wt/` (made by `handover init`, never here) write a probe file, hard-link it to a second name,
+   require `nlink` 2 on both, the same `dev` and `ino` and the bytes read back, then remove both. Fails closed: a
+   missing folder, any error or mismatch is a problem `<folder>/: <code>`; a failed check is a failed static check
+   (no case runs, exit 1, `failed` names it), so admission stays shut where every hook write would be refused.
+2c. A full run only (FX-CGATE): check `close-folders`: `run/close/intent` and `run/close/done` are folders (made by
+   `handover init`; the hook's close records are strict creates and it makes no folder); anything else, or a failed
+   stat, is a problem `<folder>/: <code>` and a failed static check.
 4. Cases in sorted order, at most `--jobs` (1 or 2) in flight; a slot takes its next case only after
    its previous case has fully ended (child exited, pipes closed, server closed, any kill finished).
    Per case, just before it runs: make the case root with its data-only `tcb/` (above); write the
@@ -155,7 +165,7 @@ G10, N10.
 exits with the code and prints the JSON its args ask for, so cases can be made right or wrong at
 will; the stubs run where they are, and read their data through `--root {root}`)
 - T1 All cases right: exit 0; `selftest.json` `result: pass`, `tcb_sha` = `treeSha(tcb/)`; a
-  `selftest` and a `check` line; `verifyLedger` ok; no case root left under `tmp/`.
+  `selftest` and a `check` line; `verifyLedger` ok; no case root left under `tmp/`. `checks` holds `hard-links` passed; no probe file is left.
 - T2 One bad case whose stub exits 0 instead of 1: exit 1, `failed` names `<script>/<case>`, the
   `selftest` line has result `fail`.
 - T3 A script with only good cases: exit 1 `no-fixtures`; a missing script file: `missing-script`.
@@ -188,9 +198,11 @@ will; the stubs run where they are, and read their data through `--root {root}`)
 - T9 A `serve` case: the stub fetches `{server}/a.html` and must see the served bytes.
 - T10 A case whose stub breaks its ledger chain while the input chain verified: fails `ledger-broken`.
 - T11 `allow_loopback: true` in the live thresholds: exit 1 `loopback-on`; a profile with an extra
-  field: exit 1 `role-files`.
-- T12 `--only seed`: runs seed's cases only, writes no file and no ledger line.
-- T13 `--dry-run`: lists cases, spawns nothing, no `tmp/` folder, no lock.
+  field: exit 1 `role-files`. A hard link that cannot be made in `wt/` (EXDEV) or `run/` (ENOTSUP), by a module the test preloads into
+  selftest's process to make `fs.linkSync` fail there, or a missing `wt/`: exit 1 `hard-links` naming that folder
+  only, no case ran, `selftest.json` `fail`, no probe file left, no folder made.
+- T12 `--only seed`: runs seed's cases only, writes no file and no ledger line. It does not probe hard links.
+- T13 `--dry-run`: lists cases, spawns nothing, no `tmp/` folder, no lock. It does not probe hard links.
 - T14 Stale ce: exit 64 and nothing written; lock busy at the end: exit 75, no `selftest.json`.
 - T15 canary over a `fakeTranscript` where every forbidden call has an error result with the hook
   text and the control write succeeded: exit 0, one `check` line pass with subject `canary:<session>`.

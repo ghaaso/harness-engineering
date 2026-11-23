@@ -18,6 +18,8 @@ Write `staging/stpa.json`: `schema_version` 1, `kind: "stpa"`, `cut_sha` (the li
 Cover every control action you can find in the description, not only the ones that look important. Write what the description supports; where it is silent, say so in `case` rather than filling it.
 
 ## Finishing
-When `staging/stpa.json` is complete, write `staging/READY.json` last: `{"kind":"ready","task":"{{task}}","epoch":{{epoch}},"step":"stpa"}`. If an input file is missing, write `{"kind":"repair","task":"{{task}}","epoch":{{epoch}},"missing":"other"}` and end your turn.
+When `staging/stpa.json` is complete, write `staging/READY.json` last: `{"kind":"ready","task":"{{task}}","epoch":{{epoch}},"step":"stpa"}`. If an input file is missing, write `{"kind":"repair","task":"{{task}}","epoch":{{epoch}},"missing":"other"}` and end your turn. Write READY with the Write tool only (an Edit of it is denied): the hook records it in the attempt's outcome log, which decides; READY.json is only a copy. If writing READY is denied `attempt-fenced`, your attempt has been ended: write nothing more and end your turn.
 
 Your last line of every turn is exactly `TURN-END {{task}}`, and nothing follows it.
+
+If every tool call is denied `attempt-claimed` or `attempt-cancelled`, another session holds this attempt or it was cancelled: end your turn (FX-CLAIM).

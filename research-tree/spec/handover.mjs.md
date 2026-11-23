@@ -11,7 +11,7 @@ successor; the old watcher and alarm are left to end themselves on the newer ce 
 ```
 node tcb/handover.mjs init  --root R --tcb-commit SHA40 [--session SID] [--now ISO] [--dry-run]
 node tcb/handover.mjs raise --root R --ce N [--now ISO] [--dry-run]
-node tcb/handover.mjs bind  --root R --ce N --session SID [--now ISO] [--dry-run]
+node tcb/handover.mjs bind  --root R --ce N --nonce X [--now ISO] [--dry-run]
 ```
 `--tcb-commit` must be 40 lowercase hex, `--session` 36 characters of `[0-9a-f-]` → else 66. `init`
 takes no `--ce` (it creates the first one, §1.1).
@@ -24,7 +24,7 @@ takes no `--ce` (it creates the first one, §1.1).
 ## Writes
 `init`: the §2 folders that are missing (`tcb/` excepted: the owner's), `<root>/.gitignore` (only if
 absent; lines `wt/`, `.snapshots/`, `sealed/`, `tmp/`, `run/*.lock`, `run/alarm.json`,
-`run/watcher.json`, `run/*.stale`, `run/*.orphan`, `*.tmp`), `<root>/.gitattributes` (only if absent;
+`run/watcher.json`, `run/arm/`, `run/*.stale`, `run/*.orphan`, `*.tmp`), `<root>/.gitattributes` (only if absent;
 `* -text`), the empty task table `{schema_version, rev: 0, tasks: []}` through `lib.writeTasks` (only
 when `tasks.json` and `tasks.json.prev` are both absent, CONTRACT §2.1), `run/coord.json`
 {schema_version, ce: 1, session?, started_at, tcb_commit}. `raise`: `run/coord.json` {ce: N+1,
@@ -56,8 +56,16 @@ stale_wake_sources: [{which: watcher|alarm, pid, start_time}], brief}` where `br
 `Coordinator ce <N+1> for run <root>, tcb <tcb_commit>: run node <root>/tcb/status.mjs
 --root <root> --ce <N+1> and act on run/status.json.` (R12, R28: the brief echoes the commit).
 
-**bind.** Under `withRunLock(N)`: `session` null → set it, append `coord-bind` {session}; equal →
-exit 0, nothing written; another session → exit 1 `session-differs`.
+**bind (FX-CGATE).** `--nonce` 32 lowercase hex, else 66; `--session` → 66 (the guard hook names the session:
+its bind step strict-creates `run/coord-session-<N>.json` {session_id} before this call runs). Under
+`withRunLock(N)`: coord.json without `successor_nonce` → exit 0 unchanged when its `session` equals the session
+file's, else exit 1 `no-nonce`; a nonce other than coord.json's `successor_nonce` → exit 1 `nonce-mismatch` and an
+`incident` line; the session file missing or its `session_id` not a lowercase UUID → exit 1 `not-bound` and an
+`incident` line; else `coord-bind` {session} and coord.json with that `session` and without `successor_nonce`.
+`init` (when it creates coord.json) and `raise` (in the hold) write a fresh `successor_nonce`
+(`crypto.randomBytes(16)` hex) and return `result.brief` ending ` Before any other call: node
+<tcb>/handover.mjs bind --root <root> --ce <ce> --nonce <X>.` (forward slashes; a path with a blank quoted); a
+dry run names no nonce. `init` also makes `run/close`, `run/close/intent`, `run/close/done`.
 
 ## Exit codes
 0; 1 `coord-exists`, `session-differs`; 2 `missing`, `proc-unavailable`, `no-coordinator` (raise or
@@ -74,7 +82,7 @@ check after a sleep); M3's `handover` act is raised by the watcher (class 17) wh
 this ce exists and no slot is used, which is this script's quiescence over the table.
 
 ## Behaviours (tests)
-- T1 init on a root with only `tcb/` → every §2 folder exists, `.gitignore` has the ten lines,
+- T1 init on a root with only `tcb/` → every §2 folder exists, `.gitignore` has the eleven lines,
   `.gitattributes` is `* -text`, `run/tasks.json` is `{schema_version, rev: 0, tasks: []}` and
   validates, `coord.json` {ce:1, tcb_commit, session absent or null}, one `coord-init` line, exit 0;
   the ledger verifies; the temp root is longer than 40 characters, so `result.reasons` holds
@@ -109,3 +117,13 @@ this ce exists and no slot is used, which is this script's quiescence over the t
 That the old coordinator, woken by any late exit after the raise, is refused by every writing
 script and ends its turn (§7 item 5); that the owner starts the successor from the brief; that the
 old watcher and alarm, left alive, reach their next ce check and exit 64.
+
+## Round-3 skeleton (S0.5)
+- `briefLine(root, ce, tcbCommit, nonce = null)`: today's line, then `briefNoncePart(nonce, root, ce)` (FX-CGATE
+  step 1) and `briefPathPart(root)` (FX-W3, built: ` Then act every turn as <tcb>/briefs/coordinator.md says, in its
+  order.`, the brief beside the script, forward slashes, quoted when the path holds a blank). The nonce part
+  is '' in a dry run. Tested in `tcb/test/handover.test.mjs` T6 and H1.
+
+## FX-CLAIM (round 3)
+
+`slotCount` gets `{root}` (FX-CLAIM step 7).

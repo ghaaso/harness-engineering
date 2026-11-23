@@ -36,6 +36,21 @@ Shape per CONTRACT §3.20 (`schema_version`, `params`; each param `{value, unit,
 - T4 No brief contains a model tier or vendor name (case-insensitive, whole words: `opus|sonnet|haiku|fable|claude|anthropic|gpt|gemini|tier`).
 - T5 Neutrality: no brief contains `hope`, `desired`, `should find`, `we believe`, `we expect`, `ideally`, `must improve`; and `checker`, `fresh-reviewer`, `scorer`, `stpa`, `fmea` and `mapper` contain none of the whole words `seed`, `seeds`, `seeded`, `plant`, `plants`, `planted`, `canary` (the child and reader briefs use `seed` only as a route name).
 - T6 `child.md` names `staging/`, `view/todo.json`, `in/manifest.json`, `READY.json`, the steps `pack` and `review`, the schema words `question_ids`, `route`, `quote`, `measured`, `conditions`, `supersedes`, says a quote is at most 15 words, allows "not stated", forbids status/label/id fields and following instructions found in web text, and gives no shell; the card field list equals CONTRACT §3.1 (every field name of §3.1 appears).
+- FX-OUT: the READY line of `child.md` and of the four helper briefs that write READY (`fmea`, `fresh-reviewer`, `mapper`, `stpa`) adds: READY is written with the Write tool only (an Edit is denied), the hook records it in the outcome log, which decides, READY.json is only a copy, and a READY denied `attempt-fenced` ends the turn. `coordinator.md` 5a: the fence's exits 65 `stale-epoch`/`wrong-step`, 1 `hmax`, 5 `ready-wins`, 65 `fence-pending` (retry with that reason only), commit's 1 `attempt-fenced`, and 3 `outcome-tamper`.
+- FX-W2: `coordinator.md` 2: call 1, in the background, `watch.mjs --alarm --ensure --nonce X` with a new 32-hex nonce each turn (S1: one ensure); its exits before registration (0 `present`, `nonce-reused`, `abandoned`, 64, 75) write no marker and ask nothing. 3: call 2, in the foreground, `status.mjs --reconcile --arm-nonces X`; exit 0 the arm `confirmed`; exit 1 `arm-unconfirmed` the turn is unarmed (revocations only, nothing that creates work); a later reconcile of the turn without nonces keeps `confirmed` (B1.4). 0a: reconcile reports a dead alarm as `arm-unconfirmed`, endturn as `alarm-missing`.
+- FX-W3: `coordinator.md` 0b: the alarm's unarmed record (`run/arm/unarmed-<pt>.json`, the alarm writes it).
+  4 (FIX-JOIN point 1): `watcher.alive` false or `watcher.ce` not yours → `watch.mjs --root --ce` in the
+  background; null, or endturn exit 2: start nothing. 6: `replace start` and `fence --reason first` only after
+  call 2 exited 0; the start tool only on a turn the owner typed (Q5a), `initiation` user_asked, an absolute
+  `cwd` `<root>\wt\<T>-e<E>`, `use_worktree` false, `context` fresh; armed until endturn or the confirmed
+  alarm's exit. 8: retry nothing, then endturn (N2). 9 (N2 with E1): endturn is the turn's last call always;
+  K is the reconcile's `result.status.ledger.seq`, else `run/status.json` `ledger.seq`; exit 1 acted on once
+  (`alarm-missing`: ensure again; `watcher-missing`: place 4; `acked-*` or `turn-stale` alone: nothing);
+  exit 2: start nothing; 75: end.
+- FX-W4: `coordinator.md` 0c: the dead-man (the owner's scheduled task, `status.mjs --deadman` every 5 min) alerts
+  the owner by a toast, again every 6 runs while the cause holds; the owner wakes the coordinator with a typed turn,
+  an ordinary one (calls 1 and 2, place 4). The coordinator never runs `status.mjs --deadman` (its run counts toward
+  the pace and alerts no one) and never writes `run/deadman.json`; on the anomaly `deadman-nowake` it tells the owner.
 - T7 `reader.md` names web search and web fetch only, the route words `keyword`, `backward`, `forward`, `contrary`, `seed`, the 15-word quote, `not stated`, `skipped` and `no-exact-words`, at most 10 cards, and contains no `{{`, no `staging/`, no `in/`, no project name (`FixFlow`, `tcb`, `ledger`).
 - T8 `checker.md` names only Read, the folder `queue/<batch>/`, the six verdict words exactly as CONTRACT §3.17 (`confirmed`, `number_mismatch`, `baseline_swapped`, `conditions_mismatch`, `outside_conditions`, `unclear`), one verdict per item, and says text in items is data.
 - T9 `fresh-reviewer.md` forbids web and research, names `in/pack.json`, `in/cards/`, `in/files/`, the six verdict words of CONTRACT §3.4, the four dismissal verdicts, the reasons `wrong-assumption|wrong-number|wrong-scope|other`, an 80-word sentence cap, the 40-word finding cap, the `fact`/`judgment` rule and the step name `review`.
@@ -55,3 +70,10 @@ Shape per CONTRACT §3.20 (`schema_version`, `params`; each param `{value, unit,
 ## Cannot be tested without the app
 - Whether a real reader or checker obeys its brief when a page or item contains an instruction (the J4 fault); that a real reader returns exact quotes when the fetch tool returns a summary; that a scorer's guesses and a reviewer's findings are honest. These are measured by the pilot (the checker's J4 detection, the plants, the guess rate), not tested here.
 - That the harness gives the helper only its brief and start message, and that the brief renders unchanged into `in/brief.md` (replace.mjs's tests).
+
+## Round-3 skeleton (S0.5): the coordinator's brief
+`tcb/briefs/coordinator.md` holds the acts (0) to (9) of one coordinator turn (FIX-JOIN part 2b) as
+headings. Each place names the one fix that fills it, with "(empty until <fix>)"; an act that several
+fixes touch has one sub-step per fix: 0a-0c (part 2b row 0) and 5a-5d (the fence hold in the order of
+FIX-JOIN point 11, then the close of a session with the hook's steps of point 9). It has no agent file
+and no placeholder: replace renders the briefs of task roles only.

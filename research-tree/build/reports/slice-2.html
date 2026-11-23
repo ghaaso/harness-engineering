@@ -1,0 +1,87 @@
+<title>Slice 2 Model Check</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+/* Layout: one reading column, a verdict band first, then tables by group; summary before detail. */
+:root{--bg:#f7f8fa;--panel:#ffffff;--fg:#1b2230;--muted:#5a6475;--line:#dde2ea;--accent:#2f5bd3;--ok:#1f7a4d;--ok-bg:#e3f3ea;--bad:#a8321f;--bad-bg:#fbe7e3;--dec:#6b5a12;--dec-bg:#f6efd2;
+--display:"Space Grotesk",system-ui,sans-serif;--body:"Inter",system-ui,sans-serif;--mono:"JetBrains Mono",ui-monospace,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12161d;--panel:#1a2029;--fg:#e6e9ef;--muted:#9aa4b5;--line:#2c3440;--accent:#7f9cf0;--ok:#6fd3a0;--ok-bg:#183326;--bad:#f09a88;--bad-bg:#3a1f1a;--dec:#e2cd7a;--dec-bg:#332c12;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#12161d;--panel:#1a2029;--fg:#e6e9ef;--muted:#9aa4b5;--line:#2c3440;--accent:#7f9cf0;--ok:#6fd3a0;--ok-bg:#183326;--bad:#f09a88;--bad-bg:#3a1f1a;--dec:#e2cd7a;--dec-bg:#332c12;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font:16px/1.55 var(--body);padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+main{max-width:1080px;margin:0 auto;padding-block:32px 56px;display:grid;gap:28px}
+h1,h2{font-family:var(--display);text-wrap:balance;margin:0}
+h1{font-size:2rem}h2{font-size:1.25rem;margin-bottom:10px}
+p{margin:0;max-width:78ch}
+.eyebrow{font-size:.8rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.verdict{background:var(--bad-bg);border:1px solid var(--bad);border-radius:6px;padding:16px 18px;display:grid;gap:6px}
+.verdict code{font-family:var(--mono);font-size:1.02rem;color:var(--bad)}
+code{font-family:var(--mono);font-size:.92em}
+.wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;background:var(--panel);font-variant-numeric:tabular-nums}
+th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--line)}
+th{font-size:.85rem;color:var(--muted);font-weight:600}
+.chip{display:inline-block;font-size:.8rem;font-weight:600;padding:2px 8px;border-radius:999px;white-space:nowrap}
+.ok{color:var(--ok);background:var(--ok-bg)}.bad{color:var(--bad);background:var(--bad-bg)}.dec{color:var(--dec);background:var(--dec-bg)}
+ul{margin:0;padding-left:20px;display:grid;gap:4px;max-width:85ch}
+.num{text-align:right}
+</style>
+<main>
+<header style="display:grid;gap:8px">
+<div class="eyebrow">Build task r57-0507 · slice 2 · 2026-11-20, 05:30 UTC</div>
+<h1>Slice 2: the model check of the code as built</h1>
+</header>
+
+<section class="verdict">
+<div class="eyebrow">Verdict (S2.4)</div>
+<code>SEND BACK: FX-W6: AgeCapReachesOwner (AGE-B)</code>
+<p>One fix goes back. As built, a bare acknowledgement from the coordinator re-arms the age cap (<code>watch.mjs:1199-1204</code>), so a stuck attempt never reaches the owner. The smallest change deletes that re-arm; the model of that change holds. Every other failing property is a model artefact, a gap already decided, or a fact the pilot must measure. None changes a decision.</p>
+</section>
+
+<section>
+<h2>What was checked</h2>
+<ul>
+<li><b>The model (S2.2)</b>, landed on <code>build</code> at e5c9c4f8: a flag for every settled branch and every departure of the 13 fixes, and the code's own mechanism wherever the old model read true state at once. New: starts only on a turn the owner typed, the lease act's window, CLOSE's id gap, an acknowledgement as a continue, REDO's started line. With every new flag off it gives the old model's states and verdicts. Its tests: 35 of 35; guard-hook and status 75 pass, 0 fail.</li>
+<li><b>The runs (S2.3)</b>: 28 runs at the sizes where the fixes act, each through the lane under 1,450 s, and 3 reruns the verdict asked for. Every run ended. 4,989 s of run time in 47 minutes; no run waited for memory.</li>
+</ul>
+</section>
+
+<section>
+<h2>Results by group</h2>
+<div class="wrap"><table>
+<tr><th>Group</th><th>Result</th><th>Status</th></tr>
+<tr><td>Age cap (W6 item 6)</td><td>The owner is never told of a stuck attempt whose coordinator only acknowledges.</td><td><span class="chip bad">sent back to FX-W6</span></td></tr>
+<tr><td>Close group (OUT, PLAN, CLOSE)</td><td>Every property holds in all 43 two-fault parts.</td><td><span class="chip ok">holds</span></td></tr>
+<tr><td>Wake group (W1, W2, W4, W5, W6, with N2)</td><td>Only failures already decided (the hand-over exit-2 path under a process-list fault, which N2 and the dead-man close; a first turn that dies before its first call) and model artefacts. No deadlock in any part.</td><td><span class="chip dec">decided or artefact</span></td></tr>
+<tr><td>Starts only on an owner-typed turn</td><td>Holds when a refused start writes nothing. If it leaves <code>start.json</code>, the third refused start on one row is charged without a fault.</td><td><span class="chip dec">decided; pilot fact</span></td></tr>
+<tr><td>Lease act</td><td>Its short window is found only under the second reading of the lease; under the first it cannot be reached.</td><td><span class="chip dec">decided; pilot fact</span></td></tr>
+<tr><td>CLOSE's id gap</td><td>A close the coordinator writes without the owner's words frees a living session's slot, against its brief. The gap stays open by decision.</td><td><span class="chip dec">decided; pilot fact</span></td></tr>
+<tr><td>REDO</td><td>Holds with FX-REDO; fails without it.</td><td><span class="chip ok">holds</span></td></tr>
+</table></div>
+</section>
+
+<section>
+<h2>Tokens and time</h2>
+<div class="wrap"><table>
+<tr><th>Part</th><th class="num">Planned</th><th class="num">Used</th><th>Note</th></tr>
+<tr><td>S2.2, the model</td><td class="num">25.4 M</td><td class="num">59.5 M</td><td>three helpers, two stopped at the 330 K checkpoint; limit 60 M; 96 min</td></tr>
+<tr><td>S2.3, the runs' reader</td><td class="num">1.4 M</td><td class="num">1.05 M</td><td>the runs themselves are the root's commands: 32 min</td></tr>
+<tr><td>S2.4, the verdict</td><td class="num">8.0 M</td><td class="num">26.9 M</td><td>17.25 M, then a successor at 9.66 M that passed its 6 M limit; 23 + 15 + 17 min</td></tr>
+<tr><td>Root 2</td><td class="num"></td><td class="num">19.9 M</td><td>88 calls</td></tr>
+<tr><td><b>Slice 2</b></td><td class="num">34.8 M</td><td class="num"><b>107.4 M</b></td><td>3 h 20 min (02:05 to 05:25 UTC); meter 78 % to 79 %</td></tr>
+</table></div>
+</section>
+
+<section>
+<h2>Not covered or not known</h2>
+<ul>
+<li>FX-CLAIM never runs together with FX-CLOSE and FX-OUT. FX-W3 and FX-W7 are not modelled. At most two faults (three in two groups), one lease field; the two lease runs ended at their memory bound.</li>
+<li>Facts for the pilot: whether a refused start leaves <code>start.json</code>; the lease's two delays; the app's session id against the CLI's; what <code>stop_session</code> and <code>archive_session</code> do; the wake deadlines, which are guesses.</li>
+<li>The model should take the verdict's corrected line (<code>model-build.mjs:1015</code>); not done yet. The end list (test gaps with the code right, one flaky test) is not fixed yet.</li>
+</ul>
+</section>
+
+<section>
+<h2>Due</h2>
+<p>The FX-W6 fix round, one fix only, as the build plan's S2.4 row says: delete the re-arm, add its test and the coordinator brief's line for the idle child and the age cap, take line 1015 into the model, run the age-cap checks again, then the last full suite. About 25-35 M tokens, under one point at this slice's rate, so it fits under the 81 % stop line. It needs a fresh root session: this one is past its hand-over point, and a new root starts only from your typed message.</p>
+</section>
+</main>

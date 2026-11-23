@@ -36,7 +36,7 @@ node <root>/tcb/<name>.mjs [<mode>] --root <dir> [--ce <n>] [--task <id> --epoch
 - `--ce <n>` is required by every script that writes anything under the run root, the ledger
   included. It is compared with `run/coord.json` `ce` **inside the run lock**, before the first write;
   a difference exits **64** and writes nothing. Read-only modes take no `--ce`. Exceptions:
-  `guard-hook.mjs` (writes nothing) and `handover.mjs init` (creates the first `ce`).
+  `guard-hook.mjs` (no lock; writes only by strict exclusive create, decision 20) and `handover.mjs init` (creates the first `ce`).
 - `--task <id> --epoch <e>`: every call that acts on one attempt names both. `e` is compared by
   equality with the row's `epoch` inside the lock; a difference exits **65** (`stale-epoch`).
   Scripts that move the step machine also name the step they expect (§3.6) and exit 65 on a mismatch.
@@ -67,6 +67,12 @@ node <root>/tcb/<name>.mjs [<mode>] --root <dir> [--ce <n>] [--task <id> --epoch
   No other script sleeps. Scripts that may run longer than 60 s (`watch.mjs` in every mode,
   `selftest.mjs run`, `snap.mjs --new`, `cost.mjs from-transcripts`) are started by the coordinator
   as background commands.
+- **The test seams never reach production (FX-W1 step 5, R29):** the coordinator's guard-hook allows
+  a `node tcb/<n>.mjs` call only in a form that script's production calls use (`EXEC_FORMS` in
+  `tcb/guard-hook.mjs`, `spec/guard-hook.mjs.md` step 12), so `--now`, `--free-mb`, `--boot`, `--tick`,
+  `--once`, `--sleep-ms`, `--interval-ms`, `--no-intake`, `--rng-seed` and `--transcripts-root` are
+  refused (`bash-pattern`, detail `flag not allowed: ...`) and reach a script only from the tests, which
+  run it directly.
 - Tokens are counted, never money. Weighted token cost uses the dimensionless weights in thresholds.
 
 ### 1.3 Output
@@ -94,15 +100,16 @@ node <root>/tcb/<name>.mjs [<mode>] --root <dir> [--ce <n>] [--task <id> --epoch
 | 5 | `ready-wins` | `replace.mjs fence` with any reason but `first` and `tainted` (a planned hand-over, a park, a cut and a drop included; decision 40, M6) found a READY of the current epoch: commit first (R7) |
 | 6 | `deferred` | Refused for now; retry on a later turn with the same call (admission refused, not quiescent, intake already running). The row stays at its step, no new fence, no count (R3) |
 | 10 | `reopened` | A dismissal was reopened (tms, R38); also a watcher wake class |
-| 11-17 | watcher, non-urgent | 11 `ready`, 12 `repair`, 13 `soft-limit`, 14 `checker-batch`, 15 `window-limit`, 16 `drain`, 17 `act-due` (the planner's own predicate holds: a row the coordinator can act on, a free slot for a waiting row, a drain ready to hand over, a run with every row terminal, or an `event` line above `acked_seq` whose condition has cleared; decision 40, M3) |
+| 11-17 | watcher, non-urgent | 11 `ready`, 12 `repair`, 13 `soft-limit`, 14 `checker-batch`, 15 `window-limit`, 16 `drain`, 17 `act-due` (the planner's own predicate holds, `lib.planAct`, one function for status and the watcher, first match (FX-PLAN): a row the coordinator can act on, a free slot for a waiting row, a drain ready to hand over, a run with every row terminal, or an `event` line above `acked_seq` whose condition has cleared; decision 40, M3) |
 | 20-27 | watcher, urgent | 20 `stall`, 21 `hang`, 22 `loop`, 23 `hard-limit`, 24 `memory`, 25 `stop-unconfirmed` (zombie spend past Z), 26 `common-cause`, 27 `tamper-seen` |
 | 30 | `alarm` | `watch.mjs --alarm`: the long silence elapsed |
 | 64 | `stale-ce` | `--ce` differs from `run/coord.json` (also: a watcher or alarm superseded by a newer ce) |
 | 65 | `stale-epoch` | `--epoch`/expected step differs from the row; a commit of a non-current epoch (logged `zombie-write`) |
 | 66 | `usage` | Bad command line |
-| 67 | `table-corrupt` | `run/tasks.json` (or another `run/` state file) unparseable or schema-invalid. Every writing script refuses; `tasks.json.prev` is kept; the owner is told |
+| 67 | `table-corrupt` | `run/tasks.json` (or another `run/` state file) unparseable or schema-invalid. Every writing script refuses; `tasks.json.prev` is kept; the owner is told. Status reads `watcher.json` and `alarm.json` loosely: a corrupt one is its anomaly `state-corrupt` and a dead wake source, not 67 (FX-W1 step 4) |
 | 70 | `internal` | Uncaught error. Gates count it as not-run; a watcher 70 means "restart the watcher", never a field failure |
 | 75 | `lock-busy` | `run/run.lock` still held after the bounded retry (or lost while held) |
+| 0, 1, 2, 5, 6, 17, 21 | round 3 | Reasons added by the round-3 fixes, each filled by its fix (S0.5 lists them): FX-W1 the endturn's tri-state report of the wake sources (1, 2) and the alarms' exit markers; FX-W2 1 `arm-unconfirmed`, 0 `present` / `nonce-reused` / `abandoned`; FX-W3 6 `not-armed`, 1 `turn-stale` (endturn); FX-W4 1 `deadman-alert` {alerts, causes} (status `--deadman`); FX-W6 21 `hang` by kind, 17 `idle-child` / `age-cap`; FX-CLAIM 5 `claimed-late`, 6 `not-claimed`, 1 `not-claim-holder` |
 
 Watcher precedence when several classes are present (first wins): 64, 27, 26, 25, 24, 23, 22, 21, 20,
 11, 12, 10, 13, 15, 16, 14, 17. Urgent classes exit at the tick that sees them; non-urgent ones wait up to
@@ -144,7 +151,7 @@ transcript paths below it otherwise pass 260 characters; `handover.mjs init` rep
 as reason `root-long` (a warning, not a refusal; tests use long temp roots). `handover.mjs init`
 creates missing directories, an empty task table (§2.1), a `.gitattributes` holding `* -text` and a
 `.gitignore` listing `wt/`, `.snapshots/`, `sealed/`, `tmp/`, `run/*.lock`, `run/alarm.json`,
-`run/watcher.json`, `run/*.stale`, `run/*.orphan`, `*.tmp`. The owner makes the git repository; no
+`run/watcher.json`, `run/arm/` (the alarms' files of round 3: the exit markers of FX-W1, the slot and nonce files of FX-W2, §3.9), `run/*.stale`, `run/*.orphan`, `*.tmp`. The owner makes the git repository; no
 script commits to it in the pilot (`commit.mjs` records `git: null`, §8 decision 23); fsck reads it.
 
 ```
@@ -172,7 +179,8 @@ wt/<task>-e<e>/            in/ (brief.md, manifest.json, checkpoint/, the inputs
 ### 2.1 Single writer of each path
 
 Every write below `run/`, `store/`, `plan/frozen/` and `completeness/` that is not exclusive-create
-happens under `run/run.lock`. "lib" means through the named library function. **No subprocess**
+happens under `run/run.lock`, except two files each rewritten without it by its one writer: `run/deadman.json`
+(status `--deadman`, FX-W4) and `run/watcher-busy.json` (the watcher, FX-W7, §3.10). "lib" means through the named library function. **No subprocess**
 (git, PowerShell, taskkill, a child script) **and no transcript parse runs while `run.lock` is
 held**: a script takes its facts before the lock and writes after taking it (the lock's own
 `selfInfo` is computed once per process before the first acquisition, §4.4).
@@ -192,6 +200,10 @@ held**: a script takes its facts before the lock and writes after taking it (the
 | `run/coord.json` | handover | lib.writeAtomic |
 | `run/acked.json` | status `--endturn` | lib.writeAtomic |
 | `run/alarm.json` | watch `--alarm` | lib.writeAtomic |
+| `run/arm/slot-<k>.json` | watch `--alarm --ensure` (hold 1) | lib.writeAtomic |
+| `run/arm/<nonce>.json` | watch `--alarm --ensure` (create, hold 1); status `--reconcile` (hold 2, `abandoned`) | exclusive create; writeAtomic |
+| `run/turn.json` | status `--reconcile` (main hold, hold 2) | lib.writeAtomic |
+| `run/deadman.json` | status `--deadman` (FX-W4; the owner's scheduled task) | lib.writeAtomic, without the run lock |
 | `run/watcher.json`; `run/watcher.lock` | watch (watcher mode) | writeAtomic; wx |
 | `run/intents/<key>.json`, `.done` | status `intent` | exclusive create |
 | `run/audit/<task>-e<e>.json`, `run/audit/search-<task>-e<e>.jsonl`, `run/audit/coordinator-ce<ce>.json` | audit | writeAtomic |
@@ -335,7 +347,7 @@ since its last attempt (`committed`, or `cut`/`dropped` before any start) it tar
 |---|---|---|
 | planned / none | `replace fence --reason first` | active / `stopped` (nothing to stop), epoch 1 |
 | planned / none, or active / stopped | `replace fence --reason cut\|drop` | no new attempt, epoch unchanged, step `stopped`, state `cut` (replace writes the `overflow` line) or `dropped`. Nothing runs, so nothing is stopped |
-| active / bound, started, admitted; parked / stopped | `replace fence --reason <r>` | step `fenced`, epoch e+1 (CAS: only if still e); staging cut and `spend_at_fence` recorded. Any reason other than `tainted` (failure reasons, `handover`, `memory`, `cut`, `drop`; decision 40, M6): READY of e present under the lock → exit 5, no change (a READY never wins over a taint); restarts = R already → fence applied, `limit` true, exit 1 `limit`; else restarts+1 unless host. `handover`/`memory` with handovers+parks ≥ H_max → exit 1 `hmax`, no change |
+| active / bound, started, admitted; parked / stopped | `replace fence --reason <r>` | step `fenced`, epoch e+1 (CAS: only if still e); staging cut and `spend_at_fence` recorded. Any reason other than `tainted` (failure reasons, `handover`, `memory`, `cut`, `drop`; decision 40, M6): an uncommitted ready slot of e in its outcome log under the lock (FX-OUT; READY.json is a copy no decision reads) → exit 5, no change (a ready slot never wins over a taint); restarts = R already → fence applied, `limit` true, exit 1 `limit`; else restarts+1 unless host. `handover`/`memory` with handovers+parks ≥ H_max → exit 1 `hmax`, no change |
 | active / fenced | `stop request` | `stop-requested` if attempt e−1 has a session (or a folder transcript), else `stopped` |
 | active / stop-requested | (coordinator stops the session) then `stop verify`, repeated | first call samples and exits 6; a later call, once `stop_verify_deltas` watcher ticks have passed, → `stopped` if confirmed; else stays, `stop` = unconfirmed, exit 1 |
 | committed / bound | `stop request`, then (coordinator closes the session) `stop verify`, repeated | step `stop-requested` → `stopped`, state stays `committed`, attempt e's `stop` = confirmed (frees its slot, decision 17) |
@@ -346,6 +358,19 @@ since its last attempt (`committed`, or `cut`/`dropped` before any start) it tar
 
 A step machine call that finds another step exits 65 and changes nothing; a call whose effect is
 already there (same epoch, same step reached, same session) exits 0 (idempotent).
+
+**FX-CLOSE (round 3; FIX-fence section 4, rev 4 H3, rev 5 point 1).** `stop request` also takes a row
+committed at `started` (the claim holder was never bound). `stop verify` confirms only when (a) the target
+attempt's claim is a tombstone or the claim holder's close is recorded (no claim: the attempt's
+`session`), (b) every other folder session's close is recorded, and (c) nothing grew and no process
+names the attempt over `stop_verify_deltas` ticks **and** at least `stop_verify_ms` of wall time since
+the sample (N3; before both, exit 6 `waiting`). A close is recorded by `run/close/done/<CLI id>.json`,
+counted by H3 (`lib.closeDoneCounts`: `stopped` or `owner`; `no-such-session` only for this
+coordinator's own start or when the process list matches nothing). Otherwise `stop` = unconfirmed,
+`verify_rounds` + 1 (row field, absent = 0; reset to 0 by every fence that moves the epoch), reason
+`close-missing` naming the CLI ids; FX-PLAN asks the owner at `verify_rounds` >= 3 while a close is
+missing. The hook names its close records by the app's id (`local_<uuid>`), so until a map from the
+app's id to the CLI id exists, a close counted here is the owner's `closed` act (departures/CGATE.md 1).
 
 ### 3.7 The ledger line [ledger-line] — `run/ledger.jsonl`
 `{seq: int ≥1, prev: 64 hex, hash: 64 hex, ts: iso, ce: int?, writer: script name, writer_sha: 64 hex,
@@ -395,12 +420,16 @@ Fixed `check` subjects (check: subject): witness: `witness`; tms: `labels`; rend
 lines after acked_seq), slots: {live, unknown, unconfirmed, max}, memory: {free_mb, reserve_mb,
 peak_mb}, budget: {B, reservation, r, spent_total}, halted: bool, draining: bool,
 tasks: [{task, state, step, epoch, V, spent, e_task, soft, hard, window, next:
-none|replace-fence|replace-start|stop-request|stop-session|stop-verify|start-session|bind|audit|commit|owner}],
+none|replace-fence|replace-start|stop-request|stop-session|stop-verify|start-session|bind|audit|commit|owner, or (FX-PLAN) `replace-fence --reason <r>`, `replace-fence --reason crash --if-unclaimed`,
+`close-session <sid>`}],
 watcher: {alive, ce, last_tick_at, ticks_total}, alarm: {alive, ce}, open_intents: key[],
 not_run: [{check, subject}], anomalies: [{code, detail}]}`. A pure function of files; any writer
 gives the same view for the same inputs (except `generated_at`). `V` is `lib.variant` (null where it
 does not apply); `not_run` lists (check, subject) whose last `check` line is not_run, plus
-(`fsck`, `store`) when the last `fsck` line is not_run.
+(`fsck`, `store`) when the last `fsck` line is not_run. FX-W4: anomaly `deadman-nowake` {why} when the dead-man
+is not shown to run every period: `no-run` (no `run/deadman.json`), `unreadable`, `stale` {at} (its `at` older than
+3 periods, 15 min), `gap` {from, to, ms} (two of its runs of one boot more than 2 periods apart, while fewer runs
+than max(1, ceil(2 x alarm_ms / 5 min)) followed it).
 
 ### 3.9 Coordinator files
 - [coord] `run/coord.json`: `{ce: int ≥1, session?, started_at, tcb_commit: 40 hex}`.
@@ -409,13 +438,52 @@ does not apply); `not_run` lists (check, subject) whose last `check` line is not
   that finds the file's sha256 changed since its last look sleeps again instead of exiting. No
   other writer; the format is unchanged.
 - [alarm] `run/alarm.json`: `{pid, start_time, ce, armed_at, sleep_ms}`.
+- [arm-exited] `run/arm/exited-<pid>-<start>.json`: `{ce, exit, at}` (FX-W1 step 2), `<pid>-<start>`
+  = `lib.markerKey(pid, start_time)`. Every alarm, on every exit after its registration (30, 0
+  `superseded`, 64 and any error exit), creates it by a lock-free exclusive create (`lib.createExclusive`, which makes
+  `run/arm/`; `at` from the edge facts; a failed create costs one stderr line, never the exit code); a hard kill writes none. A
+  marker makes `lib.liveness` judge that alarm `dead`, whatever the process list says. Pruned only by
+  `status --reconcile` in its hold 2, and only when neither `alarm.json`, a slot file nor that hold's
+  slots name its pid and start time.
+- [arm-slot] `run/arm/slot-<k>.json`: `{ce, pid, start_time, nonce, turn_seq_at_reg}` (FX-W2; FX-W3 adds
+  `turn_seq_at_reg`, turn.json's turn_seq as the same hold read it, 0 without turn.json),
+  k in 1..`alarm_slots` (branch S1: 1). Written only by the ensure (`watch.mjs --alarm --ensure`) in its
+  hold 1, under the run lock, when slot k is free: absent, corrupt, of another ce, named by an exit
+  marker, or judged dead by the ensure's one process list (cut at `ensure_query_ms`) with its bytes
+  unchanged; `alarm.json` is written in the same hold, so under S1 both name the same alarm. A record
+  without an integer pid > 0 and a string start_time is corrupt.
+- [arm-unarmed] `run/arm/unarmed-<pid>-<start>.json`: `{ce, turn_seq}` (FX-W3). Strict-created by an alarm
+  that exits 30, before its exit marker and without a lock, when turn.json's turn_seq still equals its slot
+  record's `turn_seq_at_reg` (no reconcile in a whole alarm period). Never rewritten; the reconcile's prune
+  of exit markers leaves it; FX-W4's dead-man reads it.
+- [deadman] `run/deadman.json`: `{schema_version: 1, ce, runs, at, boot, runs_no_alarm, runs_no_watcher, list_hist:
+  bool[<=5], alerted: {cause: runs since its last alert}, gap: null|{from, to, ms, boot, runs_since}}` (FX-W4). Written
+  by `status --deadman` only (writeAtomic, no lock), one run of the owner's scheduled task each; absent or corrupt
+  starts the counts again. `runs_no_*` count the runs since a live alarm (watcher) of `ce`, unchanged by a run that
+  could not tell, restarted when `ce` changes; `list_hist` true where the list failed; `boot` the run's boot or null.
+- [arm-nonce] `run/arm/<nonce>.json`, nonce 32 lowercase hex: `{state: 'started'|'registered'|'present'|
+  'abandoned', k?, pid?}` (FX-W2). The ensure creates it `{started, pid}` by exclusive create (a name
+  already there: exit 0 `nonce-reused`, nothing else written) and in its hold 1 rewrites it `{registered,
+  k, pid}` or `{present, pid}`; `status --reconcile --arm-nonces` rewrites a given nonce still absent,
+  corrupt or `started` as `{abandoned}` in its hold 2. A nonce carries no weight of its own: only live
+  slots confirm a turn.
+- [turn] `run/turn.json`: `{ce, turn_seq, read_seq, arm: 'unconfirmed'|'confirmed', slots: [{k, pid,
+  start_time}], unarmed_turns}` (FX-W2; FX-W3 adds `spent`, written by every endturn of this ce, a refused K included; endturn accepts
+  K up to `read_seq` and exits 1 `turn-stale` when turn.json is absent or of another ce). `status
+  --reconcile` writes it in its main hold after `status.json` (turn_seq + 1, never reset; read_seq the
+  ledger head `status.json` reflects; arm `unconfirmed` and slots [] unless no nonce is given and the
+  previous record is of this ce and `confirmed`) and again in its hold 2 (the live slots: `confirmed`
+  and unarmed_turns 0 when they reach `alarm_slots`, else `unconfirmed` and unarmed_turns + 1); hold 2
+  writes nothing when the file is no longer the main hold's record. Absent or corrupt counts as absent.
 - [intent] `run/intents/<key>.json`: `{key, ce, subject, text_sha, created_at}`; `.done`: `{key, done_at}`.
 
 ### 3.10 Watcher [watcher] — `run/watcher.json`; `run/watcher.lock` [lock-record]
 `watcher.json`: `{ce, pid, start_time, ticks_total, last_tick_at, intake: {pid, start_time}?,
 active: {<key>: onset_tick}, pending: [{key, class, task?, first_tick}] (non-urgent, coalescing),
 tasks: {<task>: {epoch, calls, stall_calls, hang_ticks, V, V_min, loop: {sig, run}, spend, window,
-zombie_tokens, files: {<path relative to transcripts_root>: parse-state}}}, coord_file:
+zombie_tokens, kind, deadline, age_ticks, age_base (FX-W6; age_base stays 0: no script sets it, it is where an
+explicit "continue" act would re-arm the age cap), files: {<path relative to transcripts_root>:
+parse-state, which also keeps the transcript's `tail` and `kind` (FX-W6, §4.8)}}}, coord_file:
 {<relpath>: parse-state}?}`. Counters are continued by any later watcher; a new epoch resets that
 task's counters. A class instance's **key** is `<class>|<task or ->|<epoch or ->|<onset_tick>`:
 `onset_tick` is the tick at which the condition became present after being absent (kept in
@@ -424,11 +492,22 @@ exits for a key only while that line's seq > `acked_seq`; a condition that clear
 returns gets a new onset and raises again. For class 17 `act-due` the second part names the act
 too: `17|<task or ->:<act>|<epoch or ->|<onset_tick>` (acts: `replace-fence`, `replace-start`,
 `stop-request`, `stop-session`, `stop-verify@<sample tick or ->`, `start-session`, `bind`,
-`handover`, `run-terminal`, `events`), so a row whose next act changes raises again.
+`handover`, `run-terminal`, `events`, and FX-PLAN's `replace-fence --reason <r>`, `replace-fence --reason crash
+--if-unclaimed`, `close-session <sid>`), so a row whose next act changes raises again.
 `parse-state` = `{end_byte, last_call: {id, usage}?, calls, input, cache_read, cache_write, output,
 last_context, peak_context, loop: {sig, run}}`: each tick parses only from `end_byte`
 (`parseTranscript(..., {fromByte, lastCall})`); a file shorter than `end_byte` is re-parsed from 0.
 Lock record (run.lock and watcher.lock): `{pid, start_time, nonce: 32 hex, script, ce?, acquired_at}`.
+**FX-W7 (lock fencing).** Each evaluation runs on a copy of the state. It takes the run lock with a
+short wait (`watcher_lock_try_ms`) and, inside that one hold, runs `assertHeld` of watcher.lock, its
+appends and the `watcher.json` write; only then is the copy kept. On a busy run lock the copy is
+dropped: nothing is written, the tick does not count, transcripts are read again from the kept
+`end_byte`, and the watcher does not exit (it exits 75 only on a lost watcher.lock; `--once` exits 75
+`lock-busy`). `run/watcher-busy.json` `{ce, busy_ticks}`: the busy ticks in a row, rewritten without
+the run lock by its one writer, the holder of watcher.lock; a held tick resets it to 0; FX-W4 alerts
+at `busy_alert_ticks`. An unparseable `watcher.json` is quarantined: renamed as found to
+`watcher.json.<pid>.<nonce8>.corrupt` (named in `result.quarantined`), and the watcher starts from
+fresh counters instead of exiting 67.
 
 ### 3.11 Commit record [commit-record] — `store/commits/<task>.<step>.json`
 `{schema_version, task, step, epoch, step_key: 64 hex, outputs: [{id, kind, sha256}] (sorted by id), outputs_sha}`
@@ -440,7 +519,11 @@ through commit records and re-check every `sha256` first.
 ### 3.12 Ready marker [ready] — `wt/<task>-e<e>/staging/READY.json` (the session)
 `{kind: "ready"|"repair", task, epoch, step?: commit step (ready), question_ids?: key[] (repair),
 missing?: source|snapshot|card|check|other (repair)}`. Untrusted: a READY whose `epoch` differs from
-the table is zombie-write telemetry only.
+the table is zombie-write telemetry only. READY.json is a copy that no decision reads; the decision is
+the outcome log (§3.23): the guard-hook turns a valid Write of READY (`kind: ready`) into a ready slot
+before the harness writes the copy, denies an Edit of READY (`ready-write-only`) and a READY of another
+task, epoch or step (`ready-invalid`), and lets a repair marker through with no slot. READY.json is
+still read for the repair marker (watcher class 12) and the zombie-write telemetry.
 
 ### 3.13 Snapshot metadata [snapshot-meta] — `.snapshots/meta/<raw_sha>.json`
 `{url, final_url, retrieved_at, http_status: int, content_type, bytes: int, raw_sha, text_sha?,
@@ -547,11 +630,13 @@ value `tcb/thresholds.json` ships:
 | Name | Default | Source | Name | Default | Source |
 |---|---|---|---|---|---|
 | delta_ms | 60000 | mapping D1-02 | coalesce_ticks | 2 | guess (δ = 2 min) |
-| stall_calls (c) | 30 | guess | hang_ticks (h) | 10 | guess |
+| stall_calls (c) | 30 | guess | hang_ticks (h) | 10 | guess; read by no script since FX-W6 (the kind deadlines below) |
+| model_ticks / tool_slack_ticks | 10 / 12 | guess, branch B1 (FX-W6 step 3: a model call; a tool call waits its declared timeout in ticks of Δ + this slack) | bg_wait_ticks | 60 | guess, branch B1 (FX-W6 step 3: a wait on a background task) |
+| idle_ticks | 30 | guess (FX-W6 step 4: act-due `idle-child`, never a hang) | attempt_max_ticks | 240 | guess, a placeholder (FX-W6 step 5: act-due `age-cap`, uncharged) |
 | loop_k | 3 | mapping D3-06 | W_cc_ticks | 30 | mapping D1-09 |
 | R | 1 | design R8 | H_max | 2 | guess |
 | Z_frac | 0.1 | guess | stop_verify_deltas | 2 (ticks) | guess (R9's 2Δ) |
-| N_max / N_ceiling | 2 / 3 | design R10 | peak_mb / reserve_mb | 1200 / 1024 | guess |
+| N_max / N_ceiling | 2 / 3 | guess; computed by the decision rule (r57-0414), memory one of its limits, measured per session (Q19) | peak_mb / reserve_mb | 1200 / 1024 | guess |
 | soft_frac / hard_frac | 0.8 / 0.9 | D3-05 / guess | alarm_ms | 3600000 | guess |
 | B_tokens, r_tokens | null | owner (F4) | W_quality | 300000 | coordinator |
 | W_star_coord | 133200 | mapping D3-01 (cost.js) | coord_over_factor | 1.5 | mapping D3-01 (R50) |
@@ -587,6 +672,15 @@ audit flags a checker that read more than one batch). Profiles exist for every r
   \"{root}\" --role <role> --task {task} --epoch {epoch}", timeout: 30}]}` under `PreToolUse`. The
   owner installs `tcb/settings/coordinator.json` (no task, no epoch) and merges `user-deny.json` into
   his user settings. guard-hook and audit enforce the same profile.
+- **Session tools (FX-CGATE).** The coordinator's profile alone has `session_tools: {start: string[], stop:
+  string[]}`: the app's session tools by exact name (no prefix rule), each also in `tools_allow`, start and stop
+  disjoint (shipped: start `mcp__ccd_session__start_session`; stop `mcp__ccd_session_mgmt__archive_session`,
+  `mcp__ccd_session_mgmt__stop_session`). `tcb/settings/coordinator.json` keeps its one `PreToolUse` entry and adds
+  `PostToolUse` and `PostToolUseFailure` entries, matcher = the stop tools joined by `|`, the same command and
+  timeout. Those events carry `tool_use_id` and `tool_response` (Post) or `error` (PostToolUseFailure); the hook
+  writes the close records from them (`spec/guard-hook.mjs.md`, FX-CGATE). A session is named by the CLI id
+  (`session_id` of the hook input, a lowercase UUID) and by the app id (`local_<uuid>`, the session tools' input):
+  `coord-session-<ce>.json` and `start.json` hold CLI ids, the close records are named by app ids.
 - **Agent files.** `tcb/agents/<type>.md` (U3b: front matter `name`, `description`, `tools`; body =
   the verbatim `tcb/briefs/<type>.md`). replace copies the file of every type in the profile's
   `agent_types` into `.claude/agents/`; the manifest lists them (`agents`); fsck accepts exactly those.
@@ -651,8 +745,33 @@ as written there; the spec is the single place of their fields.
   makes the case root a git repository whose one commit holds the case's `tcb/` and sets
   `run/coord.json` `tcb_commit` to it (the only way an `fsck` case can pass the tcb check).
 - [stop-sample] `run/stop-sample/<task>-e<e>.json` (stop): `{schema_version, task, epoch, target,
-  tick, sizes: {<path relative to transcripts_root>: bytes}}`.
+  tick, at, sizes: {<path relative to transcripts_root>: bytes}}`; `at` (FX-CLOSE) the sample's wall time,
+  a sample without it is taken again.
 - [unit-costs] `plan/unit-costs.json`: as `spec/cost.mjs.md`.
+
+### 3.23 Outcome log [outcome-slot] — `wt/<task>-e<e>/outcome/<j>.json`
+
+FX-OUT (`model/as-built/FIX-fence.md` section 1). The two outcomes of attempt e, finished (READY) and
+revoked (fenced), race through one log of write-once slots, one per file, j = 0, 1, 2 ...: every party
+proposes by a strict exclusive create (0b, §8.20) of the next slot name, exactly one create of a name
+succeeds, and everyone reads the winner (test-and-set, as in CORFU and the Paxos log).
+- **Layout.** `replace start` makes `outcome/` with the manifest; it lies outside the session's write
+  prefix (`{attempt}/staging/`). Ready slot bytes `{kind:"ready", task, epoch, step}` (written by the
+  guard-hook for the session's READY); fenced slot bytes `{kind:"fenced", task, epoch, reason}` (written
+  by `replace fence`); each the canonical JSON of exactly those fields (`lib.outcomeSlotBytes`). The log
+  has no gaps, and nothing is ever appended after a fenced slot. A repeat READY for a step has identical
+  bytes and takes no new slot, so a log holds at most |steps| ready slots and one fenced slot.
+- **Reading rules** (`lib.outcomeState(attemptDir, row)`, the one reader of commit, the fence, the hook,
+  the planners and fsck):
+  - **R-a.** A log that holds a fenced slot is fenced (reason r): commit refuses (exit 1
+    `attempt-fenced`), the fence takes its retry path, the hook denies (`attempt-fenced`).
+  - **R-b.** A ready slot is uncommitted when its own step is not in `row.commits`.
+  - **R-c.** Only names `<j>.json` are slots, read only when `lstat` shows a regular file; a slot whose
+    bytes do not parse, or are not a slot of this folder's task and epoch, a name with leading zeros, a
+    gap, a slot after the fenced one, or an `outcome` that is not a real folder is tamper:
+    `outcome-tamper` 3 in a script, a deny in the hook, a failing item `outcome-<why>` in fsck. Other
+    names (a create's temp file) are not read. No `outcome/` (an attempt never admitted, or started
+    before the fix) is an empty log: the hook's create fails `no-parent` and the fence writes no slot.
 
 ## 4. The library `tcb/lib.mjs`
 
@@ -700,7 +819,11 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
   indexer or an editor may hold the file without delete sharing; a `wx` create of a lock that keeps
   failing with EPERM counts as busy (a delete-pending lock). `readJson`/`readJsonl` retry EPERM,
   EACCES and ENOENT-during-rename up to 5 times, 20 ms apart. A transient error is never surfaced.
-- `createExclusive(path, data) → 'created'|'identical'`; different bytes → `exists-different` 1.
+- `createExclusive(path, data, {strict, budget}?) → 'created'|'identical'`; different bytes → `exists-different` 1.
+  `strict` (0b, every hook write): no parent folder is made (`no-parent` 2) and no `wx` fallback where hard links
+  are unsupported (`no-hardlink` 3), so the name never exists without its bytes. `budget` (ms left): spent before
+  the write or the link → `budget-spent` 2 and nothing made. `fsRetry(op, budget?)`: the sharing retry above; with
+  a budget it tries once at least and retries only while the sleep ends inside it, else `budget-spent` 2.
 - `readJson(path)`: strips one leading BOM; missing → `missing` 2, unparseable (UTF-16 included) →
   `unparseable` 2.
   `readJsonl(path) → {records, torn: Buffer|null, badLines: int[]}`: trailing bytes after the last
@@ -742,6 +865,11 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
     `fs.linkSync(renamed, lock)` (fails rather than replace) and unlink the renamed file; if the link
     fails because a lock exists, keep the file as `<name>.<nonce>.orphan` and log an `incident`
     at the next acquisition. Then start over.
+  - watcher.lock (FX-W7): the waiter judges the holder outside every lock (unknown is never broken)
+    and reads `watcher.json`'s bytes before the judgement. A holder judged dead is broken only under
+    the run lock (taken with the caller's retries; busy → `lock-busy` 75): the waiter re-reads the
+    lock and `watcher.json` and breaks only when both are byte-for-byte unchanged. A changed
+    `watcher.json` means the holder wrote: its verdict is dropped and it is judged again later.
   - Unreadable (empty, or no lock record; e.g. a reset between the `wx` create and the write): never
     judged by `proc`. When `retries` ≥ `LOCK_UNREADABLE_MIN_RETRIES` (50) and the lock's bytes stay
     unchanged for the whole budget, it is broken with the same rename / re-read / create protocol,
@@ -778,9 +906,18 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
 - `fence(root, handle, {task, expectEpoch, reason, host, tick, readyCheck, cut, spendAtFence, R,
   Hmax}) → {row, from, to, restartCharged, limit}`: the §3.6 fence rows on `updateRow`. For a failure
   reason other than `tainted` it calls `readyCheck()` under the lock first; true → `ready-wins` 5 with
-  no change. (Decision 40, M6: the rule is every reason but `first` and `tainted` on a row with a
-  running attempt; until the library's check is widened, `replace.mjs fence` makes the same
-  re-check itself under the same lock before it calls `fence`.) `handover`/`memory` at `handovers + parks ≥ Hmax` → `hmax` 1, no change. The limit path
+  no change. The callback reads the outcome log (§3.23): an uncommitted ready slot in a log that is not
+  fenced (FX-OUT, Q6 b: the library's scope stays failure-only). Decision 40, M6, the rule for every
+  reason but `first` and `tainted` on a running attempt, is `replace.mjs fence`'s, in the same lock hold
+  before it calls `fence` (FX-OUT steps 1-5): the log read (a log fenced with another reason → 65
+  `fence-pending` {reason}); every refusal (`stale-epoch`, `wrong-step`, `hmax`) before any write; then,
+  only when the fence moves the row to e+1 and attempt e has a manifest, the ready check (an uncommitted
+  ready slot → `ready-wins` 5, never over `tainted`) and the fenced slot by `outcomeAppend` (a ready slot
+  that takes the name first → `ready-wins` 5; `tainted` appends after it). By the time `fence` runs, its
+  callback sees the fence's own slot as the winner.
+- `outcomeState(attemptDir, row) → {present, fenced, slots, ready, next}` and `outcomeAppend(attemptDir,
+  slot, {row, check, create}) → {result: created|identical|fenced, j, state}` (§3.23; FX-OUT): the log's
+  one reader and its test-and-set; `outcomeSlotBytes(slot)` the canonical bytes of a slot. `handover`/`memory` at `handovers + parks ≥ Hmax` → `hmax` 1, no change. The limit path
   applies the fence and returns `limit:true` (the caller exits 1). `cut`/`drop` on a row at planned/none
   or active/stopped takes the no-attempt row of §3.6 (state `cut`/`dropped`, epoch unchanged).
 - `stagingCut(attemptDir) → {files: {relpath: {len, sha256}}, links: relpath[]}`: every regular file
@@ -813,8 +950,11 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
   `<root>/<projectDirName(folder)>/` whose first record carrying `cwd` names the folder (case-folded).
   If that folder is absent, every `<root>/*/` whose name starts with the first 100 characters of
   `projectDirName(folder)` is scanned the same way (the harness is believed to shorten long names).
-- `parseTranscript(path, {fromByte=0, lastCall=null}) → {sessionId, cwd, calls, toolUses,
-  toolResults, structured, turnEnds, endByte, torn, badLines}`; reads the file in 1 MiB chunks
+- `parseTranscript(path, {fromByte=0, lastCall=null, tail=null}) → {sessionId, cwd, calls, toolUses,
+  toolResults, structured, turnEnds, endByte, torn, badLines}` plus the non-enumerable `tail` (the
+  tail state, continued from the option `tail` when the parse resumes at fromByte) and `kind` (`tool`,
+  `bg-wait`, `model` or `idle`; an unreadable transcript is `model`) of FX-W6, as `spec/lib.md` defines
+  them; reads the file in 1 MiB chunks
   (`fs.readSync`), never as one string:
   - a **model call** is one distinct `message.id` among `type:"assistant"` records whose
     `message.model` is not `<synthetic>`; its usage is taken from the last record of that id (the
@@ -903,6 +1043,26 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
   unknown (never zero, so back-to-back starts cannot all pass); else a transcript exists → unknown.
   A `procList` of null (PowerShell failed) makes every such attempt unknown. Admission uses `live +
   unknown + unconfirmed < N_max` (R10; fail-safe). Shared by admit, status and handover.
+  **FX-CLAIM step 7** (`opts.root`, passed by admit, status, handover and watch): plus one `unconfirmed`
+  for every folder session (a transcript whose first `cwd` is an attempt folder; any row but planned,
+  any attempt) that is not its attempt's own session (the claim holder, else the recorded `session`)
+  and has no counting `run/close/done/<sid>.json`: `stopped` and `owner` count; `no-such-session`
+  counts only when the attempt's `start.json` `session` equals the record's `by`, or the process list
+  matches nothing for the folder or the session (rev 4, H3). There is no fixed ceiling of 3: the cap is
+  `min(N_max, N_ceiling)` (ORCHESTRATION 9 row 5).
+- FX-CLAIM claims (`model/as-built/FIX-fence.md` section 2, rev 5): `readClaim(dir) → {kind: none |
+  session | tombstone, session_id}` (`wt/<T>-e<E>/claim.json`; bytes that do not parse are tamper,
+  `claim-invalid` 3); `claimRecord(sid)`, `tombstoneRecord(task, epoch)`, both made by strict create
+  (0b) and never deleted while the attempt lives. The child hook claims on every task-role call after
+  the epoch gate (deny `bad-input`, `attempt-claimed`, `attempt-cancelled`, `claim-invalid`). `fence`
+  tombstones an attempt with a manifest; for a failure reason, not host, a tombstone is a no-start
+  fence, uncharged while `nostart < H_nostart` (then `nostart + 1`, capped at H_nostart, and no `fails`
+  entry, so no R8 fail), charged like a failure past it; a session claim resets `nostart` to 0.
+  `--if-unclaimed`: a session claim → exit 5 `claimed-late`, checked before any write. `bind` needs
+  the claim (exit 6 `not-claimed`, exit 1 `not-claim-holder`). Reconcile takes `started` from the
+  claim first, transcripts second; another folder session is the anomaly `duplicate-session`. `stop
+  request` on a tombstone confirms at once only with no folder session visible. `startLeaseExpired(start,
+  ticks_total, now_ms, {start_lease_ticks, start_lease_ms})`: both bounds passed (N3).
 - `variant(root, row, {f5Given}) → {V, covered: key[], uncovered: key[]}` (R5), used by replace
   (todo), stop and replace (overflow ids), watch (stall) and status: **research** and **control**:
   `covered` = `row.question_ids` carried by a card of this task (named by an `intake` line of the
@@ -959,8 +1119,8 @@ the coordinator rely on are fixed here; everything else is in its spec.
 | U1a | replace.mjs | The one start and restart path: the step machine's fence, start and bind; builds attempt folders, settings, agent files, manifest, brief, inputs, checkpoint, todo and `review-in/` | `plan`; `fence --task --epoch --reason [--tick]`; `start --task --epoch` (admission through admit.mjs's exported `decide`); `bind --task --epoch --session` | 0, 1 (`limit`, `hmax`), 2, 3, 5, 6 |
 | U1a | admit.mjs | Admission decision (R10): deps, protocol hash, gate, selftest, fresh fsck, slots over live processes, memory, reservation, gate A, halt, drain; design-check tasks skip the gate | `check [--task]` (read-only); exports `decide(facts) → {admit, reasons, reservation}` (pure) | 0, 6, 2 |
 | U1a | stop.mjs | Fence-first stop: records the request, verifies non-growth over `stop_verify_deltas` watcher ticks without sleeping, reports (never kills) processes that name the attempt, counts zombie spend | `request --task --epoch`; `verify --task --epoch` (repeated: samples, then compares) | 0, 1, 2, 6 |
-| U1b | watch.mjs | The watcher: ticks, counters, V, spend, loop, memory, windows, events, wake by exit | (default) `--ce`; `--once` (one tick, tests); `--alarm --ce [--sleep-ms]`; `--intake --ce` (harvest, commit intake, snap, witness, promote `--from witness`, tms, status, one at a time; spawned detached, not awaited) | 10-17, 20-27, 30, 0 (`--once` quiet, alarm superseded, intake done), 3 (a tamper exit inside intake), 70 |
-| U1b | status.mjs | Builds `run/status.json`; reconciles started steps; end-of-turn check; owner, intent and meter lines | (default); `--reconcile`; `--endturn --acked-seq`; `intent open|done --key`; `owner --act --subject --quote-file`; `meter --pct` | 0, 1 (endturn; reconcile `alarm-missing`), 2 |
+| U1b | watch.mjs | The watcher: ticks, counters, V, spend, loop, memory, windows, events, wake by exit | (default) `--ce`; `--once` (one tick, tests); `--alarm --ensure --nonce --ce [--sleep-ms]` (FX-W2: the ensure); `--intake --ce` (harvest, commit intake, snap, witness, promote `--from witness`, tms, status, one at a time; spawned detached, not awaited) | 10-17, 20-27, 30, 0 (`--once` quiet, alarm superseded, the ensure `nonce-reused`, `present` or `abandoned`, intake done), 3 (a tamper exit inside intake), 70 |
+| U1b | status.mjs | Builds `run/status.json`; reconciles started steps; end-of-turn check; owner, intent and meter lines | (default); `--reconcile [--arm-nonces]`; `--endturn --acked-seq`; `intent open|done --key`; `owner --act --subject --quote-file`; `meter --pct` | 0, 1 (endturn; reconcile `arm-unconfirmed`, FX-W2), 2 |
 | U1b | handover.mjs | Coordinator epochs: first coordinator, ce raise after the drain, binding the successor | `init --tcb-commit [--session]`; `raise --ce`; `bind --ce --session` | 0, 6 (not quiescent / no drain), 1, 2 (`missing`, `proc-unavailable`, `no-coordinator`) |
 | U2a | commit.mjs | The acceptor: validates staging, stores objects, flags R18 (d)(e), writes commit records (no git in the pilot) | `intake --task --epoch`; `record --task --epoch --step` | 0, 1, 2, 3, 6 (`intake-new`, `fsck-stale`, `audit-missing`, `cards-pending`) |
 | U2a | harvest.mjs | Copies readers' schema-checked results from transcripts into `staging/harvested/`, re-validated against tcb's card schema | `--task --epoch` | 0, 1 (some invalid), 2, 3 (`untrusted-path`, `harvested-differs`) |
@@ -1091,7 +1251,9 @@ Settled here where the sources leave it open or disagree (D = the design, L = a 
     seed's `makeSeed` (same unit). No other script imports another; what two units share
     (reservation, slot count, variant, current design, run flags, intake candidates, flag clearing,
     checker verdicts) is in lib.
-20. guard-hook writes nothing; its refusals are read from transcripts by audit. Reason: a hook that
+20. guard-hook takes no lock and writes only by strict exclusive create (`createExclusive` with `strict` and the time
+    left until `hook_deadline_ms` from its start; FIX-fence §0b), never a path a script writes (amended by 0b; the
+    writes come with FX-OUT, FX-CLAIM, FX-CGATE); its refusals are read from transcripts by audit. Reason: a hook that
     takes the run lock would stall every tool call.
 21. The owner's tcb commit is recorded by `handover init --tcb-commit` in `coord.json` and copied at
     each raise; fsck compares `tcb/` with it by git. Reason: R28 needs a script-readable value.
@@ -1146,11 +1308,13 @@ Settled here where the sources leave it open or disagree (D = the design, L = a 
     new.) **M2** (NoDeadlock): `status --reconcile`, the first act of every turn, checks the alarm
     of this ce and exits 1 `alarm-missing` when none lives (also when the process list is
     unavailable), so the coordinator starts `watch.mjs --alarm` before anything else and a turn
-    that dies before its endturn still leaves a wake source. **M3** (AlwaysCanResolve,
+    that dies before its endturn still leaves a wake source (replaced in round 3 by FX-W2's ensure and
+    `arm-unconfirmed`, decision 41). **M3** (AlwaysCanResolve,
     EventuallyResolves): the watcher raises class 17 `act-due` on the planner's own predicate (the
     `next` of status §3.8 for each row, `owner` excluded; `replace-fence`/`replace-start` only with
     a free slot and neither halted nor draining; `stop-verify` once its sample is
-    `stop_verify_deltas` ticks old; an admitted row whose folder has a transcript is `bind`; a drain
+    `stop_verify_deltas` ticks old; FX-PLAN: an admitted row is `bind` once it holds a session claim, quiet
+    while its start lease runs, then `replace-fence --reason crash --if-unclaimed`; a drain
     of this ce with no slot used; every row terminal; an `event` line above `acked_seq` whose key
     is no longer active). It is keyed and acknowledged like every class (§3.10), so a condition
     the coordinator has acknowledged and cannot act on stays quiet. The slot count here uses
@@ -1160,3 +1324,49 @@ Settled here where the sources leave it open or disagree (D = the design, L = a 
     attempt always counts one slot); only a test was missing. **M5** (NoFalseSuspicion): the
     pause discount of §1.2. **M6** (ReadyNotDiscarded): the READY re-check of `fence` applies to
     every reason but `first` and `tainted` (§1.4 exit 5, §3.6).
+41. The arm first, the armed gate and the dead-man (round 3: FX-W2, FX-W3, FX-W4; FIX-JOIN point 1).
+    Filled by those fixes (S0.5 sets the heading only).
+    FX-W1 (R6-b, FIX-JOIN part 3, branch L1): `status --endturn` reports each wake source alive, dead
+    or unknown: exit 1 when any is dead, 2 only when none is dead and some is unknown. Every alarm
+    writes an exit marker before it exits, so an alarm that fired or was superseded is dead, never
+    unknown. On a dead watcher the coordinator starts a new one; on unknown it starts nothing.
+    FX-W2 (R6-a, FIX-JOIN part 3, branch S1: `alarm_slots` 1, one ensure per turn, no second nonce):
+    "The coordinator's first call of every turn starts `watch.mjs --alarm --ensure` in the background,
+    which registers an alarm only when no slot holds one that has not exited; its second is `status
+    --reconcile`, which counts the slots holding an alarm with no exit marker that is alive or unknown,
+    and records the turn as armed only if enough are." It replaces M2's `alarm-missing` (decision 40):
+    reconcile exits 1 `arm-unconfirmed` when the turn is not armed, and a second reconcile of an armed
+    turn keeps it armed in its main hold while hold 2 re-checks the slots ([turn], §3.9).
+    FX-W3 (R6-c, FIX-JOIN part 3; A3; N2 with E1): an act that creates work (`replace start`, `replace
+    fence --reason first`, the session-start tool) needs "armed": `run/turn.json` of the caller's ce, arm
+    `confirmed`, slots with no exit marker (`lib.armedState`, files only). The scripts check it in their
+    hold (`withRunLock` `requireArmed`: exit 6 `not-armed`, nothing written; a dry run gives the same 6),
+    the guard hook for the start tool (deny `not-armed`, no start.json). A revocation (every other fence
+    reason, `stop`, the stop tools) is never gated. `status --endturn` takes K from the turn (K at most
+    turn.json's `read_seq`; absent or of another ce: exit 1 `turn-stale`, nothing written), spends the
+    arm in every endturn of this ce, and reports the wake sources after a refusal too; the coordinator
+    ends every turn with it, also after `handover` exit 2 and after any exit 75 (E1; tests: status "S2.1 N2"). An alarm that fires with turn_seq unmoved since it registered writes
+    [arm-unarmed] (§3.9).
+    FX-W4 (R6-d, FIX-JOIN part 3 and point 1.4; rev 5 N1; branches P1, H4 B, H7): "The bound: a wake arrives
+    while either source lives; a dead watcher is restarted at the next turn, within two alarm periods. A
+    scheduled task outside the tree, which wakes the PC, alerts the owner when no alarm or no watcher lives, the
+    process list keeps failing, an act-due is stuck (about 4.75 h), the run lock stays busy, or turns run
+    unarmed; it cannot wake the coordinator." Revision 5 N1 replaces "once per onset": while the same cause
+    holds the alert repeats every `realert_runs` runs (P1: 6, 30 min), and one run without the cause ends the
+    onset. The task (`tcb/settings/deadman-task.xml`, installed by the owner) runs `status --deadman --root R`
+    every 5 min and at logon with wake-to-run, and shows a toast on any exit but 0 (H4 B); the status view
+    raises `deadman-nowake` when its runs stop coming every period ([status], §3.8; [deadman], §3.9).
+
+### FX-PLAN (round 3): the planner's acts, first match (class 17; status `next`)
+`lib.planAct(row, lib.planFacts(root, row, ctx))`, called by status's `nextOf` and the watcher's `rowAct`
+(FIX-fence section 6, rev 4 P1/P2, rev 5 points 1-2; Q5a acts only). 0 `owner`: failed, `limit`, zombie spend over
+Z, a tampered outcome log, or `verify_rounds` >= 3 while the stop's target attempt has a needed close not counted.
+1 attempt E's log fenced, the row still at E: `replace-fence --reason <the log's reason>`, or `owner` where that
+retry would be refused (wrong-step, hmax). 2 planned/none `replace-fence`; active|parked/stopped `replace-start`
+(both `none` while halted or draining). 3 active|parked/fenced, committed at started or bound: `stop-request`.
+4 stop-requested as before (`stop-session`, `stop-verify`). 5-6 active at admitted, or started: a session claim
+`bind`; `start.json` `none` while the lease runs, then `replace-fence --reason crash --if-unclaimed` (exit 5
+`claimed-late` leaves nothing written; the next act is `bind`); no `start.json`: `start-session` (admitted) or
+`owner` (started). 7 bound with a ready slot: `audit`, then `commit`. A step-7 folder session that no stop is
+closing gets `close-session <sid>` in place of `none`, `replace-start` or `start-session` (`owner` when its
+done record does not count, H3). A pair no script moves is `owner`.

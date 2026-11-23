@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TCB = path.resolve(HERE, '..');
@@ -240,6 +240,8 @@ function makeRoot({ fixtures = true, canary = false, extra = [] } = {}) {
   for (const s of SCRIPTS) fs.writeFileSync(R.p('tcb', s + '.mjs'), STUB.replace('__SCRIPT__', s));
   fs.writeFileSync(R.p('run', 'coord.json'), JSON.stringify({ schema_version: 1, ce: 1, started_at: NOW, tcb_commit: '0'.repeat(40) }));
   fs.writeFileSync(R.p('run', 'tasks.json'), JSON.stringify({ schema_version: 1, rev: 0, tasks: [] }));
+  // FX-CGATE: the folders of the hook's close records (handover init makes them; static check close-folders)
+  for (const d of ['intent', 'done']) fs.mkdirSync(R.p('run', 'close', d), { recursive: true });
   if (fixtures) defaultFixtures(R, extra);
   if (canary) {
     fs.mkdirSync(R.p('tcb', 'fixtures', 'selftest'), { recursive: true });
@@ -315,8 +317,8 @@ function defaultFixtures(R, extra = []) {
 // running selftest
 // ---------------------------------------------------------------------------------------------
 // jobs null: the default (one case at a time), no --jobs flag on the command line
-function runSt(R, mode, extra = [], { ce = '1', jobs = null, timeoutMs = '20000', limitMs = 240000, defaults = true, script = SELFTEST } = {}) {
-  const args = [script, mode, '--root', R.root, '--ce', ce];
+function runSt(R, mode, extra = [], { ce = '1', jobs = null, timeoutMs = '20000', limitMs = 240000, defaults = true, script = SELFTEST, node = [] } = {}) {
+  const args = [...node, script, mode, '--root', R.root, '--ce', ce];
   if (defaults) {
     if (mode === 'run') {
       if (jobs !== null) args.push('--jobs', jobs);
@@ -396,6 +398,9 @@ test('T1 all cases right: exit 0, selftest.json pass bound to the tcb tree, two 
     assert.deepEqual(order, [...order].sort((a, b) => cmp(a[0], b[0]) || cmp(a[1], b[1])), 'cases are sorted by script, case');
     assert.ok(st.cases.every((c, i) => i === 0 || c.n > st.cases[i - 1].n), 'n follows the sorted order');
     assert.ok(Array.isArray(st.checks) && st.checks.every((c) => c.pass === true && typeof c.check === 'string'));
+    const hl = st.checks.find((c) => c.check === 'hard-links');
+    assert.ok(hl && hl.pass === true && Array.isArray(hl.detail) && hl.detail.length === 0, 'hard-links: ' + JSON.stringify(hl));
+    assert.deepEqual(probesLeft(R), [], 'no hard-link probe file is left');
     assert.equal(ran(R).length, 2 * SCRIPTS.length + 1, 'every case ran');
     // ledger
     const led = readLedger(R);
@@ -751,7 +756,48 @@ test('T10 a case whose stub breaks its ledger chain while the input chain verifi
   });
 });
 
-test('T11 allow_loopback true in the live thresholds is loopback-on; a profile with an extra field is role-files', async () => {
+// 0b(a): the hard-link probe files selftest leaves (none), and a module preloaded into selftest's own
+// process that makes node's fs.linkSync fail with `code` for every new name directly in `<root>/<folder>/`
+function probesLeft(R) {
+  return ['run', 'wt'].flatMap((d) => (fs.existsSync(R.p(d)) ? fs.readdirSync(R.p(d)).filter((n) => n.startsWith('selftest-link.')) : []));
+}
+function noLinkPreload(R, folder, code) {
+  const f = R.p('out', `nolink-${folder}.mjs`);
+  fs.writeFileSync(f, [
+    "import fs from 'node:fs';",
+    "import path from 'node:path';",
+    "import { syncBuiltinESMExports } from 'node:module';",
+    `const DIR = ${JSON.stringify(path.resolve(R.p(folder)).toLowerCase())};`,
+    'const orig = fs.linkSync;',
+    'fs.linkSync = function (a, b) {',
+    `  if (path.dirname(path.resolve(String(b))).toLowerCase() === DIR) throw Object.assign(new Error('${code}: no hard links here (test), link'), { code: '${code}', syscall: 'link' });`,
+    '  return orig.apply(this, arguments);',
+    '};',
+    'syncBuiltinESMExports();',
+  ].join('\n'));
+  return ['--import', pathToFileURL(f).href];
+}
+
+test('T11 allow_loopback true in the live thresholds is loopback-on; a profile with an extra field is role-files; a hard link that cannot be made in run/ or wt/, or a missing wt/, is hard-links (0b)', async () => {
+  for (const [folder, code, other] of [['wt', 'EXDEV', 'run'], ['run', 'ENOTSUP', 'wt'], ['wt', 'ENOENT', 'run']]) {
+    await withRoot({}, async (R) => {
+      let node = [];
+      if (code === 'ENOENT') fs.rmSync(R.p('wt'), { recursive: true }); // handover init makes wt/; selftest makes no folder
+      else node = noLinkPreload(R, folder, code);
+      const r = await runSt(R, 'run', [], { node });
+      assertLine(r, { exit: 1, mode: 'run' });
+      const hl = (r.json.reasons || []).find((x) => x.code === 'hard-links');
+      const det = JSON.stringify(hl ? hl.detail : null);
+      assert.ok(hl && det.includes(`${folder}/: ${code}`), `${folder} ${code}: reasons ${JSON.stringify(r.json.reasons)}`);
+      assert.ok(!det.includes(`${other}/`), `only ${folder}/ fails: ${det}`);
+      assert.deepEqual(ran(R), [], 'no case runs after a failed check');
+      const st = readSt(R);
+      assert.equal(st.result, 'fail');
+      assert.ok(st.failed.includes('hard-links'));
+      assert.deepEqual(probesLeft(R), []);
+      if (code === 'ENOENT') assert.equal(fs.existsSync(R.p('wt')), false, 'selftest makes no folder');
+    });
+  }
   await withRoot({}, async (R) => {
     setParam(R.root, 'allow_loopback', true);
     const r = await runSt(R, 'run');
@@ -768,6 +814,17 @@ test('T11 allow_loopback true in the live thresholds is loopback-on; a profile w
     assertLine(r, { exit: 1, mode: 'run' });
     assert.ok(reasonCodes(r).includes('role-files'), `reasons: ${JSON.stringify(r.json.reasons)}`);
   });
+  // FX-CGATE: run/close/done that is not a folder fails close-folders, and no case runs
+  await withRoot({}, async (R) => {
+    fs.rmSync(R.p('run', 'close', 'done'), { recursive: true });
+    fs.writeFileSync(R.p('run', 'close', 'done'), 'x');
+    const r = await runSt(R, 'run');
+    assertLine(r, { exit: 1, mode: 'run' });
+    const cf = (r.json.reasons || []).find((x) => x.code === 'close-folders');
+    assert.ok(cf && JSON.stringify(cf.detail).includes('run/close/done/: not a folder'), `reasons: ${JSON.stringify(r.json.reasons)}`);
+    assert.ok(!JSON.stringify(cf.detail).includes('run/close/intent/'), 'only done fails');
+    assert.deepEqual(ran(R), [], 'no case runs after a failed check');
+  });
 });
 
 test('T12 --only seed runs seed\'s cases only and writes no file and no ledger line', async () => {
@@ -779,6 +836,7 @@ test('T12 --only seed runs seed\'s cases only and writes no file and no ledger l
     assert.ok(!fs.existsSync(R.p('run', 'selftest.json')), 'a partial run must not write selftest.json');
     assert.ok(!fs.existsSync(R.p('run', 'ledger.jsonl')), 'a partial run must not append a ledger line');
     assert.equal(filesHash(R.root, ['out']), before, 'no file may change');
+    assert.ok(!(r.json.result.checks || []).some((c) => c.check === 'hard-links'), 'an --only run does not probe hard links');
   });
 });
 
@@ -794,6 +852,7 @@ test('T13 --dry-run lists the cases, spawns nothing, creates no tmp/ folder and 
     assert.ok(!fs.existsSync(R.p('run', 'selftest.json')));
     assert.ok(!fs.existsSync(R.p('run', 'ledger.jsonl')));
     assert.equal(filesHash(R.root, ['out']), before);
+    assert.ok(!(r.json.result.checks || []).some((c) => c.check === 'hard-links'), 'a dry run does not probe hard links');
   });
 });
 

@@ -324,7 +324,42 @@ function checkUnlogged(objs, lines, table) {
     else if (p === 'x' && !certs.has(id)) anomalies.push({ code: 'object-unlogged', id });
     else if (p === 'm' && !manifests.has(id)) anomalies.push({ code: 'object-unlogged', id });
   }
-  return anomalies;
+  return [...anomalies, ...missingLines(lines, table)];
+}
+
+// FX-REDO (FIX-fence section 5): a row move whose ledger line is still missing (a death between the
+// row and its line, and no repeat since) is a warning, `ledger-line-missing` with id
+// `<task>-e<epoch>:<kind>`. What the row shows for good: a cut attempt E -> the fence to E+1; a
+// bound_at -> the bind; a confirmed stop of attempt k -> the confirmed stop line (epoch k+1, or k for
+// the last attempt of a committed row). What only the current step shows: admitted (with a
+// manifest) -> admit; active at started -> started; stop-requested -> stop-request.
+function missingLines(lines, table) {
+  const have = new Set();
+  for (const l of lines) {
+    if (!l || typeof l.task !== 'string' || !Number.isInteger(l.epoch)) continue;
+    if (l.kind === 'fence' && l.data && Number.isInteger(l.data.from)) have.add(`${l.task}|${l.epoch}|fence|${l.data.from}`);
+    else if (l.kind === 'stop') { if (l.data && l.data.confirmed === true) have.add(`${l.task}|${l.epoch}|stop`); }
+    else have.add(`${l.task}|${l.epoch}|${l.kind}`);
+  }
+  const out = [];
+  const need = (task, e, kind, key) => {
+    if (!have.has(key ?? `${task}|${e}|${kind}`)) out.push({ code: 'ledger-line-missing', id: `${task}-e${e}:${kind}` });
+  };
+  for (const row of table.tasks || []) {
+    if (!row || typeof row.task !== 'string') continue;
+    const T = row.task;
+    for (const a of row.attempts || []) {
+      if (!a || !Number.isInteger(a.epoch)) continue;
+      if (a.cut && typeof a.cut === 'object') need(T, a.epoch + 1, 'fence', `${T}|${a.epoch + 1}|fence|${a.epoch}`);
+      if (typeof a.bound_at === 'string') need(T, a.epoch, 'bind');
+      if (a.stop === 'confirmed') need(T, row.state === 'committed' && a.epoch === row.epoch ? a.epoch : a.epoch + 1, 'stop');
+    }
+    const cur = (row.attempts || []).find((a) => a && a.epoch === row.epoch);
+    if (row.step === 'admitted' && cur && cur.manifest) need(T, row.epoch, 'admit');
+    if (row.state === 'active' && row.step === 'started') need(T, row.epoch, 'started');
+    if (row.step === 'stop-requested') need(T, row.epoch, 'stop-request');
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------- check 7: tcb against the owner's commit
@@ -471,6 +506,30 @@ async function checkClaude(root, L, table) {
   return { n, failing: dedupe(failing), anomalies };
 }
 
+// ---------------------------------------------------------------- check 10: every attempt's outcome log (FX-OUT)
+
+// Each attempt's `outcome/` (CONTRACT §3.23) read by lib.outcomeState: every slot parses and belongs to
+// its attempt, the log has no gap, and nothing follows a fenced slot. A bad log fails as
+// `outcome-<why>` (gap, after-fenced, slot-unparseable, slot-shape, slot-owner, slot-name,
+// slot-not-file, not-a-folder). An attempt with no `outcome/` is not counted.
+function checkOutcome(L, table) {
+  const failing = [];
+  let n = 0;
+  for (const row of table.tasks || []) {
+    for (const a of row.attempts || []) {
+      if (!a || !Number.isInteger(a.epoch)) continue;
+      try {
+        if (lib.outcomeState(L.attempt(row.task, a.epoch), row).present) n++;
+      } catch (e) {
+        if (!(e && e.code === 'outcome-tamper')) throw e;
+        n++;
+        failing.push(item('outcome', `${row.task}-e${a.epoch}`, `outcome-${(e.detail && e.detail.why) || 'tamper'}`));
+      }
+    }
+  }
+  return { n, failing: dedupe(failing) };
+}
+
 // ---------------------------------------------------------------- check 9: frozen and cut files
 
 function checkFrozen(root, L, lines) {
@@ -565,6 +624,7 @@ async function main(ctx) {
   const tcb = checkTcb(root, coord);
   const claude = await checkClaude(root, L, table);
   const frozen = checkFrozen(root, L, led1.records);
+  const outcome = checkOutcome(L, table);
 
   const T = (() => {
     try {
@@ -614,6 +674,7 @@ async function main(ctx) {
       tcb: { result: tcb.result, reason: tcb.reason ?? null, failing: tcb.failing },
       claude: { n: claude.n, failing: claude.failing },
       frozen: { n: frozen.n, failing: frozen.failing },
+      outcome: { n: outcome.n, failing: outcome.failing },
     };
     const failing = dedupe(Object.values(checks).flatMap((c) => c.failing));
     const anomalies = [

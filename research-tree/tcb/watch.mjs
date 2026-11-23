@@ -1,7 +1,7 @@
 // watch.mjs (unit U1b): the coordinator's event loop (R4-R6, R8, R10-R12, R50).
 //   (watcher) --root R --ce N [--interval-ms MS] [--no-intake] [--now ISO] [--free-mb M]
 //   --once    --root R --ce N [--no-intake] [--now ISO] [--free-mb M]
-//   --alarm   --root R --ce N [--sleep-ms MS] [--now ISO]
+//   --alarm --ensure --nonce X --root R --ce N [--sleep-ms MS] [--now ISO]   (FX-W2: the ensure)
 //   --intake  --root R --ce N
 // Source of truth: CONTRACT.md (sections 1.2, 1.4, 2.1, 3.10, 4) and spec/watch.mjs.md.
 // Reads, decides and exits with the most urgent class. Counts model calls and ticks; the one clock
@@ -45,7 +45,13 @@ const FLAGS = {
   now: { type: 'string' },
   'free-mb': { type: 'int' },
   boot: { type: 'string' },
+  ensure: { type: 'bool' },
+  nonce: { type: 'string' },
 };
+// FX-W2: the ensure's nonce, a new one each turn; hex only, so it never names a slot or a marker file.
+const NONCE_RE = /^[0-9a-f]{32}$/;
+// FX-W2 step 8: an abandoned ensure that found no free slot reads turn.json this often.
+const ABANDONED_POLL_MS = 2000;
 
 // ---------------------------------------------------------------- small local helpers
 
@@ -115,7 +121,18 @@ function attemptDir(root, row, e) {
   return path.join(root, 'wt', `${row.task}-e${e}`);
 }
 
-// READY.json of attempt e: the parsed value, or null when absent or unparseable (status reports that).
+// The outcome log of attempt e (lib.outcomeState), or null when it does not read (status and fsck
+// report a bad log).
+function readLog(root, row, e) {
+  try {
+    return lib.outcomeState(attemptDir(root, row, e), row);
+  } catch {
+    return null;
+  }
+}
+
+// READY.json of attempt e, a copy (FX-OUT): read for the repair marker and the zombie-write telemetry
+// only. The parsed value, or null when absent or unparseable.
 function readReady(root, row, e) {
   try {
     const v = lib.readJson(path.join(attemptDir(root, row, e), 'staging', 'READY.json'));
@@ -132,39 +149,52 @@ function commitExists(root, task, step) {
 // M3: the act status.json's `next` names for this row (status.mjs nextOf), when it is an act the
 // coordinator can take now; null for `none`, `owner`, `audit`/`commit` (READY is class 11) and for
 // an act that can only defer (a start with no free slot, a verify before its sample is old enough).
-function rowAct(root, tr, row, { slotFree, blocked, tick, svd }) {
-  const { state, step } = row;
+function rowAct(root, tr, row, facts) {
+  // Round 3 (S0.5; FIX-JOIN point 11): 1 planAct (FX-PLAN); 2 `owner` or `none` gives null (FX-W5
+  // step 1); then today's filters (3) and the act as keyed today (4).
+  const planned = rowActPlanned(root, tr, row, facts);
+  if (ownerOrNone(planned)) return null;
+  const { slotFree, blocked, tick, svd } = facts;
   const e = row.epoch;
-  if (state === 'failed' || row.limit === true) return null; // the owner's
-  if (state === 'planned' && step === 'none') return !blocked && slotFree ? 'replace-fence' : null;
-  if ((state === 'active' || state === 'parked') && step === 'stopped') return !blocked && slotFree ? 'replace-start' : null;
-  if (step === 'fenced' || (state === 'committed' && step === 'bound')) return 'stop-request';
-  if (step === 'stop-requested') {
-    const k = state === 'committed' ? e : e - 1;
+  // 3. The "can take now" filters (FIX-JOIN point 11): the work-creating first fence and restart wait
+  // for a free slot and for neither halted nor draining; audit and commit are class 11's (READY); a
+  // verify waits until its sample is stop_verify_deltas ticks old. Every other act is due as planned.
+  if (planned === 'replace-fence' || planned === 'replace-start') return !blocked && slotFree ? planned : null;
+  if (planned === 'audit' || planned === 'commit') return null;
+  if (planned === 'stop-verify') {
+    const k = row.state === 'committed' ? e : e - 1;
     const target = attemptOfSafe(row, k);
-    const stop = target && target.stop ? target.stop : 'none';
     let sample = null;
     try {
       sample = lib.readJson(path.join(root, 'run', 'stop-sample', `${row.task}-e${k}.json`));
     } catch {
       sample = null;
     }
-    if (sample && Number.isInteger(sample.tick)) return tick >= sample.tick + svd ? `stop-verify@${sample.tick}` : null;
-    if (stop === 'unconfirmed') return 'stop-verify@-';
-    if (stop === 'none' || stop === 'requested') return 'stop-session';
-    return null;
+    // FX-CLOSE (c), N3: also stop_verify_ms of wall time since the sample, or the verify could only wait
+    // (a sample with no wall time is taken again by the verify: due).
+    const at = sample && typeof sample.at === 'string' ? Date.parse(sample.at) : NaN;
+    const nowMs = facts.plan ? facts.plan.nowMs : NaN;
+    const wallOk = !Number.isFinite(at) || typeof facts.svm !== 'number' || nowMs >= at + facts.svm;
+    if (sample && Number.isInteger(sample.tick)) return tick >= sample.tick + svd && wallOk ? `stop-verify@${sample.tick}` : null;
+    return target && target.stop === 'unconfirmed' ? 'stop-verify@-' : null;
   }
-  if (step === 'admitted') {
-    let found = [];
-    try {
-      found = lib.transcriptsForFolder(tr, attemptDir(root, row, e)) ?? [];
-    } catch {
-      found = [];
-    }
-    return found.length ? 'bind' : 'start-session';
-  }
-  if (step === 'started') return 'bind';
-  return null;
+  return planned;
+}
+
+// FX-PLAN, rowAct step 1: lib.planAct over lib.planFacts, the planner status's nextOf calls, with the
+// watcher's facts (`facts.plan`: tick, wall time, lease, an empty process list as slotCount has it,
+// the step-7 sessions and the rows over Z). The transcript-visible branch is gone: the claim decides.
+function rowActPlanned(root, tr, row, facts) { // eslint-disable-line no-unused-vars
+  const p = facts.plan ?? {};
+  const zombieOver = p.zombieRows instanceof Set && p.zombieRows.has(row.task);
+  return lib.planAct(row, lib.planFacts(root, row, { ...p, blocked: facts.blocked === true, zombieOver, audited: false }));
+}
+
+// FX-W5 step 1 (FX-PLAN step 2): an `owner` or `none` act raises no act due, so it is never raised
+// again nor counted `stuck` (FIX-JOIN point 11; zombie-over arrives as `owner` through planAct's facts).
+// Until FX-PLAN fills rowActPlanned, `planned` is undefined and today's filters decide.
+function ownerOrNone(planned) {
+  return planned === 'owner' || planned === 'none';
 }
 
 function lockOpts(th, ce, proc, now) {
@@ -197,9 +227,15 @@ function advanceFile(abs, prev) {
     return { ps: prev ?? freshParseState(), newCalls: 0, missing: true };
   }
   let ps = prev ? { ...prev, loop: { ...(prev.loop ?? { sig: null, run: 0 }) } } : freshParseState();
-  if (size < num(ps.end_byte)) ps = freshParseState();
-  if (size === num(ps.end_byte) && ps.end_byte > 0) return { ps, newCalls: 0 };
-  const parsed = lib.parseTranscript(abs, { fromByte: num(ps.end_byte), lastCall: ps.last_call ?? null });
+  const shrunk = size < num(ps.end_byte);
+  if (shrunk) ps = freshParseState();
+  if (size === num(ps.end_byte) && ps.end_byte > 0) return { ps, newCalls: 0, moved: false };
+  // FX-W6: the tail state continues from the stored one; `moved` = a new conversation record (or a re-parse).
+  const prevN = ps.tail && Number.isInteger(ps.tail.n) ? ps.tail.n : 0;
+  const parsed = lib.parseTranscript(abs, { fromByte: num(ps.end_byte), lastCall: ps.last_call ?? null, tail: ps.tail ?? null });
+  const moved = shrunk || parsed.reset === true || (parsed.tail ? parsed.tail.n : 0) > prevN;
+  ps.tail = parsed.tail ?? null;
+  ps.kind = parsed.kind ?? null;
   let newCalls = 0;
   for (const c of parsed.calls ?? []) {
     const u = usageOf(c.usage);
@@ -223,7 +259,7 @@ function advanceFile(abs, prev) {
     else ps.loop = { sig: lr.sig ?? null, run: num(lr.run) };
   }
   if (Number.isInteger(parsed.endByte) && parsed.endByte >= 0) ps.end_byte = parsed.endByte;
-  return { ps, newCalls };
+  return { ps, newCalls, moved };
 }
 
 function spendOfState(ps) {
@@ -287,11 +323,39 @@ function freshTaskState(epoch) {
   return {
     epoch, calls: 0, stall_calls: 0, hang_ticks: 0, V: null, V_min: null, loop: { sig: null, run: 0 },
     spend: 0, window: null, zombie_tokens: 0, files: {},
+    kind: null, deadline: null, age_ticks: 0, age_base: 0, // FX-W6
   };
 }
 
+// FX-W6 steps 1-3 and 5's count. `hang_ticks` counts the counted, unpaused ticks since the attempt's
+// last new conversation record in any of its transcripts (an operation's start), so a new record of
+// any kind restarts it; the first tick of an epoch counts nothing (not ticks_total, FIX-JOIN 2c).
+// The kind is the main transcript's tail; one that cannot be read counts as `model`. `age_ticks`
+// counts the counted ticks at step bound (a paused tick too, M5).
+function opCount(env, ts, row, { fresh, moved, counted, paused, kind, tail }) {
+  ts.kind = lib.TRANSCRIPT_KINDS.includes(kind) ? kind : 'model';
+  if (fresh) { /* step 1: nothing is counted */ } else if (moved) ts.hang_ticks = 0;
+  else if (counted && !paused) ts.hang_ticks = num(ts.hang_ticks) + 1;
+  if (!fresh && counted && row.step === 'bound') ts.age_ticks = num(ts.age_ticks) + 1;
+  ts.deadline = kindDeadline(ts.kind, tail, env.th, env.delta);
+}
+
+// The deadline in counted ticks (branch B1, marked guesses): tool = the largest declared timeout of
+// its pending tool uses in ticks of delta + tool_slack_ticks; bg-wait = bg_wait_ticks; model =
+// model_ticks; idle = none (never a charged hang, step 4).
+function kindDeadline(kind, tail, th, delta) {
+  if (kind === 'idle') return null;
+  if (kind === 'bg-wait') return th.get('bg_wait_ticks');
+  if (kind === 'tool') {
+    const ms = Math.max(0, ...Object.values((tail && tail.pending) || {}).filter((v) => typeof v === 'number' && Number.isFinite(v)));
+    const d = Number.isFinite(delta) && delta > 0 ? delta : th.get('delta_ms');
+    return Math.ceil(ms / d) + th.get('tool_slack_ticks');
+  }
+  return th.get('model_ticks');
+}
+
 function loadWatcherState(root) {
-  const s = readState(fileOf(root, 'watcherJson'), 'watcher.json');
+  const s = readWatcherJson(root);
   const state = s && typeof s === 'object' ? s : {};
   return {
     schema_version: 1,
@@ -302,6 +366,74 @@ function loadWatcherState(root) {
     pending: Array.isArray(state.pending) ? state.pending : [],
     tasks: state.tasks && typeof state.tasks === 'object' ? state.tasks : {},
   };
+}
+
+// FX-W7 step 3: an unparseable watcher.json is quarantined instead of exiting 67 at every restart. It
+// is renamed, as found, to watcher.json.<pid>.<nonce8>.corrupt beside it, and the watcher starts from
+// fresh counters (spends re-parsed from byte 0). Called only while watcher.lock is held.
+function readWatcherJson(root) {
+  const file = fileOf(root, 'watcherJson');
+  try {
+    return readState(file, 'watcher.json');
+  } catch (e) {
+    if (!(e && e.code === 'table-corrupt')) throw e;
+    const aside = lib.tempName(file).replace(/\.tmp$/, '.corrupt');
+    lib.fsRetry(() => fs.renameSync(file, aside));
+    QUARANTINED.push(path.basename(aside));
+    return null;
+  }
+}
+const QUARANTINED = [];
+
+// FX-W7 step 2: run/watcher-busy.json {ce, busy_ticks}, the busy ticks in a row. Its one writer is
+// the holder of watcher.lock, without the run lock; unreadable counts as 0.
+function busyTicksOf(root) {
+  try {
+    const v = lib.readJson(lib.paths(root).watcherBusy);
+    return v && Number.isInteger(v.busy_ticks) && v.busy_ticks > 0 ? v.busy_ticks : 0;
+  } catch {
+    return 0;
+  }
+}
+function writeBusy(env, n) {
+  lib.writeAtomic(lib.paths(env.root).watcherBusy, JSON.stringify({ ce: env.ce, busy_ticks: n }) + '\n');
+  env.busyTicks = n;
+}
+
+// FX-W7 step 2: one evaluation of a copy of the state, kept by adoptState only after its hold wrote
+// watcher.json. On a busy run lock the copy is dropped, so the tick does not count and the
+// transcripts are read again from the kept end_byte; only the copy's intake record is kept (an intake
+// it spawned is running). Then assertHeld (a lost watcher.lock exits 75) and one more busy tick.
+async function evaluateCopy(env, flags, counted) {
+  const next = structuredClone(env.state);
+  if (counted) next.ticks_total += 1;
+  const out = await evaluate(env, next, lib.edgeFacts(flags), counted);
+  if (out.busy) {
+    env.handle.assertHeld();
+    if (next.intake !== undefined) env.state.intake = next.intake;
+    writeBusy(env, env.busyTicks + 1);
+  }
+  return out;
+}
+
+// FX-W7 step 2: fn(handle) in one run-lock hold that waits about watcher_lock_try_ms (retries of
+// TRY_RETRY_MS, the library's wait), the ce re-checked inside (R4). False when the run lock stayed
+// busy and fn did not run.
+const TRY_RETRY_MS = 100;
+async function holdTick(env, facts, fn) {
+  const { root, th, ce, proc } = env;
+  const retries = Math.max(0, Math.ceil(th.get('watcher_lock_try_ms') / TRY_RETRY_MS));
+  let entered = false;
+  try {
+    await lib.withRunLock(root, { ...lockOpts(th, ce, proc, facts.now), retries, retryMs: TRY_RETRY_MS }, async (handle) => {
+      entered = true;
+      await fn(handle);
+    });
+  } catch (x) {
+    if (!entered && x && x.code === 'lock-busy') return false;
+    throw x;
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------- one evaluation (spec step 4 a-i)
@@ -329,7 +461,6 @@ async function evaluate(env, state, facts, counted) {
   const activeRows = (table.tasks ?? []).filter((r) => r.state === 'active' && (r.step === 'started' || r.step === 'bound'));
   const f5Given = th.get('f5_given') === true;
   const stallMax = th.get('stall_calls');
-  const hangMax = th.get('hang_ticks');
   const loopK = th.get('loop_k');
   const softFrac = th.get('soft_frac');
   const hardFrac = th.get('hard_frac');
@@ -357,9 +488,12 @@ async function evaluate(env, state, facts, counted) {
     const set = transcriptSet(root, tr, row, att);
     const files = {};
     let mainState = null;
+    let moved = false; // FX-W6: a new conversation record in any transcript of the attempt
     for (const abs of [set.main, ...set.helpers].filter(Boolean)) {
       const rel = lib.relPosix(tr, abs);
-      const { ps } = advanceFile(abs, ts.files[rel]);
+      const adv = advanceFile(abs, ts.files[rel]);
+      const { ps } = adv;
+      if (adv.moved) moved = true;
       files[rel] = ps;
       if (abs === set.main) mainState = ps;
     }
@@ -395,21 +529,19 @@ async function evaluate(env, state, facts, counted) {
         ts.stall_calls = num(ts.stall_calls) + newCalls;
       }
     }
-    if (newCalls > 0) ts.hang_ticks = 0;
-    else if (counted && !paused) ts.hang_ticks = num(ts.hang_ticks) + 1;
+    opCount(env, ts, row, { fresh, moved: moved || newCalls > 0, counted, paused, kind: mainState ? mainState.kind : null, tail: mainState ? mainState.tail : null });
 
+    // The READY of this epoch is an uncommitted ready slot in the outcome log (FX-OUT, FIX-JOIN 2c);
+    // READY.json is read only for a repair marker, which takes no slot.
     const ready = readReady(root, row, e);
+    const log = readLog(root, row, e);
     let readyCls = null;
     let readyStep = null;
-    if (ready && ready.epoch === e) {
-      if (ready.kind === 'ready') {
-        readyStep = typeof ready.step === 'string'
-          ? ((row.steps ?? []).includes(ready.step) ? ready.step : null)
-          : (row.steps ?? []).find((s) => !commitExists(root, row.task, s)) ?? null;
-        if (readyStep && !commitExists(root, row.task, readyStep)) readyCls = 11;
-      } else if (ready.kind === 'repair') {
-        readyCls = 12;
-      }
+    if (log && log.fenced === null && log.ready.length) {
+      readyStep = log.ready[log.ready.length - 1];
+      readyCls = 11;
+    } else if (ready && ready.epoch === e && ready.kind === 'repair') {
+      readyCls = 12;
     }
     const base = { task: row.task, epoch: e };
     if (readyCls === 11) conds.push({ ...base, cls: 11, detail: { step: readyStep } });
@@ -417,7 +549,7 @@ async function evaluate(env, state, facts, counted) {
     else {
       // A READY of this epoch voids stall, hang and loop (R5, finding A4).
       if (V !== null && ts.stall_calls >= stallMax) conds.push({ ...base, cls: 20, detail: { stall_calls: ts.stall_calls, V, V_min: ts.V_min } });
-      if (ts.hang_ticks >= hangMax) conds.push({ ...base, cls: 21, detail: { hang_ticks: ts.hang_ticks } });
+      if (ts.deadline !== null && ts.hang_ticks >= ts.deadline) conds.push({ ...base, cls: 21, detail: { hang_ticks: ts.hang_ticks, kind: ts.kind, deadline: ts.deadline } });
       if (num(ts.loop.run) >= loopK) conds.push({ ...base, cls: 22, detail: { sig: ts.loop.sig, run: ts.loop.run } });
     }
     const eTask = num(row.e_task);
@@ -434,6 +566,7 @@ async function evaluate(env, state, facts, counted) {
 
   // c. Zombie writes and zombie spend: attempts k < e, and fenced attempts not confirmed stopped.
   const zFrac = th.get('Z_frac');
+  const zombieRows = new Set(); // FX-PLAN: rows whose zombie spend is over Z (class 25), owner rows for the planner
   for (const row of table.tasks ?? []) {
     const e = row.epoch;
     let zombieTokens = 0;
@@ -456,6 +589,7 @@ async function evaluate(env, state, facts, counted) {
     const eTask = num(row.e_task);
     if (zombieTokens > 0 && zombieTokens > zFrac * eTask) {
       conds.push({ cls: 25, task: row.task, epoch: e, detail: { zombie_tokens: zombieTokens, z: zFrac * eTask } });
+      zombieRows.add(row.task);
     }
   }
 
@@ -544,8 +678,9 @@ async function evaluate(env, state, facts, counted) {
   // stay silent while work waits. Keyed and acknowledged like every class (step 5).
   const rows = table.tasks ?? [];
   let used = Infinity;
+  const sessions7 = []; // FX-PLAN: the step-7 sessions, for the planner
   try {
-    const sc = await lib.slotCount(rows, [], tr, { root }); // empty process list: no PowerShell per tick
+    const sc = await lib.slotCount(rows, [], tr, { root, counted: sessions7 }); // empty process list: no PowerShell per tick
     used = num(sc && sc.live) + num(sc && sc.unknown) + num(sc && sc.unconfirmed);
   } catch (x) {
     if (x && x.exit === 3) throw x;
@@ -554,13 +689,18 @@ async function evaluate(env, state, facts, counted) {
   const slotFree = used < num(th.get('N_max'), 0);
   const blocked = runFlags.halted === true || runFlags.draining === true;
   const svd = num(th.get('stop_verify_deltas'), 0);
+  const opt = (k) => (th.has(k) ? th.get(k) : undefined);
+  // FX-PLAN: the planner's facts as status has them, with the watcher's empty process list and tick.
+  const plan = { ticksTotal: tick, nowMs, lease: { start_lease_ticks: opt('start_lease_ticks'), start_lease_ms: opt('start_lease_ms') },
+    procList: [], counted: sessions7, Hmax: opt('H_max'), zombieRows };
   let rowActs = 0;
   for (const row of rows) {
-    const act = rowAct(root, tr, row, { slotFree, blocked, tick, svd });
+    const act = rowAct(root, tr, row, { slotFree, blocked, tick, svd, svm: opt('stop_verify_ms'), plan }); // svm: FX-CLOSE
     if (!act) continue;
     rowActs += 1;
     conds.push({ cls: 17, task: row.task, epoch: row.epoch, act, detail: { act } });
   }
+  actDueIdleAgeCap(env, state, conds, { rows, tick });
   if (runFlags.draining === true && used === 0) conds.push({ cls: 17, act: 'handover', detail: { act: 'handover' } });
   if (rows.length > 0 && rowActs === 0 && rows.every((r) => TERMINAL.has(r.state))) {
     conds.push({ cls: 17, act: 'run-terminal', detail: { act: 'run-terminal' } });
@@ -606,6 +746,7 @@ async function evaluate(env, state, facts, counted) {
   }
   const eventSeq = new Map();
   for (const l of lines) if (l.kind === 'event' && l.data && typeof l.data.key === 'string') eventSeq.set(l.data.key, l.seq);
+  reraiseStuck(env, state, present, tick, { eventSeq, ackedSeq });
   const newActive = {};
   for (const c of present) {
     let key = Object.keys(state.active).find((k) => k.slice(0, k.lastIndexOf('|')) === c.ident);
@@ -623,61 +764,65 @@ async function evaluate(env, state, facts, counted) {
   }
   state.active = newActive;
 
-  // Ledger appends: one run-lock acquisition, ce re-checked inside (R4).
-  if (appends.length) {
+  // FX-W7 step 2: one run-lock hold per evaluation, with a short wait (holdTick): assertHeld of
+  // watcher.lock, the ledger appends (ce re-checked inside the lock, R4) and the watcher.json write.
+  // A busy run lock writes nothing here: the caller drops this copy and counts a busy tick.
+  let result = null;
+  const held = await holdTick(env, facts, async (handle) => {
+    env.handle.assertHeld();
     try {
-      await lib.withRunLock(root, lockOpts(th, ce, proc, facts.now), async (handle) => {
-        for (const a of appends) {
-          const line = { ctx, ce, kind: a.kind, data: a.data, now: facts.now };
-          if (a.task !== undefined) line.task = a.task;
-          if (a.epoch !== undefined) line.epoch = a.epoch;
-          const written = await lib.appendLedger(root, handle, line);
-          if (a.kind === 'event' && written && Number.isInteger(written.seq)) eventSeq.set(a.data.key, written.seq);
-        }
-      });
+      for (const a of appends) {
+        const line = { ctx, ce, kind: a.kind, data: a.data, now: facts.now };
+        if (a.task !== undefined) line.task = a.task;
+        if (a.epoch !== undefined) line.epoch = a.epoch;
+        const written = await lib.appendLedger(root, handle, line);
+        if (a.kind === 'event' && written && Number.isInteger(written.seq)) eventSeq.set(a.data.key, written.seq);
+      }
     } catch (x) {
       // A broken ledger tail refuses appends; the tamper class still wakes the coordinator.
       if (!(x && x.exit === 3 && present.some((c) => c.cls === 27))) throw x;
     }
-  }
 
-  // Which keys are due: their event line is above acked_seq (no line found counts as due).
-  const isDue = (key) => {
-    const s = eventSeq.get(key);
-    return s === undefined || s > ackedSeq;
-  };
-  const due = present.filter((c) => isDue(c.key));
-  const coalesce = th.get('coalesce_ticks');
-  const pending = [];
-  for (const c of due) {
-    if (isUrgent(c.cls)) continue;
-    const old = state.pending.find((p) => p.key === c.key);
-    const entry = old ?? { key: c.key, class: c.cls, first_tick: tick };
-    if (!old && c.task) entry.task = c.task;
-    pending.push(entry);
-  }
-  state.pending = pending;
-  const ripe = pending.some((p) => tick - p.first_tick >= coalesce);
-  const urgentDue = due.some((c) => isUrgent(c.cls));
-  let classes = [];
-  if (ripe || urgentDue) classes = PRECEDENCE.filter((cl) => due.some((c) => c.cls === cl));
+    // Which keys are due: their event line is above acked_seq (no line found counts as due).
+    const isDue = (key) => {
+      const s = eventSeq.get(key);
+      return s === undefined || s > ackedSeq;
+    };
+    const due = present.filter((c) => isDue(c.key));
+    const coalesce = th.get('coalesce_ticks');
+    const pending = [];
+    for (const c of due) {
+      if (isUrgent(c.cls)) continue;
+      const old = state.pending.find((p) => p.key === c.key);
+      const entry = old ?? { key: c.key, class: c.cls, first_tick: tick };
+      if (!old && c.task) entry.task = c.task;
+      pending.push(entry);
+    }
+    state.pending = pending;
+    const ripe = pending.some((p) => tick - p.first_tick >= coalesce);
+    const urgentDue = due.some((c) => isUrgent(c.cls));
+    let classes = [];
+    if (ripe || urgentDue) classes = PRECEDENCE.filter((cl) => due.some((c) => c.cls === cl));
 
-  // 6. watcher.json (assertHeld first).
-  state.last_tick_at = isoOf(facts.now);
-  env.handle.assertHeld();
-  lib.writeAtomic(fileOf(root, 'watcherJson'), JSON.stringify(state) + '\n');
+    // 6. watcher.json (assertHeld first), then this copy becomes the state.
+    state.last_tick_at = isoOf(facts.now);
+    env.handle.assertHeld();
+    lib.writeAtomic(fileOf(root, 'watcherJson'), JSON.stringify(state) + '\n');
+    adoptState(env, state);
 
-  return {
-    exit: classes.length ? classes[0] : 0,
-    classes,
-    paused,
-    reasons: classes.length
-      ? due
-          .filter((c) => classes.includes(c.cls))
-          .sort((a, b) => PRECEDENCE.indexOf(a.cls) - PRECEDENCE.indexOf(b.cls))
-          .map((c) => ({ code: CLASS_SLUG[c.cls], detail: { key: c.key, task: c.task ?? null, epoch: c.epoch ?? null, ...(c.detail ?? {}) } }))
-      : [],
-  };
+    result = {
+      exit: classes.length ? classes[0] : 0,
+      classes,
+      paused,
+      reasons: classes.length
+        ? due
+            .filter((c) => classes.includes(c.cls))
+            .sort((a, b) => PRECEDENCE.indexOf(a.cls) - PRECEDENCE.indexOf(b.cls))
+            .map((c) => ({ code: CLASS_SLUG[c.cls], detail: { key: c.key, task: c.task ?? null, epoch: c.epoch ?? null, ...(c.detail ?? {}) } }))
+        : [],
+    };
+  });
+  return held ? result : { busy: true, exit: 0, classes: [], paused, reasons: [] };
 }
 
 async function spawnIntake(root, ce, proc) {
@@ -713,29 +858,38 @@ async function runWatcher(ctx, root, flags, once) {
   const facts0 = lib.edgeFacts(flags);
   const handle = await lib.acquireLock(root, 'watcher.lock', { script: SCRIPT, ce, proc, now: facts0.now, retries: th.get('lock_retries') });
   try {
-    const state = loadWatcherState(root); // corrupt -> 67
+    const state = loadWatcherState(root); // corrupt -> quarantined (FX-W7 step 3)
     const self = await lib.selfInfo(proc);
     state.ce = ce;
     state.pid = self.pid;
     state.start_time = self.start_time;
-    const env = { ctx, root, th, ce, proc, flags, handle, delta };
+    // env.state: the kept state; each tick evaluates a copy (evaluateCopy, FX-W7 step 2).
+    const env = { ctx, root, th, ce, proc, flags, handle, delta, state, busyTicks: busyTicksOf(root) };
     const run = once ? 'once' : 'watcher';
     let out;
     if (once) {
-      state.ticks_total += 1;
-      out = await evaluate(env, state, lib.edgeFacts(flags), true);
+      out = await evaluateCopy(env, flags, true);
+      if (out.busy) throw err('lock-busy', 75, { lock: 'run.lock', busy_ticks: env.busyTicks });
     } else {
-      // A new watcher re-evaluates everything once without counting a tick (R6).
-      out = await evaluate(env, state, lib.edgeFacts(flags), false);
-      while (out.exit === 0) {
+      // A new watcher re-evaluates everything once without counting a tick (R6). A busy run lock
+      // drops that evaluation (FX-W7): it is made again, still uncounted, and the watcher never
+      // exits on a busy tick (no wake loop, B6.1).
+      let counted = false;
+      for (;;) {
+        out = await evaluateCopy(env, flags, counted);
+        if (!out.busy) {
+          if (out.exit !== 0) break;
+          counted = true;
+        }
         await sleep(delta);
-        state.ticks_total += 1;
-        out = await evaluate(env, state, lib.edgeFacts(flags), true);
       }
     }
     return {
       exit: out.exit,
-      result: { run, classes: out.classes, ticks_total: state.ticks_total, pending: state.pending, paused: out.paused === true },
+      result: {
+        run, classes: out.classes, ticks_total: env.state.ticks_total, pending: env.state.pending, paused: out.paused === true,
+        ...(QUARANTINED.length ? { quarantined: QUARANTINED[0] } : {}),
+      },
       reasons: out.reasons,
     };
   } finally {
@@ -749,6 +903,13 @@ async function runWatcher(ctx, root, flags, once) {
 
 // ---------------------------------------------------------------- --alarm
 
+// FX-W2 (FIX-wake.md FX-W2, branch S1): the alarm is started only as the ensure. Step 2: checkCe (64),
+// then the exclusive create of run/arm/<nonce>.json {started}; a nonce already there: exit 0
+// nonce-reused, nothing else written. Step 3 (ensureSlots), outside every lock: the slot records, then
+// one process query cut at ensure_query_ms. Hold 1 (ensureHold1): a free slot registers this process
+// (alarmSlotTurnSeq, alarmRegisterSlot, then alarm.json as built) and it sleeps as the alarm; none:
+// exit 0 present. Step 8: an ensure whose nonce file reconcile marked `abandoned` registers if a slot is
+// free, else waits for the next turn (ensureAbandoned).
 async function runAlarm(ctx, root, flags) {
   const ce = flags.ce;
   lib.checkCe(root, ce);
@@ -756,6 +917,12 @@ async function runAlarm(ctx, root, flags) {
   const proc = lib.realProc({ exe: th.get('proc_exe') });
   const sleepMs = Number.isInteger(flags['sleep-ms']) ? flags['sleep-ms'] : th.get('alarm_ms');
   const facts = lib.edgeFacts(flags);
+  const nonce = flags.nonce;
+  const me = lib.selfInfo(proc);
+  if (!ensureStarted(root, nonce, me)) {
+    return { exit: 0, result: { run: 'alarm', ensure: 'nonce-reused', nonce }, reasons: [{ code: 'nonce-reused', detail: { nonce } }] };
+  }
+  const seen = await ensureSlots(root, th, ce);
   let previous = null;
   try {
     previous = lib.readJson(fileOf(root, 'alarm'));
@@ -767,31 +934,342 @@ async function runAlarm(ctx, root, flags) {
   // Read before alarm.json is written, so an endturn after this alarm registered always re-arms it.
   let token = armToken(root);
   const record = { schema_version: 1, pid: self.pid, start_time: self.start_time, ce, armed_at: isoOf(facts.now), sleep_ms: sleepMs };
-  await lib.withRunLock(root, lockOpts(th, ce, proc, facts.now), async (handle) => {
-    handle.assertHeld();
-    lib.writeAtomic(fileOf(root, 'alarm'), JSON.stringify(record) + '\n');
-  });
-  const result = { run: 'alarm', previous, armed: record, rearms: 0 };
-  for (;;) {
-    await sleep(sleepMs);
-    lib.checkCe(root, ce); // a newer ce -> 64
-    let cur = null;
-    try {
-      cur = lib.readJson(fileOf(root, 'alarm'));
-    } catch {
-      cur = null;
-    }
-    const mine = !!cur && Number(cur.pid) === Number(self.pid)
-      && (cur.start_time === self.start_time || lib.sameStartTime(cur.start_time, self.start_time));
-    if (!mine) {
-      return { exit: 0, result: { ...result, superseded: true }, reasons: [{ code: 'superseded', detail: cur ? { pid: cur.pid ?? null } : null }] };
-    }
-    const now = armToken(root);
-    if (now === token) break; // a whole period with no endturn: the long silence
-    token = now; // re-armed by an endturn: sleep one more period (nothing written, no clock read)
-    result.rearms += 1;
+  // the alarm's registration, for the round-3 steps (S0.5): handle is set in the hold only
+  // FX-W2: nonce, the step-3 verdicts (seen), the slot chosen in hold 1 (slot: {k, record}), the
+  // outcome without one (present | abandoned) and turn.json's turn_seq read in hold 1 (turnSeq).
+  const reg = { root, ce, th, proc, flags, facts, self, record, handle: null, registered: false, nonce, seen, slot: null, outcome: null, turnSeq: 0 };
+  try {
+    await lib.withRunLock(root, lockOpts(th, ce, proc, facts.now), async (handle) => {
+      handle.assertHeld();
+      reg.handle = handle;
+      ensureHold1(reg);
+      if (!reg.slot) return;
+      alarmSlotTurnSeq(reg);
+      alarmRegisterSlot(reg); // sets reg.registered once the slot names this alarm
+      lib.writeAtomic(fileOf(root, 'alarm'), JSON.stringify(record) + '\n');
+    });
+  } catch (e) {
+    reg.handle = null;
+    // FX-W1: registered (the slot written), then the hold failed (alarm.json, or the lock lost at the release, 75)
+    if (reg.registered) alarmExit(reg, e && Number.isInteger(e.exit) ? e.exit : 70);
+    throw e;
   }
-  return { exit: 30, result: { ...result, superseded: false }, reasons: [{ code: 'alarm', detail: { sleep_ms: sleepMs, rearms: result.rearms } }] };
+  reg.handle = null;
+  if (!reg.registered) {
+    if (reg.outcome === 'present') {
+      return { exit: 0, result: { run: 'alarm', ensure: 'present', nonce, slots: seen.map(({ k, state }) => ({ k, state })) }, reasons: [{ code: 'present', detail: { nonce } }] };
+    }
+    return ensureAbandoned(reg, sleepMs);
+  }
+  const result = { run: 'alarm', ensure: 'registered', nonce, k: reg.slot.k, previous, armed: record, rearms: 0 };
+  let out = null;
+  try {
+    for (;;) {
+      await sleep(sleepMs);
+      lib.checkCe(root, ce); // a newer ce -> 64
+      let cur = null;
+      try {
+        cur = lib.readJson(fileOf(root, 'alarm'));
+      } catch {
+        cur = null;
+      }
+      const mine = !!cur && Number(cur.pid) === Number(self.pid)
+        && (cur.start_time === self.start_time || lib.sameStartTime(cur.start_time, self.start_time));
+      if (!mine) {
+        out = { exit: 0, result: { ...result, superseded: true }, reasons: [{ code: 'superseded', detail: cur ? { pid: cur.pid ?? null } : null }] };
+        break;
+      }
+      const now = armToken(root);
+      if (now === token) break; // a whole period with no endturn: the long silence
+      token = now; // re-armed by an endturn: sleep one more period (nothing written, no clock read)
+      result.rearms += 1;
+    }
+    if (!out) out = { exit: 30, result: { ...result, superseded: false }, reasons: [{ code: 'alarm', detail: { sleep_ms: sleepMs, rearms: result.rearms } }] };
+  } catch (e) {
+    alarmExit(reg, e && Number.isInteger(e.exit) ? e.exit : 70); // an error exit after registration
+    throw e;
+  }
+  return alarmExit(reg, out);
+}
+
+// ---------------------------------------------------------------------------------------------
+// the round-3 steps of watch (S0.5; FIX-JOIN point 11): each is empty until its fix fills it.
+
+// FX-W3 (the alarm's own record, step 1): the slot record's turn_seq_at_reg, turn.json's turn_seq as
+// ensureHold1 read it in this same registration hold (0 when turn.json is absent or unreadable).
+function alarmSlotTurnSeq(reg) {
+  reg.handle.assertHeld();
+  reg.slot.record = { ...reg.slot.record, turn_seq_at_reg: reg.turnSeq };
+}
+
+// FX-W2: the ensure's slot record run/arm/slot-<k>.json, in the registration hold: reg.slot.record
+// {ce, pid, start_time, nonce} (FX-W3's alarmSlotTurnSeq adds turn_seq_at_reg to it first). From the slot
+// write on this process is registered (every later exit leaves its FX-W1 marker); then the outcome
+// run/arm/<nonce>.json {state: 'registered', k, pid}, which reconcile's hold 2 reads.
+function alarmRegisterSlot(reg) {
+  reg.handle.assertHeld();
+  const P = lib.paths(reg.root);
+  lib.writeAtomic(P.armSlot(reg.slot.k), JSON.stringify(reg.slot.record) + '\n');
+  reg.registered = true;
+  lib.writeAtomic(P.armNonce(reg.nonce), JSON.stringify({ state: 'registered', k: reg.slot.k, pid: reg.self.pid }) + '\n');
+}
+
+// FX-W2 step 2: run/arm/<nonce>.json {state: 'started', pid} by exclusive create (it makes run/arm/).
+// false: the name exists (a reused nonce, or reconcile abandoned it first): nothing else is written.
+function ensureStarted(root, nonce, me) {
+  try {
+    return lib.createExclusive(lib.paths(root).armNonce(nonce), JSON.stringify({ state: 'started', pid: me.pid }) + '\n') === 'created';
+  } catch (e) {
+    if (e && e.code === 'exists-different') return false;
+    throw e;
+  }
+}
+
+// alarm_slots (FX-W2, branch S1: 1), an integer >= 1.
+function slotCountOf(th) {
+  const n = th.get('alarm_slots');
+  if (!Number.isInteger(n) || n < 1) throw err('param-invalid', 2, { name: 'alarm_slots', value: n ?? null });
+  return n;
+}
+
+// A slot file's bytes and record; rec null when absent, unreadable, not JSON or naming no process.
+function slotSource(file) {
+  let bytes = null;
+  try {
+    bytes = fs.readFileSync(file);
+  } catch {
+    return { bytes: null, rec: null };
+  }
+  let rec = null;
+  try {
+    rec = JSON.parse(bytes.toString('utf8').replace(/^﻿/, ''));
+  } catch {
+    rec = null;
+  }
+  const ok = !!rec && typeof rec === 'object' && Number.isInteger(rec.pid) && rec.pid > 0 && typeof rec.start_time === 'string';
+  return { bytes, rec: ok ? rec : null };
+}
+
+// FX-W2 step 3, outside every lock: each slot's bytes (read first), then the markers, then one process
+// query cut at ensure_query_ms, only when a slot of this ce has no marker. A failed or timed-out query
+// is unknown (lib.liveness), never dead. -> [{k, bytes, state}]
+async function ensureSlots(root, th, ce) {
+  const P = lib.paths(root);
+  const slots = [];
+  for (let k = 1; k <= slotCountOf(th); k += 1) slots.push({ k, ...slotSource(P.armSlot(k)) });
+  const markers = lib.exitMarkers(root);
+  let list = null;
+  if (slots.some((s) => s.rec && s.rec.ce === ce && !markers.has(lib.markerKey(s.rec.pid, s.rec.start_time)))) {
+    try {
+      list = lib.realProc({ timeoutMs: th.get('ensure_query_ms'), exe: th.get('proc_exe') }).list();
+      if (!Array.isArray(list)) list = null;
+    } catch {
+      list = null;
+    }
+  }
+  const alive = (pid, st) => (Array.isArray(list)
+    ? list.some((p) => Number(p.pid) === Number(pid) && typeof st === 'string' && typeof p.start_time === 'string' && lib.aliveFromQuery(p.start_time, st) === true)
+    : null);
+  return slots.map((s) => ({ k: s.k, bytes: s.bytes, state: s.rec && s.rec.ce === ce ? lib.liveness(s.rec, { alive }, markers) : 'dead' }));
+}
+
+// turn.json's turn_seq (FX-W2 step 5), 0 when absent or unreadable.
+function turnSeqOf(root) {
+  try {
+    const t = lib.readJson(lib.paths(root).turn);
+    return t && Number.isInteger(t.turn_seq) ? t.turn_seq : 0;
+  } catch {
+    return 0;
+  }
+}
+
+// FX-W2 step 4 (and 8), in hold 1: is the nonce abandoned; a slot is free when absent, corrupt, of
+// another ce, marked as exited, or judged dead in step 3 with unchanged bytes; the first free one is
+// reg.slot. None: present (written to the nonce file) or, when abandoned, the wait of step 8.
+function ensureHold1(reg) {
+  reg.handle.assertHeld();
+  const P = lib.paths(reg.root);
+  let cur = null;
+  try {
+    cur = lib.readJson(P.armNonce(reg.nonce));
+  } catch {
+    cur = null;
+  }
+  const abandoned = !!cur && cur.state === 'abandoned';
+  reg.turnSeq = turnSeqOf(reg.root);
+  const markers = lib.exitMarkers(reg.root);
+  for (let k = 1; k <= slotCountOf(reg.th); k += 1) {
+    const s = slotSource(P.armSlot(k));
+    const v = reg.seen.find((x) => x.k === k);
+    const free = !s.rec || s.rec.ce !== reg.ce || markers.has(lib.markerKey(s.rec.pid, s.rec.start_time))
+      || (!!v && v.state === 'dead' && !!v.bytes && !!s.bytes && s.bytes.equals(v.bytes));
+    if (free) {
+      reg.slot = { k, record: { ce: reg.ce, pid: reg.self.pid, start_time: reg.self.start_time, nonce: reg.nonce } };
+      return;
+    }
+  }
+  if (abandoned) {
+    reg.outcome = 'abandoned';
+    return;
+  }
+  lib.writeAtomic(P.armNonce(reg.nonce), JSON.stringify({ state: 'present', pid: reg.self.pid }) + '\n');
+  reg.outcome = 'present';
+}
+
+// FX-W2 step 8, after hold 1, nothing registered: read turn.json every 2 s; exit 0 abandoned once its
+// turn_seq has grown past the one read in hold 1 (the next turn's reconcile ran, so this exit arrives
+// inside that turn), or after the alarm period. A newer ce: 64. No marker: no slot names this process.
+async function ensureAbandoned(reg, sleepMs) {
+  const t0 = performance.now();
+  for (;;) {
+    const left = sleepMs - (performance.now() - t0);
+    await sleep(Math.max(0, Math.min(ABANDONED_POLL_MS, left)));
+    lib.checkCe(reg.root, reg.ce);
+    const now = turnSeqOf(reg.root);
+    const grown = now > reg.turnSeq;
+    if (grown || performance.now() - t0 >= sleepMs) {
+      const detail = { nonce: reg.nonce, turn_seq_seen: reg.turnSeq, turn_seq: now, why: grown ? 'turn' : 'alarm_ms' };
+      return { exit: 0, result: { run: 'alarm', ensure: 'abandoned', ...detail }, reasons: [{ code: 'abandoned', detail }] };
+    }
+  }
+}
+
+// Every exit after registration passes here: `out` is the output of a normal exit (30, or 0
+// superseded) or the exit code of an error exit (64 included). Returns `out` unchanged.
+function alarmExit(reg, out) {
+  const exit = typeof out === 'number' ? out : out.exit;
+  if (exit === 30) alarmUnarmedRecord(reg);
+  alarmExitMarker(reg, exit);
+  return out;
+}
+
+// FX-W3 (the alarm's own record, step 2): on exit 30, before the exit marker and without a lock, read
+// turn.json's turn_seq; still the turn_seq_at_reg of this alarm's slot record means no reconcile ran
+// in a whole alarm period, so create run/arm/unarmed-<pt>.json {ce, turn_seq} (a strict create; FX-W4's
+// dead-man alerts on two of the current ce with one turn_seq). A failure costs one stderr line and
+// leaves the exit as it was, like the marker.
+function alarmUnarmedRecord(reg) {
+  try {
+    if (!reg.slot || !reg.slot.record) return;
+    const atReg = reg.slot.record.turn_seq_at_reg;
+    const now = turnSeqOf(reg.root);
+    if (!Number.isInteger(atReg) || now !== atReg) return;
+    const file = lib.paths(reg.root).armUnarmed(reg.self.pid, reg.self.start_time);
+    lib.createExclusive(file, JSON.stringify({ ce: reg.ce, turn_seq: now }) + '\n');
+  } catch (e) {
+    process.stderr.write(`watch --alarm: unarmed record not written: ${(e && (e.code || e.message)) || e}\n`);
+  }
+}
+
+// FX-W1: the exit marker run/arm/exited-<pt>.json {ce, exit, at}, a lock-free strict create.
+// It makes run/arm/ when absent. A failure costs one stderr line and leaves the exit code as it was:
+// readers then judge this alarm by the process list alone.
+function alarmExitMarker(reg, exit) {
+  try {
+    const at = isoOf(lib.edgeFacts(reg.flags).now);
+    const file = lib.paths(reg.root).armExited(reg.self.pid, reg.self.start_time);
+    lib.createExclusive(file, JSON.stringify({ ce: reg.ce, exit, at }) + '\n');
+  } catch (e) {
+    process.stderr.write(`watch --alarm: exit marker not written: ${(e && (e.code || e.message)) || e}\n`);
+  }
+}
+
+// FX-W6: the act-due `idle-child` (idle_ticks) and `age-cap` (attempt_max_ticks) for the coordinator,
+// added to the act-due set after the row acts; they are not row acts. Both are uncharged and fence
+// nothing. idle-child: the main transcript's kind is `idle` for idle_ticks counted ticks (step 4).
+// age-cap: age_ticks - age_base >= attempt_max_ticks (step 5). An acknowledgement of its event line
+// (the endturn) does not re-arm it: the condition stays present, so FX-W5 raises it again at its
+// interval and counts it towards `stuck` (reraiseStuck), which FX-W4's dead-man reads. No script sets
+// age_base (0 from freshTaskState): it is where an explicit "continue" act would re-arm the cap, and
+// none is built (refute/W4.md:113-115). A READY of the current epoch (class 11 or 12) voids both, as
+// it voids hang.
+function actDueIdleAgeCap(env, state, conds, { rows }) {
+  let idleMax;
+  let ageMax;
+  for (const row of rows) {
+    if (row.state !== 'active' || (row.step !== 'started' && row.step !== 'bound')) continue;
+    const ts = state.tasks[row.task];
+    const e = row.epoch;
+    if (!ts || ts.epoch !== e) continue;
+    if (conds.some((c) => (c.cls === 11 || c.cls === 12) && c.task === row.task && c.epoch === e)) continue;
+    idleMax ??= env.th.get('idle_ticks');
+    ageMax ??= env.th.get('attempt_max_ticks');
+    const base = { cls: 17, task: row.task, epoch: e };
+    if (ts.kind === 'idle' && num(ts.hang_ticks) >= idleMax) {
+      conds.push({ ...base, act: 'idle-child', detail: { act: 'idle-child', idle_ticks: ts.hang_ticks } });
+    }
+    if (num(ts.age_ticks) - num(ts.age_base) >= ageMax) {
+      conds.push({ ...base, act: 'age-cap', detail: { act: 'age-cap', age_ticks: ts.age_ticks, attempt_max_ticks: ageMax } });
+    }
+  }
+}
+
+// FX-W5: the re-raise of an act still due at the capped interval and its `stuck` count (stuck_raises),
+// over the whole present set, before the active keys are renewed.
+//
+// FIX-wake.md FX-W5 steps 2-3, branch R1 (build/branches.md row 6). Raised again: every act-due (17)
+// but `run-terminal` (its condition never clears), and stall, hang and loop (20-22), the set the model
+// checked R1 with (ABLATION-wake.md:234-235). The interval before raise n + 1 after n raises is
+// min(RERAISE_BASE_TICKS x 2^b, RERAISE_CAP_TICKS) ticks, b = min(n, RERAISE_B_MAX): 15, 30, 60, 60.
+// Both tick counts are marked guesses kept here (slice 1 writes no thresholds.json key).
+const RERAISE_CLASSES = new Set([17, 20, 21, 22]);
+const RERAISE_BASE_TICKS = 15; // a guess (FIX-wake.md FX-W5 step 2)
+const RERAISE_CAP_TICKS = 60; // a guess (FIX-wake.md FX-W5 step 2)
+const RERAISE_B_MAX = 2;
+const STUCK_RAISES_DEFAULT = 3; // the design's stuck_raises, used when thresholds.json lacks a valid one
+
+const reraiseInterval = (n) => Math.min(RERAISE_BASE_TICKS * 2 ** Math.min(n, RERAISE_B_MAX), RERAISE_CAP_TICKS);
+
+// stuck_count after n raises: one per raise made once b was at its cap, i.e. after the raises at 15,
+// 30 and 60 ticks (FIX-wake.md:54: 15 + 30 + 60, then 3 x 60 = 285 ticks, about 4.75 h at delta 60 s).
+const stuckCount = (n) => Math.max(0, n - (RERAISE_B_MAX + 1));
+
+// Threshold stuck_raises; missing, or not a positive integer, falls back to the design's 3.
+function stuckRaisesOf(th) {
+  let v;
+  try {
+    v = th.get('stuck_raises');
+  } catch (x) {
+    if (x && x.code === 'param-missing') return STUCK_RAISES_DEFAULT;
+    throw x;
+  }
+  return Number.isInteger(v) && v >= 1 ? v : STUCK_RAISES_DEFAULT;
+}
+
+// A present ident of those classes whose key's event line is acknowledged (seq <= acked_seq) and whose
+// last raise (the key's tick) is at least the interval old is raised again: its key leaves `active`, so
+// the keying below gives it a new key <ident>|<tick> and one new event line with detail.reraise = n + 1.
+// An unacknowledged key is due anyway. `reraise` {ident: n >= 1} and `stuck` [ident] are rebuilt from
+// the present idents each evaluation: an ident leaving the active set leaves both (step 3).
+function reraiseStuck(env, state, present, tick, { eventSeq, ackedSeq }) {
+  const limit = stuckRaisesOf(env.th);
+  const prev = state.reraise && typeof state.reraise === 'object' ? state.reraise : {};
+  const reraise = {};
+  const stuck = [];
+  for (const c of present) {
+    if (!RERAISE_CLASSES.has(c.cls) || (c.cls === 17 && c.act === 'run-terminal')) continue;
+    const key = Object.keys(state.active).find((k) => k.slice(0, k.lastIndexOf('|')) === c.ident);
+    if (!key) continue; // a new onset: the keying below raises it
+    let n = Number.isInteger(prev[c.ident]) && prev[c.ident] > 0 ? prev[c.ident] : 0;
+    const seq = eventSeq.get(key);
+    let last = Number.isInteger(state.active[key]) ? state.active[key] : Number(key.slice(key.lastIndexOf('|') + 1));
+    if (!Number.isFinite(last)) last = -Infinity;
+    if (seq !== undefined && seq <= ackedSeq && tick - last >= reraiseInterval(n)) {
+      delete state.active[key];
+      n += 1;
+      c.detail = { ...(c.detail ?? {}), reraise: n };
+    }
+    if (n > 0) reraise[c.ident] = n;
+    if (stuckCount(n) >= limit) stuck.push(c.ident);
+  }
+  state.reraise = reraise;
+  state.stuck = stuck.sort();
+}
+
+// FX-W7: the tick's state is kept only when its hold succeeded (the copy `next`), after watcher.json.
+function adoptState(env, state) { // eslint-disable-line no-unused-vars
+  env.state = state;
+  if (env.busyTicks) writeBusy(env, 0); // a successful hold resets the busy count
 }
 
 // The alarm's arm token: the sha256 of run/acked.json's bytes, null when it cannot be read.
@@ -878,6 +1356,12 @@ async function main(ctx) {
   if (!Number.isInteger(flags.ce) || flags.ce < 1) throw err('usage', 66, { flag: 'ce', expect: 'integer >= 1' });
   for (const f of ['interval-ms', 'sleep-ms']) {
     if (flags[f] !== undefined && (!Number.isInteger(flags[f]) || flags[f] < 0)) throw err('usage', 66, { flag: f });
+  }
+  // FX-W2: an alarm starts only as the ensure (`--alarm --ensure --nonce X`); a bare --alarm is refused.
+  if (picked[0] === 'alarm' || flags.ensure === true || flags.nonce !== undefined) {
+    if (picked[0] !== 'alarm') throw err('usage', 66, { flag: flags.ensure === true ? 'ensure' : 'nonce', expect: 'with --alarm' });
+    if (flags.ensure !== true) throw err('usage', 66, { flag: 'ensure', expect: 'required with --alarm (FX-W2)' });
+    if (typeof flags.nonce !== 'string' || !NONCE_RE.test(flags.nonce)) throw err('usage', 66, { flag: 'nonce', expect: '32 lowercase hex' });
   }
   const root = path.resolve(flags.root);
 

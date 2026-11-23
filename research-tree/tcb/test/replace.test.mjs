@@ -170,8 +170,14 @@ function walkRel(dir, base = dir, out = []) {
 }
 const treeHash = (dir) => sha(JSON.stringify(walkRel(dir).map((r) => [r, sha(fs.readFileSync(path.join(dir, ...r.split('/'))))])));
 
-function mk() {
+// FX-W3: a start and a fence `first` create work, so they need an armed turn (lib.armedState: run/turn.json
+// of the caller's ce, arm confirmed, slots with no exit marker; files only, no process list). A root here
+// is a coordinator's armed turn, as the brief's call 2 leaves it, unless `armed: false`.
+const SLOT_PT = { pid: 4242, start_time: '2026-11-20T00:00:00.0000000Z' };
+const armedTurn = (ce = 1, o = {}) => ({ ce, turn_seq: 1, read_seq: 0, arm: 'confirmed', slots: [{ k: 1, ...SLOT_PT }], unarmed_turns: 0, ...o });
+function mk({ armed = true } = {}) {
   const h = helpers.makeRoot({ ce: 1 });
+  if (armed) putJ(h.root, 'run/turn.json', armedTurn(1));
   return { root: h.root, cleanup: () => h.cleanup() };
 }
 
@@ -181,6 +187,7 @@ function argv(root, mode, o = {}) {
   if (o.task) a.push('--task', o.task);
   if (o.epoch !== undefined) a.push('--epoch', String(o.epoch));
   if (o.reason) a.push('--reason', o.reason);
+  if (o.ifUnclaimed) a.push('--if-unclaimed');
   if (o.session) a.push('--session', o.session);
   if (o.tick !== undefined) a.push('--tick', String(o.tick));
   if (o.boot) a.push('--boot', o.boot);
@@ -262,7 +269,15 @@ const row = (task, o = {}) => ({
   state: 'planned', step: 'none', epoch: 0, reason: null, session: null, restarts: 0, handovers: 0, parks: 0, limit: false, fails: [], attempts: [], commits: {}, updated_rev: 1, ...o,
 });
 const att = (task, e, o = {}) => ({ epoch: e, folder: `wt/${task}-e${e}`, stop: 'none', ...o });
-const table = (root, rows, rev = 1) => putJ(root, 'run/tasks.json', { schema_version: 1, rev, tasks: rows });
+const table = (root, rows, rev = 1) => {
+  // FX-CLAIM: a bound attempt holds its session's claim (bind requires one)
+  for (const r of rows) {
+    for (const a of r.attempts ?? []) {
+      if (a && a.session && a.bound_at && a.folder && !has(root, `${a.folder}/claim.json`)) putJ(root, `${a.folder}/claim.json`, { kind: 'session', session_id: a.session });
+    }
+  }
+  return putJ(root, 'run/tasks.json', { schema_version: 1, rev, tasks: rows });
+};
 const getTable = (root) => readJ(root, 'run/tasks.json');
 const getRow = (root, task) => getTable(root).tasks.find((r) => r.task === task);
 const attemptOf = (r, e) => r.attempts.find((a) => a.epoch === e);
@@ -271,6 +286,8 @@ const Z64 = '0'.repeat(64);
 const startRow = (o = {}) => row(RES, { state: 'active', step: 'stopped', epoch: 1, reason: 'first', attempts: [att(RES, 1)], ...o });
 const boundRow = (o = {}) =>
   row(RES, { state: 'active', step: 'bound', epoch: 1, reason: 'first', session: SID1, attempts: [att(RES, 1, { session: SID1, bound_at: '2026-11-17T08:00:00.000Z', boot: BOOT_A, manifest: M0, settings_sha: Z64 })], ...o });
+// FX-OUT: the READY of attempt e as the hook records it, a ready slot in its outcome log (READY.json is a copy).
+const readySlot = (root, task, e, step = 'pack', j = 0) => put(root, `wt/${task}-e${e}/outcome/${j}.json`, lib.outcomeSlotBytes({ kind: 'ready', task, epoch: e, step }));
 const folderAbs = (root, task, e) => path.join(root, 'wt', `${task}-e${e}`);
 
 function setThr(root, patch) {
@@ -553,6 +570,7 @@ test('T5 fence with a READY of the current epoch: ready-wins for a failure, neve
     const { root } = w;
     table(root, [boundRow()]);
     put(root, `wt/${RES}-e1/staging/READY.json`, ready(1));
+    readySlot(root, RES, 1);
     const tb = read(root, 'run/tasks.json');
     const j = run(root, 'fence', { task: RES, epoch: 1, reason: 'stall', tick: 4, boot: BOOT_A });
     expectExit(j, 5, 'ready-wins');
@@ -600,8 +618,11 @@ test('T5 fence with a READY of the current epoch: ready-wins for a failure, neve
     const { root } = w;
     table(root, [boundRow()]);
     put(root, `wt/${RES}-e1/staging/READY.json`, ready(1));
+    readySlot(root, RES, 1);
     const j = run(root, 'fence', { task: RES, epoch: 1, reason: 'tainted', tick: 4, boot: BOOT_A });
     expectExit(j, 0);
+    assert.deepEqual(fs.readdirSync(at(root, `wt/${RES}-e1/outcome`)).sort(), ['0.json', '1.json'], 'a tainted fence appends after the ready slot');
+    assert.ok(read(root, `wt/${RES}-e1/outcome/1.json`).equals(Buffer.from(lib.outcomeSlotBytes({ kind: 'fenced', task: RES, epoch: 1, reason: 'tainted' }))));
     const r = getRow(root, RES);
     assert.equal(r.epoch, 2);
     assert.equal(r.step, 'fenced');
@@ -622,6 +643,7 @@ test('T5b (M6) a READY of the current epoch wins over every reason but first and
       table(root, [boundRow()]);
       if (reason === 'drop') owner(root);
       put(root, `wt/${RES}-e1/staging/READY.json`, ready);
+      readySlot(root, RES, 1);
       const tb = read(root, 'run/tasks.json');
       const j = run(root, 'fence', { task: RES, epoch: 1, reason, boot: BOOT_A });
       expectExit(j, 5, 'ready-wins');
@@ -638,6 +660,7 @@ test('T5b (M6) a READY of the current epoch wins over every reason but first and
     const { root } = w;
     table(root, [boundRow()]);
     put(root, `wt/${RES}-e1/staging/READY.json`, ready);
+    readySlot(root, RES, 1);
     const h = treeHash(root);
     const j = run(root, 'fence', { task: RES, epoch: 1, reason: 'handover', boot: BOOT_A, dry: true });
     expectExit(j, 5, 'ready-wins');
@@ -654,6 +677,89 @@ test('T5b (M6) a READY of the current epoch wins over every reason but first and
     assert.equal(r.step, 'fenced');
     assert.equal(r.handovers, 1);
   });
+});
+
+// FX-OUT (FIX-fence.md section 1, fence side): every refusal before the one write (N1), the fenced slot,
+// the retry path, and no slot for an attempt that was never admitted (rev 4 H1, schedule F1).
+const outcomeOf = (root, task, e) => (has(root, `wt/${task}-e${e}/outcome`) ? fs.readdirSync(at(root, `wt/${task}-e${e}/outcome`)).sort() : null);
+const fencedSlot = (task, e, reason) => lib.outcomeSlotBytes({ kind: 'fenced', task, epoch: e, reason });
+
+test('FX-OUT 3: a refused fence (stale-epoch, wrong-step, hmax) writes no slot; a fence writes one fenced slot; a torn fence is retried with its own reason only', async (t) => {
+  const world = (t2, rows) => {
+    const w = mk();
+    t2.after(w.cleanup);
+    table(w.root, rows);
+    setThr(w.root, { H_max: 2 });
+    fs.mkdirSync(at(w.root, `wt/${RES}-e1/outcome`), { recursive: true });
+    return w.root;
+  };
+  const att1 = att(RES, 1, { session: SID1, boot: BOOT_A, manifest: M0, settings_sha: Z64 });
+  await t.test('refusals: exit 65 stale-epoch, 65 wrong-step, 1 hmax; no slot, the row unchanged', async (t2) => {
+    for (const [name, rows, o, exit, code] of [
+      ['stale-epoch', [boundRow({ epoch: 2, step: 'fenced', session: null, attempts: [att1, att(RES, 2)] })], { reason: 'stall', tick: 4 }, 65, 'stale-epoch'],
+      ['wrong-step', [boundRow({ step: 'stopped', session: null })], { reason: 'stall', tick: 4 }, 65, 'wrong-step'],
+      ['hmax', [boundRow({ handovers: 1, parks: 1 })], { reason: 'handover' }, 1, 'hmax'],
+    ]) {
+      const root = world(t2, rows);
+      const tb = read(root, 'run/tasks.json');
+      expectExit(run(root, 'fence', { task: RES, epoch: 1, boot: BOOT_A, ...o }), exit, code);
+      assert.deepEqual(outcomeOf(root, RES, 1), [], `${name}: no slot`);
+      assert.ok(tb.equals(read(root, 'run/tasks.json')), `${name}: the row is unchanged`);
+    }
+  });
+  await t.test('a fence of a running attempt writes one fenced slot, then the CAS; with its line lost, another reason gets 65 and the same reason is the FX-REDO repeat: no second slot', async (t2) => {
+    const root = world(t2, [boundRow()]);
+    expectExit(run(root, 'fence', { task: RES, epoch: 1, reason: 'stall', tick: 4, boot: BOOT_A }), 0);
+    assert.deepEqual(outcomeOf(root, RES, 1), ['0.json']);
+    assert.ok(read(root, `wt/${RES}-e1/outcome/0.json`).equals(Buffer.from(fencedSlot(RES, 1, 'stall'))));
+    assert.equal(getRow(root, RES).epoch, 2);
+    // a death after the CAS, before the fence line: the row at the post-state, the fenced slot, no line
+    const lines = read(root, 'run/ledger.jsonl').toString('utf8').split('\n').filter(Boolean);
+    assert.equal(JSON.parse(lines[lines.length - 1]).kind, 'fence');
+    fs.writeFileSync(at(root, 'run/ledger.jsonl'), lines.slice(0, -1).map((l) => l + '\n').join(''));
+    // another reason is not the exact post-state: it loses with 65 (the log's own reason) and writes nothing
+    const before = treeHash(root);
+    const lost = run(root, 'fence', { task: RES, epoch: 1, reason: 'hang', tick: 5, boot: BOOT_A });
+    expectExit(lost, 65, 'fence-pending');
+    assert.equal(lost.reasons.find((x) => x.code === 'fence-pending').detail.reason, 'stall');
+    assert.equal(treeHash(root), before, 'the losing fence writes nothing');
+    // the same fence (a later tick) is FX-REDO's repeat at the exact post-state: exit 0, the line completed once
+    const rep = run(root, 'fence', { task: RES, epoch: 1, reason: 'stall', tick: 5, boot: BOOT_A });
+    expectExit(rep, 0);
+    assert.deepEqual([rep.result.repeat, rep.result.redo], [true, true]);
+    assert.deepEqual(ofKind(root, 'fence').map((l) => [l.epoch, l.data.from, l.data.reason, l.data.redo]), [[2, 1, 'stall', true]]);
+    assert.deepEqual(outcomeOf(root, RES, 1), ['0.json'], 'nothing after the fenced slot');
+    await assertLedgerVerifies(root);
+  });
+  await t.test('a torn fence (its slot, no CAS): another reason exits 65 fence-pending; its own reason completes it with no second slot', async (t2) => {
+    const root = world(t2, [boundRow()]);
+    put(root, `wt/${RES}-e1/outcome/0.json`, fencedSlot(RES, 1, 'hang'));
+    const tb = read(root, 'run/tasks.json');
+    const j = run(root, 'fence', { task: RES, epoch: 1, reason: 'stall', tick: 4, boot: BOOT_A });
+    expectExit(j, 65, 'fence-pending');
+    assert.equal(j.reasons.find((x) => x.code === 'fence-pending').detail.reason, 'hang');
+    assert.ok(tb.equals(read(root, 'run/tasks.json')));
+    expectExit(run(root, 'fence', { task: RES, epoch: 1, reason: 'hang', tick: 4, boot: BOOT_A }), 0);
+    const r = getRow(root, RES);
+    assert.deepEqual([r.epoch, r.step, r.reason], [2, 'fenced', 'hang']);
+    assert.deepEqual(outcomeOf(root, RES, 1), ['0.json']);
+  });
+});
+
+test('FX-OUT 4 (schedule F1): a fence of a parked row, whose attempt was never admitted, writes no slot and no tombstone and makes no folder', async () => {
+  const w = mk();
+  try {
+    const { root } = w;
+    const a1 = att(RES, 1, { session: SID1, boot: BOOT_A, manifest: M0, settings_sha: Z64, stop: 'confirmed', spend_at_fence: 0 });
+    table(root, [row(RES, { state: 'parked', step: 'stopped', epoch: 2, reason: 'memory', parks: 1, attempts: [a1, att(RES, 2)] })]);
+    const j = run(root, 'fence', { task: RES, epoch: 2, reason: 'cut', boot: BOOT_A });
+    expectExit(j, 0);
+    const r = getRow(root, RES);
+    assert.deepEqual([r.epoch, r.step, r.reason], [3, 'fenced', 'cut']);
+    assert.equal(has(root, `wt/${RES}-e2`), false, 'no folder, no outcome slot, no claim.json for attempt 2');
+  } finally {
+    w.cleanup();
+  }
 });
 
 test('T6 fence crash: host only when the recorded boot differs from the current one', async (t) => {
@@ -701,6 +807,52 @@ test('T7 fence stall at restarts = R: fence applied, limit true, exit 1 limit, f
   await assertLedgerVerifies(root);
 });
 
+// FX-CLAIM: an admitted attempt (a manifest, its folder) and one fence of it, in a world of its own
+const admittedAt = (o = {}) => row(RES, { state: 'active', step: 'admitted', epoch: 1, reason: 'first', attempts: [att(RES, 1, { manifest: M0, settings_sha: Z64 })], ...o });
+function fenceOnce(t, rowObj, reason, claim, o = {}) {
+  const w = mk();
+  t.after(w.cleanup);
+  const { root } = w;
+  table(root, [rowObj]);
+  fs.mkdirSync(folderAbs(root, RES, 1), { recursive: true });
+  if (claim) putJ(root, `wt/${RES}-e1/claim.json`, claim);
+  const before = { tasks: read(root, 'run/tasks.json'), files: fs.readdirSync(folderAbs(root, RES, 1)).sort(), lines: ledgerLines(root).length };
+  const j = run(root, 'fence', { task: RES, epoch: 1, reason, tick: 9, boot: BOOT_A, ...o });
+  const c = has(root, `wt/${RES}-e1/claim.json`) ? readJ(root, `wt/${RES}-e1/claim.json`) : null;
+  return { root, j, before, r: getRow(root, RES), claim: c, f: ofKind(root, 'fence')[0] ?? null };
+}
+
+test('T7b FX-CLAIM no-start fences (N7): a tombstone is uncharged while nostart < H_nostart and is no R8 fail; past the cap it is charged; a session claim resets nostart; a planned reason leaves nostart', async (t) => {
+  let x = fenceOnce(t, admittedAt(), 'crash');
+  expectExit(x.j, 0);
+  assert.deepEqual(x.claim, { kind: 'tombstone', task: RES, epoch: 1 }, 'the fence tombstones an attempt no session claimed');
+  assert.deepEqual([x.r.epoch, x.r.step, x.r.restarts, x.r.nostart, x.r.fails.length], [2, 'fenced', 0, 1, 0]);
+  assert.equal(x.f.data.restart_charged, false);
+  x = fenceOnce(t, admittedAt({ nostart: 1 }), 'stall');
+  assert.deepEqual([x.r.restarts, x.r.nostart, x.r.fails.length], [0, 2, 0]);
+  x = fenceOnce(t, admittedAt({ nostart: 2, restarts: 0 }), 'crash');
+  assert.deepEqual([x.r.restarts, x.r.nostart, x.r.fails.length, x.f.data.restart_charged], [1, 2, 1, true], 'past H_nostart: charged like a failure');
+  x = fenceOnce(t, admittedAt({ nostart: 1 }), 'handover');
+  assert.deepEqual([x.r.restarts, x.r.nostart, x.r.handovers], [0, 1, 1], 'a planned hand-over: uncharged, nostart untouched');
+  x = fenceOnce(t, admittedAt({ nostart: 2 }), 'crash', { kind: 'session', session_id: SID1 });
+  assert.deepEqual([x.r.restarts, x.r.nostart, x.r.fails.length], [1, 0, 1], 'a session claim: charged, nostart reset');
+  assert.deepEqual(x.claim, { kind: 'session', session_id: SID1 }, 'the session claim is kept');
+});
+
+test('T7c FX-CLAIM --if-unclaimed (the lease act): a session claim -> exit 5 claimed-late with nothing written; no claim -> the fence goes on; another mode -> usage', async (t) => {
+  let x = fenceOnce(t, admittedAt(), 'crash', { kind: 'session', session_id: SID1 }, { ifUnclaimed: true });
+  expectExit(x.j, 5, 'claimed-late');
+  assert.ok(x.before.tasks.equals(read(x.root, 'run/tasks.json')), 'the row is unchanged');
+  assert.deepEqual(fs.readdirSync(folderAbs(x.root, RES, 1)).sort(), x.before.files, 'no slot and no tombstone');
+  assert.equal(x.f, null, 'no fence line');
+  assert.equal(ledgerLines(x.root).filter((l) => l.kind !== 'incident').length, x.before.lines);
+  x = fenceOnce(t, admittedAt(), 'crash', null, { ifUnclaimed: true });
+  expectExit(x.j, 0);
+  assert.deepEqual([x.r.epoch, x.r.restarts, x.r.nostart], [2, 0, 1]);
+  assert.equal(x.claim.kind, 'tombstone');
+  expectExit(run(x.root, 'bind', { task: RES, epoch: 1, session: SID1, boot: BOOT_B, ifUnclaimed: true }), 66);
+});
+
 test('T8 fence handover at handovers + parks = H_max: exit 1 hmax, row unchanged, incident line', async (t) => {
   const w = mk();
   t.after(w.cleanup);
@@ -730,7 +882,7 @@ test('T9 fence with a stale epoch is refused; two concurrent fences: one wins, o
     t2.after(w.cleanup);
     const { root } = w;
     table(root, [boundRow()]);
-    const [a, b] = await Promise.all([runAsync(root, 'fence', { task: RES, epoch: 1, reason: 'stall', tick: 5, boot: BOOT_A }), runAsync(root, 'fence', { task: RES, epoch: 1, reason: 'stall', tick: 5, boot: BOOT_A })]);
+    const [a, b] = await Promise.all([runAsync(root, 'fence', { task: RES, epoch: 1, reason: 'stall', tick: 5, boot: BOOT_A }), runAsync(root, 'fence', { task: RES, epoch: 1, reason: 'hang', tick: 5, boot: BOOT_A })]);
     assert.deepEqual([a.status, b.status].sort((x, y) => x - y), [0, 65]);
     parse(a);
     parse(b);
@@ -1275,6 +1427,7 @@ test('T21 bind: admitted -> bound with session, bound_at and boot; a repeat is i
   const { root } = w;
   table(root, [admittedRow()]);
   fs.mkdirSync(folderAbs(root, RES, 1), { recursive: true });
+  putJ(root, `wt/${RES}-e1/claim.json`, { kind: 'session', session_id: SID1 }); // FX-CLAIM: the session's first tool call claimed
   const j = run(root, 'bind', { task: RES, epoch: 1, session: SID1, boot: BOOT_B });
   expectExit(j, 0);
   assert.equal(j.mode, 'bind');
@@ -1306,6 +1459,7 @@ test('T22 bind where a transcript of the session has another cwd -> exit 1 wrong
     const { root } = w;
     table(root, [admittedRow()]);
     fs.mkdirSync(folderAbs(root, RES, 1), { recursive: true });
+    putJ(root, `wt/${RES}-e1/claim.json`, { kind: 'session', session_id: SID1 });
     fakeT(root, SID1, folderAbs(root, 'other-task', 1), [u(10, 0, 0, 5)]);
     const tb = read(root, 'run/tasks.json');
     const j = run(root, 'bind', { task: RES, epoch: 1, session: SID1, boot: BOOT_B });
@@ -1318,10 +1472,33 @@ test('T22 bind where a transcript of the session has another cwd -> exit 1 wrong
     const { root } = w;
     table(root, [admittedRow()]);
     fs.mkdirSync(folderAbs(root, RES, 1), { recursive: true });
+    putJ(root, `wt/${RES}-e1/claim.json`, { kind: 'session', session_id: SID1 });
     fakeT(root, SID1, folderAbs(root, RES, 1), [u(10, 0, 0, 5)]);
     expectExit(run(root, 'bind', { task: RES, epoch: 1, session: SID1, boot: BOOT_B }), 0);
     assert.equal(getRow(root, RES).step, 'bound');
   });
+});
+
+test('T22b FX-CLAIM bind by claim: no claim -> exit 6 not-claimed; another session or a tombstone -> exit 1 not-claim-holder; the holder binds a started row whose recorded session differs', async (t) => {
+  const w = mk();
+  t.after(w.cleanup);
+  const { root } = w;
+  table(root, [admittedRow()]);
+  fs.mkdirSync(folderAbs(root, RES, 1), { recursive: true });
+  const tb = read(root, 'run/tasks.json');
+  expectExit(run(root, 'bind', { task: RES, epoch: 1, session: SID1, boot: BOOT_B }), 6, 'not-claimed');
+  putJ(root, `wt/${RES}-e1/claim.json`, { kind: 'session', session_id: SID2 });
+  expectExit(run(root, 'bind', { task: RES, epoch: 1, session: SID1, boot: BOOT_B }), 1, 'not-claim-holder');
+  putJ(root, `wt/${RES}-e1/claim.json`, { kind: 'tombstone', task: RES, epoch: 1 });
+  expectExit(run(root, 'bind', { task: RES, epoch: 1, session: SID1, boot: BOOT_B }), 1, 'not-claim-holder');
+  assert.ok(tb.equals(read(root, 'run/tasks.json')), 'a refused bind changes nothing');
+  assert.equal(ofKind(root, 'bind').length, 0);
+  // a started row whose recorded session came from a transcript (the second source): the claim decides
+  table(root, [admittedRow({ step: 'started', attempts: [att(RES, 1, { manifest: M0, settings_sha: Z64, session: SID2 })] })], 2);
+  putJ(root, `wt/${RES}-e1/claim.json`, { kind: 'session', session_id: SID1 });
+  expectExit(run(root, 'bind', { task: RES, epoch: 1, session: SID2, boot: BOOT_B }), 1, 'not-claim-holder');
+  expectExit(run(root, 'bind', { task: RES, epoch: 1, session: SID1, boot: BOOT_B }), 0);
+  assert.deepEqual([getRow(root, RES).step, getRow(root, RES).session], ['bound', SID1]);
 });
 
 // =================================================================== any mode
@@ -1380,6 +1557,88 @@ test('T24 any writing mode while another process holds run.lock -> exit 75 after
       assert.ok(lockBytes.equals(read(root, 'run/run.lock')), 'the lock of the other process is untouched');
       assert.ok(tb.equals(read(root, 'run/tasks.json')));
       assert.deepEqual(j.ledger_seq, []);
+    });
+  }
+});
+
+// =================================================================== FX-W3: armed
+// FIX-wake FX-W3: an act that creates work (start, fence first) needs an armed turn; otherwise exit 6
+// not-armed, thrown in the hold before the act (withRunLock's requireArmed), so nothing is written: no
+// ledger line, no incident, no row change, no folder. A dry run checks the same files and gives the same 6.
+test('FX-W3 not-armed: start and fence first exit 6 not-armed, nothing written, for no turn.json, an unconfirmed or spent arm, another ce, an exited slot; a dry run gives the same 6; armed, both pass', async (t) => {
+  const w = mk({ armed: false });
+  t.after(w.cleanup);
+  const { root } = w;
+  world(root);
+  const FIRST = 'f1-second';
+  table(root, [startRow(), row(FIRST)]);
+  await seal(root);
+  const marker = `run/arm/exited-${lib.markerKey(SLOT_PT.pid, SLOT_PT.start_time)}.json`;
+  const states = [
+    ['no turn.json', null, { why: 'no-turn' }],
+    ['arm unconfirmed', armedTurn(1, { arm: 'unconfirmed', slots: [] }), { why: 'arm', arm: 'unconfirmed' }],
+    ['arm spent (after endturn)', armedTurn(1, { arm: 'spent' }), { why: 'arm', arm: 'spent' }],
+    ['a turn of another ce', armedTurn(2), { why: 'other-ce', turn_ce: 2 }],
+    ['the slot\'s alarm exited', armedTurn(1), { why: 'slot-exited', pid: SLOT_PT.pid }, true],
+  ];
+  const calls = [
+    ['start', 'start', { task: RES, epoch: 1, ...START }],
+    ['fence first', 'fence', { task: FIRST, epoch: 0, reason: 'first', boot: BOOT_A }],
+  ];
+  for (const [name, turn, detail, mark] of states) {
+    fs.rmSync(at(root, 'run/turn.json'), { force: true });
+    if (turn) putJ(root, 'run/turn.json', turn);
+    if (mark) putJ(root, marker, { ce: 1, exit: 30, at: NOW });
+    const tb = read(root, 'run/tasks.json');
+    const n = ledgerLines(root).length;
+    for (const [what, mode, o] of calls) {
+      for (const dry of [false, true]) {
+        const k = `${name}, ${what}${dry ? ', dry run' : ''}`;
+        const j = run(root, mode, { ...o, dry });
+        expectExit(j, 6, 'not-armed');
+        assert.equal(j.code, 'deferred');
+        assert.deepEqual(j.reasons.find((r) => r.code === 'not-armed').detail, { ce: 1, ...detail }, k);
+        assert.ok(tb.equals(read(root, 'run/tasks.json')), `${k}: row unchanged`);
+        assert.equal(ledgerLines(root).length, n, `${k}: no ledger line, no incident`);
+        assert.equal(has(root, `wt/${RES}-e1`), false, `${k}: no folder`);
+        assert.equal(has(root, `wt/${FIRST}-e1`), false, `${k}: no folder`);
+      }
+    }
+  }
+  // armed (call 2 of the turn exited 0): the same calls pass
+  fs.rmSync(at(root, marker));
+  putJ(root, 'run/turn.json', armedTurn(1));
+  expectExit(run(root, 'start', calls[0][2]), 0);
+  assert.ok(has(root, `wt/${RES}-e1`), 'the start made its folder');
+  expectExit(run(root, 'fence', calls[1][2]), 0);
+  assert.equal(getRow(root, FIRST).epoch, 1);
+});
+
+// FIX-wake FX-W3 (RevocationNeverGated): every other fence reason and the stop revoke work and are never
+// gated by the arm: with no turn.json they act as before. The loop is every reason of lib.REASONS but
+// `first` (the one fence that creates work), so a gate on any one revocation fails its own case here.
+const STOP_SCRIPT = path.join(HERE, '..', 'stop.mjs');
+const REVOCATIONS = lib.REASONS.filter((x) => x !== 'first');
+test('FX-W3 revocation never gated: with no turn.json, a fence of every reason but first acts (stall, hang, loop, crash, tainted, memory, handover, cut, drop), and stop request after each', async (t) => {
+  assert.deepEqual(REVOCATIONS, ['stall', 'hang', 'loop', 'crash', 'tainted', 'memory', 'handover', 'cut', 'drop'], 'every reason but first, as the title names them');
+  for (const reason of REVOCATIONS) {
+    await t.test(reason, async (t2) => {
+      const w = mk({ armed: false });
+      t2.after(w.cleanup);
+      const { root } = w;
+      table(root, [boundRow()]);
+      if (reason === 'drop') led(root, 'owner', { data: { act: 'drop', subject: RES, quote: 'drop this task' } }); // T10: a drop needs the owner's line
+      const tick = lib.FAILURE_REASONS.includes(reason) ? { tick: 3 } : {}; // T11: a failure reason needs the tick
+      const j = run(root, 'fence', { task: RES, epoch: 1, reason, boot: BOOT_A, ...tick });
+      expectExit(j, 0);
+      const f = getRow(root, RES);
+      assert.deepEqual([f.epoch, f.step, f.reason], [2, 'fenced', reason]);
+      const r = spawnSync(process.execPath, [STOP_SCRIPT, 'request', '--root', root, '--ce', '1', '--task', RES, '--epoch', '2', '--now', NOW], { encoding: 'utf8', cwd: root, windowsHide: true, timeout: 180000 });
+      const s = JSON.parse(r.stdout.trim().split('\n').pop());
+      assert.equal(s.exit, 0, r.stdout + r.stderr);
+      assert.ok(!s.reasons.some((x) => x.code === 'not-armed'));
+      assert.equal(getRow(root, RES).step, 'stop-requested');
+      assert.equal(has(root, 'run/turn.json'), false, 'nothing armed the turn');
     });
   }
 });

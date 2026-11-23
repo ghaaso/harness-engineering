@@ -63,6 +63,15 @@ that reason (CONTRACT §7).
   with delete sharing, so a real holder needs another program; the seam stands in for it.)
 - T22 `createExclusive` returns `created`, then `identical` for the same bytes; different bytes throw
   `exists-different` 1 and leave the file unchanged.
+- T22b (0b) `createExclusive(p, data, {strict: true})` behaves as T22; a missing parent folder → `no-parent` 2 and no
+  folder made (without `strict` the parent is made, as before); a `linkSync` failing with ENOTSUP, EINVAL, EXDEV,
+  ENOSYS or EMLINK (seam) → `no-hardlink` 3, nothing at the name, no temp left (without `strict` the `wx` fallback
+  still creates it); `budget` 0 or below → `budget-spent` 2 with no file touched; a temp create failing EPERM
+  every time with `budget` 150 → `budget-spent` 2 inside about the budget, nothing made.
+- T22c (0b) `fsRetry(op, budget)`: an op failing EPERM with budget 0 is tried once → `budget-spent` 2 (`detail.code`
+  EPERM, `tries` 1); with budget 150 it is retried (2 to 40 tries) and gives up inside about the budget; one
+  failing 3 times then succeeding returns within 5000; ENOENT is thrown at once; a budget that is not a number
+  → `bad-budget` 70; no budget → the 40 retries (T21b, T25b).
 - T23 `readJson` throws `missing` 2 and `unparseable` 2 in those cases.
 - T23b `readJson` of a file starting with a UTF-8 BOM parses (the BOM is stripped); a UTF-16LE file
   with its BOM throws `unparseable` 2 with detail `utf16`.
@@ -317,3 +326,77 @@ All tests in this section set `{concurrency: false}` (§4.11).
   is empty); `cleanup` removes the whole root.
 - T98 `fakeTranscript` output parses with `parseTranscript` into exactly the calls, tool uses, results
   and structured items given.
+
+## Round-3 skeleton (S0.5): signatures fixed, bodies filled by the fixes
+Until its fix lands, each API function below throws `not-built` (exit 70, detail `{fn, fix}`) and each
+empty step returns its neutral value, so behaviour is unchanged (FIX-JOIN point 11, build order).
+- `outcomeState(attemptDir, row)` -> `{present, fenced, slots, ready, next}`; `outcomeAppend(attemptDir, slot,
+  {row, check, create})` -> `{result: created|identical|fenced, j, state}`; `outcomeSlotBytes(slot)`: FX-OUT, built
+  (CONTRACT §3.23 and §4.6). outcomeState: no `outcome/` → an empty log (`present` false); R-a fenced (the
+  fenced slot's reason), R-b `ready` = steps of ready slots not in `row.commits`; R-c only `<j>.json` names,
+  a regular file whose bytes are exactly a slot of the folder's task and epoch; a gap, a slot after the
+  fenced one, a leading-zero name or a non-folder `outcome` → `outcome-tamper` 3 (detail `why`). outcomeAppend:
+  reads the log, returns `fenced` on a fenced log, runs `check(state)` on every read before writing, returns
+  `identical` for a slot with the same bytes, else creates `<next>.json` (`create` default: the strict create
+  of 0b) and reads again when another writer took the name. T56 (`fence`'s callback) is not widened (Q6 b).
+- `readClaim(attemptDir)` -> `{kind: 'none'|'session'|'tombstone', session_id}`; `claimRecord(sessionId)`;
+  `tombstoneRecord(task, epoch)`: FX-CLAIM.
+- `planAct(row, facts)` -> one act name, `none` and `owner` included: FX-PLAN.
+- `liveness(rec, proc, markers)` -> `alive` | `dead` | `unknown` (FX-W1 step 1, built; branch L1, no
+  lease): `dead` when `rec` is not an object (it names no process) or `markers` holds
+  `markerKey(rec.pid, rec.start_time)` (a Set of keys, anything with `has`, or an array): an exit
+  marker beats the process list. Else `proc.alive(Number(pid), start_time)`: true → `alive`, false →
+  `dead`; null, an absent `alive` or one that throws → `unknown`. Never called inside a run-lock hold:
+  the caller passes a list taken outside every lock (status: `listProc`); inside a hold the reader
+  re-reads the record and keeps the verdict only while its bytes are unchanged.
+  `exitMarkers(root)` -> the Set of keys of the names `run/arm/exited-<key>.json` present (names only,
+  no parse: the strict create is all or nothing); a missing folder gives an empty set; `unarmed-*`, slot
+  files and `*.tmp` names are not markers. Tested in `tcb/test/lib.test.mjs` (FX-W1 liveness).
+- `realProc({timeoutMs, exe})`: unchanged; FX-W2 (built) passes `timeoutMs: ensure_query_ms` for the
+  ensure's one list; a list cut by the timeout throws `proc-unavailable` {why: `ETIMEDOUT`}, which the
+  ensure reads as unknown (tested in `tcb/test/watch.test.mjs`, FX-W2 confirm deadline).
+- `withRunLock(root, {ce, requireArmed})`: `requireArmed: true` runs `armedCheck(root, handle, ce)` after the
+  ce check and before fn (FX-W3, built): `checkArmed(root, ce)`, so not armed is exit 6 `not-armed`, thrown
+  before fn: the refused act writes nothing. No ce given counts as not armed.
+- `armedState(root, ce, io = {})` (FX-W3, built, exported): the one file predicate of `requireArmed` and of
+  the guard hook; no process list, no lock. `{armed: true, turn_seq}` when `run/turn.json` is of this ce,
+  its arm is `confirmed` and its slots (at least one, each an integer pid > 0 and a string start_time) have
+  no exit marker `run/arm/exited-<pt>.json`. Every other case is `{armed: false, why, ...}` (fail closed):
+  `no-turn` (absent), `turn-unreadable` (not JSON or not an object), `other-ce` {turn_ce}, `arm` {arm},
+  `no-slots`, `bad-slot`, `slot-exited` {pid}. `io` {readJson, exists}: the hook passes its own.
+  `checkArmed(root, ce)`: armedState, or throw exit 6 `not-armed` {ce, why, ...}. Tested in
+  `tcb/test/lib.test.mjs` (FX-W3 armedState).
+- `acquireLock`: the break of a lock judged stale passes `breakStep(c, doBreak)`. For run.lock it
+  returns `doBreak()`. For watcher.lock (FX-W7 step 1, built) it takes run.lock with the caller's
+  retries, re-reads watcher.lock and `watcher.json`, and breaks only when both are as they were at the
+  judgement (`watcher.json` is read before the judgement); `progress` drops the verdict. The break of
+  an unreadable lock does not pass there (LR-4 kept). Test W7a: a busy run lock → `lock-busy` 75 and
+  both locks untouched; a holder that writes `watcher.json` during its judgement → not broken, the run
+  lock taken and released; run lock free and `watcher.json` unchanged → broken under the run lock.
+- `parseTranscript` (FX-W6): option `tail` and the result's non-enumerable `tail` and `kind`. The tail
+  state `{n, last, msg, pending, bg}` (lib.mjs `tailState`) is moved only by `assistant` and `user`
+  records; attachment and the 24 skipped types of `TRANSCRIPT_RECORD_TYPES` (and unknown types) are
+  neutral, not unreadable; an attachment's `queued_command` prompt is read for task notifications.
+  `transcriptKind`: nothing read → `model`; a pending tool use of the last call → `tool`; the turn ended
+  (a stop_reason other than null, tool_use, pause_turn; or an interrupt notice) → `bg-wait` while a
+  background task (toolUseResult `backgroundTaskId`, `taskId`, or `isAsync` with `agentId`) has no
+  task notification and no TaskStop/KillShell/KillBash naming it, else `idle`; else → `model`. Tested
+  in `tcb/test/watch.test.mjs` (W6a).
+  `TRANSCRIPT_KINDS` = tool, bg-wait, model, idle; `TRANSCRIPT_RECORD_TYPES` = the 27 record types
+  measured in `build/facts/WH5-Wturn.md`.
+- `slotCount(rows, procList, transcriptsRoot, {root} = {})`: `{root}` is part of the signature; FX-CLAIM's
+  callers pass it.
+- `RUNTIME_FILES`: the 13 runtime files of the round-3 fixes (path, helper of `paths(root)`, fix, writer,
+  fields, rewritten); `markerKey(pid, start_time)` names the arm markers `exited-<pt>`, `unarmed-<pt>`.
+
+## FX-CLAIM (round 3)
+
+`readClaim`, `claimRecord`, `tombstoneRecord`, `startLeaseExpired` (CONTRACT 4.10); `fence` reads the claim of attempt E for `nostart` (failure reasons, not host); `slotCount` step 7. Tests: lib T96x (step 7 and H3), T96y (the lease), T96z (claims).
+
+## FX-PLAN (round 3)
+- `planAct(row, facts)` -> one act string, first match (CONTRACT "FX-PLAN (round 3)"); pure.
+- `planFacts(root, row, ctx)` -> its facts: claim, start.json, lease (`startLeaseExpired`), the outcome log's
+  fenced reason, ready slots and tamper, the stop sample, `closesMissing`, the row's step-7 sessions; ctx gives
+  ticksTotal, nowMs, lease, procList, counted, Hmax, zombieOver, blocked, audited.
+- `slotCount`'s `opts.counted` (an array) receives `{task, epoch, session, claim, done}` per counted step-7 session.
+- Tests: lib FX-PLAN T1 (the total table; committed at started -> `stop-request` is accepted by stop.mjs since FX-CLOSE step 3), T2, T3.

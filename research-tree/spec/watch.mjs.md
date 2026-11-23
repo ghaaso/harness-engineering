@@ -10,11 +10,14 @@ the intake runner it spawns without waiting.
 ```
 node tcb/watch.mjs --root R --ce N [--interval-ms MS] [--no-intake] [--now ISO] [--free-mb M]
 node tcb/watch.mjs --once  --root R --ce N [--no-intake] [--now ISO] [--free-mb M]
-node tcb/watch.mjs --alarm --root R --ce N [--sleep-ms MS] [--now ISO]
+node tcb/watch.mjs --alarm --ensure --nonce X --root R --ce N [--sleep-ms MS] [--now ISO]
 node tcb/watch.mjs --intake --root R --ce N
 ```
 No positional mode (stdout `mode: null`; `result.run` is watcher|once|alarm|intake). `--once`,
-`--alarm`, `--intake` are exclusive (two → 66). `--interval-ms` overrides Δ (`delta_ms`);
+`--alarm`, `--intake` are exclusive (two → 66). FX-W2: the alarm starts only as the ensure, so
+`--alarm` needs `--ensure` and `--nonce X` (32 lowercase hex, a new nonce each turn, the one the turn
+then gives status's reconcile as its arm nonce); `--alarm` without either, a malformed nonce, or
+`--ensure`/`--nonce` without `--alarm` → 66 before anything is written. `--interval-ms` overrides Δ (`delta_ms`);
 `--no-intake` (test seam) never spawns intake. In the loop, `main()` reads the edge facts (now,
 free memory) once per tick (CONTRACT §1.2); `--now`/`--free-mb` fix them. The coordinator starts
 every mode as a background command.
@@ -26,18 +29,24 @@ W_cc_ticks, Z_frac, reserve_mb, soft_frac, hard_frac, W_star_coord, W_quality, W
 batch_size, f5_given, transcripts_root), `wt/<task>-e<k>/staging/READY.json`, `store/commits/`,
 `store/status/card_status.jsonl`, `store/witness.jsonl`, `store/qualification.json`,
 `queue/*/batch.json`, transcripts (lib parser, incrementally from the stored `end_byte`), process
-list.
+list. The ensure (FX-W2) also reads `run/arm/slot-<k>.json`, `run/arm/<nonce>.json`, the exit
+markers `run/arm/exited-*.json`, `run/turn.json` (`turn_seq`) and the thresholds `alarm_ms`,
+`alarm_slots`, `ensure_query_ms`, `proc_exe`.
 
 ## Writes
 `run/watcher.lock` (wx, held for life), `run/watcher.json` (writeAtomic, `assertHeld` first),
-`run/alarm.json` (alarm mode, under the run lock), ledger lines `event` {class, code, urgent,
+`run/alarm.json` (alarm mode, under the run lock), `run/arm/<nonce>.json` (the ensure, FX-W2: {state:
+'started', pid} by exclusive create, then {state: 'registered', k, pid} or {state: 'present', pid}
+under the run lock; CONTRACT §3.9 [arm-nonce]), `run/arm/slot-<k>.json` {ce, pid, start_time, nonce}
+(the ensure's hold 1, under the run lock; [arm-slot]), `run/arm/exited-<pt>.json` {ce, exit, at} (alarm
+mode, FX-W1: a lock-free exclusive create, CONTRACT §3.9 [arm-exited]), ledger lines `event` {class, code, urgent,
 detail, key}, `zombie-write` {epoch_seen, tokens}, `drain` {window, w_star}, `halt` {reason,
 fails[]}, `incident` (intake steps) — every append through `withRunLock(ce)`, so the ce is
 re-checked inside the lock before each append (R4). Transcripts are parsed before the lock (§2.1).
 
 ## Watcher steps (default and `--once`)
 1 `checkCe` (stale → 64 at once). 2 `acquireLock(watcher.lock)`: a live holder → 75 after retries;
-a dead holder is broken by lib. 3 Read `watcher.json` (absent → fresh counters; corrupt → 67);
+a dead holder is broken by lib, under the run lock (FX-W7). 3 Read `watcher.json` (absent → fresh counters; corrupt → quarantined, fresh counters, FX-W7);
 counters of every task continue from any earlier watcher (R5); set ce, pid, start_time.
 4 Default mode: one **start evaluation** with no tick counted (a new watcher re-evaluates everything,
 R6); then loop: sleep Δ, `ticks_total += 1`, evaluate. `--once`: `ticks_total += 1`, evaluate once.
@@ -50,13 +59,25 @@ b. Per row active at step started|bound (current attempt e): parse its transcrip
    `lib.variant(root, row, {f5Given})`.V.
    - V null (design-check) → no stall counter. Else V < V_min → V_min = V, stall_calls = 0; else
      stall_calls += new calls. ≥ `stall_calls` → 20.
-   - new calls = 0 on a counted tick → hang_ticks += 1, else 0. ≥ `hang_ticks` → 21. **Pause
+   - **Hang by per-kind deadlines in ticks (FX-W6, branch B1).** The first tick of an epoch counts
+     nothing (step 1; `ticks_total` still advances). After it, a new conversation record in any transcript
+     of the attempt (a new call, a tool result, a prompt: the transcript's `tail.n` grew, or it was
+     re-parsed) sets hang_ticks to 0; else a counted tick adds 1. The kind is the main transcript's tail
+     (`lib.parseTranscript` `kind`, kept in its parse-state with `tail`; none read counts as `model`);
+     its deadline: `tool` = ⌈largest declared timeout of the pending tool uses / Δ⌉ + `tool_slack_ticks`;
+     `bg-wait` = `bg_wait_ticks`; `model` = `model_ticks`; `idle` = none. hang_ticks ≥ the deadline → 21
+     `{hang_ticks, kind, deadline}`, charged as before. An `idle` child is never a hang: at hang_ticks ≥
+     `idle_ticks` step j raises act-due `idle-child`. `age_ticks` adds 1 on every counted tick at step
+     bound after the first (a paused one too); age_ticks − age_base ≥ `attempt_max_ticks` → act-due
+     `age-cap` (step j; age_base stays 0: no script sets it). `hang_ticks` (the threshold) is read no more. **Pause
      discount (M5, CONTRACT §1.2):** a counted tick whose gap `now − last_tick_at` (the stored
      value of the previous evaluation, any watcher) exceeds 2Δ is *paused*: hang_ticks is left as
      it is (new calls still reset it). This is the watcher's only use of a clock difference and it
      can only withhold a hang count; an unparseable or missing `last_tick_at` counts the tick.
    - `loopRun` of the main transcript's tool uses: run ≥ `loop_k` → 22; stored as `loop {sig, run}`.
-   - READY of epoch e: kind ready for a step without a commit record → 11; kind repair → 12. Either
+   - READY of epoch e (FX-OUT): an uncommitted ready slot in the outcome log (`lib.outcomeState`, R-b; a
+     fenced or unreadable log has none) → 11 (detail step: the latest such slot); else a repair marker in
+     `staging/READY.json` (it takes no slot) → 12. Either
      voids 20, 21, 22 for that epoch (R5, finding A4).
    - spend (current attempt) ≥ ⌊soft_frac·e_task⌋ → 13; ≥ ⌊hard_frac·e_task⌋ → 23.
    - window = `last_context`; `W_star_child` a gate and window ≥ it → 15.
@@ -90,7 +111,13 @@ j. **Act due → 17 (M3, CONTRACT decision 40): the planner's own predicate**, s
    unconfirmed; with a sample → `stop-verify@<sample.tick>` only once ticks_total ≥ sample.tick +
    `stop_verify_deltas` (earlier the verify can only defer); admitted → `start-session`, or `bind`
    when the attempt folder already has a transcript (the reconcile at the next turn start will make
-   it started). Failed rows, `limit` rows and rows whose `next` is `owner`, `none`, `audit` or
+   it started). After the row acts (FX-W6, not row acts, uncharged, no fence): per row at started|bound
+   without a READY of the epoch (class 11 or 12), `<task>:idle-child` while its kind is `idle` and
+   hang_ticks ≥ `idle_ticks`, and `<task>:age-cap` while age_ticks − age_base ≥ `attempt_max_ticks`. An
+   acknowledgement of the age-cap event line (seq ≤ acked_seq) does not re-arm the cap: the condition
+   stays, so FX-W5 raises it again at its interval and counts it towards `stuck`, which FX-W4's dead-man
+   reads. No script sets age_base (0 from the epoch's fresh state): it is where an explicit "continue"
+   act would re-arm the cap, and none is built. Failed rows, `limit` rows and rows whose `next` is `owner`, `none`, `audit` or
    `commit` raise nothing here (READY is class 11). Run level: a `drain` line of this ce with no
    slot used → `-:handover`; a non-empty table whose rows are all committed|cut|failed|dropped and
    none has a row act → `-:run-terminal`; an `event` line with seq > acked_seq whose key is not in
@@ -116,16 +143,45 @@ a paused one, M5); `--once` with nothing due → exit 0. Step j is evaluated aft
 Release the watcher lock on every exit; an uncaught error exits 70 ("restart the watcher").
 
 ## Alarm steps
-1 `checkCe` → 64. 2 Previous `alarm.json`: record it in `result.previous`; kill nothing (decision
+The alarm is started only as **the ensure** (FX-W2, FIX-wake.md FX-W2; branch S1: `alarm_slots` 1, one
+ensure per turn, no second nonce). 1 `checkCe` → 64. 1a (FX-W2 step 2) `lib.createExclusive` of
+`run/arm/<nonce>.json` {state: 'started', pid} (it makes `run/arm/`): the name exists (a reused
+nonce, or one that reconcile abandoned first) → exit 0 `nonce-reused`, nothing else written. 1b
+(step 3, outside every lock) Read the bytes of `slot-1` .. `slot-<alarm_slots>` first, then the exit
+markers, then, only when a slot of this ce has no marker, one process list
+(`lib.realProc({timeoutMs: ensure_query_ms})`); a list that fails or is cut by the timeout is
+unknown, never dead. Each slot's verdict is `lib.liveness`; a record without an integer pid > 0 and
+a string start_time is corrupt. 2 Previous `alarm.json`: record it in `result.previous`; kill nothing (decision
 5: it exits 0 `superseded` when it wakes). 2b Read the **arm token** (M1, CONTRACT §3.9): the
-sha256 of `run/acked.json`'s bytes, null when absent. 3 Under `withRunLock(ce)`: write `alarm.json`
-{pid, start_time, ce, armed_at, sleep_ms}. 4 Sleep `--sleep-ms` (default `alarm_ms`). 5 coord ce >
+sha256 of `run/acked.json`'s bytes, null when absent. 3 **Hold 1**, under `withRunLock(ce)` (steps 4
+and 8 of FX-W2): re-read the nonce file (did reconcile write `abandoned`?) and `run/turn.json`'s
+`turn_seq`; slot k (the first wins) is free when absent, corrupt, of another ce, named by an exit
+marker, or judged dead in 1b with its bytes unchanged. A free slot: `alarmSlotTurnSeq` (FX-W3), then
+`alarmRegisterSlot` writes `slot-<k>.json` {ce, pid, start_time, nonce} (from this write on the
+alarm is registered: every later exit leaves its marker, step 6) and the nonce file {state:
+'registered', k, pid}; then `alarm.json` {pid, start_time, ce, armed_at, sleep_ms}. Under S1 the
+slot and `alarm.json` are written in the same hold, so they always name the same alarm, and step 5's
+`superseded` still reads `alarm.json`. No free slot and not abandoned: the nonce file {state:
+'present', pid}, exit 0 `present`, `result.slots` the verdicts of 1b; no marker. 3a (FX-W2 step 8)
+Abandoned and no free slot: after the hold, read `turn.json` every 2 s (`checkCe` each time → 64)
+and exit 0 `abandoned` once its `turn_seq` exceeds the one read in hold 1 (`why: 'turn'`: the next
+turn's reconcile ran, so the exit arrives in that turn), or after the alarm period (`why:
+'alarm_ms'`); nothing written, no marker. An abandoned ensure that finds a free slot registers as
+above. 4 Sleep `--sleep-ms` (default `alarm_ms`). 5 coord ce >
 own → exit 64; `alarm.json` names another pid → exit 0 `superseded`; the token differs from the
 one last read → the alarm was re-armed: keep the new token, `rearms += 1`, and go back to 4 (no
-write, no clock read); else exit 30 `alarm`, `result {previous, armed, superseded, rearms}`. So the
+write, no clock read); else exit 30 `alarm`, `result {ensure: 'registered', nonce, k, previous,
+armed, superseded, rearms}`. So the
 alarm fires only after a whole period in which no endturn ran, and nobody ever kills it (the
 model's busy loop came from killing the alarm at each endturn, whose exit then woke the
-coordinator).
+coordinator). 6 **The exit marker (FX-W1 step 2).** Every exit after the registration of step 3 (30, 0
+`superseded`, 64, and an error exit: 67 or 70 in the sleep loop, or the registration hold failing
+after the slot was written, its lock lost at the release included) first creates `run/arm/exited-<pt>.json` {ce, exit, at} by
+`lib.createExclusive` (not strict: `run/arm/` is made when absent; `<pt>` = `lib.markerKey(pid,
+start_time)` of this process; `at` from the edge facts, so `--now` fixes it). The create takes no lock; a failure writes one stderr line and leaves
+the exit code as it was (readers then judge this alarm by the process list alone). An exit before
+registration (64 at step 1, 75 for a busy lock, `nonce-reused`, `present`, `abandoned`) writes none;
+a hard kill writes none.
 
 ## Intake steps
 `checkCe` → 64. Run each as a child process (`process.execPath`, `cwd: root`, `shell: false`,
@@ -142,8 +198,38 @@ its `incident` detail {script, exit: 70, timeout: true}; intake continues. Resul
 args, exit, timeout?}]}`; exit 0.
 
 ## Exit codes
-0 (`--once` quiet, alarm superseded, intake done), 10-17, 20-27, 30, 3 (`run-from-attempt`, tamper
+0 (`--once` quiet, alarm superseded, the ensure `nonce-reused`, `present` or `abandoned`, intake
+done), 10-17, 20-27, 30, 3 (`run-from-attempt`, tamper
 in intake), 64, 66, 67, 70, 75.
+
+## Raised again while the condition holds (FX-W5, round 3, branch R1)
+FIX-wake.md FX-W5; `build/branches.md` row 6. Fills the skeleton's `ownerOrNone` and `reraiseStuck`.
+- Step 1: `rowAct` raises nothing for a planned act `owner` or `none` (`ownerOrNone`), so such a row is
+  never raised again nor `stuck`. The act is `planAct`'s once FX-PLAN fills `rowActPlanned`, whose
+  facts bring zombie-over (FIX-JOIN point 11); until then `planned` is undefined and today's filters decide.
+- Classes raised again: every act-due (17) but `run-terminal` (its condition never clears), and stall,
+  hang and loop (20-22), the set the model checked R1 with (ABLATION-wake.md:234-235). Others are
+  raised once per onset as before.
+- Step 2, in evaluate after the present set is keyed by ident and before the active keys are renewed:
+  a present ident of those classes whose key's `event` line is acknowledged (seq ≤ `acked_seq`) and
+  whose last raise (the key's tick) is at least `min(15 × 2^b, 60)` ticks old, b = min(n, 2) after n
+  raises, is raised again: its key leaves `active`, so step 5 gives it a new key `<ident>|<tick>` and
+  one new `event` line with `detail.reraise` = n + 1, which exits like any new key (17 after
+  coalescing, 20-22 at once). An unacknowledged key is due anyway and is not raised again. 15 and 60
+  are marked guesses in the code (slice 1 writes no thresholds.json key).
+- Step 3: `stuck_count` = the raises made once b was at its cap, n − 3 (the raises at 15, 30 and 60
+  ticks reach it). At `stuck_raises` (thresholds.json, 3; missing or not a positive integer: 3) the
+  ident is in `stuck`: 15 + 30 + 60, then 3 × 60 = 285 ticks after the onset (about 4.75 h at Δ 60 s,
+  FIX-wake.md:54). FX-W4's dead-man reads it.
+- `watcher.json` gains `reraise: {<ident>: n ≥ 1}` and `stuck: [<ident>]` (sorted), rebuilt from the
+  present idents at each evaluation: an ident leaving the active set leaves both.
+- Tests: **W5 re-raise** (a planned row's `replace-fence`, acknowledged: quiet one tick short of each
+  interval, raised at 15, 30, 60 and 60 ticks with a new key and `detail.reraise`; `stuck_raises` 1 puts
+  it in `stuck` at the 4th raise, not the 3rd; left unacknowledged it exits 17 and is not raised again);
+  **W5 stuck** (an acknowledged hang raised again and exiting 21 at once, six times; in `stuck` only at
+  the 6th, 285 ticks after the onset; a new call clears the hang and empties `stuck` and `reraise`);
+  **W5 stuck stays** (once stuck at the 4th raise, the acknowledged act-due stays in `stuck` at quiet
+  ticks 1 and 59 ticks later, where FX-W4 reads it at its own times; nothing is raised there).
 
 ## Rules implemented
 R1, R4 (reads, decides, exits; watcher.lock; ce first and inside the lock; intake spawned, not
@@ -186,7 +272,7 @@ All with `--once` or `--interval-ms 50` and `--no-intake` unless stated; fake tr
   at most one `watcher.json` write after the raise (review U1-F3).
 - T16 a second watcher while the first holds `watcher.lock` → 75; a lock whose holder is dead is
   broken and the watcher runs.
-- T17 `watcher.json` unparseable → 67; `tasks.json` unparseable → 67.
+- T17 `watcher.json` unparseable → quarantined, exit 0 from fresh counters (FX-W7); `tasks.json` unparseable → 67.
 - T18 intake spawn (without `--no-intake`; test reads `watcher.json.intake.pid`, waits for that
   process to end and asserts it was a `--intake` run): spawned once; a second tick while it is alive
   spawns none.
@@ -195,9 +281,32 @@ All with `--once` or `--interval-ms 50` and `--no-intake` unless stated; fake tr
   incident; a stub exiting 70 → one incident; a stub exiting 64 ends it with 64; a stub that does
   not exit within `intake_step_timeout_ms` (1500 in the test) → ended, step exit 70 `timeout: true`,
   one incident, the later steps run.
-- T20 `--alarm --sleep-ms 100` → `alarm.json` written, exit 30; a coord ce raised during the sleep →
-  64; a second alarm (`--sleep-ms 2000`) started once `alarm.json` names the first: the first is not
-  signalled, exits 0 `superseded` when it wakes, and `alarm.json` names the second.
+- T20 `--alarm --ensure --nonce X --sleep-ms 100` → `alarm.json` written, `slot-1.json` {ce: 1, pid,
+  start_time, nonce: X} and `X.json` {state: 'registered', k: 1, pid}, exit 30; a coord ce raised
+  during the sleep → 64; a second ensure while the first sleeps (slot 1 live) → exit 0 `present`,
+  `result.slots` [{k: 1, state: 'alive'}], its nonce file `present`, slot 1 and `alarm.json`
+  unchanged; with slot 1 removed a third ensure registers: the first is not signalled, exits 0
+  `superseded` when it wakes, and `alarm.json` names the third.
+- FX-W2 usage: `--alarm` alone, without `--ensure` or `--nonce`, with an upper-case, short or
+  path-like nonce, and `--ensure`/`--nonce` without `--alarm` → 66 each; no `run/arm/`, no
+  `alarm.json`, no ledger.
+- FX-W2 reused nonce (FIX-wake FX-W2, schedule 2): X registers and fires (exit 30, its marker); X
+  again → exit 0 `nonce-reused` and no file changes or appears; `status --reconcile --arm-nonces X`
+  → exit 1 `arm-unconfirmed` (slot 1 `exited`), `X.json` still `registered`; a new Y (sleeping)
+  registers in the freed slot; reconcile Y → exit 0, `arm` confirmed, turn.json {turn_seq 2,
+  confirmed, unarmed_turns 0}, X's marker pruned.
+- FX-W2 confirm deadline: the shipped `arm_confirm_ms` ≥ `ensure_query_ms` + `lock_retries` × 100 +
+  5000 and `alarm_slots` 1; `lib.realProc({timeoutMs: 1}).list()` throws `proc-unavailable` with
+  why `ETIMEDOUT`; a dead slot of this ce without a marker: with `ensure_query_ms` 1 the ensure is
+  `present` (verdict unknown), with 10000 it registers (exit 30); reconcile given a nonce no ensure
+  ran waits `arm_confirm_ms` (1500) and writes it `abandoned` (exit 1), and a late ensure of it is
+  `nonce-reused`; an ensure held off hold 1 by a live `run.lock` holder while its nonce file is set
+  `abandoned`, with slot 1 live, exits 0 `abandoned` (why `turn`) once `turn.json`'s `turn_seq`
+  grows, slot 1 untaken, no marker.
+- FX-W1 alarm exit marker: exit 30 (`--sleep-ms 50`) leaves `run/arm/exited-<pt>.json` {ce: 1, exit:
+  30, at: the `--now`}; with `--sleep-ms 1500` there is no marker while the alarm sleeps, and then
+  `alarm.json` naming another pid → exit 0 and marker {exit: 0}; coord ce 2 → 64 and {exit: 64}; a torn
+  `coord.json` → 67 and {exit: 67}; `lib.exitMarkers` then holds exactly that alarm's key.
 - T21 every exit prints one §1.3 line; every ledger written verifies.
 - T22 incremental parse: a 50 MB fake transcript parsed at tick 1; tick 2 after 3 calls are appended
   reads only the new bytes (`files[path].end_byte` advances; a spy on the read count or the elapsed
@@ -216,7 +325,22 @@ All with `--once` or `--interval-ms 50` and `--no-intake` unless stated; fake tr
   `stop-verify@<tick>`. An admitted row → `start-session`; its folder gaining a transcript → a new
   key `bind` and a new exit. A `drain` line of this ce and no slot used → `handover`. An `event`
   line above acked_seq whose condition has cleared → `events`. A row at `failed` or `limit` → none.
-- M5 pause discount: hang_ticks 2; tick 1 at T, tick 2 at T + 10 min (Δ 60 s) → no exit 21,
+- W6a per-kind deadline: a pending Bash tool use with timeout 120000 (Δ 60 s, tool_slack_ticks 1) →
+  deadline 3, hang_ticks 0 after the first tick; no 21 at 2 ticks (model_ticks 2); 21 `{kind: tool,
+  deadline: 3}` at 3; its tool result restarts the count, kind `model`. In process: `parseTranscript`
+  kinds `model` (a prompt; a call with stop_reason null), `tool`, `bg-wait` (a background launch, then
+  end_turn; system and api-request records change nothing), `idle` after its task notification, after
+  a TaskStop of a Monitor task, after an interrupt; an incremental parse with the carried `tail` equals
+  the whole parse.
+- W6b idle child: end_turn, idle_ticks 2, model_ticks 1 → no 21; act-due `idle-child` at 2 ticks; a
+  user message (the answer) → kind `model`, hang_ticks 0, the key gone.
+- W6c age cap: attempt_max_ticks 2 → act-due `age-cap` at age 2 (tick 3), no 21; acknowledged → age_base
+  stays 0 and the key stays active, quiet inside FX-W5's interval; raised again at tick 18 (15 ticks
+  after the onset) with `detail.reraise` 1 and a second event line.
+- W6d age cap stuck: a coordinator that only acknowledges → the cap is raised again 15, 30, 60, 60, 60
+  and 60 ticks apart; the 6th raise (285 ticks after the onset, stuck_raises 3) puts `17|<task>:age-cap|1`
+  in watcher.json.stuck, and it stays there at an acknowledged quiet tick after; age_base stays 0.
+- M5 pause discount (after the epoch's first tick): model_ticks 2; tick 1 at T, tick 2 at T + 10 min (Δ 60 s) → no exit 21,
   hang_ticks still 1, `result.paused` true; tick 3 at T + 11 min → exit 21. Without the discount
   tick 2 exits 21.
 
@@ -224,3 +348,45 @@ All with `--once` or `--interval-ms 50` and `--no-intake` unless stated; fake tr
 A background command's exit reaching the coordinator's turn, also during sleep or after a ce
 change (§7 item 5); Node timers and the PC across suspend (item 6: one sleep of Δ = one tick);
 real transcripts matching the parser (item 7); a real session's window in its transcript.
+
+## Round-3 skeleton (S0.5)
+- `rowAct`: 1 `rowActPlanned(root, tr, row, facts)` (FX-PLAN; undefined); 2 `ownerOrNone(planned)` gives
+  null (FX-W5 step 1; false); then today's filters and act (FIX-JOIN point 11).
+- `evaluate`: `actDueIdleAgeCap(env, state, conds, {rows, tick})` after the row acts (FX-W6);
+  `reraiseStuck(env, state, present, tick)` before the active keys are renewed (FX-W5); `adoptState(env,
+  state)` after watcher.json is written (FX-W7).
+- FX-W7 (built). `evaluateCopy(env, flags, counted)` evaluates `structuredClone(env.state)` (`ticks_total
+  += 1` when counted); `holdTick` takes the run lock with about `watcher_lock_try_ms` of retries (100 ms
+  apart) and runs, in that one hold, `assertHeld` of watcher.lock, the appends, the due and pending
+  steps, the `watcher.json` write and `adoptState` (`env.state` = the copy; a non-zero busy count
+  written back to 0). A busy run lock: the copy is dropped except its `intake` record, `assertHeld`
+  outside the hold, `run/watcher-busy.json` `{ce, busy_ticks}` + 1; the loop sleeps Δ and evaluates
+  again (a dropped start evaluation stays uncounted), `--once` exits 75 `lock-busy`. Step 3: an
+  unparseable `watcher.json` is renamed to `watcher.json.<pid>.<nonce8>.corrupt` (`result.quarantined`)
+  and the counters start fresh; T17's first half now expects that. Test W7b: two busy `--once` ticks
+  with class 24 present → 75, busy 1 then 2, no `watcher.json`, no event; a default-mode watcher stays
+  up through busy ticks; after the release it exits 24 with one event line, `ticks_total` 0, busy 0;
+  a following `--once` → 24, no second line, `ticks_total` 1. Reads also `watcher_lock_try_ms`.
+- The alarm: in the registration hold, before alarm.json, `alarmSlotTurnSeq(reg)` (FX-W3), then
+  `alarmRegisterSlot(reg)` (FX-W2). Every exit after registration passes `alarmExit(reg, out or exit
+  code)`: `alarmUnarmedRecord` (FX-W3, exit 30 only), then `alarmExitMarker` (FX-W1); an error is rethrown.
+  FX-W3 built: `alarmSlotTurnSeq` adds `turn_seq_at_reg` to the slot record (turn.json's turn_seq as
+  `ensureHold1` read it in the same hold; 0 when turn.json is absent or unreadable). `alarmUnarmedRecord`, on
+  exit 30, before the marker and without a lock: when turn.json's turn_seq still equals the slot record's
+  `turn_seq_at_reg` (no reconcile in a whole alarm period), strict-create `run/arm/unarmed-<pt>.json`
+  {ce, turn_seq}; a failure is one stderr line and leaves the exit. Tested in `tcb/test/watch.test.mjs`
+  (FX-W3 unarmed record; T20 alarm).
+  FX-W1 built: `alarmExitMarker` (alarm step 6). FX-W2 built: the ensure (alarm steps 1a, 1b, 3, 3a:
+  `ensureStarted`, `ensureSlots`, `ensureHold1`, `ensureAbandoned`) and `alarmRegisterSlot`;
+  `reg.registered` is set at the slot write (FX-W1 set it after the `alarm.json` write), so a
+  registration hold that throws after the slot names this alarm (the `alarm.json` write, or a 75 at
+  the release) also passes `alarmExit`.
+
+## FX-PLAN (round 3): the planner
+`next` (status) and the row act (watch) are `lib.planAct` over `lib.planFacts` (CONTRACT, "FX-PLAN (round 3)"):
+the transcript-visible branch is gone (the claim decides); acts with arguments are strings
+(`replace-fence --reason <r>`, `replace-fence --reason crash --if-unclaimed`, `close-session <sid>`). The watcher
+keeps its filters: the first fence and `replace-start` wait for a free slot and neither halted nor draining;
+`audit`/`commit` are class 11's; `stop-verify` waits for its sample's age; `owner`/`none` raise nothing. Its
+facts: its tick, wall time, an empty process list, the step-7 sessions of its own slotCount, and the rows of class
+25 as zombie-over. Tests: status T3; watch "FX-PLAN act due", "FX-PLAN: a zombie-over row"; lib FX-PLAN T1-T3.

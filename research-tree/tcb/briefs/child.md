@@ -38,7 +38,9 @@ Write `staging/review.json`: `kind: "review"`, `field`, `task` (`{{task}}`), `pa
 - `our_work_findings`: claims in files under `in/files/` (when present) that the cards contradict: `file`, `locator`, `reason` (wrong-assumption, wrong-number, wrong-scope, other), `text` (at most 40 words).
 
 ## Finishing a step
-When a step's files are complete and valid, write `staging/READY.json` last: `{"kind":"ready","task":"{{task}}","epoch":{{epoch}},"step":"<step name>"}`. If you cannot finish because a source or a check you need is missing, write `{"kind":"repair","task":"{{task}}","epoch":{{epoch}},"question_ids":[...],"missing":"source"}` (missing: source, snapshot, card, check or other) and end your turn. When the coordinator tells you to commit, write the valid files you have, then READY, and stop: start nothing new.
+When a step's files are complete and valid, write `staging/READY.json` last: `{"kind":"ready","task":"{{task}}","epoch":{{epoch}},"step":"<step name>"}`. If you cannot finish because a source or a check you need is missing, write `{"kind":"repair","task":"{{task}}","epoch":{{epoch}},"question_ids":[...],"missing":"source"}` (missing: source, snapshot, card, check or other) and end your turn. When the coordinator tells you to commit, write the valid files you have, then READY, and stop: start nothing new. Write READY with the Write tool only (an Edit of it is denied): the hook records it in the attempt's outcome log, which decides; READY.json is only a copy. If writing READY is denied `attempt-fenced`, your attempt has been ended: write nothing more and end your turn.
 If `in/reader-brief.md` is not in your folder, you have no readers: you start none (no Agent calls) and work with the tools you have, in the same forms, until the coordinator tells you to stop.
 
 Your last line of every turn is exactly `TURN-END {{field}}`, and nothing follows it: no other note, summary or request, in that line or after it.
+
+If every tool call is denied `attempt-claimed` or `attempt-cancelled`, another session holds this attempt or it was cancelled: end your turn (FX-CLAIM).

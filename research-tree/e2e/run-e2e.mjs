@@ -284,9 +284,20 @@ const mkHazards = (cut) => ({
 const state = { fsckOk: true };
 async function fsck(name = 'fsck') { return sc('fsck', [], { name, check: (r) => (r.json.result?.result === 'pass' || r.exit === 0 ? true : 'fsck result ' + JSON.stringify(r.json.result).slice(0, 300)) }); }
 
+// FX-W3: an act that creates work (fence first, start) needs an armed turn. The coordinator arms it by its
+// calls 1 and 2 (the ensure, then status --reconcile --arm-nonces X); here this process stands in for that
+// outcome, as it stands in for the watcher and the alarm below: a confirmed turn.json of this ce naming its
+// own slot. The next reconcile of the turn re-checks the slots and finds none, as before.
+function armTurn() {
+  const me = LIB.selfInfo();
+  const prev = exists(P('run', 'turn.json')) ? rj(P('run', 'turn.json')) : { turn_seq: 0, read_seq: 0, unarmed_turns: 0 };
+  fs.writeFileSync(P('run', 'turn.json'), JSON.stringify({ ...prev, ce: CE, arm: 'confirmed', slots: [{ k: 1, pid: me.pid, start_time: me.start_time }] }));
+}
+
 async function beginAttempt(task, e, { sid, dirName, reconcile = false, name = task }) {
   // epoch e of task; fence first when the row is planned
   const pre = rowOf(task);
+  armTurn();
   if (pre.state === 'planned') await sc('replace', ['fence', '--task', task, '--epoch', '0', '--reason', 'first'], { boot: true, name: `${name}: replace fence first` });
   await fsck(`${name}: fsck before start`);
   await sc('admit', ['check', '--task', task], { ce: false, free: true, name: `${name}: admit check`, exit: 0 });
@@ -300,9 +311,30 @@ const readsOf = (folder, limit = 12) => [path.join(folder, 'in', 'brief.md'), ..
 
 async function bind(a, name) {
   writeTranscript(a.file, { sessionId: a.sid, cwd: a.folder, calls: [readCall(path.join(a.folder, 'in', 'brief.md'))] });
+  put('claim.json', LIB.claimRecord(a.sid), a.folder); // FX-CLAIM: the hook's claim at the session's first tool call, simulated like the transcript
   return sc('replace', ['bind', '--task', a.task, '--epoch', String(a.e), '--session', a.sid], { boot: true, name: `${name || a.task}: replace bind e${a.e}` });
 }
-const ready = (a, step) => put(path.join('wt', `${a.task}-e${a.e}`, 'staging', 'READY.json'), { kind: 'ready', task: a.task, epoch: a.e, step }, ROOT);
+// FX-OUT (FIX-fence.md section 1, "Steps, child side" 1-4; tcb/briefs/child.md line 41): the child writes READY last,
+// with the Write tool only. The harness runs the attempt's guard hook first (the command its .claude/settings.json
+// names), and the hook's test-and-set puts the ready slot in outcome/<j>.json, the record commit, watch and status
+// decide by. Only on allow does the Write land READY.json, a copy no decision reads. This process stands in for the
+// harness, as it does for the session start: it runs the hook with the settings' role, then writes the copy. The
+// hook's answer is checked but not counted (the counted check of the slot is the commit record that follows): a FAIL
+// line only when the hook answers other than the design says; `deny` names the code the hook must deny with.
+async function ready(a, step, { content, deny = null } = {}) {
+  const file = path.join(a.folder, 'staging', 'READY.json');
+  const bytes = content ?? JSON.stringify({ kind: 'ready', task: a.task, epoch: a.e, step });
+  let role = null;
+  try { role = /--role ([a-z-]+)/.exec(fs.readFileSync(path.join(a.folder, '.claude', 'settings.json'), 'utf8'))?.[1] ?? null; } catch { /* no settings: the row's role */ }
+  const input = JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: file, content: bytes }, cwd: a.folder, session_id: a.sid, transcript_path: a.file });
+  const r = await sc('guard-hook', ['--role', role || rowOf(a.task).role, '--task', a.task, '--epoch', String(a.e)], { ce: false, now: false, input, quiet: true });
+  const code = /\[guard-hook\] deny ([a-z0-9-]+)/.exec(r.stderr || '')?.[1] ?? null;
+  if (!(deny ? r.exit === 2 && code === deny : r.exit === 0)) {
+    rec(false, `${a.task} e${a.e}: the hook's answer to READY ${step}`, 'guard-hook', `exit=${r.exit} deny ${code} want ${deny ? 'deny ' + deny : 'allow (a ready slot)'} | stderr=${(r.stderr || '').trim().slice(0, 300)}`);
+  }
+  if (r.exit === 0) fs.writeFileSync(file, bytes); // allowed: the Write lands the copy
+  return r;
+}
 async function finishStep(a, step, name, { audit = true } = {}) {
   await sc('commit', ['intake', '--task', a.task, '--epoch', String(a.e)], { name: `${name}: commit intake (${step})` });
   if (audit) await sc('audit', ['--task', a.task, '--epoch', String(a.e)], { name: `${name}: audit (${step})`, check: (r) => (r.json.result?.label === 'clean' || r.json.result?.label === undefined ? true : 'label ' + r.json.result.label) });
@@ -371,6 +403,7 @@ async function main() {
   const APPROVAL_Q = 'I approve this protocol and plan as written.';
   put('plan/notes/approve-protocol.txt', APPROVAL_Q);
   put('plan/notes/approve-plan.txt', APPROVAL_Q);
+  put('plan/notes/closed.txt', 'I closed the session; its window and process are gone.'); // FX-CLOSE: quoted by the owner's `closed` act (closeAttempt)
   put('plan/protocols/f1.json', {
     schema_version: 1, kind: 'protocol', field: 'f1', question_ids: ['f1-a-01', 'f1-a-02'],
     criteria: { include: [{ code: 'I1', text: 'reports a number with a baseline' }], exclude: [{ code: 'E1', text: 'no baseline' }] },
@@ -407,7 +440,8 @@ async function main() {
   await sc('handover', ['init', '--tcb-commit', '1'.repeat(40)], { ce: false, exit: 1, code: 'coord-exists', name: 'handover init with another commit is refused (coord-exists)' });
   await sc('status', ['owner', '--act', 'approve', '--subject', 'protocol:f1', '--quote-file', P('plan', 'notes', 'approve-protocol.txt')], { name: 'status owner approve protocol:f1' });
   await sc('status', ['owner', '--act', 'approve', '--subject', 'analysis-plan', '--quote-file', P('plan', 'notes', 'approve-plan.txt')], { name: 'status owner approve analysis-plan' });
-  await sc('status', ['--reconcile'], { free: true, exit: 1, code: 'alarm-missing', name: 'status --reconcile: no alarm yet -> alarm-missing (the turn must start one)' });
+  // FX-W2: reconcile confirms the arm only by a live alarm slot (run/arm/slot-1.json); none yet -> the turn is unarmed
+  await sc('status', ['--reconcile'], { free: true, exit: 1, code: 'arm-unconfirmed', name: 'status --reconcile: no alarm slot yet -> arm-unconfirmed (the turn is unarmed)' });
 
   if (FORCE_SELFTEST) {
     await forceSelftest('forced by --force-selftest (development)');
@@ -448,7 +482,7 @@ async function main() {
     await bind(a, task);
     writeTranscript(a.file, { sessionId: a.sid, cwd: a.folder, calls: [...readsOf(a.folder), { text: `Done.\nTURN-END ${task}` }] });
     put(path.join('wt', `${task}-e1`, 'staging', `${step === 'hazards' ? 'hazards' : step}.json`), obj, ROOT);
-    ready(a, step);
+    await ready(a, step);
     await finishStep(a, step, task);
   };
   // The first run of this e2e wrote p_ids P1..P21 only, as spec/gate.mjs.md and CONTRACT 3.19 say, and gate.mjs
@@ -469,7 +503,8 @@ async function main() {
   chk('f1-research: attempt folder has inputs, settings, agents, todo', exists(path.join(R.folder, 'in', 'protocol.json')) && exists(path.join(R.folder, '.claude', 'settings.json')) && exists(path.join(R.folder, 'view', 'todo.json')) && exists(path.join(R.folder, '.claude', 'agents', 'reader.md')), R.folder, 'replace.mjs');
   // the session start is the app's: a transcript whose cwd is the folder, found by --reconcile
   writeTranscript(R.file, { sessionId: R.sid, cwd: R.folder, calls: [readCall(path.join(R.folder, 'in', 'brief.md'))] });
-  await sc('status', ['--reconcile'], { free: true, exit: 1, code: 'alarm-missing', name: 'f1-research: status --reconcile finds the transcript by folder', check: () => (rowOf('f1-research').step === 'started' ? true : 'step ' + rowOf('f1-research').step) });
+  await sc('status', ['--reconcile'], { free: true, exit: 1, code: 'arm-unconfirmed', name: 'f1-research: status --reconcile finds the transcript by folder', check: () => (rowOf('f1-research').step === 'started' ? true : 'step ' + rowOf('f1-research').step) });
+  put('claim.json', LIB.claimRecord(R.sid), R.folder); // FX-CLAIM: the hook's claim at the session's first tool call, simulated like the transcript
   await sc('replace', ['bind', '--task', 'f1-research', '--epoch', '1', '--session', R.sid], { boot: true, name: 'f1-research: replace bind (started -> bound)' });
   // the guard hook (a pure decision script: stdin JSON, exit 0 allow, 2 deny)
   const hook = (tool, input) => JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: tool, tool_input: input, cwd: R.folder, session_id: R.sid, transcript_path: R.file });
@@ -574,10 +609,12 @@ async function main() {
 
   // ------------------------------------------------------------ I. commit the pack (torn READY first)
   await sc('tms', [], { name: 'tms (labels, repair list) before the pack is committed' });
-  fs.writeFileSync(stg('READY.json'), '{"kind":"ready","task":"f1-res');
+  // fault: a torn READY (the session was cut off mid-write). FX-OUT child side 3: the child's Write meets the hook
+  // first, which refuses bytes that do not parse (ready-invalid): no ready slot, and the Write never lands.
+  await ready(R, 'pack', { content: '{"kind":"ready","task":"f1-res', deny: 'ready-invalid' });
   await sc('commit', ['record', '--task', 'f1-research', '--epoch', '1', '--step', 'pack'], { exit: 2, code: 'no-ready', name: 'FAULT torn READY.json is not read as done (commit record exit 2 no-ready)', check: () => (!exists(P('store', 'commits', 'f1-research.pack.json')) ? true : 'a commit record exists') });
   chk('FAULT torn READY: the row is not committed', rowOf('f1-research').state !== 'committed', '', 'commit.mjs');
-  ready(R, 'pack');
+  await ready(R, 'pack');
   const rec1 = await finishStep(R, 'pack', 'f1-research');
   chk('f1-research committed; commit record names the pack and the 4 cards... and the extra cards in the store only', rowOf('f1-research').state === 'committed' && exists(P('store', 'commits', 'f1-research.pack.json')), `row ${rowOf('f1-research').state}`, 'commit.mjs');
   const researchPack = (() => { try { return rj(P('store', 'commits', 'f1-research.pack.json')).outputs.find((o) => o.kind === 'pack')?.id; } catch { return null; } })();
@@ -596,16 +633,20 @@ async function main() {
   // the replaced attempt writes anyway
   put(path.join('wt', 'f1-control-e1', 'staging', 'cards', 'late.card.json'), { ...CARDS.c1, quote: 'A late write by the replaced attempt that must never be stored here' }, ROOT);
   const lateId = LIB.objectId('c', { ...CARDS.c1, quote: 'A late write by the replaced attempt that must never be stored here' });
-  ready(C1, 'pack');
+  // its READY too, but a READY Write meets the hook (FX-OUT child side 1, the epoch gate): the row is at epoch 2, so
+  // the hook denies it (stale-epoch) and neither a slot nor the copy is made
+  await ready(C1, 'pack', { deny: 'stale-epoch' });
   const zBefore = ofKind('zombie-write').length;
   await sc('commit', ['intake', '--task', 'f1-control', '--epoch', '1'], { exit: 65, name: 'FAULT stale epoch: commit intake of the replaced attempt is refused (65)' });
   await sc('commit', ['record', '--task', 'f1-control', '--epoch', '1', '--step', 'pack'], { exit: 65, name: 'FAULT stale epoch: commit record of the replaced attempt is refused (65)' });
   chk('FAULT replaced attempt: the late write is logged (zombie-write) and not stored', ofKind('zombie-write').length > zBefore && !exists(P('store', 'objects', `${lateId}.json`)) && !exists(P('store', 'commits', 'f1-control.pack.json')), `zombie lines ${ofKind('zombie-write').length - zBefore}`, 'commit.mjs');
-  await sc('watch', ['--once', '--no-intake'], { free: true, exit: [0, 11, 12, 13, 14, 15, 16, 17], name: 'watch --once logs the zombie write of the fenced attempt' });
+  await sc('watch', ['--once', '--no-intake'], { free: true, exit: [0, 11, 12, 13, 14, 15, 16, 17], name: 'watch --once after the replaced attempt\'s late writes (its READY was denied: no copy for the zombie-write telemetry)' });
   await sc('stop', ['request', '--task', 'f1-control', '--epoch', '2'], { name: 'stop request (fence first, then stop)', check: () => (rowOf('f1-control').step === 'stop-requested' ? true : 'step ' + rowOf('f1-control').step) });
+  await closeAttempt('f1-control', 1, 'the stalled attempt');
   await sc('stop', ['verify', '--task', 'f1-control', '--epoch', '2'], { exit: 6, name: 'stop verify samples the transcript sizes (exit 6)' });
   for (let i = 0; i < 2; i += 1) await sc('watch', ['--once', '--no-intake'], { free: true, exit: [0, 11, 12, 13, 14, 15, 16, 17], name: `watch --once tick (stop_verify_deltas ${i + 1}/2)` });
-  await sc('stop', ['verify', '--task', 'f1-control', '--epoch', '2'], { name: 'stop verify: no growth, no survivors -> stopped', check: () => (rowOf('f1-control').step === 'stopped' && LIB.attemptOf(rowOf('f1-control'), 1).stop === 'confirmed' ? true : JSON.stringify(rowOf('f1-control').step)) });
+  tick(LIB.thresholds(ROOT).get('stop_verify_ms')); // FX-CLOSE (c), N3: the no-growth window also needs stop_verify_ms of wall time
+  await sc('stop', ['verify', '--task', 'f1-control', '--epoch', '2'], { name: 'stop verify: no growth, no survivors, the close recorded -> stopped', check: () => (rowOf('f1-control').step === 'stopped' && LIB.attemptOf(rowOf('f1-control'), 1).stop === 'confirmed' ? true : JSON.stringify(rowOf('f1-control').step)) });
   const C2 = await beginAttempt('f1-control', 2, { sid: sidOf(31), name: 'f1-control' });
   chk('f1-control e2: checkpoint prefix of e1 enters in/checkpoint (R7)', exists(path.join(C2.folder, 'in', 'checkpoint', 'prefix', 'notes.txt')) && rowOf('f1-control').state === 'active', '', 'replace.mjs');
   await bind(C2, 'f1-control e2');
@@ -613,13 +654,13 @@ async function main() {
   const controlPack = mkPack([sentence('s1', 'cache', 'fact', 'The cache cut median lookup latency from 20 ms to 12.5 ms.', [IDS.c1]), sentence('s2', 'batch', 'fact', 'Batching writes cut median latency from 10 ms to 8 ms.', [IDS.c2])]);
   writeTranscript(C2.file, { sessionId: C2.sid, cwd: C2.folder, calls: [...readsOf(C2.folder, 6), { tools: [{ name: 'Write', input: { file_path: path.join(C2.folder, 'staging', 'pack.json') } }], results: ['ok'] }, { text: 'Done.\nTURN-END f1' }] });
   put(cstg('pack.json'), controlPack, ROOT);
-  ready(C2, 'pack');
+  await ready(C2, 'pack');
   await finishStep(C2, 'pack', 'f1-control');
   const ctlPackId = (() => { try { return rj(P('store', 'commits', 'f1-control.pack.json')).outputs.find((o) => o.kind === 'pack')?.id; } catch { return null; } })();
   const ctlReview = mkReview('f1-control', ctlPackId);
   put(cstg('review.json'), ctlReview, ROOT);
   writeTranscript(C2.file, { sessionId: C2.sid, cwd: C2.folder, calls: [...readsOf(C2.folder, 6), { tools: [{ name: 'Write', input: { file_path: path.join(C2.folder, 'staging', 'pack.json') } }, { name: 'Write', input: { file_path: path.join(C2.folder, 'staging', 'review.json') } }], results: ['ok', 'ok'] }, { text: 'Done.\nTURN-END f1' }] });
-  ready(C2, 'review');
+  await ready(C2, 'review'); // a row of two steps stays active after its first commit, and its child goes on (Rev 5 point 3)
   await finishStep(C2, 'review', 'f1-control (same-window review)');
   chk('f1-control committed after two steps', rowOf('f1-control').state === 'committed', rowOf('f1-control').state, 'commit.mjs');
   if (ONLY_PHASE === 'J') return finish();
@@ -635,7 +676,7 @@ async function main() {
   const reviewObj = mkReview('f1-review', researchPack, findings);
   writeTranscript(V.file, { sessionId: V.sid, cwd: V.folder, calls: [...readsOf(V.folder, 40), { tools: [{ name: 'Write', input: { file_path: path.join(V.folder, 'staging', 'review.json') } }], results: ['ok'] }, { text: 'Done.\nTURN-END f1' }] });
   put(path.join('wt', 'f1-review-e1', 'staging', 'review.json'), reviewObj, ROOT);
-  ready(V, 'review');
+  await ready(V, 'review');
   await finishStep(V, 'review', 'f1-review');
   chk('f1-review committed', rowOf('f1-review').state === 'committed', rowOf('f1-review').state, 'commit.mjs');
   await sc('certify', ['--task', 'f1-review', '--epoch', '1'], { name: 'certify: reads vs manifest, cited cards confirmed, plants found', check: (r) => (r.json.result?.result === 'certified' && r.json.result?.plants?.found === 3 ? true : JSON.stringify(r.json.result).slice(0, 400)) });
@@ -705,27 +746,54 @@ async function main() {
   fs.writeFileSync(P('run', 'watcher.json'), JSON.stringify({ ...wj, ce: CE, pid: me.pid, start_time: me.start_time }));
   fs.writeFileSync(P('run', 'watcher.lock'), JSON.stringify({ pid: me.pid, start_time: me.start_time, nonce: '0'.repeat(32), script: 'watch', ce: CE, acquired_at: tick() }));
   fs.writeFileSync(P('run', 'alarm.json'), JSON.stringify({ pid: me.pid, start_time: me.start_time, ce: CE, armed_at: tick(), sleep_ms: 3600000 }));
-  await sc('status', ['--reconcile'], { free: true, name: 'status --reconcile with a live alarm (stand-in): nothing missing' });
+  // FX-W2: the ensure's hold 1 writes the slot and its nonce file with alarm.json (watch --alarm --ensure --nonce X);
+  // call 2 is reconcile with that nonce, which confirms the arm by the live slot it registered
+  const armNonce = 'a1'.repeat(16);
+  fs.mkdirSync(P('run', 'arm'), { recursive: true });
+  fs.writeFileSync(P('run', 'arm', 'slot-1.json'), JSON.stringify({ ce: CE, pid: me.pid, start_time: me.start_time, nonce: armNonce }));
+  fs.writeFileSync(P('run', 'arm', `${armNonce}.json`), JSON.stringify({ state: 'registered', k: 1, pid: me.pid }));
+  await sc('status', ['--reconcile', '--arm-nonces', armNonce], { free: true, name: 'status --reconcile --arm-nonces with a live alarm slot (stand-in): the arm is confirmed', check: () => (rj(P('run', 'turn.json')).arm === 'confirmed' ? true : 'turn ' + JSON.stringify(rj(P('run', 'turn.json')))) });
   const ledHead = LIB.ledgerHead(ROOT).seq;
   await sc('status', ['--endturn', '--acked-seq', String(ledHead)], { name: 'status --endturn: both wake sources run' });
   await sc('status', ['--endturn', '--acked-seq', String(ledHead + 5)], { exit: 1, code: 'acked-ahead', name: 'status --endturn with an acked seq beyond the ledger is refused' });
-  await sc('handover', ['raise'], { name: 'handover raise (drain, quiescent): ce 2', check: (r) => (rj(P('run', 'coord.json')).ce === 2 && /ce 2/.test(r.json.result?.brief || '') ? true : 'coord ' + JSON.stringify(rj(P('run', 'coord.json')))) });
+  const raised = await sc('handover', ['raise'], { name: 'handover raise (drain, quiescent): ce 2', check: (r) => (rj(P('run', 'coord.json')).ce === 2 && /ce 2/.test(r.json.result?.brief || '') ? true : 'coord ' + JSON.stringify(rj(P('run', 'coord.json')))) });
   await sc('status', [], { ce: 1, exit: 64, name: 'a stale ce is refused by every writing script (64)' });
   CE = 2;
-  await sc('handover', ['bind', '--session', COORD2_SID], { name: 'handover bind (successor session)' });
+  // FX-CGATE (FIX-fence part 3, steps 1-2): the successor takes the nonce from the raise's brief line; the hook's
+  // bind step names its session in run/coord-session-2.json (this process stands in for the hook); bind checks the nonce
+  const nonce = /--nonce ([0-9a-f]{32})/.exec(raised.json?.result?.brief || '')?.[1] ?? 'no-nonce-in-brief';
+  fs.writeFileSync(P('run', 'coord-session-2.json'), JSON.stringify({ session_id: COORD2_SID }));
+  await sc('handover', ['bind', '--nonce', nonce], { name: 'handover bind (successor session)', check: () => (rj(P('run', 'coord.json')).session === COORD2_SID && rj(P('run', 'coord.json')).successor_nonce === undefined ? true : 'coord ' + JSON.stringify(rj(P('run', 'coord.json')))) });
   await sc('gate', ['cut', '--design', designFile], { name: 'gate cut at ce 2: the design cut is identical, nothing new' });
   await sc('fsck', [], { name: 'fsck at ce 2' });
   return finish();
 }
 
-// A committed row's session still counts as a slot until `stop verify` confirms it gone (decision 17).
+// FX-CLOSE (a), (b): stop verify confirms only once the close of the attempt's claim holder (else its bound session),
+// and of every other session whose transcript has the attempt's folder as cwd, is recorded. Here each attempt has one
+// session, its claim holder. The app closes a session, and no hook record names a close by the CLI's id yet, so this
+// process stands in for the owner: his `closed` act records it (run/close/done/<sid>.json, outcome owner).
+async function closeAttempt(task, epoch, label) {
+  let sid = null;
+  try {
+    const a = LIB.attemptOf(rowOf(task), epoch);
+    const c = LIB.readClaim(a.folder ? path.resolve(ROOT, a.folder) : att(task, epoch));
+    sid = c.kind === 'session' ? c.session_id : (a.session || null);
+  } catch { sid = null; }
+  return sc('status', ['owner', '--act', 'closed', '--subject', String(sid), '--quote-file', P('plan', 'notes', 'closed.txt')], { name: `status owner --act closed: ${task} e${epoch}'s session (${label})`, check: () => (exists(P('run', 'close', 'done', `${sid}.json`)) ? true : `no run/close/done/${sid}.json`) });
+}
+
+// A committed row's session still counts as a slot until `stop verify` confirms it gone (decision 17); FX-CLOSE: the
+// confirm needs the session's close (closeAttempt) and stop_verify_ms of wall time since the sample as well as the ticks.
 async function stopCommitted(label) {
   const rows = tasks().tasks.filter((r) => r.state === 'committed').map((r) => ({ task: r.task, epoch: r.epoch }))
     .filter(({ task, epoch }) => { try { return LIB.attemptOf(rowOf(task), epoch).stop !== 'confirmed'; } catch { return true; } });
   if (rows.length && !exists(P('run', 'watcher.json'))) await sc('watch', ['--once', '--no-intake'], { free: true, exit: [0, 10, 11, 12, 13, 14, 15, 16, 17], name: 'watch --once (first tick: watcher.json, the stop sample needs ticks_total)' });
   for (const { task, epoch } of rows) await sc('stop', ['request', '--task', task, '--epoch', String(epoch)], { name: `stop request ${task} (committed, ${label})` });
+  for (const { task, epoch } of rows) await closeAttempt(task, epoch, label);
   for (const { task, epoch } of rows) await sc('stop', ['verify', '--task', task, '--epoch', String(epoch)], { exit: 6, name: `stop verify ${task}: sample` });
   for (let i = 0; i < 2; i += 1) await sc('watch', ['--once', '--no-intake'], { free: true, exit: [0, 10, 11, 12, 13, 14, 15, 16, 17], name: `watch --once tick for the stops (${i + 1}/2)` });
+  if (rows.length) tick(LIB.thresholds(ROOT).get('stop_verify_ms')); // FX-CLOSE (c), N3
   for (const { task, epoch } of rows) await sc('stop', ['verify', '--task', task, '--epoch', String(epoch)], { name: `stop verify ${task}: confirmed`, check: () => (rowOf(task).state === 'committed' && LIB.attemptOf(rowOf(task), epoch).stop === 'confirmed' ? true : 'stop ' + LIB.attemptOf(rowOf(task), epoch).stop) });
 }
 

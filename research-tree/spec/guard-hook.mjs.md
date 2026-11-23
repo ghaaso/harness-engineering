@@ -9,7 +9,8 @@ hook input), §3.22 (`must_read.json`), §4.3 (`isUnder`, `segmentName`), §4.8 
 The preventive half of R29: before every tool call of a research session or helper, refuse paths
 outside the role, writes under `.claude/` or a protected path, Bash except the coordinator's `node
 tcb/<n>.mjs`, a wrong helper type, a child's fetch of a non-witnessed URL, any call of a fenced
-attempt. It decides from files, writes nothing (§8.20) and denies on its own error.
+attempt. It decides from files, takes no lock, writes only by strict exclusive create inside its deadline (§8.20, 0b;
+no step writes yet) and denies on its own error.
 
 ## Command line and protocol
 ```
@@ -23,12 +24,22 @@ stderr line `[guard-hook] deny <code>: <detail>`. **No other exit code ever**: a
 non-blocking error that lets the call through, so a usage error is a deny (not 66), the
 run-from-attempt check is a deny (not 3), and uncaught exceptions, rejections and an internal
 deadline (threshold `hook_deadline_ms`, 5000, guess) all exit 2 `internal`. It does not use
-`runMain`'s stdout line; it reads no clock to decide anything. Whether it runs as the entry is
+`runMain`'s stdout line; it reads no wall clock to decide anything; its one clock is its own deadline (the fallback timer, and for a
+write the time left until `hook_deadline_ms` from its start, on the monotonic clock, 0b). Whether it runs as the entry is
 decided by `import.meta.main`, or by comparing the realpath of `process.argv[1]` with the module's
 own path (Node gives `import.meta.url` as the realpath): started through a junction or a symlink it
 still decides, never exits 0 without deciding.
 
-## Reads (never writes)
+## Writes (0b, FIX-fence §0b)
+Only through `hookCreate(io, file, data)`: `lib.createExclusive(file, data, {strict: true, budget})`, `budget` = the
+time left until `hook_deadline_ms` counted from the hook process's start (in-process, a call counts from its own
+start to 5000). Result `created`, `identical` or `different` (another writer's bytes; the caller reads them). Time
+spent before or during the create → deny `budget-spent`; `no-parent`, `no-hardlink` → deny with that code; any
+other error → `write-failed`. A denied write makes nothing at the name. No lock, never a path a script writes. The
+files come with FX-OUT (outcome slots), FX-CLAIM (`claim.json`) and FX-CGATE (`start.json`, `coord-session-<ce>`,
+close records): until then no step writes. `hookWrite(file, data, io)` is exported for tests.
+
+## Reads
 `tcb/profiles/<role>.json`, `tcb/thresholds.json`; task roles: `run/tasks.json` (`lib.readTasks`, no
 lock); `fetch: witnessed`: `{attempt}/in/must_read.json` only, plus the one URL's
 `.snapshots/by-url/<urlKey>.jsonl` and the `.snapshots/meta/<raw_sha>.json` it names (never the
@@ -72,6 +83,19 @@ ledger, so the cost does not grow with the run); checker: `queue/<b>/batch.json`
     quotes), then arguments made only of `[A-Za-z0-9_\-./:=]` or double-quoted strings of those plus
     space and `\`; `<n>` matches `^[a-z][a-z-]*$`, is not `lib`, and the file exists; else
     `bash-pattern`. No shell metacharacter (`;&|<>$'(){}*?!%^@,`, a backtick, a newline) ever passes.
+    Then **the allow list (FX-W1 step 5, R29; `stepAllowList`):** the script (the path's file name),
+    its mode (the third token when it is not a `--` token) and its flags (the name, up to `=`, of
+    every `--` token: `lib.parseArgs` reads each as a flag) must fit one of that script's production
+    forms in `EXEC_FORMS` [mode or none, required flags, other allowed flags], taken from each
+    script's spec ("## Command line") with the round-3 forms (`handover bind --nonce`, `replace fence
+    --if-unclaimed`, `watch --alarm --ensure --nonce`, `status --reconcile --arm-nonces`, `status
+    --deadman`); else `bash-pattern` with detail `flag not allowed: <script> <why>`, why one of
+    `--<flag>`, `(no production form)` (the hook itself), `without a mode`, `mode <m>`, `without
+    --<req>`, `<flags> together`. The test seams `TEST_SEAM_FLAGS` (`--once`, `--boot`, `--tick`,
+    `--now`, `--sleep-ms`, `--interval-ms`, `--free-mb`, `--no-intake`, and `--rng-seed`,
+    `--transcripts-root`) are in no form, so they are refused for every script (CONTRACT §1.2). The
+    alarm form requires `--alarm --ensure --nonce` (FX-W2): a bare `--alarm` is refused (`flag not
+    allowed: watch without --ensure`).
 13. agent: `subagent_type` present and in `agent_types` → pass; else `agent-type`.
 14. Allow: exit 0.
 
@@ -80,7 +104,7 @@ ledger, so the cost does not grow with the run); checker: `queue/<b>/batch.json`
 |---|---|---|---|---|---|---|
 | child, child-reviewing, canary | Read Glob Grep Write Edit Agent WebFetch ToolSearch | `{attempt}/` | `{attempt}/staging/` | reader | witnessed | none |
 | fresh-reviewer, control, stpa, fmea, mapper | Read Glob Grep Write | `{attempt}/` | `{attempt}/staging/` | — | none | none |
-| coordinator | Read Glob Grep Write Edit Agent Bash PowerShell ToolSearch + the host's session tools (owner lists them as `<prefix>*`) | `{root}/run/status.json`, `{root}/views/`, `{root}/store/objects/x_`, `{root}/completeness/gate.json`, `{root}/plan/`, `{root}/tcb/briefs/`, `{root}/tcb/README.md` | the coordinator paths of CONTRACT §2.1: `{root}/plan/questions/`, `{root}/plan/approaches.json`, `{root}/plan/protocols/`, `{root}/plan/analysis-plan.json`, `{root}/plan/cost-inputs.json`, `{root}/plan/tasks-plan.json`, `{root}/plan/plant-candidates/`, `{root}/plan/our-work/`, `{root}/plan/notes/` | checker, mapper | none | tcb-node |
+| coordinator | Read Glob Grep Write Edit Agent Bash PowerShell ToolSearch + the host's session tools (owner lists them as `<prefix>*`) | `{root}/run/status.json`, `{root}/views/`, `{root}/store/objects/x_`, `{root}/completeness/gate.json`, `{root}/plan/`, `{root}/tcb/briefs/`, `{root}/tcb/README.md` | the coordinator paths of CONTRACT §2.1: `{root}/plan/questions/`, `{root}/plan/approaches.json`, `{root}/plan/protocols/`, `{root}/plan/analysis-plan.json`, `{root}/plan/cost-inputs.json`, `{root}/plan/tasks-plan.json`, `{root}/plan/plant-candidates/`, `{root}/plan/our-work/`, `{root}/plan/notes/` | checker | none | tcb-node |
 | reader | WebSearch WebFetch ToolSearch StructuredOutput | — | — | — | any | none |
 | checker | Read StructuredOutput | `{root}/queue/{batch}/` | — | — | none | none |
 
@@ -131,7 +155,8 @@ the exit code is 0 or 2, stdout is empty, and on 2 stderr starts `[guard-hook] d
 - T5 Bash for child → `tool-denied`; coordinator `node tcb/status.mjs --root C:/r --ce 1`
   (cwd root) and the absolute quoted form → 0; `node tcb/x.mjs; del y`, `node -e 1`,
   `node tcb/../../a.mjs`, `node tcb/lib.mjs`, `node tcb/nosuch.mjs`, the old layout `node tcb/scripts/status.mjs` (relative or absolute), `$(x)`,
-  a newline → 2 `bash-pattern`.
+  a newline → 2 `bash-pattern`. (Its allowed calls are production forms, so they pass the FX-W1 allow
+  list unchanged; its denied ones fail the grammar before it.)
 - T6 Agent `subagent_type: reader` from a child → 0; `general-purpose` or absent → 2 `agent-type`;
   coordinator `checker` → 0, `reader` → 2.
 - T7 A helper call (`agent_type: reader`) in a child folder: WebFetch of any http URL → 0, Read of
@@ -157,6 +182,21 @@ the exit code is 0 or 2, stdout is empty, and on 2 stderr starts `[guard-hook] d
   parses after substitution, its hook command starts with the quoted `{node}`, names its own role, allows only tools in the
   profile's `tools_allow` and denies every `tools_deny` entry; `reader.md` lists exactly WebSearch,
   WebFetch and `checker.md` exactly Read, each body equal to its brief.
+- T15 (0b) `hookWrite`: a create with time left → `created`, again `identical`, other bytes `different` (no
+  deny, bytes kept); `budgetMs` 0 or below → `budget-spent`; a missing parent → `no-parent`, no folder made;
+  `fs.linkSync` failing ENOTSUP → `no-hardlink`; a temp open failing EPERM every time with 150 ms left →
+  `budget-spent` after 2 to 40 tries inside about that time; a throwing `create` → `write-failed`, a strange
+  result → `internal`. Nothing is left at a denied name. (Runs in a checkout whose path has no `.claude` segment:
+  under `.claude/` T2-T4, T11 and T13 deny every write `write-claude`.)
+
+- T16 FX-W1 allow list (in process, through `decide`): one production call of every form of every
+  script of `EXEC_FORMS`, with the round-3 forms and `--flag=value` spelling → allowed; each of the ten
+  test seams, as `--x v` and `--x=v`, added to a production call of every script → `bash-pattern`
+  `flag not allowed: <script> --<x>`; a mode flag's companions without it (`watch --ensure --nonce`,
+  `status --arm-nonces`), two modes together, no mode, a flag of another mode, an unknown flag, a
+  quoted `"--now"` and `guard-hook.mjs` itself → `bash-pattern` with the reason; and every `--flag`
+  each script's spec names under "## Command line" (except "no `--x`" mentions) is in a form of that
+  script or is a seam. (Named `FX-W1 allow list` in `tcb/test/guard-hook.test.mjs`.)
 
 ## Cannot be tested without the app (written, then `t.skip('needs-app: ...')`)
 - needs-app 1: the harness runs this hook before every tool call, helpers included, passes the
@@ -165,3 +205,50 @@ the exit code is 0 or 2, stdout is empty, and on 2 stderr starts `[guard-hook] d
 - needs-app 2: user-level denies bind every session; the `//` absolute form works on Windows.
 - needs-app 3: a session in `wt/<task>-e<e>/` obeys that folder's settings and agent files and no
   ancestor's (the coordinator's hook must not apply to children).
+
+## Round-3 skeleton (S0.5): the steps of the decision
+One context `pass` = {hook, root, role, task, epoch, attempt, toolName, toolInput, cwd, io, profile, row,
+access}. Each step is empty until its fix fills it. A step denies by throwing; a step that writes does so
+only through `hookCreate` (strict create, 0b), after every read-only check of the call (FIX-JOIN point 9).
+- Step 4, task roles, after the epoch gate: `stepClaim` (FX-CLAIM).
+- Step 6 is `checkAccess(pass)`, moved as it was; in its exec branch, after the tcb-node grammar check:
+  `stepAllowList` (FX-W1).
+- Step 7, after step 6 allowed the call. Task roles, Write or Edit: `stepReadySlot` (FX-OUT, built: a target
+  whose path key is `{attempt}/staging/READY.json`: an Edit → deny `ready-write-only`; a Write whose `content`
+  does not parse, fails `checkFormat(ready)`, or names another task, epoch or a step not in the row → deny
+  `ready-invalid`; a repair marker → allow, no slot; else `lib.outcomeAppend` with `hookCreate` as its create:
+  a fenced log → deny `attempt-fenced`, the same ready slot or a new one → allow, a bad log → deny
+  `outcome-tamper`, no `outcome/` → deny `no-parent`). Coordinator:
+  `coordinatorSteps`, in order `stepBind` (FX-CGATE 2), `stepCurrentSession` (FX-CGATE 3), `stepArmed`
+  (FX-W3, built: for the session-start tool only, `lib.armedState` at coord.json's ce through the hook's io;
+  not armed → deny `not-armed` `ce N: <why> {detail}`, before the row check and the start record, so nothing
+  is written; the stop tools and every other call are never gated by it; tested in FX-W3 hook and G4),
+  `stepRowAtAdmitted` (FX-CGATE 4, read-only), `stepStartRecord` (FX-CGATE 4), `stepStopIntent`
+  (FX-CGATE 5); a step that returns `'allow'` ends them.
+- FX-CGATE as built. Names: a caller is the hook input's `session_id`, a lowercase UUID (`SESSION_ID_RE`); a stop
+  target is an app id `local_<uuid>` (`APP_SESSION_ID_RE`); anything else (`self`, a CLI id, a path) is `bad-target`
+  and nothing is written. Step 2 `stepBind`: an exec call `node <root>/tcb/handover.mjs bind` with exactly the pairs
+  `--root <this root>`, `--ce <coord.json ce>`, `--nonce <coord.json successor_nonce>` (any order), a UUID caller
+  that no `run/coord-session-<k>.json` with k < ce names (an unreadable one disqualifies) strict-creates
+  `run/coord-session-<ce>.json` {session_id} and is allowed; another session already there → `bound-elsewhere`; a
+  call that does not qualify goes on. Step 3 `stepCurrentSession`: the read kind passes; any other call of a
+  caller other than the session of `coord-session-<ce>.json` (ce from coord.json) → `stale-coordinator`, also when
+  either file cannot be read. Step 4 (the profile's `session_tools.start`): `cwd` absolute and exactly
+  `<root>\wt\<T>-e<E>`, `use_worktree: false`, `context` absent or `fresh`, `target` absent or `local`, `host`,
+  `preset`, `environment`, `repository`, `proposal_id`, `source_branch`, `branch_name` absent, else `bad-target`;
+  the row (no lock) active/admitted at E, else `wrong-step` (`table-unreadable`); then `wt/<T>-e<E>/start.json`
+  {kind:'start', session, tool_use_id|null, tick (watcher.json ticks_total or null), at}; a record already there
+  is allowed only for the same session and the same non-null tool_use_id, else `start-issued`. Step 5
+  (`session_tools.stop`): `run/close/intent/<target>.json` {kind:'close-intent', session, by, tool_use_id|null};
+  a record already there passes when it is a close-intent of that target (a retried close), else `record-tamper`.
+  Step 6, the Post mode: `PostToolUse` and `PostToolUseFailure` are taken for the coordinator's stop tools only
+  (any other role or tool → `bad-input`); steps 4-7 do not run. The text (`tool_response` as a string, the joined
+  `text` of a content array or of {content}, and `error`): `Archived session <t>` then ` (` or `.`, or `Session <t>
+  is already archived.` → `stopped`; `Session <t> not found.` → `no-such-session`; any other text writes nothing
+  (exit 0). The record `run/close/done/<t>.json` {kind:'close-done', session, outcome, by}; a record already there
+  passes when it is a close-done of that target (the first stands), else `record-tamper`. The profile shape check
+  takes the optional `session_tools` (CONTRACT 3.21).
+
+## FX-CLAIM (round 3)
+
+`stepClaim` (step 4, after the epoch gate, no lock): a `session_id` not of FX-CGATE's `SESSION_ID_RE` (a lowercase UUID) → `bad-input`; no claim → strict create of the session claim; another session → `attempt-claimed`; a tombstone → `attempt-cancelled`; bytes that do not parse → `claim-invalid`. Tests: T10b; T13 makes its session's claims before counting.

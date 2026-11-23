@@ -1,0 +1,57 @@
+CORRECT: 14 findings
+
+# Blind review of `research-tree/build/COMPLEXITY.md`
+
+Helper of top session 3 (kind refute, Opus), 2026-11-20, from `research-tree/build/briefs/COMPLEXITY-refute.md`. Read
+only; nothing started. Every figure below is recomputed from its source by my own scripts in
+`<session scratchpad>/complexity-refute/` (`tx.mjs` the tokens-self rule, `gaps.mjs`, `helpers.mjs`, `lanesess.mjs`,
+`top2.mjs`, `recalc.mjs`). "C" = COMPLEXITY.md, "P" = PILOT-PLAN.md, "v2" = protocol v2, "v1" = protocol v1.
+
+**What stands.** The plan's 8.5-13.8 h does count a 4.3 h stop as T's work, and the pilot is mostly machinery around
+one field. **What does not stand.** The reduced plan's single coordinator is priced at a fifth of what round 3
+measured, so path (e) costs about 0.9 B (not 0.8), fits the 10 % at no measured lane cost, and needs 2-4 more of his
+turns. Its "0.4 B if the one-session form holds" rests on a test the protocol says cannot show that. Path (a) counts one
+or two leaves too many. Corrected, (e) is about a fifth cheaper than (a) in tokens (not a third to two fifths); the
+large savings are hours and his turns.
+
+## Findings
+
+| # | The analysis says | The source says | Corrected | Changes |
+|---|---|---|---|---|
+| 1 | One Opus coordinator for all eight lanes "reaches 211-307 K [c: 96 calls, 86 K start, 1.3-2.3 K a call], under the 368 K compaction: no hand-over, so no typed turn"; it costs 14-19 M and "hands over never" (C:102-103, :124, :157) | The 96 calls have no source. Round 3's lane sessions, counted from the first helper start to the end (transcripts afb95132+b3a078ad, 40282554+53e109f9, 88f1506e+3f32429e, da43d56f): **50-71 calls and +70-89 K a lane** (1.27 K a call). E-tokens.md:37: Opus orchestrator mains 34 calls (30-41) a session; r57-0139: a lane took two sessions. The computed hand-over point is 247-273 K (r57-0171); RULINGS.md: "Hand over at the computed point"; a successor starts only on his typed turn (r57-0109). Even the analysis's own 307 K is past 273 K | Eight lanes: 400-570 calls, 650-800 K without hand-over (at least 380 K at one call per helper notice). So **2-4 successors on his typed turns** (or 1-2 compactions, if accepted, which C must say), and the coordinator costs **71-102 M**, not 14-19 | section 0 (points 4, 5, 10), paths table (e), reduced plan (steps 1, 5) |
+| 2 | (e)'s intake fold for eight lanes "8-13" M; (e) = 681 / 798 / 901 M, 12.9 points, 129 %; "fits 10 % ... at a1: 0.58 B" (C:33-34, :124) | Round 3's fold of the intake was two Opus packets of two lanes each: 13.13 and 8.05 M (transcript 1fe0ac69, helpers "corrections packet c1 a1", "w1 t1") | Fold 32-53 M. With finding 1: **(e) = 761 / 898 / 1,024 M, 12.3 / 14.5 / 16.5 points, 123 / 145 / 165 % of the 10 %; at a1's cost 665 M (107 %)**. No path that keeps the checks fits the 10 % at any measured lane cost; only (d) does. (e) is then about (c) (943 M, finding 13) less the lane sessions' turns | section 0 (points 5, 10), paths table (e), verdict "a third to two fifths less" |
+| 3 | Lane 1 runs once in S1's form; "If it holds, lanes 2-8 run in that form (total about 0.4 B)"; "One lane, one run: it shows a gross gap, not equality" (C:24-25, :161-163) | v2:734-735, comparison 1 "can show a difference above \|S1 - S2\|, a gross failure and real costs; not equality, nor other fields"; v2:794, without S2 "every difference reads 'no difference shown'"; v2:819-820, one chosen field, nothing generalises; r57-0015, r57-0028. The plan runs no S2 and no gate or record check on that arm | One run of lane 1 can rule the one-session form **out** (a gross gap); it cannot rule it **in** for seven other lanes. The 0.4 B (6.5 points) branch is not a supported outcome; drop it or say it is a risk taken on one run | section 0 (points 6, 10), reduced plan (step 3) |
+| 4 | Path (a) = pilot, then **eight** leaves: 1,160-1,352 M, 18.7-21.8 points; "against 1.2-1.4 B (19-22 points)" (C:22-23, :120). The brief also wrote "eight leaves" | v2:498 "At seven leaves"; v1 (RESEARCH-TREE-PROTOCOL-2026-11-16.md:26-31) seven experts from lanes 2-8, "Lane 1 is not a field: it is the problem sheet"; P:40 the pilot's field comes from the direction's lanes; v2:32, :480 an internal pilot | Pilot plus **six** leaves (seven if the pilot's field is run again): **1,005-1,261 M, 16-20 points**. Against (e) corrected: about a fifth less in tokens | section 0 (point 5), paths table (a), verdict |
+| 5 | "2 answers from him (the go, the cap)" (C:19-20, :166) | CLAUDE.md rule 3: a download is named with source and size first; experiments run in containers with the network off. Direction:78-79 (rule 8) no experiments in this phase. P:182-183, :235: the pilot's go names the rule-3 exception and the downloads (about 60 MB a field; round 3 kept 240 MB for four lanes) | The go must name the paper downloads (public papers, under 40 MB each, ROUND.md; about 0.5 GB for eight lanes) and, if step 3's comparison stays, the experiment exception. With finding 1 his answers are the go, the cap and 2-4 successor starts | section 0 (point 4), reduced plan (step 5) |
+| 6 | "this week's room was 4.3 points at 10:24 UTC"; (e) takes "about 4 h" (C:101, :124) | P:15 and :124-127: 4.3 points at 09:15, **3.5 at 10:24**; the gate holds any start that does not fit the room (P s3, ORCHESTRATION s4) | At 12-17 points, (e) runs about two lanes this week and the rest from the reset (2026-11-23 12:00 UTC); its 4 h start there, as the pilot's do | reduced plan (when), section 2 |
+| 7 | What (e) loses: "both comparisons ... design checks" (C:168-171) | Direction:95-100 "Experts first, reviews second (the owner's instruction)"; v2:5 "Its core is his own idea: the child that researched also reviews"; v2:737-743 the reviews read one copy of our files with planted wrong assumptions; v2:752-757 F1 is his ruling after the pilot | Add to the losses: our work is no longer reviewed in the protocol's fixed form by the session that holds the field; round 3's report section "what it would change in our rule or our tree" (ROUND.md, "The report"), by a fresh analyser from the collect files, stands in; F1 stays unmeasured | reduced plan (what it loses) |
+| 8 | (e) "Keeps Q1-Q5" (C:124) | C:115 defines Q5 as "intake sample and recall test"; (e)'s step 4 (C:164-165) has a sample and a fold, no recall test (round 3's: 0.75 + 4.27 M) | Keeps Q1-Q4 and Q5's sample; the recall test is dropped unless added (about 5 M) | paths table (e) |
+| 9 | Research is 63 M (15 %); R_same (9.9 M) counted as comparison 2 (C:13, :42-43) | v2:752-756: F1's default (a), "the child that researched reviews in the same session", is the review itself; v2:739 R2 is the fresh review "for spread"; the brief's research work includes "review" | Research **72.9 M (17 %)**, comparisons 143.6 M. The point holds: the pilot is mostly machinery | section 0 (point 1, figure) |
+| 10 | Successors "2-8, not 17-38, and 22-28 typed turns", from r57-0171's 169 K and 2.33 M (C:72-74) | Those are the main checkout's figures; the pilot's coordinator runs in a lean run root, F 70-90 K (P:91-93), and W*_coord 133.2 K is the default the plan keeps (P:168-170; v2:778-779) | Like for like (F 70-90 K, orientation 2.33 M, g 1.3-2.3 K): W* 148-194 K, 8.7-8.9 M a session, 49-94 M = 6-11 sessions, **5-10 successors, 25-30 typed turns** | section 1 only |
+| 11 | "Parallel readers save both" time and tokens (C:30-31, :137-138) | The brief's counterfactual is one reader at a time: five readers one after another each start a fresh window and cost the same tokens as five at once | Readers at once save time (a lane's readers 48-110 min one after another, 22-37 min at once); the tokens are saved by splitting the reading among several readers, at once or not (one long reader: about twice, past compaction) | section 0 (point 9, wording) |
+| 12 | "What binds: 20 helpers at once per session"; "memory does not limit [helpers]"; memory "about 25 sessions" [m] (C:28, :95-100) | `research-tree/build/facts/docs-subagents-excerpt.md:40`: 20 is the default, changed by setting `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` (his to approve); C-capacity.md row 5: a helper's memory is inside its session's process and not measured (0.1-0.2 GB a busy session [e]; snapshot before and after a fan-out); row 4: about 20 more sessions at 0.5 GB beside the 13 running, 0.4 GB being an estimate (0.1-1.0) | Above 20 helpers the bound is the account's rate limits (15 measured); helper memory is an unmeasured input with a range; about 20 more sessions [c from an e]. The PC is still not the limit | section 0 (point 8, wording) |
+| 13 | Path (c)'s top session: 37.7 M "in the round's window" (C:82, :122) | Transcript cf83865e: 8.00 M (37 calls, 14:00-14:41 UTC) came before round 3 started (the owner's message of 14:41:56 started the lanes) | Round 3's share 29.7 M; (c) = 847 / 943 / 1,023 M; the meter about 67.5 M a point | paths table (c), minor |
+| 14 | Marks [c] on lines with an unsourced input: "96 calls" (finding 1), "fold 8-13" (finding 2), "30-43 polls" (C:107-108), "later scripts 100-170 [e]" (C:120); the memory width marked [m] (C:94) | r57-0158 measured polls at 21 calls in 6.4 min (far more polls a lane; the conclusion "no extra level" only gets stronger); the build cost 907.7 M for 25 scripts (r57-0170); C-capacity row 4 gives 0.4 GB as an estimate | Mark these [e] and show the basis, or use the measured inputs above | marks only |
+
+## Checked and found right
+
+- The plan's expected column sums to 417.8 M and C's five groups add to it; the fit through the three roots is
+  15.13 M + 1.49 M a unit (residuals 0.03-0.54 M), 49.4 M at 23 units.
+- The stop: all three collecting sessions hold a 256-minute gap, 14:48:51 to 19:05 UTC; the owner typed "stop them for a
+  minute i want to put overclocking on my pc" at 14:48:30 (cf83865e), and the top session's message at 19:05:14 says
+  he stopped them for a PC restart. The plan's 4.8-5.3 h (review finding 10) spans it. C's hours split (research
+  1.2-2.6 h, the stop 5.1-7.3 h, 2.8-3.8 h of work, 3.4-6.5 h with the factor) and the age cap (1.2 h (1.1-4.85) with
+  the stop; 0.45-1.18 h and 1.77 h without) recompute.
+- Round 3 by the tokens-self rule: c1 88.28, t1 98.08, w1 114.79, a1 64.67 M; intake 53.97; v2 draft 23.10; each
+  step's split and quartiles; lane active hours 1.18-1.77 (hand-over waits cut); 15 Sonnet readers at once by 19:09 UTC.
+- Least step times: report 14-18, fold 17-20, extraction then check 5-8 min, a1 70 min; readers 22-37 min and gate
+  beside refuter 11.5-20 min against C's 25-39 and 7-20 (immaterial).
+- Refuted 1.2-4.3 % and narrowed 35-40 % of claims (r57-0140); rule of three about 2 %.
+- Reader minutes one at a time 48-110, helper-minutes 118-181, eight lanes one after another 15.7-24.1 h; the fan-out
+  formula (13.9 against 33.2 M; measured reader growth 2.3-3.0 K a call only widens it).
+- Paths (c) and (d) arithmetic as written, points at 62 M and the 620 M budget (direction:107-110, r57-0170).
+- Starts without his typing: helpers, background with fork mode off (`.claude/settings.json`), 3 levels (r57-0157,
+  r57-0158); a cross-session message resumed the lanes but starts none; r57-0109's note; nothing proposed goes
+  around the app's controls. Opus for (e)'s coordinator (no node has grandchildren, r57-0035, r57-0418).
+- Several writers: every reader writes its own file (ROUND.md method table); r57-0415 applies only to the fix round.
+- C asks the owner no design question; the cap it asks is his (direction s7, v2 s12 F4).

@@ -301,7 +301,7 @@ function watchBounded(args) {
 
 function profileShapeError(v, role) {
   if (!isPlainObject(v)) return 'not an object';
-  for (const k of Object.keys(v)) if (k !== 'schema_version' && !PROFILE_KEYS.includes(k)) return `extra field ${k}`;
+  for (const k of Object.keys(v)) if (k !== 'schema_version' && k !== 'session_tools' && !PROFILE_KEYS.includes(k)) return `extra field ${k}`;
   if ('schema_version' in v && v.schema_version !== 1) return 'schema_version';
   for (const k of PROFILE_KEYS) if (!(k in v)) return `missing ${k}`;
   if (v.role !== role) return `role ${v.role}`;
@@ -314,6 +314,23 @@ function profileShapeError(v, role) {
     if (/[{}]/.test(p.replace(/\{(root|attempt|batch)\}/g, ''))) return `placeholder in ${p}`;
     if (!/^\{(root|attempt)\}/.test(p)) return `prefix ${p} not anchored`;
   }
+  return sessionToolsError(v, role);
+}
+
+// FX-CGATE: the optional `session_tools` {start, stop} (the guard hook's own check): the coordinator's
+// only, exact tool names each in tools_allow, start and stop disjoint.
+function sessionToolsError(v, role) {
+  if (!('session_tools' in v)) return null;
+  if (role !== 'coordinator') return `session_tools on role ${role}`;
+  const st = v.session_tools;
+  if (!isPlainObject(st)) return 'session_tools not an object';
+  for (const k of Object.keys(st)) if (k !== 'start' && k !== 'stop') return `session_tools extra field ${k}`;
+  for (const k of ['start', 'stop']) {
+    const list = st[k];
+    if (!Array.isArray(list) || list.some((s) => typeof s !== 'string' || s === '' || s.endsWith('*'))) return `session_tools.${k} not a list of tool names`;
+    for (const s of list) if (!v.tools_allow.includes(s)) return `session_tools.${k} ${s} not in tools_allow`;
+  }
+  if (st.start.some((s) => st.stop.includes(s))) return 'session_tools start and stop overlap';
   return null;
 }
 
@@ -552,6 +569,73 @@ function staticChecks(root, cases, only) {
     cases.filter((c) => c.script === 'watch' && scope.includes('watch') && c.spec && !c.problem && !watchBounded(c.spec.args)).map((c) => `watch/${c.case}`),
   );
   return checks;
+}
+
+// 0b(a) (FIX-fence §0b; fact F-P12): every hook write is a strict exclusive create (a temp file, then a
+// hard link to the name, never a fallback), so where a hard link cannot be made every hook write is
+// refused. One probe in each of `run/` and `wt/` (both made by `handover init`; neither is made here):
+// write a file, hard-link it to a second name, and require one file under the two names (`nlink` 2 on
+// both, the same `dev` and `ino`, the bytes read back); both names are removed at once. Fails closed:
+// a missing folder, any error or any mismatch is a problem `<folder>/: <why>`.
+const LINK_DIRS = ['run', 'wt'];
+
+function linkProblem(dir) {
+  const stem = path.join(dir, `selftest-link.${process.pid}.${crypto.randomBytes(4).toString('hex')}`);
+  const a = `${stem}.a`;
+  const b = `${stem}.b`;
+  const bytes = Buffer.from(`hard-link probe ${path.basename(stem)}\n`, 'utf8');
+  const made = [];
+  try {
+    const fd = lib.fsRetry(() => fs.openSync(a, 'wx'));
+    made.push(a);
+    try {
+      fs.writeSync(fd, bytes);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    lib.fsRetry(() => fs.linkSync(a, b));
+    made.push(b);
+    const sa = fs.lstatSync(a, { bigint: true });
+    const sb = fs.lstatSync(b, { bigint: true });
+    if (sa.nlink !== 2n || sb.nlink !== 2n) return `nlink ${sa.nlink} and ${sb.nlink}, not 2`;
+    if (sa.ino !== sb.ino || sa.dev !== sb.dev) return 'two files, not one';
+    if (!fs.readFileSync(b).equals(bytes)) return 'bytes differ';
+    return null;
+  } catch (e) {
+    return e && e.code ? String(e.code) : `error ${String(e)}`;
+  } finally {
+    for (const p of made.reverse()) {
+      try {
+        lib.removeFile(p);
+      } catch {
+        // a probe file left behind is harmless (no script reads these names)
+      }
+    }
+  }
+}
+
+// FX-CGATE: the guard hook's close records are strict creates (0b: it makes no folder), so
+// run/close/intent and run/close/done must be folders; anything else, or a failed stat, fails the check.
+function closeFoldersCheck(root) {
+  const problems = [];
+  for (const rel of ['run/close/intent', 'run/close/done']) {
+    try {
+      if (!fs.lstatSync(path.join(root, ...rel.split('/'))).isDirectory()) problems.push(`${rel}/: not a folder`);
+    } catch (e) {
+      problems.push(`${rel}/: ${e && e.code ? e.code : 'unreadable'}`);
+    }
+  }
+  return { check: 'close-folders', pass: problems.length === 0, detail: problems };
+}
+
+function hardLinkProblems(root) {
+  const out = [];
+  for (const name of LINK_DIRS) {
+    const why = linkProblem(path.join(root, name));
+    if (why) out.push(`${name}/: ${why}`);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -960,6 +1044,12 @@ async function runMode(ctx, flags, root, ce) {
 
   const all = collectCases(root);
   const checks = staticChecks(root, all, only);
+  // 0b(a): only the run that certifies the tree probes (a dry run writes nothing, --only certifies nothing)
+  if (!dryRun && only.length === 0) {
+    const problems = hardLinkProblems(root);
+    checks.push({ check: 'hard-links', pass: problems.length === 0, detail: problems });
+  }
+  if (!dryRun && only.length === 0) checks.push(closeFoldersCheck(root)); // FX-CGATE
   const staticOk = checks.every((c) => c.pass);
   const selected = all.filter((c) => (only.length ? only.includes(c.script) : true));
   const failedChecks = checks.filter((c) => !c.pass).map((c) => c.check);

@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  FX-W4, the dead-man's scheduled task (FIX-wake.md FX-W4 step 1; build/branches.md: H4 B, a toast; wake-to-run
+  is required under both H7 branches). A FILE ONLY: nothing in the build installs, registers or schedules it, and
+  no test hands it to schtasks or the Task Scheduler (tcb/test/status.test.mjs reads it as text and only parses
+  its command as PowerShell).
+
+  The owner installs it himself:
+    1. replaces {node} (the absolute path of node.exe) and {root} (the run root: an absolute path, forward
+       slashes, no single quote) in the Arguments line below;
+    2. allows wake timers in the power plan (Power Options, Sleep, "Allow wake timers": Enable), without which
+       WakeToRun does nothing;
+    3. imports the file in Task Scheduler (Import Task...) under his own account.
+
+  It runs every 5 minutes (StartWhenAvailable: a missed run starts as soon as it can) and at logon, wakes the PC
+  to run, runs only while he is logged on (InteractiveToken, least privilege), has no battery, idle or network
+  condition, and a run is stopped after 4 minutes. Each run is `node {root}/tcb/status.mjs --deadman --root
+  {root}`, the production form, nothing else. On any exit but 0 it shows a toast naming the exit and the
+  reasons: 1 deadman-alert with the causes that alert this run; 2, 66, 67 or 70 (70 also when node did not
+  start) mean the dead-man itself is broken, so they toast at every run. The status view raises the anomaly
+  deadman-nowake when the runs stop coming every period (no record, a stale one, or a gap within one boot).
+
+  Unverified: that the toast reaches the owner (focus assist, a locked screen), that a console window does not
+  flash at each run, and that this file imports as written.
+-->
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>FX-W4 dead-man of the research tree: status.mjs --deadman every 5 minutes and at logon; a toast on any exit but 0.</Description>
+    <URI>\tcb-deadman</URI>
+  </RegistrationInfo>
+  <Triggers>
+    <TimeTrigger>
+      <Repetition>
+        <Interval>PT5M</Interval>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+      <StartBoundary>2026-11-20T00:00:00</StartBoundary>
+      <Enabled>true</Enabled>
+    </TimeTrigger>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>true</WakeToRun>
+    <ExecutionTimeLimit>PT4M</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe</Command>
+      <Arguments>-NoProfile -NonInteractive -WindowStyle Hidden -Command "$o = &amp; '{node}' '{root}/tcb/status.mjs' --deadman --root '{root}'; $x = $LASTEXITCODE; if ($null -eq $x) { $x = 70 }; if ($x -ne 0) { $t = 'exit ' + $x; try { $j = [string]($o | Select-Object -Last 1) | ConvertFrom-Json; foreach ($q in @($j.reasons)) { $t += ': ' + $q.code; if ($q.detail -and $q.detail.alerts) { $t += ' (' + (@($q.detail.alerts) -join ', ') + ')' } } } catch { $t += ': no result line' }; [void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]; $g = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); $n = $g.GetElementsByTagName('text'); [void]$n.Item(0).AppendChild($g.CreateTextNode('Research tree dead-man')); [void]$n.Item(1).AppendChild($g.CreateTextNode($t)); [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe').Show([Windows.UI.Notifications.ToastNotification]::new($g)) }; exit $x"</Arguments>
+    </Exec>
+  </Actions>
+</Task>

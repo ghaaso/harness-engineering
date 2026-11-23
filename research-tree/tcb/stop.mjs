@@ -247,6 +247,88 @@ function overflowIfCut(env, handle, row, T, E, tokens) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// FX-REDO (FIX-fence section 5): a missing ledger line after a death. Each mode writes the row and
+// then its line; the mode's own repeat completes a line a death left missing, only at the exact
+// post-state and inside the mode's hold, rebuilt from the row and marked `data.redo: true`:
+// `stop-request` at stop-requested, the confirmed `stop` at stopped (written by verify or by a
+// request confirmed at once). A dry run reports `redo` and writes nothing.
+
+/** Appends kind for (T, E) with data and redo when no such line matches: true when it wrote (dry: would). */
+function redoLine(env, handle, kind, T, E, match, data) {
+  const { lines } = lib.readLedger(env.root);
+  if (lib.lastLine(lines ?? [], kind, (l) => l.task === T && l.epoch === E && match(l))) return false;
+  if (handle) append(env, handle, kind, T, E, { ...data, redo: true });
+  return true;
+}
+const confirmedStop = (l) => !!l.data && l.data.confirmed === true;
+
+/** The target attempt's claim (FX-CLAIM step 6), read by the request and by its repeat's redo. */
+function targetClaim(root, T, k, att) {
+  return lib.readClaim(att.folder ? path.resolve(root, att.folder) : path.join(root, 'wt', `${T}-e${k}`));
+}
+
+// ---------------------------------------------------------------------------------------------
+// FX-CLOSE (FIX-fence section 4, rev 4 H3, rev 5 point 1): verify confirms only when (a) the claim is
+// a tombstone or the claim holder's close is recorded, (b) every other folder session's close is
+// recorded, and (c) nothing grew over stop_verify_deltas ticks and at least stop_verify_ms of wall
+// time since the sample. A close is recorded by run/close/done/<CLI id>.json and counts by
+// lib.closeDoneCounts (stopped or owner; a no-such-session only for this coordinator's own start or
+// when the process list matches nothing). The hook names its records by the app's id, so until a map
+// from the app's id to the CLI's exists only the owner's `closed` act records a close found here.
+
+/** The CLI ids whose close verify needs and does not find counted; read under the lock. Claim tamper is 3. */
+function closesMissing(root, T, k, att, folderSessions, list) {
+  const dir = att.folder ? path.resolve(root, att.folder) : path.join(root, 'wt', `${T}-e${k}`);
+  const claim = lib.readClaim(dir);
+  const holder = claim.kind === 'session' ? claim.session_id : claim.kind === 'none' && typeof att.session === 'string' && att.session ? att.session : null;
+  const start = safe(() => lib.readJson(path.join(dir, 'start.json')), null);
+  const need = holder ? [holder] : [];
+  for (const s of folderSessions ?? []) if (typeof s === 'string' && s && !need.includes(s)) need.push(s);
+  return need.filter((sid) => !lib.closeDoneCounts(root, sid, start, list, dir));
+}
+
+/** The sample's wall time in ms (FX-CLOSE (c)), NaN when it has none. */
+function sampleAt(sample) {
+  return sample && typeof sample.at === 'string' ? Date.parse(sample.at) : NaN;
+}
+
+/** The line of the stop that a death left missing, from the row (the after-image); false when none is due. */
+function stopRedo(env, handle, row, T, E, pre) {
+  const k = targetEpoch(row);
+  const att = safe(() => lib.attemptOf(row, k), null);
+  if (row.step === 'stop-requested') {
+    // FX-CLAIM step 6 on the merge: the line names what the request named. The claim holder first; a
+    // tombstone's request (made only with a folder session visible) names every folder session.
+    const folder = (pre && pre.k === k ? pre.tt.folderSessions : null) ?? [];
+    const claim = att ? targetClaim(env.root, T, k, att) : { kind: 'none', session_id: null };
+    const session = (claim.kind === 'session' ? claim.session_id : null) ?? (att && att.session) ?? folder[0] ?? null;
+    const named = claim.kind === 'tombstone' && folder.length ? { sessions: folder } : {};
+    return redoLine(env, handle, 'stop-request', T, E, () => true, { session, ...named });
+  }
+  if (row.step !== 'stopped' || !att || att.stop !== 'confirmed') return false;
+  const data = { session: att.session ?? null, confirmed: true, grew: [], survivors: [], zombie_tokens: row.state === 'committed' ? 0 : null };
+  return redoLine(env, handle, 'stop', T, E, confirmedStop, data);
+}
+
+/** verify repeated at stopped: exit 0 repeat; the lock is taken only when the confirmed stop line looks missing. */
+async function verifyRepeat(env, T, E, row0) {
+  const answer = (row, redo) => ({ exit: 0, result: { task: T, epoch: E, step: 'stopped', state: row.state, repeat: true, redo }, reasons: [] });
+  const { lines } = lib.readLedger(env.root);
+  if (lib.lastLine(lines ?? [], 'stop', (l) => l.task === T && l.epoch === E && confirmedStop(l))) return answer(row0, false);
+  return await underLock(
+    env,
+    (handle) => {
+      const row = findRow(lib.readTasks(env.root), T);
+      if (row.epoch !== E) throw tcbError('stale-epoch', 65, { expected: E, actual: row.epoch });
+      if (row.step !== 'stopped') throw tcbError('wrong-step', 65, { state: row.state, step: row.step });
+      return answer(row, stopRedo(env, handle, row, T, E, null));
+    },
+    T,
+    E,
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
 // request
 
 async function modeRequest(env, T, E) {
@@ -272,23 +354,32 @@ async function modeRequest(env, T, E) {
       const row = findRow(table, T);
       if (row.epoch !== E) throw tcbError('stale-epoch', 65, { expected: E, actual: row.epoch });
       if (row.step === 'stop-requested' || row.step === 'stopped') {
-        return { exit: 0, result: { task: T, epoch: E, step: row.step, state: row.state, repeat: true }, reasons: [] };
+        const redo = stopRedo(env, handle, row, T, E, pre); // FX-REDO
+        return { exit: 0, result: { task: T, epoch: E, step: row.step, state: row.state, repeat: true, redo }, reasons: [] };
       }
       const fenced = row.step === 'fenced' && (row.state === 'active' || row.state === 'parked');
-      const committedBound = row.state === 'committed' && row.step === 'bound';
-      if (!fenced && !committedBound) throw tcbError('wrong-step', 65, { state: row.state, step: row.step });
+      // FX-CLOSE step 3: a committed row at started (its claim holder was never bound) is stopped too.
+      const committedOpen = row.state === 'committed' && (row.step === 'bound' || row.step === 'started');
+      if (!fenced && !committedOpen) throw tcbError('wrong-step', 65, { state: row.state, step: row.step });
       const k = targetEpoch(row);
       const att = lib.attemptOf(row, k);
       if (!pre || pre.k !== k) throw tcbError('rev-moved', 65, { task: T });
-      const session = att.session ?? pre.tt.folderSessions[0] ?? null;
+      // FX-CLAIM step 6 (rev 5 point 1): the target attempt's claim. A tombstone (no session ever passed
+      // a tool call, and none can) confirms at once only when no folder session is visible; with one
+      // visible, the stop is requested for every folder session and goes through verify. Otherwise the
+      // request names the claim holder (today's sources after it).
+      const claim = targetClaim(root, T, k, att);
+      const tomb = claim.kind === 'tombstone';
+      const session = (claim.kind === 'session' ? claim.session_id : null) ?? att.session ?? pre.tt.folderSessions[0] ?? null;
       // Review U1-F5 (R9, R10): an admitted attempt (it has a manifest) may have a session the
       // coordinator already started whose transcript is not visible yet. Without a session it is
       // still stop-requested (session null), and verify observes the folder's transcripts and
       // processes over stop_verify_deltas ticks. Only an attempt that was never admitted, or whose
       // stop an earlier verify already confirmed, is confirmed at once.
-      const mayRun = !!att.manifest && att.stop !== 'confirmed';
+      const mayRun = tomb ? pre.tt.folderSessions.length > 0 : !!att.manifest && att.stop !== 'confirmed';
+      const named = tomb && mayRun ? { sessions: pre.tt.folderSessions } : {};
 
-      if (session || mayRun) {
+      if ((session && !tomb) || mayRun) {
         if (handle) {
           lib.updateRow(root, handle, { task: T, epoch: E, steps: [row.step], states: [row.state] }, (copy) => {
             const i = attemptIndex(copy, k);
@@ -296,9 +387,9 @@ async function modeRequest(env, T, E) {
             copy.step = 'stop-requested';
             return copy;
           });
-          append(env, handle, 'stop-request', T, E, { session });
+          append(env, handle, 'stop-request', T, E, { session, ...named });
         }
-        return { exit: 0, result: { task: T, epoch: E, target: k, session, step: 'stop-requested', state: row.state }, reasons: [] };
+        return { exit: 0, result: { task: T, epoch: E, target: k, session, ...named, step: 'stop-requested', state: row.state }, reasons: [] };
       }
 
       // Nothing ran: never admitted (or already confirmed), no session and no transcript. Confirmed at once.
@@ -346,9 +437,7 @@ async function modeVerify(env, T, E) {
     );
   }
   if (row0.epoch !== E) throw tcbError('stale-epoch', 65, { expected: E, actual: row0.epoch });
-  if (row0.step === 'stopped') {
-    return { exit: 0, result: { task: T, epoch: E, step: 'stopped', state: row0.state, repeat: true }, reasons: [] };
-  }
+  if (row0.step === 'stopped') return await verifyRepeat(env, T, E, row0); // FX-REDO
   if (row0.step !== 'stop-requested') throw tcbError('wrong-step', 65, { state: row0.state, step: row0.step });
   const committed = row0.state === 'committed';
   const k = targetEpoch(row0);
@@ -367,8 +456,10 @@ async function modeVerify(env, T, E) {
   };
   const sFile = samplePath(root, T, k); // keyed by the target attempt k (wt/<task>-e<k>)
   const sample = readSample(sFile);
+  // FX-CLOSE (c): a sample with no wall time (made before the fix) is taken again.
   const sampleValid =
-    sample && sample.task === T && sample.epoch === k && sample.target === k && typeof sample.tick === 'number' && sample.sizes && typeof sample.sizes === 'object';
+    sample && sample.task === T && sample.epoch === k && sample.target === k && typeof sample.tick === 'number' && sample.sizes && typeof sample.sizes === 'object' &&
+    Number.isFinite(sampleAt(sample));
 
   // 4 no sample (or one for another target): take it and come back later
   if (!sampleValid) {
@@ -376,7 +467,7 @@ async function modeVerify(env, T, E) {
       env,
       (handle) => {
         recheck(findRow(lib.readTasks(root), T));
-        if (handle) lib.writeAtomic(sFile, JSON.stringify({ schema_version: 1, task: T, epoch: k, target: k, tick: ticks, sizes }));
+        if (handle) lib.writeAtomic(sFile, JSON.stringify({ schema_version: 1, task: T, epoch: k, target: k, tick: ticks, at: env.now, sizes }));
         process.stderr.write('[stop] sample-a\n');
         return {
           exit: 6,
@@ -389,12 +480,13 @@ async function modeVerify(env, T, E) {
     );
   }
 
-  // 5 not enough ticks yet
-  if (ticks < sample.tick + env.deltas) {
+  // 5 not enough ticks yet, or (FX-CLOSE (c), N3) not enough wall time: ticks alone can be driven
+  const atDue = sampleAt(sample) + env.verifyMs;
+  if (ticks < sample.tick + env.deltas || !(Date.parse(env.now) >= atDue)) {
     return {
       exit: 6,
       result: { task: T, epoch: E, target: k, session, tick: ticks, sample_tick: sample.tick },
-      reasons: [{ code: 'waiting', detail: { tick: ticks, due: sample.tick + env.deltas } }],
+      reasons: [{ code: 'waiting', detail: { tick: ticks, due: sample.tick + env.deltas, at_due: new Date(atDue).toISOString() } }],
     };
   }
 
@@ -423,12 +515,12 @@ async function modeVerify(env, T, E) {
     for (const p of (m && m.matched) || []) if (p && !byPid.has(p.pid)) byPid.set(p.pid, { pid: p.pid, start_time: p.start_time ?? null, name: p.name ?? null });
   }
   const survivors = [...byPid.values()].sort((a, b) => a.pid - b.pid);
-  const confirmed = grew.length === 0 && survivors.length === 0;
+  const quiet = grew.length === 0 && survivors.length === 0; // FX-CLOSE (a), (b) are read under the lock
 
   // zombie spend: transcript total now minus the spend at the fence (0 for a committed row)
   let zombie = 0;
   if (!committed && typeof att.spend_at_fence === 'number') zombie = Math.max(0, spendTotal(tt.files) - att.spend_at_fence);
-  const allSpend = confirmed && row0.reason === 'cut' && !committed ? allAttemptsSpend(transcriptsRoot, root, row0) : 0;
+  const allSpend = quiet && row0.reason === 'cut' && !committed ? allAttemptsSpend(transcriptsRoot, root, row0) : 0;
 
   // 7 under the lock: re-check, record
   return await underLock(
@@ -436,11 +528,14 @@ async function modeVerify(env, T, E) {
     (handle) => {
       const row = findRow(lib.readTasks(root), T);
       recheck(row);
+      const missing = closesMissing(root, T, k, lib.attemptOf(row, k), tt.folderSessions, list); // FX-CLOSE (a), (b)
+      const confirmed = quiet && missing.length === 0;
       let newRow = null;
       if (handle) {
         const out = lib.updateRow(root, handle, { task: T, epoch: E, steps: ['stop-requested'] }, (copy) => {
           const i = attemptIndex(copy, k);
           copy.attempts[i] = { ...copy.attempts[i], stop: confirmed ? 'confirmed' : 'unconfirmed' };
+          if (!confirmed) copy.verify_rounds = (Number.isInteger(copy.verify_rounds) ? copy.verify_rounds : 0) + 1; // FX-CLOSE step 5
           if (confirmed) {
             copy.step = 'stopped';
             dispose(copy);
@@ -455,9 +550,9 @@ async function modeVerify(env, T, E) {
             process.stderr.write(`[stop] sample not removed: ${e && e.message}\n`);
           }
         } else {
-          lib.writeAtomic(sFile, JSON.stringify({ schema_version: 1, task: T, epoch: k, target: k, tick: ticks, sizes }));
+          lib.writeAtomic(sFile, JSON.stringify({ schema_version: 1, task: T, epoch: k, target: k, tick: ticks, at: env.now, sizes }));
         }
-        append(env, handle, 'stop', T, E, { session, confirmed, grew, survivors, zombie_tokens: zombie });
+        append(env, handle, 'stop', T, E, { session, confirmed, grew, survivors, zombie_tokens: zombie, closes_missing: missing });
       }
       const state = newRow ? newRow.state : confirmed ? predictState(row) : row.state;
       let overflow = null;
@@ -471,17 +566,20 @@ async function modeVerify(env, T, E) {
         grew,
         survivors,
         zombie_tokens: zombie,
+        closes_missing: missing,
         step: confirmed ? 'stopped' : 'stop-requested',
         state,
       };
       if (overflow) result.overflow = overflow;
       if (confirmed) return { exit: 0, result, reasons: [] };
 
+      result.verify_rounds = newRow ? newRow.verify_rounds : (Number.isInteger(row.verify_rounds) ? row.verify_rounds : 0) + 1;
       const reasons = [{ code: 'stop-unconfirmed', detail: { grew } }];
+      if (missing.length) reasons.push({ code: 'close-missing', detail: { sessions: missing } });
       if (survivors.length) reasons.push({ code: 'survivors', detail: survivors });
       const eTask = typeof row.e_task === 'number' ? row.e_task : 0;
       if (zombie > env.zFrac * eTask) reasons.push({ code: 'zombie-over-z', detail: { zombie_tokens: zombie, z: env.zFrac * eTask } });
-      if (handle) incident(env, handle, 'refusal', { code: 'stop-unconfirmed', detail: { grew, survivors: survivors.length, zombie_tokens: zombie } }, T, E);
+      if (handle) incident(env, handle, 'refusal', { code: 'stop-unconfirmed', detail: { grew, survivors: survivors.length, zombie_tokens: zombie, closes_missing: missing } }, T, E);
       for (const s of survivors) process.stderr.write(`[stop] survivor pid ${s.pid} (${s.name ?? '?'}) names the attempt; nothing was killed\n`);
       return { exit: 1, result, reasons };
     },
@@ -524,6 +622,7 @@ async function main(ctx) {
     proc: lib.realProc({ exe: th.get('proc_exe') }),
     transcriptsRoot: th.get('transcripts_root'),
     deltas: th.get('stop_verify_deltas'),
+    verifyMs: th.get('stop_verify_ms'), // FX-CLOSE (c), N3
     zFrac: th.get('Z_frac'),
     f5Given: !!th.get('f5_given', false),
   };
