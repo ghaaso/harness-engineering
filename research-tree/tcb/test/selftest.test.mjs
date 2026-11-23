@@ -1331,3 +1331,34 @@ test('PA-4 role-files: the tier hook in every settings file, the hook and its ta
     });
   }
 });
+
+// FX-PILOT unit PB2 (refute FX-PILOT-PB, breaking): the app reads a deny of Task as a deny of the whole Agent tool
+// and applies a whole-tool deny before any allow rule, so role-files fails a settings file whose allow rule is
+// shadowed that way, under any of the tool's names; the live tcb passes it (PA-4's first run).
+test('PB2 role-files: an allow rule shadowed by a deny of its whole tool, under any of its names, fails', async () => {
+  const roleFiles = (r) => (r.json.reasons || []).find((x) => x.code === 'role-files');
+  const cases = [
+    ['the coordinator denies Task again', (R) => {
+      const f = R.p('tcb', 'settings', 'coordinator.json');
+      const s = readJson(f);
+      s.permissions.deny.push('Task');
+      fs.writeFileSync(f, JSON.stringify(s, null, 2));
+    }, 'settings/coordinator.json: allow Agent(checker) is shadowed by deny Task (the whole tool Agent)'],
+    ['a child denies Agent(*)', (R) => {
+      const f = R.p('tcb', 'settings', 'child.json');
+      const s = readJson(f);
+      s.permissions.deny.push('Agent(*)');
+      fs.writeFileSync(f, JSON.stringify(s, null, 2));
+    }, 'settings/child.json: allow Agent(reader) is shadowed by deny Agent(*) (the whole tool Agent)'],
+  ];
+  for (const [name, edit, want] of cases) {
+    await withRoot({}, async (R) => {
+      edit(R);
+      const r = await runSt(R, 'run', ['--only', 'render']);
+      assertLine(r, { exit: 1, mode: 'run' });
+      const rf = roleFiles(r);
+      assert.ok(rf && JSON.stringify(rf.detail).includes(want), `${name}: ${JSON.stringify(r.json.reasons)}`);
+      assert.deepEqual(ran(R), [], `${name}: no case runs after a failed check`);
+    });
+  }
+});
