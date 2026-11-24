@@ -1183,9 +1183,17 @@ function alarmExitMarker(reg, exit) {
 // age_base (0 from freshTaskState): it is where an explicit "continue" act would re-arm the cap, and
 // none is built (refute/W4.md:113-115). A READY of the current epoch (class 11 or 12) voids both, as
 // it voids hang.
+// The cap is by role (refute/FX-PILOT-PC.md B1): a tree row takes attempt_max_ticks (107, from round 3's
+// tree sessions, readers in parallel); a `control` row (S1, S2: one session doing a field alone, no
+// helpers) takes attempt_max_ticks_control (246), computed by the same rule from the record's serial
+// field time: four lanes, 118-181 helper-minutes one at a time, median 163 (COMPLEXITY.md:126, :191-192,
+// :198). The record holds only min, median and max, so Q3 + 1.5 IQR (type-7 quantiles, the ones that
+// give 107's Q1 0.611 and Q3 1.075) is 191.1-245.1 min over every split of the two middle lanes; the cap
+// takes the top, 245.1, rounded up to 246 ticks at delta 60 s: it stays above every field whatever the
+// middle lanes were (PILOT-PLAN s4 item 4: a lower cap could end an honest run and lose its field).
 function actDueIdleAgeCap(env, state, conds, { rows }) {
   let idleMax;
-  let ageMax;
+  const ageMaxOf = {};
   for (const row of rows) {
     if (row.state !== 'active' || (row.step !== 'started' && row.step !== 'bound')) continue;
     const ts = state.tasks[row.task];
@@ -1193,7 +1201,8 @@ function actDueIdleAgeCap(env, state, conds, { rows }) {
     if (!ts || ts.epoch !== e) continue;
     if (conds.some((c) => (c.cls === 11 || c.cls === 12) && c.task === row.task && c.epoch === e)) continue;
     idleMax ??= env.th.get('idle_ticks');
-    ageMax ??= env.th.get('attempt_max_ticks');
+    const ageKey = row.role === 'control' ? 'attempt_max_ticks_control' : 'attempt_max_ticks';
+    const ageMax = (ageMaxOf[ageKey] ??= env.th.get(ageKey));
     const base = { cls: 17, task: row.task, epoch: e };
     if (ts.kind === 'idle' && num(ts.hang_ticks) >= idleMax) {
       conds.push({ ...base, act: 'idle-child', detail: { act: 'idle-child', idle_ticks: ts.hang_ticks } });
