@@ -493,13 +493,15 @@ function casesT6(w) {
     list.push({ n: `${role} Agent without subagent_type`, role, tool: 'Agent', input: { prompt: 'x' }, expect: 'agent-type' });
     list.push({ n: `${role} Agent with empty subagent_type`, role, tool: 'Agent', input: { subagent_type: '', prompt: 'x' }, expect: 'agent-type' });
     list.push({ n: `${role} Agent checker (not its type)`, role, tool: 'Agent', input: { subagent_type: 'checker', prompt: 'x' }, expect: 'agent-type' });
-    list.push({ n: `${role} Task tool`, role, tool: 'Task', input: { subagent_type: 'reader', prompt: 'x' }, expect: 'tool-denied' });
+    // PB2: Task is not in tools_deny (the app reads a deny of Task as a deny of all of Agent); the hook still refuses it
+    list.push({ n: `${role} Task tool`, role, tool: 'Task', input: { subagent_type: 'reader', prompt: 'x' }, expect: 'tool-not-allowed' });
   }
   for (const role of ['fresh-reviewer', 'control', 'stpa', 'fmea', 'mapper']) {
     list.push({ n: `${role} Agent reader (Agent not in its tools)`, role, tool: 'Agent', input: { subagent_type: 'reader', prompt: 'x' }, expect: 'tool-not-allowed' });
   }
   list.push({ n: 'coordinator Agent checker', role: 'coordinator', tool: 'Agent', input: { subagent_type: 'checker', prompt: 'x' }, expect: 0 });
   list.push({ n: 'coordinator Agent scorer (PB)', role: 'coordinator', tool: 'Agent', input: { subagent_type: 'scorer', prompt: 'x' }, expect: 0 });
+  list.push({ n: 'coordinator Task tool (PB2)', role: 'coordinator', tool: 'Task', input: { subagent_type: 'scorer', prompt: 'x' }, expect: 'tool-not-allowed' });
   for (const role of ['child', 'fresh-reviewer']) list.push({ n: `${role} Agent scorer (PB: not its type)`, role, tool: 'Agent', input: { subagent_type: 'scorer', prompt: 'x' }, expect: role === 'child' ? 'agent-type' : 'tool-not-allowed' });
   list.push({ n: 'coordinator Agent mapper (U3-F8: not a coordinator agent type)', role: 'coordinator', tool: 'Agent', input: { subagent_type: 'mapper', prompt: 'x' }, expect: 'agent-type' });
   list.push({ n: 'coordinator Agent reader', role: 'coordinator', tool: 'Agent', input: { subagent_type: 'reader', prompt: 'x' }, expect: 'agent-type' });
@@ -1513,6 +1515,8 @@ test('T14 shipped profiles, settings and agent files agree with each other and w
     let deny = ['Bash', 'PowerShell', 'NotebookEdit', 'MultiEdit', 'WebSearch', 'Task'];
     if (role === 'coordinator') deny = deny.filter((t) => t !== 'Bash' && t !== 'PowerShell');
     if (role === 'reader') deny = deny.filter((t) => t !== 'WebSearch');
+    // PB2: a role that starts helpers does not deny Task (the app reads it as a deny of the whole Agent tool)
+    if (e.agent_types.length) deny = deny.filter((t) => t !== 'Task');
     if (JSON.stringify(sorted(p.tools_deny)) !== JSON.stringify(sorted(deny))) problems.push(`${role}: tools_deny ${JSON.stringify(p.tools_deny)}, want ${JSON.stringify(deny)}`);
     const both = p.tools_allow.filter((t) => matchTool(t, p.tools_deny));
     if (both.length) problems.push(`${role}: allowed and denied: ${both}`);
@@ -1613,6 +1617,48 @@ test('T14 shipped profiles, settings and agent files agree with each other and w
     if (body.trim() !== brief.trim()) aproblems.push(`${name}.md: body differs from tcb/briefs/${name}.md`);
   }
   assert.deepEqual(aproblems, [], 'agent file problems');
+});
+
+// ---------------------------------------------------------------------------------------------
+// PB2 (refute FX-PILOT-PB, breaking): the app (Claude Code 2.1.330, read from its bundle) maps each permission
+// rule's tool name through its legacy table (Task is Agent), takes a rule with no content, "" or "*" as one on the
+// whole tool, and refuses a call that such a deny covers before any allow rule is read. So no allow rule of a
+// shipped settings file may share its tool with a whole-tool deny under any of the tool's names.
+// ---------------------------------------------------------------------------------------------
+const APP_TOOL_ALIASES = {
+  Task: 'Agent', KillShell: 'TaskStop', KillBash: 'TaskStop', ListPeers: 'ListAgents', Brief: 'SendUserMessage',
+  ListMcpResources: 'ListMcpResourcesTool', ReadMcpResource: 'ReadMcpResourceTool', ReadMcpResourceDir: 'ReadMcpResourceDirTool',
+  ProposeGoal: 'SetGoal',
+};
+function appRule(rule) {
+  const m = /^([^()]+)\(([\s\S]*)\)$/.exec(rule);
+  const raw = m ? m[1] : rule;
+  return { rule, tool: Object.hasOwn(APP_TOOL_ALIASES, raw) ? APP_TOOL_ALIASES[raw] : raw, whole: !m || m[2] === '' || m[2] === '*' };
+}
+function shadowed(allow, deny) {
+  const whole = deny.map(appRule).filter((r) => r.whole);
+  const covers = (d, t) => d === t || (() => { const s = d.endsWith('__*') ? d.slice(0, -3) : d; return /^mcp__/.test(s) && s.split('__').length === 2 && t.startsWith(s + '__'); })();
+  return allow.flatMap((a) => { const t = appRule(a).tool; const d = whole.find((r) => covers(r.tool, t)); return d ? [`allow ${a} is shadowed by deny ${d.rule}`] : []; });
+}
+
+test('PB2 no allow rule of a shipped settings file is shadowed by a deny of its whole tool under any of its names', () => {
+  // the check itself: each name and form of a whole-tool deny shadows Agent(scorer); a deny with content does not
+  for (const d of ['Task', 'Agent', 'Agent(*)', 'Agent()', 'Task(*)']) assert.equal(shadowed(['Agent(scorer)'], [d]).length, 1, `deny ${d}`);
+  for (const d of ['Agent(reader)', 'Task(reader)', 'TaskStop', 'Bash']) assert.deepEqual(shadowed(['Agent(scorer)'], [d]), [], `deny ${d}`);
+  assert.equal(shadowed(['mcp__s__start'], ['mcp__s']).length, 1, 'an MCP server deny covers its tools');
+  const sdir = path.join(TCB, 'settings');
+  const problems = [];
+  for (const f of fs.readdirSync(sdir).filter((x) => x.endsWith('.json') && x !== 'user-deny.json').sort()) {
+    const s = JSON.parse(subst(fs.readFileSync(path.join(sdir, f), 'utf8')));
+    for (const p of shadowed(s.permissions?.allow ?? [], s.permissions?.deny ?? [])) problems.push(`${f}: ${p}`);
+  }
+  assert.deepEqual(problems, [], 'allow rules the app would never reach');
+  // every helper type a role may start has its allow rule, and the hook still refuses Task (not in tools_allow)
+  for (const role of ['coordinator', 'child', 'child-reviewing', 'canary']) {
+    const p = JSON.parse(fs.readFileSync(path.join(TCB, 'profiles', role + '.json'), 'utf8'));
+    assert.ok(p.agent_types.length > 0, `${role} starts helpers`);
+    assert.ok(!p.tools_allow.includes('Task') && !p.tools_deny.includes('Task'), `${role}: Task neither allowed nor denied`);
+  }
 });
 
 // ---------------------------------------------------------------------------------------------

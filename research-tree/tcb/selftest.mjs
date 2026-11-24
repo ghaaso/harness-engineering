@@ -359,6 +359,38 @@ function matcherHits(matcher, tool) {
   }
 }
 
+// FX-PILOT unit PB2: the app (Claude Code 2.1.330, read from its bundle) maps each permission rule's tool name
+// through its legacy table, so a rule on Task is a rule on Agent; a rule with no content, or with "" or "*", covers
+// the whole tool; and a deny that covers the whole tool refuses every call of it before any allow rule is read
+// (the end-conversation tool aside). An allow rule is then dead when some deny covers its whole tool under any name.
+const TOOL_ALIASES = {
+  Task: 'Agent', KillShell: 'TaskStop', KillBash: 'TaskStop', ListPeers: 'ListAgents', Brief: 'SendUserMessage',
+  ListMcpResources: 'ListMcpResourcesTool', ReadMcpResource: 'ReadMcpResourceTool', ReadMcpResourceDir: 'ReadMcpResourceDirTool',
+  ProposeGoal: 'SetGoal',
+};
+function permRule(rule) {
+  const s = String(rule);
+  const m = /^([^()]+)\(([\s\S]*)\)$/.exec(s);
+  const raw = m ? m[1] : s;
+  const tool = Object.prototype.hasOwnProperty.call(TOOL_ALIASES, raw) ? TOOL_ALIASES[raw] : raw;
+  return { rule: s, tool, whole: !m || m[2] === '' || m[2] === '*' };
+}
+function wholeDenyCovers(denyTool, tool) {
+  if (denyTool === tool) return true;
+  const d = denyTool.endsWith('__*') ? denyTool.slice(0, -3) : denyTool; // an MCP server rule: mcp__srv or mcp__srv__*
+  return /^mcp__/.test(d) && d.split('__').length === 2 && tool.startsWith(d + '__');
+}
+function shadowedAllows(allow, deny) {
+  const whole = deny.map(permRule).filter((r) => r.whole);
+  const out = [];
+  for (const a of allow) {
+    const t = permRule(a).tool;
+    const d = whole.find((r) => wholeDenyCovers(r.tool, t));
+    if (d) out.push(`allow ${a} is shadowed by deny ${d.rule} (the whole tool ${t})`);
+  }
+  return out;
+}
+
 // FX-PILOT unit PA: tcb/tier-hook.mjs and tcb/tier-routes.json are in tcb/, the table has kinds with
 // models, and every helper type a profile may start has a route (its kind and model reach the starter
 // through status or the manifest, never through a brief).
@@ -467,6 +499,7 @@ function roleFilesProblems(root) {
       }
     }
     if (Array.isArray(deny)) for (const t of prof.tools_deny) if (!deny.includes(t)) probs.push(`settings/${f}: does not deny ${t}`);
+    if (Array.isArray(allow) && Array.isArray(deny)) for (const p of shadowedAllows(allow, deny)) probs.push(`settings/${f}: ${p}`);
     const pre = s && s.hooks && s.hooks.PreToolUse;
     const entries = Array.isArray(pre) ? pre : [];
     // FX-PILOT unit PA (r57-0025, r57-0026): the tier hook on the helper and session starts of every role

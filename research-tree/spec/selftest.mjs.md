@@ -85,7 +85,8 @@ expect file under `<root>/tcb/fixtures/selftest/`.
    and ≥1 bad case (`no-fixtures`); every `case.json` validates (`bad-case`); every schema loads
    (`schema-load`); `thresholds.json` validates (`thresholds-invalid`) and `allow_loopback` is false
    (`loopback-on`); the role files agree (guard-hook spec T14: profiles valid, settings consistent
-   with profiles, agent files' tools and bodies) (`role-files`); every `watch` case is a one-tick case
+   with profiles, no allow rule shadowed by a deny of its whole tool under any of the app's names for it (PB2), agent
+   files' tools and bodies) (`role-files`); every `watch` case is a one-tick case
    that starts nothing (`watch-case-loops`). Any failed static check: no case runs.
 3. `--dry-run`: print the case list and the static results; nothing run or written, no `tmp/` folder.
 2b. A full run only (neither `--dry-run` nor `--only`): check `hard-links` (0b(a), FIX-fence §0b, fact F-P12). In
