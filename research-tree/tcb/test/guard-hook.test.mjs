@@ -493,12 +493,19 @@ function casesT6(w) {
     list.push({ n: `${role} Agent without subagent_type`, role, tool: 'Agent', input: { prompt: 'x' }, expect: 'agent-type' });
     list.push({ n: `${role} Agent with empty subagent_type`, role, tool: 'Agent', input: { subagent_type: '', prompt: 'x' }, expect: 'agent-type' });
     list.push({ n: `${role} Agent checker (not its type)`, role, tool: 'Agent', input: { subagent_type: 'checker', prompt: 'x' }, expect: 'agent-type' });
-    list.push({ n: `${role} Task tool`, role, tool: 'Task', input: { subagent_type: 'reader', prompt: 'x' }, expect: 'tool-denied' });
+    // PB2: Task is not in tools_deny (the app reads a deny of Task as a deny of all of Agent); the hook still refuses it
+    list.push({ n: `${role} Task tool`, role, tool: 'Task', input: { subagent_type: 'reader', prompt: 'x' }, expect: 'tool-not-allowed' });
   }
-  for (const role of ['fresh-reviewer', 'control', 'stpa', 'fmea', 'mapper']) {
+  for (const role of ['fresh-reviewer', 'stpa', 'fmea', 'mapper']) {
     list.push({ n: `${role} Agent reader (Agent not in its tools)`, role, tool: 'Agent', input: { subagent_type: 'reader', prompt: 'x' }, expect: 'tool-not-allowed' });
   }
+  // FX-PILOT unit PC: the single-session arm (role control) starts no helper of any type
+  list.push({ n: 'control Agent reader (Agent denied: one session, no fan-out)', role: 'control', tool: 'Agent', input: { subagent_type: 'reader', prompt: 'x' }, expect: 'tool-denied' });
+  list.push({ n: 'control Task tool', role: 'control', tool: 'Task', input: { subagent_type: 'reader', prompt: 'x' }, expect: 'tool-denied' });
   list.push({ n: 'coordinator Agent checker', role: 'coordinator', tool: 'Agent', input: { subagent_type: 'checker', prompt: 'x' }, expect: 0 });
+  list.push({ n: 'coordinator Agent scorer (PB)', role: 'coordinator', tool: 'Agent', input: { subagent_type: 'scorer', prompt: 'x' }, expect: 0 });
+  list.push({ n: 'coordinator Task tool (PB2)', role: 'coordinator', tool: 'Task', input: { subagent_type: 'scorer', prompt: 'x' }, expect: 'tool-not-allowed' });
+  for (const role of ['child', 'fresh-reviewer']) list.push({ n: `${role} Agent scorer (PB: not its type)`, role, tool: 'Agent', input: { subagent_type: 'scorer', prompt: 'x' }, expect: role === 'child' ? 'agent-type' : 'tool-not-allowed' });
   list.push({ n: 'coordinator Agent mapper (U3-F8: not a coordinator agent type)', role: 'coordinator', tool: 'Agent', input: { subagent_type: 'mapper', prompt: 'x' }, expect: 'agent-type' });
   list.push({ n: 'coordinator Agent reader', role: 'coordinator', tool: 'Agent', input: { subagent_type: 'reader', prompt: 'x' }, expect: 'agent-type' });
   list.push({ n: 'coordinator Agent without type', role: 'coordinator', tool: 'Agent', input: { prompt: 'x' }, expect: 'agent-type' });
@@ -562,8 +569,39 @@ function casesT9(w) {
     wf('child without must_read.json', 'https://example.test/paper-a', 'fetch-not-witnessed', { task: 'f1-nomr' }),
     wf('child with an unparseable must_read.json', 'https://example.test/paper-a', 'fetch-not-witnessed', { task: 'f1-badmr' }),
     wf('fresh-reviewer fetches', 'https://example.test/paper-a', ['tool-not-allowed', 'fetch-none'], { role: 'fresh-reviewer' }),
-    wf('control fetches', 'https://example.test/paper-a', ['tool-not-allowed', 'fetch-none'], { role: 'control' }),
+    // FX-PILOT unit PC: the single-session arm has the readers' search and fetch (fetch any)
+    wf('control fetches a witnessed URL', 'https://example.test/paper-a', 0, { role: 'control' }),
+    wf('control fetches a URL that is not listed and not stored', 'https://example.test/other', 0, { role: 'control' }),
+    { n: 'control WebSearch', role: 'control', tool: 'WebSearch', input: { query: 'q' }, expect: 0 },
+    { n: 'control Write outside staging', role: 'control', tool: 'Write', input: { file_path: path.join(w.A('control'), 'in', 'x'), content: 'x' }, expect: 'write-outside-role' },
     wf('coordinator fetches', 'https://example.test/paper-a', ['tool-not-allowed', 'fetch-none'], { role: 'coordinator' }),
+  ];
+}
+
+// PB (PILOT-PLAN s4 unit 2): the coordinator's scorer helper, under its own profile
+function casesScorer(w) {
+  const R = (...s) => w.P(...s);
+  const sc = (n, tool, input, expect, extra = {}) => ({ n, role: 'coordinator', agent_type: 'scorer', tool, input, expect, ...extra });
+  const a = w.A('child');
+  return [
+    sc('scorer reads the blind index', 'Read', { file_path: R('views', 'blind', 'index.json') }, 0),
+    sc('scorer reads a blind item', 'Read', { file_path: R('views', 'blind', 'item-3.md') }, 0),
+    sc('scorer StructuredOutput', 'StructuredOutput', { scores: [] }, 0),
+    sc('scorer reads the blinding key in sealed/', 'Read', { file_path: R('sealed', 'blind', '0123456789ab.json') }, 'read-outside-role'),
+    sc('scorer reads another view', 'Read', { file_path: R('views', 'comparison.json') }, 'read-outside-role'),
+    sc('scorer reaches another view by ..', 'Read', { file_path: R('views', 'blind', '..', 'comparison.json') }, 'read-outside-role'),
+    sc('scorer reads a folder name that only starts like blind', 'Read', { file_path: R('views', 'blinder', 'index.json') }, 'read-outside-role'),
+    sc('scorer reads the plan', 'Read', { file_path: R('plan', 'analysis-plan.json') }, 'read-outside-role'),
+    sc('scorer reads the store', 'Read', { file_path: R('store', 'objects', 'c_x.json') }, 'read-outside-role'),
+    sc('scorer reads a queue batch', 'Read', { file_path: R('queue', 'b1-1', 'batch.json') }, 'read-outside-role'),
+    sc('scorer Write', 'Write', { file_path: R('views', 'blind', 'x.json'), content: '{}' }, 'tool-not-allowed'),
+    sc('scorer Glob', 'Glob', { pattern: '*', path: R('views', 'blind') }, 'tool-not-allowed'),
+    sc('scorer Grep', 'Grep', { pattern: 'x', path: R('views', 'blind') }, 'tool-not-allowed'),
+    sc('scorer WebFetch', 'WebFetch', { url: 'https://example.test/x', prompt: 'p' }, 'tool-not-allowed'),
+    sc('scorer Bash', 'Bash', { command: 'node tcb/status.mjs' }, 'tool-denied'),
+    sc('scorer Agent', 'Agent', { subagent_type: 'checker', prompt: 'x' }, 'tool-not-allowed'),
+    { n: 'scorer helper in a child folder', tool: 'Read', input: { file_path: path.join(a, 'in', 'brief.md') }, agent_type: 'scorer', expect: 'helper-type' },
+    { n: 'scorer helper in a fresh-reviewer folder', role: 'fresh-reviewer', tool: 'Read', input: { file_path: R('views', 'blind', 'index.json') }, agent_type: 'scorer', expect: 'helper-type' },
   ];
 }
 
@@ -694,13 +732,19 @@ test('T8 checker reads: only a queue batch folder that holds batch.json', async 
   });
 });
 
+test('PB scorer reads: only views/blind/, never sealed/, another view or the store; no write, search, shell or helper; only the coordinator may start it', async () => {
+  await withWorld({}, async (w) => {
+    assert.deepEqual(await runCases(w, casesScorer(w)), []);
+  });
+});
+
 test('T9 witnessed fetch: must_read.json plus a stored text snapshot; the hook does not read the ledger', async () => {
   await withWorld({}, async (w) => {
     assert.deepEqual(await runCases(w, casesT9(w)), []);
   });
   // fetch none and fetch any, through profiles edited in a copy
   await withWorld({}, async (w) => {
-    editProfile(w, 'control', (p) => { p.tools_allow = [...p.tools_allow, 'WebFetch']; p.fetch = 'none'; });
+    editProfile(w, 'control', (p) => { p.tools_allow = [...new Set([...p.tools_allow, 'WebFetch'])]; p.fetch = 'none'; });
     editProfile(w, 'child-reviewing', (p) => { p.fetch = 'any'; });
     const f = await runCases(w, [
       { n: 'fetch none profile', role: 'control', tool: 'WebFetch', input: { url: 'https://example.test/paper-a', prompt: 'p' }, expect: 'fetch-none' },
@@ -1396,11 +1440,13 @@ test('G5 the Post mode: archived or already archived is stopped, not found is no
 // ---------------------------------------------------------------------------------------------
 const CHILDLIKE = { tools_allow: ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Agent', 'WebFetch', 'ToolSearch'], read_prefixes: ['{attempt}/'], write_prefixes: ['{attempt}/staging/'], agent_types: ['reader'], fetch: 'witnessed', bash: 'none' };
 const FRESHLIKE = { tools_allow: ['Read', 'Glob', 'Grep', 'Write'], read_prefixes: ['{attempt}/'], write_prefixes: ['{attempt}/staging/'], agent_types: [], fetch: 'none', bash: 'none' };
+// FX-PILOT unit PC: the single-session arm S1, S2 (role control): the readers' search and fetch, no helpers
+const SOLO = { tools_allow: ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'WebSearch', 'WebFetch', 'ToolSearch'], read_prefixes: ['{attempt}/'], write_prefixes: ['{attempt}/staging/'], agent_types: [], fetch: 'any', bash: 'none' };
 const COORD = {
   tools_allow: ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Agent', 'Bash', 'PowerShell', 'ToolSearch'],
   read_prefixes: ['{root}/run/status.json', '{root}/views/', '{root}/store/objects/x_', '{root}/completeness/gate.json', '{root}/plan/', '{root}/tcb/briefs/', '{root}/tcb/README.md'],
   write_prefixes: ['{root}/plan/questions/', '{root}/plan/approaches.json', '{root}/plan/protocols/', '{root}/plan/analysis-plan.json', '{root}/plan/cost-inputs.json', '{root}/plan/tasks-plan.json', '{root}/plan/plant-candidates/', '{root}/plan/our-work/', '{root}/plan/notes/'],
-  agent_types: ['checker'],
+  agent_types: ['checker', 'scorer'],
   fetch: 'none',
   bash: 'tcb-node',
 };
@@ -1411,13 +1457,15 @@ const EXPECT = {
   'child-reviewing': CHILDLIKE,
   canary: CHILDLIKE,
   'fresh-reviewer': FRESHLIKE,
-  control: FRESHLIKE,
+  control: SOLO,
   stpa: FRESHLIKE,
   fmea: FRESHLIKE,
   mapper: FRESHLIKE,
   coordinator: COORD,
   reader: { tools_allow: ['WebSearch', 'WebFetch', 'ToolSearch', 'StructuredOutput'], read_prefixes: [], write_prefixes: [], agent_types: [], fetch: 'any', bash: 'none' },
   checker: { tools_allow: ['Read', 'StructuredOutput'], read_prefixes: ['{root}/queue/{batch}/'], write_prefixes: [], agent_types: [], fetch: 'none', bash: 'none' },
+  // PB: the blinded scorer (PILOT-PLAN s4 unit 2): Read on views/blind/ only, like the checker on its batch
+  scorer: { tools_allow: ['Read', 'StructuredOutput'], read_prefixes: ['{root}/views/blind/'], write_prefixes: [], agent_types: [], fetch: 'none', bash: 'none' },
 };
 const sorted = (a) => [...a].sort();
 const matchTool = (name, list) => list.some((e) => (e.endsWith('*') ? name.startsWith(e.slice(0, -1)) : e === name));
@@ -1476,6 +1524,9 @@ test('T14 shipped profiles, settings and agent files agree with each other and w
     let deny = ['Bash', 'PowerShell', 'NotebookEdit', 'MultiEdit', 'WebSearch', 'Task'];
     if (role === 'coordinator') deny = deny.filter((t) => t !== 'Bash' && t !== 'PowerShell');
     if (role === 'reader') deny = deny.filter((t) => t !== 'WebSearch');
+    // PB2: a role that starts helpers does not deny Task (the app reads it as a deny of the whole Agent tool)
+    if (e.agent_types.length) deny = deny.filter((t) => t !== 'Task');
+    if (role === 'control') deny = [...deny.filter((t) => t !== 'WebSearch'), 'Agent'];
     if (JSON.stringify(sorted(p.tools_deny)) !== JSON.stringify(sorted(deny))) problems.push(`${role}: tools_deny ${JSON.stringify(p.tools_deny)}, want ${JSON.stringify(deny)}`);
     const both = p.tools_allow.filter((t) => matchTool(t, p.tools_deny));
     if (both.length) problems.push(`${role}: allowed and denied: ${both}`);
@@ -1493,7 +1544,13 @@ test('T14 shipped profiles, settings and agent files agree with each other and w
     try { s = JSON.parse(subst(fs.readFileSync(f, 'utf8'))); } catch (err) { sproblems.push(`${role}: does not parse after substitution: ${err.message}`); continue; }
     const p = profiles[role];
     const pre = s.hooks?.PreToolUse;
-    if (!Array.isArray(pre) || pre.length !== 1 || pre[0].matcher !== '*' || !Array.isArray(pre[0].hooks) || pre[0].hooks.length !== 1) { sproblems.push(`${role}: hooks.PreToolUse shape`); continue; }
+    // FX-PILOT unit PA: the guard hook's one "*" entry, then the tier hook's entry for the starts
+    if (!Array.isArray(pre) || pre.length !== 2 || pre[0].matcher !== '*' || !Array.isArray(pre[0].hooks) || pre[0].hooks.length !== 1) { sproblems.push(`${role}: hooks.PreToolUse shape`); continue; }
+    const tierE = pre[1];
+    if (tierE.matcher !== 'Agent|Task|mcp__ccd_session__start_session' || !Array.isArray(tierE.hooks) || tierE.hooks.length !== 1
+      || tierE.hooks[0].type !== 'command' || tierE.hooks[0].command !== '"C:/nodejs/node.exe" "C:/x/run1/tcb/tier-hook.mjs"' || tierE.hooks[0].timeout !== 30) {
+      sproblems.push(`${role}: hooks.PreToolUse[1] is not the tier hook on the starts`);
+    }
     const h = pre[0].hooks[0];
     const want = role === 'coordinator'
       ? '"C:/nodejs/node.exe" "C:/x/run1/tcb/guard-hook.mjs" --root "C:/x/run1" --role coordinator'
@@ -1527,6 +1584,7 @@ test('T14 shipped profiles, settings and agent files agree with each other and w
     }
     if (role === 'coordinator') {
       if (!allow.includes('Bash(node tcb/*)')) sproblems.push('coordinator: allow lacks Bash(node tcb/*)');
+      for (const t of p.agent_types) if (!allow.includes(`Agent(${t})`)) sproblems.push(`coordinator: allow lacks Agent(${t})`);
     } else {
       if (p.tools_allow.includes('Read') && !allow.includes('Read(//C:/x/run1/wt/t1-e1/**)')) sproblems.push(`${role}: allow lacks Read(//{attempt}/**)`);
       if (p.tools_allow.includes('Edit') && !allow.includes('Edit(//C:/x/run1/wt/t1-e1/staging/**)')) sproblems.push(`${role}: allow lacks Edit(//{attempt}/staging/**)`);
@@ -1557,7 +1615,7 @@ test('T14 shipped profiles, settings and agent files agree with each other and w
 
   // agent files
   const aproblems = [];
-  for (const [name, toolsWant] of [['reader', ['WebSearch', 'WebFetch']], ['checker', ['Read']]]) {
+  for (const [name, toolsWant] of [['reader', ['WebSearch', 'WebFetch']], ['checker', ['Read']], ['scorer', ['Read']]]) {
     const f = path.join(TCB, 'agents', name + '.md');
     if (!fs.existsSync(f)) { aproblems.push(`${name}.md missing`); continue; }
     const { fm, body } = frontMatter(fs.readFileSync(f, 'utf8'));
@@ -1569,6 +1627,48 @@ test('T14 shipped profiles, settings and agent files agree with each other and w
     if (body.trim() !== brief.trim()) aproblems.push(`${name}.md: body differs from tcb/briefs/${name}.md`);
   }
   assert.deepEqual(aproblems, [], 'agent file problems');
+});
+
+// ---------------------------------------------------------------------------------------------
+// PB2 (refute FX-PILOT-PB, breaking): the app (Claude Code 2.1.330, read from its bundle) maps each permission
+// rule's tool name through its legacy table (Task is Agent), takes a rule with no content, "" or "*" as one on the
+// whole tool, and refuses a call that such a deny covers before any allow rule is read. So no allow rule of a
+// shipped settings file may share its tool with a whole-tool deny under any of the tool's names.
+// ---------------------------------------------------------------------------------------------
+const APP_TOOL_ALIASES = {
+  Task: 'Agent', KillShell: 'TaskStop', KillBash: 'TaskStop', ListPeers: 'ListAgents', Brief: 'SendUserMessage',
+  ListMcpResources: 'ListMcpResourcesTool', ReadMcpResource: 'ReadMcpResourceTool', ReadMcpResourceDir: 'ReadMcpResourceDirTool',
+  ProposeGoal: 'SetGoal',
+};
+function appRule(rule) {
+  const m = /^([^()]+)\(([\s\S]*)\)$/.exec(rule);
+  const raw = m ? m[1] : rule;
+  return { rule, tool: Object.hasOwn(APP_TOOL_ALIASES, raw) ? APP_TOOL_ALIASES[raw] : raw, whole: !m || m[2] === '' || m[2] === '*' };
+}
+function shadowed(allow, deny) {
+  const whole = deny.map(appRule).filter((r) => r.whole);
+  const covers = (d, t) => d === t || (() => { const s = d.endsWith('__*') ? d.slice(0, -3) : d; return /^mcp__/.test(s) && s.split('__').length === 2 && t.startsWith(s + '__'); })();
+  return allow.flatMap((a) => { const t = appRule(a).tool; const d = whole.find((r) => covers(r.tool, t)); return d ? [`allow ${a} is shadowed by deny ${d.rule}`] : []; });
+}
+
+test('PB2 no allow rule of a shipped settings file is shadowed by a deny of its whole tool under any of its names', () => {
+  // the check itself: each name and form of a whole-tool deny shadows Agent(scorer); a deny with content does not
+  for (const d of ['Task', 'Agent', 'Agent(*)', 'Agent()', 'Task(*)']) assert.equal(shadowed(['Agent(scorer)'], [d]).length, 1, `deny ${d}`);
+  for (const d of ['Agent(reader)', 'Task(reader)', 'TaskStop', 'Bash']) assert.deepEqual(shadowed(['Agent(scorer)'], [d]), [], `deny ${d}`);
+  assert.equal(shadowed(['mcp__s__start'], ['mcp__s']).length, 1, 'an MCP server deny covers its tools');
+  const sdir = path.join(TCB, 'settings');
+  const problems = [];
+  for (const f of fs.readdirSync(sdir).filter((x) => x.endsWith('.json') && x !== 'user-deny.json').sort()) {
+    const s = JSON.parse(subst(fs.readFileSync(path.join(sdir, f), 'utf8')));
+    for (const p of shadowed(s.permissions?.allow ?? [], s.permissions?.deny ?? [])) problems.push(`${f}: ${p}`);
+  }
+  assert.deepEqual(problems, [], 'allow rules the app would never reach');
+  // every helper type a role may start has its allow rule, and the hook still refuses Task (not in tools_allow)
+  for (const role of ['coordinator', 'child', 'child-reviewing', 'canary']) {
+    const p = JSON.parse(fs.readFileSync(path.join(TCB, 'profiles', role + '.json'), 'utf8'));
+    assert.ok(p.agent_types.length > 0, `${role} starts helpers`);
+    assert.ok(!p.tools_allow.includes('Task') && !p.tools_deny.includes('Task'), `${role}: Task neither allowed nor denied`);
+  }
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -1722,4 +1822,35 @@ test('FX-W1 allow list: production forms allowed, test seams refused for every s
     }
   }
   assert.deepEqual([...new Set(missing)], []);
+});
+
+// FX-PILOT unit PA (PILOT-PLAN s4 unit 1): with tcb/tier-routes.json in place the start carries the row's
+// route: the title begins with the kind of the row's tier, the model is that kind's model; otherwise
+// bad-route with no start.json written (the tier hook beside this one would refuse the same start, and
+// the two run side by side). A tier that is no kind is bad-route.
+test('PA-3 the start tool with a route table: the title\'s kind and the model must be the row\'s route, else bad-route with nothing written', async () => {
+  await withWorld({}, async (w) => {
+    fs.copyFileSync(path.join(TCB, 'tier-routes.json'), w.P('tcb', 'tier-routes.json'));
+    const table = cgRead(w.P('run', 'tasks.json'));
+    table.tasks.push(row('child', { task: 'f1-start', step: 'admitted', tier: 'orchestrate' }));
+    table.tasks.push(row('child', { task: 'f1-odd', step: 'admitted', tier: 'sonnet' }));
+    writeTable(w.root, table.tasks, 2);
+    const a = mkAttempt(w.root, 'f1-start', 1);
+    const b = mkAttempt(w.root, 'f1-odd', 1);
+    fs.writeFileSync(w.P('run', 'watcher.json'), JSON.stringify({ schema_version: 1, ce: 1, ticks_total: 7 }));
+    fs.writeFileSync(w.P('run', 'turn.json'), JSON.stringify(armedTurn()));
+    const ok = { cwd: a, use_worktree: false, prompt: 'p', title: 'orchestrate: f1-start', model: 'opus' };
+    const st = (n, input, expect, opt = {}) => cgCall(w, n, T_START, input, expect, opt);
+    assert.deepEqual(await runCases(w, [
+      st('no model', { ...ok, model: undefined }, 'bad-route'),
+      st('a cheaper model', { ...ok, model: 'sonnet' }, 'bad-route'),
+      st('the caller\'s model', { ...ok, model: 'fable' }, 'bad-route'),
+      st('no kind in the title', { ...ok, title: 'f1-start' }, 'bad-route'),
+      st('another kind in the title', { ...ok, title: 'analyse: f1-start' }, 'bad-route'),
+      st('a tier that is no kind', { ...ok, cwd: b, title: 'read: f1-odd', model: 'sonnet' }, 'bad-route'),
+    ]), []);
+    for (const d of [a, b]) assert.equal(fs.existsSync(path.join(d, 'start.json')), false, 'nothing written on a deny');
+    assert.deepEqual(await runCases(w, [st('the start on its route', { ...ok, title: 'Orchestrate : f1-start', model: 'claude-opus-5-5' }, 0, { more: { tool_use_id: 'toolu_1' } })], 1), []);
+    assert.equal(cgRead(path.join(a, 'start.json')).tool_use_id, 'toolu_1');
+  });
 });

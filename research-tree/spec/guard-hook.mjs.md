@@ -103,12 +103,16 @@ ledger, so the cost does not grow with the run); checker: `queue/<b>/batch.json`
 | role | tools_allow | read_prefixes | write_prefixes | agent_types | fetch | bash |
 |---|---|---|---|---|---|---|
 | child, child-reviewing, canary | Read Glob Grep Write Edit Agent WebFetch ToolSearch | `{attempt}/` | `{attempt}/staging/` | reader | witnessed | none |
-| fresh-reviewer, control, stpa, fmea, mapper | Read Glob Grep Write | `{attempt}/` | `{attempt}/staging/` | — | none | none |
+| control (the single-session arm S1, S2: the readers' search and fetch, no helpers; FX-PILOT unit PC) | Read Glob Grep Write Edit WebSearch WebFetch ToolSearch | `{attempt}/` | `{attempt}/staging/` | — | any | none |
+| fresh-reviewer, stpa, fmea, mapper | Read Glob Grep Write | `{attempt}/` | `{attempt}/staging/` | — | none | none |
 | coordinator | Read Glob Grep Write Edit Agent Bash PowerShell ToolSearch + the host's session tools (owner lists them as `<prefix>*`) | `{root}/run/status.json`, `{root}/views/`, `{root}/store/objects/x_`, `{root}/completeness/gate.json`, `{root}/plan/`, `{root}/tcb/briefs/`, `{root}/tcb/README.md` | the coordinator paths of CONTRACT §2.1: `{root}/plan/questions/`, `{root}/plan/approaches.json`, `{root}/plan/protocols/`, `{root}/plan/analysis-plan.json`, `{root}/plan/cost-inputs.json`, `{root}/plan/tasks-plan.json`, `{root}/plan/plant-candidates/`, `{root}/plan/our-work/`, `{root}/plan/notes/` | checker | none | tcb-node |
 | reader | WebSearch WebFetch ToolSearch StructuredOutput | — | — | — | any | none |
 | checker | Read StructuredOutput | `{root}/queue/{batch}/` | — | — | none | none |
 
-`tools_deny` (all; `schema_version: 1`): Bash, PowerShell (but coordinator), NotebookEdit, MultiEdit, WebSearch (but reader), Task.
+`tools_deny` (all; `schema_version: 1`): Bash, PowerShell (but coordinator), NotebookEdit, MultiEdit, WebSearch (but reader and control), Task
+(but the roles that start helpers: coordinator, child, child-reviewing, canary; PB2: the app reads a rule on `Task` as one on
+the whole `Agent` tool and applies such a deny before any allow rule, so it would refuse `Agent(<type>)`; the hook still
+refuses a `Task` call there, `tool-not-allowed`, as `Task` is not in `tools_allow`); Agent for control (PC: one session, no fan-out; it starts no helpers, so its Task deny stays).
 
 ## Settings `tcb/settings/` (CONTRACT §3.21)
 - `<role>.json` for each task role and `coordinator.json`: harness settings `{permissions: {allow,
@@ -180,7 +184,8 @@ the exit code is 0 or 2, stdout is empty, and on 2 stderr starts `[guard-hook] d
   after 50 mixed calls, no lock file is created, the ledger is unchanged.
 - T14 Every file in `tcb/profiles/` validates against [profile]; every `tcb/settings/<role>.json`
   parses after substitution, its hook command starts with the quoted `{node}`, names its own role, allows only tools in the
-  profile's `tools_allow` and denies every `tools_deny` entry; `reader.md` lists exactly WebSearch,
+  profile's `tools_allow` and denies every `tools_deny` entry, and no allow rule shares its tool with a deny of the whole
+  tool under any of the app's names for it (PB2: `Task` is `Agent`; no content, `()` or `(*)` is the whole tool); `reader.md` lists exactly WebSearch,
   WebFetch and `checker.md` exactly Read, each body equal to its brief.
 - T15 (0b) `hookWrite`: a create with time left → `created`, again `identical`, other bytes `different` (no
   deny, bytes kept); `budgetMs` 0 or below → `budget-spent`; a missing parent → `no-parent`, no folder made;

@@ -130,12 +130,16 @@ Only after call 2 exited 0 in this turn (arm `confirmed`), and only the acts sta
   it). On a turn begun by an alarm's or the watcher's exit, a helper's notice or a session's message the app
   refuses a start: do not call the tool, leave the act due (the watcher raises it again; the owner's next typed turn
   takes it). The call: `mcp__ccd_session__start_session` with `initiation` `user_asked`, `cwd` exactly the absolute
-  folder `<root>\wt\<T>-e<E>`, `use_worktree` false, `context` `fresh` (or left out), a `title`, the child's brief
+  folder `<root>\wt\<T>-e<E>`, `use_worktree` false, `context` `fresh` (or left out), a `title` that begins with the
+  row's `route.kind` in status and a colon (`<kind>: <T>`), `model` the row's `route.model`, the child's brief
   as `prompt`, and `background` (at least 80 characters); `target` only `local` or left out, and never `host`,
   `preset`, `environment`, `repository`, `proposal_id`, `source_branch` or `branch_name`. The hook denies the start
   when the turn is not armed (`not-armed`), the row is not active at admitted at E (`wrong-step`), the folder or
-  an input is any other (`bad-target`), or another start of the attempt is recorded (`start-issued`); a denied
+  an input is any other (`bad-target`), the title's kind or the model is not the row's route (`bad-route`; a
+  row whose `route` is null is the owner's), or another start of the attempt is recorded (`start-issued`); a denied
   start writes nothing. Bind once the claim exists (place 7).
+- A helper (Agent tool; `checker`, `scorer`): `subagent_type` the type, `description` beginning with
+  `helper_routes.<type>.kind` in status and a colon, `model` its `model`. Without them the tier hook refuses it.
 
 Armed means: `run/turn.json` of your ce, arm `confirmed`, and no exit marker for its slots. It lasts until endturn
 (arm `spent`) or until the confirmed alarm exits: an alarm that fires mid-turn leaves its marker and ends the arm

@@ -32,6 +32,7 @@ Every script is run from the pinned checkout in the run root, never from an atte
 - `snap.mjs`: fetches a source with plain Node (caps, no cookies, no private addresses) and stores its bytes and text by hash.
 - `witness.mjs`: finds the exact quote and the number in the stored text and binds the result to the card and snapshot hashes.
 - `guard-hook.mjs`: the pre-tool hook: role paths, no writes to settings folders, no shell for children, witnessed fetches; denies on its own error; owns the role profiles.
+- `tier-hook.mjs`, `tier-routes.json`: the tier hook on every role's helper and session starts (a kind at the head of the description or title and an explicit model) and its route table; a row's `tier` names a kind, and `agents` gives each helper type its kind. Status (`route`, `helper_routes`) and the manifest (`agents`) carry kind and model to the starter.
 - `selftest.mjs`: runs every script on its good and bad fixtures; the canary for hooks and user-level denies.
 - `render.mjs`: builds every page and view: pack, review, synthesis, owner page, coverage, the seven measures, residual readings.
 - `audit.mjs`: read audit, protected-path writes, search log, notes, first-call context, coordinator turns above 1.5 times W*; owns the denylist.
