@@ -1777,6 +1777,44 @@ test('FX-W6 age cap stuck: a coordinator that only acknowledges the cap; the 6th
   });
 });
 
+// refute FX-PILOT-PC B1: the age cap is by role. A control row (S1, S2: one session doing a field alone) takes the
+// shipped attempt_max_ticks_control, above the record's longest serial field (181 helper-minutes, COMPLEXITY.md:192);
+// a tree row keeps the shipped attempt_max_ticks. The shipped values are used, so the test binds them to 181.
+test('FX-W6 age cap by role: a control row of 181 min is not flagged, past its own cap it is; a tree row keeps attempt_max_ticks', async () => {
+  const ship = J(path.join(TCB_SRC, 'thresholds.json')).params;
+  const treeCap = ship.attempt_max_ticks.value;
+  const ctlCap = ship.attempt_max_ticks_control.value;
+  assert.equal(ship.attempt_max_ticks_control.source, 'measured');
+  assert.ok(treeCap < 181 && ctlCap > 181, `tree cap ${treeCap} below, control cap ${ctlCap} above a 181-min serial field`);
+  await withRoot({ thr: { attempt_max_ticks: treeCap, attempt_max_ticks_control: ctlCap, coalesce_ticks: 0 } }, async (ctx) => {
+    const c = singleTask(ctx, { task: 'f1-control', extra: { stage: 'control', role: 'control' } });
+    const t = singleTask(ctx, { task: 'f2-research', qids: ['f2-a-01'], extra: { field: 'f2' } });
+    setTasks(ctx, [c.row, t.row]);
+    assertLine(tick(ctx), 0); // the epoch's first tick counts nothing
+    const setAge = (task, n) => {
+      const wj = watcherJson(ctx);
+      wj.tasks[task].age_ticks = n;
+      w(path.join(ctx.root, 'run', 'watcher.json'), wj);
+    };
+    const capsOf = (task) => actEvents(ctx, 'age-cap').filter((e) => String(e.data.key).startsWith(`17|${task}:age-cap|`));
+    // both rows at age 181 after this tick: the tree row is past 107, the control row is not past its cap
+    setAge(c.task, 180);
+    setAge(t.task, 180);
+    const j = assertLine(tick(ctx), 17);
+    assert.equal(watcherJson(ctx).tasks[c.task].age_ticks, 181);
+    assert.ok(j.reasons.some((x) => x.detail.act === 'age-cap' && x.detail.task === t.task && x.detail.attempt_max_ticks === treeCap));
+    assert.ok(!j.reasons.some((x) => x.detail.act === 'age-cap' && x.detail.task === c.task), 'a 181-min control row is not flagged');
+    assert.equal(capsOf(c.task).length, 0);
+    // the control row one tick before its cap, then at it
+    setAge(c.task, ctlCap - 2);
+    tick(ctx);
+    assert.equal(capsOf(c.task).length, 0, `not flagged at ${ctlCap - 1}`);
+    const k = assertLine(tick(ctx), 17);
+    assert.ok(k.reasons.some((x) => x.detail.act === 'age-cap' && x.detail.task === c.task && x.detail.age_ticks === ctlCap && x.detail.attempt_max_ticks === ctlCap), 'flagged at its own cap');
+    assert.equal(capsOf(c.task).length, 1);
+  });
+});
+
 test('NA1 a background command exit reaches the coordinator turn, also during sleep or after a ce change', { skip: `${NEEDS_APP}: item 5, the harness delivers a background command's exit` }, () => {});
 test('NA2 Node timers and the PC across suspend: one sleep of Delta is one tick', { skip: `${NEEDS_APP}: item 6, needs a real suspend of the PC` }, () => {});
 test('NA3 real transcripts match the parser', { skip: `${NEEDS_APP}: item 7, needs real session transcripts` }, () => {});
