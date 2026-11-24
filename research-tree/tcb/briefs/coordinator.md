@@ -165,7 +165,9 @@ The watcher raises these for an attempt at `started` or `bound`. Neither is char
 READY of the attempt's epoch ends both.
 - `idle-child`: the child's turn has ended and no new record of the attempt has come for `idle_ticks` ticks. Answer
   the child, or stop the attempt.
-- `age-cap`: the attempt has been at `bound` for `attempt_max_ticks` ticks. Stop it unless it is making progress.
+- `age-cap`: the attempt has been at `bound` for its role's cap: `attempt_max_ticks` ticks for a tree row,
+  `attempt_max_ticks_control` for a `control` row (S1, S2: one session doing the field alone runs longer). Stop it
+  unless it is making progress.
 
 To stop an attempt, fence it (5a), then close its session (5c): `stop request` takes only a fenced or committed
 attempt. Acknowledging either act at endturn does not let the attempt go on silently: while its condition holds, the

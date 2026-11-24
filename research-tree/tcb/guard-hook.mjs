@@ -595,6 +595,8 @@ function checkAccess(pass) {
   if (kind === 'agent') {
     const t = access.agentType;
     if (typeof t !== 'string' || t === '' || !profile.agent_types.includes(t)) throw new Deny('agent-type', oneLine(t === undefined ? '(absent)' : t));
+    const why = helperRouteProblem(pass, t);
+    if (why) throw new Deny('bad-route', why);
     return;
   }
 
@@ -996,6 +998,23 @@ function startRouteProblem(pass, row) {
   const m = /^([a-z-]+)\s*:/i.exec(String(inp.title ?? '').trim());
   if (!m || m[1].toLowerCase() !== route.kind) return `title must begin with "${route.kind}:" (row ${row.task})`;
   if (lib.modelFamily(inp.model) !== route.model) return `model must be ${route.model} (row ${row.task}, kind ${route.kind}), not ${oneLine(JSON.stringify(inp.model ?? null))}`;
+  return null;
+}
+
+// FX-PILOT unit PA2 (refute FX-PILOT-PA B1): a helper start carries its type's route, the check
+// startRouteProblem runs for sessions. The tier hook beside this one checks only that the model fits
+// the kind the description names; here the kind must be the route of the subagent_type
+// (tier-routes.json `agents`) and the model that kind's model. A type with no route in a readable
+// table is refused; without a readable table nothing is checked here (the tier hook refuses then).
+function helperRouteProblem(pass, type) {
+  const routes = lib.tierRoutes(pass.root, pass.io.readJson);
+  if (!routes) return null;
+  const route = lib.agentRouteOf(routes, type);
+  if (!route) return `helper type ${oneLine(type)} has no route in tcb/tier-routes.json agents`;
+  const inp = pass.toolInput;
+  const m = /^([a-z-]+)\s*:/i.exec(String(inp.description ?? '').trim());
+  if (!m || m[1].toLowerCase() !== route.kind) return `description must begin with "${route.kind}:" (helper ${oneLine(type)})`;
+  if (lib.modelFamily(inp.model) !== route.model) return `model must be ${route.model} (helper ${oneLine(type)}, kind ${route.kind}), not ${oneLine(JSON.stringify(inp.model ?? null))}`;
   return null;
 }
 

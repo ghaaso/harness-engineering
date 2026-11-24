@@ -1854,3 +1854,33 @@ test('PA-3 the start tool with a route table: the title\'s kind and the model mu
     assert.equal(cgRead(path.join(a, 'start.json')).tool_use_id, 'toolu_1');
   });
 });
+
+// REFUTE-PA-1 (FX-PILOT-PA B1; unit PA2): with tcb/tier-routes.json in place a helper start carries its
+// type's route (tier-routes.json `agents`): the description begins with the type's kind and the model is
+// that kind's model, else bad-route. The tier hook checks only that model and kind agree with each other,
+// so a reader on analyse/opus or a checker on locate/haiku passed both hooks before. One right start of
+// each type is still allowed.
+test('REFUTE-PA-1 a helper start off its type\'s route is refused', async () => {
+  await withWorld({}, async (w) => {
+    fs.copyFileSync(path.join(TCB, 'tier-routes.json'), w.P('tcb', 'tier-routes.json'));
+    const ag = (n, role, type, description, model, expect) => ({ n, role, tool: 'Agent', input: { subagent_type: type, description, model, prompt: 'x' }, expect });
+    const wrong = [
+      ag('child-reviewing Agent reader on analyse/opus', 'child-reviewing', 'reader', 'analyse: q', 'opus', 'bad-route'),
+      ag('child-reviewing Agent reader on locate/haiku', 'child-reviewing', 'reader', 'locate: q', 'haiku', 'bad-route'),
+      ag('coordinator Agent checker on analyse/opus', 'coordinator', 'checker', 'analyse: q', 'opus', 'bad-route'),
+      ag('coordinator Agent scorer on locate/haiku', 'coordinator', 'scorer', 'locate: q', 'haiku', 'bad-route'),
+      ag('child Agent reader on orchestrate-deep/fable', 'child', 'reader', 'orchestrate-deep: q', 'fable', 'bad-route'),
+      ag('child Agent reader on its kind with opus', 'child', 'reader', 'collect: q', 'claude-opus-5-5', 'bad-route'),
+      ag('coordinator Agent checker on its kind with no model', 'coordinator', 'checker', 'read: q', undefined, 'bad-route'),
+      ag('coordinator Agent scorer with no kind', 'coordinator', 'scorer', 'score the answers', 'sonnet', 'bad-route'),
+    ];
+    assert.deepEqual(await runCases(w, wrong), []);
+    const right = [
+      ag('child Agent reader on collect/sonnet', 'child', 'reader', 'collect: q', 'sonnet', 0),
+      ag('child-reviewing Agent reader on collect/sonnet', 'child-reviewing', 'reader', 'Collect : q', 'claude-sonnet-4-6', 0),
+      ag('coordinator Agent checker on read/sonnet', 'coordinator', 'checker', 'read: q', 'sonnet', 0),
+      ag('coordinator Agent scorer on read/sonnet', 'coordinator', 'scorer', 'read: q', 'sonnet', 0),
+    ];
+    assert.deepEqual(await runCases(w, right), []);
+  });
+});
