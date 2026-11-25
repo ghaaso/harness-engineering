@@ -79,10 +79,7 @@ recorded; a before-and-after run of the work they guard is not.
 - Nothing in the records was measured on a machine other than Bilal's PC. Every number above may differ on yours.
 - The setup was checked from a clean clone on Windows only. macOS and Linux were not run, and no live Claude Code
   session has yet run on the kit's settings: the hooks were fed their input through the commands the settings hold.
-- `main` carries the archived FixFlow skills and agents. On Bilal's PC a settings file switches them off; on yours
-  they load until you switch them off, and they cost about 8,000 tokens in every session here (r57-0155). Copy the
-  `skillOverrides` and `permissions.deny` blocks from `.claude/settings.json` on `bilal/build` into your
-  `.claude/settings.local.json`. The setup does not do this for you yet.
+- The archived FixFlow skills and agents on `main`: `setup.mjs --apply` switches them off in your `.claude/settings.local.json`, and `--remove` brings them back.
 - `tier-hook` has no test file of its own; `check-clone.mjs` runs ten sample calls through it instead.
 - A route that names Fable needs access to Fable.
 - `research-tree/tools/lane.mjs` runs on macOS and Linux as written, with one fault there: a timeout stops only the
@@ -96,6 +93,14 @@ recorded; a before-and-after run of the work they guard is not.
 - On `bilal/build`, the shared `.claude/settings.json` names its hooks by his PC's path
   (`C:/Users/User/Documents/projects/harness-engineering/...`); the kit writes your own path into
   `.claude/settings.local.json` instead.
+
+## On macOS (not run yet)
+
+1. Run `node harness-kit/check-clone.mjs` first and read its table: every kit row should read ok, then a FixFlow line saying `--remove` left none.
+2. Path quoting: `setup.mjs` (`quotedRoot`, `commandFor`) writes `node "<clone>/.claude/hooks/<hook>.mjs" --harness-kit`, which `/bin/sh` runs; it refuses a clone path holding `"`, `$`, a backtick or a backslash. Open `.claude/settings.local.json` and run one command by hand.
+3. Symlinked folders: `window-ceiling.mjs` (`handoverPath`) and `creep-gate.mjs` (`norm`) compare paths as text against the clone's real path. A clone under a symlink (`/tmp` is `/private/tmp`) may not match the paths the app sends, so a hand-over write past the line may be refused.
+4. Windows paths in the code: `window-ceiling.mjs` line 237 lets hand-over notes through only under `AppData/Local/Claude-data/.../side-session-notes`, a Windows folder. On a Mac, write the hand-over to `research-tree/build/<name>-STATE.md` instead.
+5. `research-tree/tools/lane.mjs` lines 92 and 93: outside Windows, a timeout kills only the direct child (`child.kill('SIGKILL')`). Spawning it `detached: true` and killing `-child.pid` would stop the whole tree.
 
 ## Where everything is
 

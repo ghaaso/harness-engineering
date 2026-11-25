@@ -107,6 +107,43 @@ const USER = {
   check('an unknown argument is refused', r.status === 1);
 }
 
+// 6. the archived FixFlow skills and agents: switched off from what the clone holds, taken back exactly
+function withFixflow(c) {
+  for (const s of ['fixflow-orchestration', 'odoo-accounting-import', 'lean-thing']) mkdirSync(join(c.root, '.claude', 'skills', s), { recursive: true });
+  writeFileSync(join(c.root, '.claude', 'skills', 'README.md'), 'x');
+  mkdirSync(join(c.root, '.claude', 'agents'), { recursive: true });
+  writeFileSync(join(c.root, '.claude', 'agents', 'fixflow-explorer.md'), '---\nname: fixflow-explorer\ntools: Read\n---\nx');
+  writeFileSync(join(c.root, '.claude', 'agents', 'fixflow-odd-file.md'), '---\nname: fixflow-odd\n---\nx');
+  writeFileSync(join(c.root, '.claude', 'agents', 'lean-read.md'), '---\nname: lean-read\n---\nx');
+  return c;
+}
+{
+  const c = withFixflow(clone());
+  let r = run(c);
+  check('dry run counts 2 skills and 2 agents', r.status === 0 && /switched off: 2 skills .* 2 agents/.test(r.stdout) && !existsSync(c.file), r.stdout);
+  run(c, '--apply');
+  const s = json(c.file);
+  check('apply: skill folders off, lean-* and README not', s.skillOverrides['fixflow-orchestration'] === 'off' && s.skillOverrides['odoo-accounting-import'] === 'off'
+    && !('lean-thing' in s.skillOverrides) && Object.keys(s.skillOverrides).length === 2, JSON.stringify(s.skillOverrides));
+  check('apply: fixflow agents denied by frontmatter name, lean-read not', JSON.stringify(s.permissions.deny) === JSON.stringify(['Agent(fixflow-explorer)', 'Agent(fixflow-odd)']), JSON.stringify(s.permissions));
+  run(c, '--apply');
+  check('apply twice: no duplicates', json(c.file).permissions.deny.length === 2);
+  r = run(c, '--remove');
+  check('remove on a new file deletes it', r.status === 0 && !existsSync(c.file), r.stdout);
+}
+{
+  const c = withFixflow(clone());
+  const mine = { skillOverrides: { 'fixflow-orchestration': 'on', other: 'off' }, permissions: { deny: ['Agent(fixflow-explorer)', 'Bash(rm *)'], allow: ['Read'] }, env: { X: '1' } };
+  writeFileSync(c.file, JSON.stringify(mine));
+  run(c, '--apply');
+  const s = json(c.file);
+  check('her own settings stay hers: her "on" kept, her deny not duplicated', s.skillOverrides['fixflow-orchestration'] === 'on' && s.skillOverrides['odoo-accounting-import'] === 'off'
+    && s.permissions.deny.filter((d) => d === 'Agent(fixflow-explorer)').length === 1 && s.permissions.deny.includes('Agent(fixflow-odd)'), JSON.stringify(s));
+  run(c, '--remove');
+  let same = false; try { deepStrictEqual(json(c.file), mine); same = true; } catch {}
+  check('remove leaves exactly her settings (her deny of fixflow-explorer stays)', same, readFileSync(c.file, 'utf8'));
+}
+
 rmSync(base, { recursive: true, force: true });
 console.log(`setup.test: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
