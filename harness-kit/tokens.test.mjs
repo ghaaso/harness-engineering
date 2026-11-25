@@ -1,11 +1,13 @@
-// Tests of tokens.mjs (2026-11-25). Run: node harness-kit/tokens.test.mjs
+// Tests of the program kit-tokens (2026-11-25). Run: KIT_HOOK_BIN_DIR=<folder of built programs> node harness-kit/tokens.test.mjs
 // A made-up Claude config folder (CLAUDE_CONFIG_DIR) holds one session of a made-up project with two helpers.
-// With KIT_HOOK_BIN_DIR set the cases run the Rust program kit-tokens instead (.claude/hooks/hook-under-test.mjs).
-import { runHook } from '../.claude/hooks/hook-under-test.mjs';
+// The program is run through .claude/hooks/hook-under-test.mjs.
+import { runHook, RUST } from '../.claude/hooks/hook-under-test.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+if (!RUST) { console.log('skip  tokens, 8 cases: the Rust program only (its JavaScript was a duplicate and is removed); run with KIT_HOOK_BIN_DIR=<folder of built programs>'); process.exit(0); }
 
 const here = dirname(fileURLToPath(import.meta.url));
 const T = mkdtempSync(join(tmpdir(), 'kit-tokens-'));

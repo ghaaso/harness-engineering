@@ -3,8 +3,10 @@
 // Needs nothing outside .claude/hooks/: the hook, tier-routes.json and kit-mode.mjs are copied into a temporary folder
 // shaped as a clone (<tmp>/clone/.claude/hooks/), so every log line goes there and nothing in the repository is written.
 // The cases: the five of selftest.mjs that are about this hook, the ten sample calls of harness-kit/check-clone.mjs, and
-// kit mode (--harness-kit "--project=<folder>").
+// kit mode (--harness-kit "--project=<folder>") with the effort check on trial (2026-11-26), and a kind named like an
+// object property (`constructor`), refused as unknown both ways.
 // With KIT_HOOK_BIN_DIR set it runs the Rust program kit-tier-hook in place of the hook (./hook-under-test.mjs).
+// Kit mode is the program's only: against the JavaScript hook its cases are skipped, each with its reason.
 import { runHook, RUST } from './hook-under-test.mjs';
 import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -37,6 +39,9 @@ function run(input, args = [], hook = HOOK) {
 }
 // A case that cannot apply to the Rust program: counted, not run, the reason printed.
 function skipped(name, why) { skip++; console.log(`skip ${name}  (${why})`); }
+// A kit-mode case: run against the program only (the thunk is not called against the JavaScript hook).
+const KIT_ONLY = 'kit mode, and the effort check in it, are the Rust program\'s only';
+function kexpect(name, thunk, code, re) { if (RUST) expect(name, thunk(), code, re); else skipped(name, KIT_ONLY); }
 function expect(name, r, code, re) {
   const ok = r.code === code && (!re || re.test(r.err + r.out));
   ok ? pass++ : fail++;
@@ -64,6 +69,8 @@ expect('a Bash call is not its business', run(pre('Bash', { command: 'ls' })), 0
 expect('unreadable input passes', run('not json'), 0);
 expect('child session in a folder whose settings.local.json carries the hook passes', run(pre(start, { title: 'read: x', model: 'sonnet', cwd: LOCAL })), 0);
 expect('child session in a folder without the hook is refused', run(pre(start, { title: 'read: x', model: 'sonnet', cwd: BARE })), 2);
+expect('a kind named like an object property ("constructor: x") is refused as unknown', run(pre('Agent', { description: 'constructor: x', model: 'opus' })), 2, /kind of job and a colon/);
+expect('without --harness-kit the effort is not checked (none, or one no route lists)', { code: run(pre('Agent', { description: 'read: x', model: 'sonnet', effort: 'max' })).code + run(pre('Agent', { description: 'read: x', model: 'sonnet' })).code, err: '', out: '' }, 0);
 const plainLog = join(C, '.claude', 'logs');
 expect('without --harness-kit the log is beside the hooks (<clone>/.claude/logs)', { code: logOf(plainLog).includes('"decision"') ? 0 : 1, err: '', out: '' }, 0);
 
@@ -72,12 +79,19 @@ const P = join(T, 'her-project');
 mkdirSync(P, { recursive: true });
 const KA = ['--harness-kit', `--project=${P}`];
 const before = logOf(plainLog).length;
-expect('kit: Agent "build: x" on sonnet passes', run(pre('Agent', { description: 'build: x', model: 'sonnet' }, P), KA), 0);
-expect('kit: Agent "refute: x" on sonnet is refused (routes beside the hook)', run(pre('Agent', { description: 'refute: x', model: 'sonnet' }, P), KA), 2, /"refute" runs on/);
-expect('kit: the log is under <project>/.claude/logs, not the clone\'s', { code: logOf(join(P, '.claude', 'logs')).split('\n').filter(Boolean).length === 2 && logOf(plainLog).length === before ? 0 : 1, err: '', out: '' }, 0);
-expect('kit: a child session in a folder without the kit\'s hooks is told to run the set-up there', run(pre(start, { title: 'read: x', model: 'sonnet', cwd: BARE }, P), KA), 2, /harness-kit\/setup\.mjs" --apply --project/);
-expect('kit: --project given as two arguments works the same', run(pre('Agent', { description: 'read: x', model: 'opus' }, P), ['--harness-kit', '--project', P]), 2);
-expect('kit: --no-usage-tool changes nothing here', run(pre('Agent', { description: 'extract: x', model: 'haiku' }, P), [...KA, '--no-usage-tool']), 0);
+kexpect('kit: Agent "build: x" on sonnet at medium passes', () => run(pre('Agent', { description: 'build: x', model: 'sonnet', effort: 'medium' }, P), KA), 0);
+kexpect('kit: Agent "refute: x" on sonnet is refused (routes beside the hook)', () => run(pre('Agent', { description: 'refute: x', model: 'sonnet', effort: 'high' }, P), KA), 2, /"refute" runs on/);
+kexpect('kit: the log is under <project>/.claude/logs, not the clone\'s', () => ({ code: logOf(join(P, '.claude', 'logs')).split('\n').filter(Boolean).length === 2 && logOf(plainLog).length === before ? 0 : 1, err: '', out: '' }), 0);
+kexpect('kit: a child session in a folder without the kit\'s hooks is told to run the set-up there', () => run(pre(start, { title: 'read: x', model: 'sonnet', cwd: BARE }, P), KA), 2, /harness-kit\/setup\.(sh|cmd)" --apply --project/);
+kexpect('kit: --project given as two arguments works the same', () => run(pre('Agent', { description: 'read: x', model: 'opus', effort: 'high' }, P), ['--harness-kit', '--project', P]), 2);
+kexpect('kit: --no-usage-tool changes nothing here', () => run(pre('Agent', { description: 'extract: x', model: 'haiku', effort: 'low' }, P), [...KA, '--no-usage-tool']), 0);
+// ---- the effort check, on trial (kit mode only) ----
+const kitLog = () => logOf(join(P, '.claude', 'logs'));
+kexpect('kit: a helper with no effort is refused with the efforts its route allows, on trial', () => run(pre('Agent', { description: 'read: x', model: 'sonnet' }, P), KA), 2, /pass the effort explicitly\. For "read" the route allows medium or high\..*on trial/);
+kexpect('kit: an effort its route does not allow is refused', () => run(pre('Agent', { description: 'extract: x', model: 'haiku', effort: 'high' }, P), KA), 2, /"extract" runs at low or medium effort, not at high\..*on trial/);
+kexpect('kit: max is refused even for an Opus kind', () => run(pre('Agent', { description: 'analyse: x', model: 'opus', effort: 'max' }, P), KA), 2, /"analyse" runs at high or xhigh effort, not at max/);
+kexpect('kit: an allowed effort passes (refute on opus at xhigh)', () => run(pre('Agent', { description: 'refute: x', model: 'opus', effort: 'xhigh' }, P), KA), 0);
+kexpect('kit: every helper decision logs the effort it named', () => ({ code: /"effort":"high".*"decision":"deny"/.test(kitLog()) && /"effort":"xhigh".*"decision":"allow"/.test(kitLog()) && /"effort":null.*"decision":"deny"/.test(kitLog()) ? 0 : 1, err: '', out: '' }), 0);
 // A hook whose kit-mode.mjs is missing behaves as without the argument (log beside the hook, its own refusals).
 const C2 = join(T, 'clone-without-kit-mode', '.claude', 'hooks');
 mkdirSync(C2, { recursive: true });

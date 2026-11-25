@@ -1,4 +1,4 @@
-//! kit-tokens: the port of `harness-kit/tokens.mjs`: what each helper of a session cost, so that limits get a basis
+//! kit-tokens: what each helper of a session cost, so that limits get a basis
 //! of one's own.
 //!
 //! ```text
@@ -665,7 +665,7 @@ fn list(want: &str, project: &Path, files: &mut [File], objs: &mut usize) -> Res
         }
     }
     out.push_str("Tokens: input + cache creation + cache read + output, once per message id (as the fan-out gate counts).\n");
-    out.push_str("Add a helper as a basis of your own: node harness-kit/tokens.mjs --basis \"<what it did>\" <helper id>\n");
+    out.push_str("Add a helper as a basis of your own: harness-kit/rust/target/release/kit-tokens --basis \"<what it did>\" <helper id>\n");
     Ok(out)
 }
 
@@ -726,7 +726,7 @@ fn basis(
 ) -> Result<String, Stop> {
     if js::trim(what).is_empty() || want.is_empty() {
         return Err(Stop::fail(
-            "usage: node harness-kit/tokens.mjs [--project <folder>] --basis \"<what was measured>\" <agent id>",
+            "usage: harness-kit/rust/target/release/kit-tokens [--project <folder>] --basis \"<what was measured>\" <agent id>",
         ));
     }
     let aid = want.strip_prefix("agent-").unwrap_or(want);

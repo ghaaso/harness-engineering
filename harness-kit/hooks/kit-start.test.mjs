@@ -1,18 +1,19 @@
-// Tests of kit-start.mjs (2026-11-25). Run: node harness-kit/hooks/kit-start.test.mjs
-// The hook is copied into a temporary clone (<tmp>/clone/harness-kit/hooks/); her project is another temporary folder.
-// With KIT_HOOK_BIN_DIR set it runs the Rust program kit-start in place of the hook (.claude/hooks/hook-under-test.mjs).
+// Tests of the program kit-start (2026-11-25). Run: KIT_HOOK_BIN_DIR=<folder of built programs> node harness-kit/hooks/kit-start.test.mjs
+// Her project is a temporary folder.
+// The clone is a temporary folder (<tmp>/clone/harness-kit/hooks/ names where the program takes its clone from, .claude/hooks/hook-under-test.mjs).
 import { runHook, RUST } from '../../.claude/hooks/hook-under-test.mjs';
 import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+if (!RUST) { console.log('skip  kit-start, 10 cases: the Rust program only (its JavaScript was a duplicate and is removed); run with KIT_HOOK_BIN_DIR=<folder of built programs>'); process.exit(0); }
+
 const here = dirname(fileURLToPath(import.meta.url));
 const T = mkdtempSync(join(tmpdir(), 'kit-start-'));
 const C = join(T, 'clone'), P = join(T, 'her-project');
 mkdirSync(join(C, 'harness-kit', 'hooks'), { recursive: true });
 mkdirSync(join(P, '.harness'), { recursive: true });
-copyFileSync(join(here, 'kit-start.mjs'), join(C, 'harness-kit', 'hooks', 'kit-start.mjs'));
 writeFileSync(join(P, '.harness', 'TEAM-STATE.md'), '# state\n');
 writeFileSync(join(P, '.harness', 'WIDTHS.md'), '# widths\n');
 let pass = 0, fail = 0;

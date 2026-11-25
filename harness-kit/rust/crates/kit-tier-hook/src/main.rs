@@ -6,10 +6,11 @@
 //! logs folder (`<clone>/.claude/logs`, or `<project>/.claude/logs` with `--harness-kit`). Where the JavaScript
 //! throws (a `null` input, a malformed routes file) this program ends with exit 1 as Node does.
 //!
-//! Two deliberate differences: a child session's folder counts as wired when its settings name `tier-hook.mjs` or
-//! `kit-tier-hook` (the kit wires this program, whose command does not hold `tier-hook.mjs`); and a kind is looked
-//! up among the routes file's own kinds only, so a kind that names a property every JavaScript object has
-//! (`constructor`) is refused as unknown, where the JavaScript throws and the start passes unchecked.
+//! Differences from the JavaScript hook: a child session's folder counts as wired when its settings name
+//! `tier-hook.mjs` or `kit-tier-hook` (the kit wires this program, whose command does not hold `tier-hook.mjs`); in
+//! kit mode a folder without the hooks is told to run the kit's set-up wrapper; and in kit mode a helper start is also
+//! checked for its effort (on trial): it must name one of the `efforts` its kind's route lists in the routes file,
+//! and every helper decision logs the effort it named. Both look a kind up among the routes file's own kinds only.
 
 use kit_core::context::Context;
 use kit_core::input::{self, Input};
@@ -89,6 +90,18 @@ fn run(ctx: &Context, input: &Input, now: u64) -> Outcome {
     };
     let what = if is_helper { "helper" } else { "session" };
     rec = rec.str("what", what);
+    // The effort check (on trial) runs in kit mode on helpers only; their every log line carries the effort named.
+    let check_effort = is_helper && ctx.kit.is_some();
+    let effort = get("effort")
+        .and_then(Value::as_str)
+        .map(str::to_lowercase)
+        .filter(|e| !e.is_empty());
+    if check_effort {
+        rec = match &effort {
+            Some(e) => rec.cut("effort", e, 20),
+            None => rec.null("effort"),
+        };
+    }
 
     let routes_path = ctx.hooks_dir().join("tier-routes.json");
     let routes_text = std::fs::read(&routes_path).map(|b| String::from_utf8_lossy(&b).into_owned());
@@ -149,7 +162,7 @@ fn run(ctx: &Context, input: &Input, now: u64) -> Outcome {
         if !wired {
             let why = if ctx.kit.is_some() {
                 format!(
-                    "tier hook: the folder {dir} does not carry the kit's hooks. Wire them there first: node \"{}/harness-kit/setup.mjs\" --apply --project \"{dir}\"",
+                    "tier hook: the folder {dir} does not carry the kit's hooks. Wire them there first: \"{}/harness-kit/{SETUP}\" --apply --project \"{dir}\"",
                     paths::slashes(&ctx.clone)
                 )
             } else {
@@ -238,7 +251,37 @@ fn run(ctx: &Context, input: &Input, now: u64) -> Outcome {
             ),
         );
     }
+    if check_effort
+        && let Some(why) = route
+            .get("efforts")
+            .and_then(Value::as_array)
+            .and_then(|allowed| effort_refusal(&kind, allowed, effort.as_deref()))
+    {
+        return deny(rec, why);
+    }
     allow(rec)
+}
+
+/// The kit's set-up wrapper on this operating system.
+const SETUP: &str = if cfg!(windows) {
+    "setup.cmd"
+} else {
+    "setup.sh"
+};
+
+/// The refusal of the effort check (on trial) for a helper of `kind` whose route allows `allowed`, or `None` when
+/// the effort named is one of them.
+fn effort_refusal(kind: &str, allowed: &[Value], effort: Option<&str>) -> Option<String> {
+    let want = js::join(allowed, " or ");
+    match effort {
+        None => Some(format!(
+            "tier hook: pass the effort explicitly. For \"{kind}\" the route allows {want}. (The effort check is on trial: its log shows whether it works.)"
+        )),
+        Some(e) if !allowed.iter().any(|a| a.as_str() == Some(e)) => Some(format!(
+            "tier hook: \"{kind}\" runs at {want} effort, not at {e}. (The effort check is on trial: its log shows whether it works.)"
+        )),
+        Some(_) => None,
+    }
 }
 
 /// The kind at the start of a label, lower case: the JavaScript's `/^([a-z-]+)\s*:/i` (ASCII letters and `-`, then
@@ -294,6 +337,21 @@ mod tests {
         )
     }
 
+    fn agent_at(description: &str, model: &str, effort: &str) -> Input {
+        Input::Json(
+            json!({"hook_event_name": "PreToolUse", "tool_name": "Agent",
+            "tool_input": {"description": description, "model": model, "effort": effort}}),
+        )
+    }
+
+    /// A clone with the real routes, run in kit mode for a project beside it.
+    fn kit_clone(name: &str) -> (std::path::PathBuf, Context) {
+        let root =
+            std::env::temp_dir().join(format!("kit-tier-hook-{}-{name}", std::process::id()));
+        let kit_arg = format!("--project={}", root.join("her").display());
+        clone_with_routes(name, &["--harness-kit", &kit_arg])
+    }
+
     #[test]
     fn kind_needs_letters_then_a_colon() {
         assert_eq!(
@@ -314,7 +372,7 @@ mod tests {
         let kit_arg = format!("--project={}", project.display());
         let (_, kit) = clone_with_routes("logs", &["--harness-kit", &kit_arg]);
         let refused = run(&plain, &agent("read: x", "opus"), 1);
-        let passed = run(&kit, &agent("read: x", "sonnet"), 2);
+        let passed = run(&kit, &agent_at("read: x", "sonnet", "medium"), 2);
         let plain_log = std::fs::read_to_string(root.join("clone/.claude/logs/tier-hook.jsonl"))
             .unwrap_or_default();
         let kit_log = std::fs::read_to_string(project.join(".claude/logs/tier-hook.jsonl"))
@@ -324,8 +382,63 @@ mod tests {
         assert!(plain_log.starts_with("{\"t\":1,\"session\":null,\"agent_id\":null,\"what\":\"helper\",\"kind\":\"read\",\"model\":\"opus\",\"decision\":\"deny\","));
         assert_eq!(
             kit_log,
-            "{\"t\":2,\"session\":null,\"agent_id\":null,\"what\":\"helper\",\"kind\":\"read\",\"model\":\"sonnet\",\"decision\":\"allow\"}\n"
+            "{\"t\":2,\"session\":null,\"agent_id\":null,\"what\":\"helper\",\"effort\":\"medium\",\"kind\":\"read\",\"model\":\"sonnet\",\"decision\":\"allow\"}\n"
         );
+    }
+
+    #[test]
+    fn kit_mode_refuses_a_helper_that_names_no_effort_and_says_what_its_route_allows() {
+        let (root, ctx) = kit_clone("noeffort");
+        let out = run(&ctx, &agent("read: x", "sonnet"), 1);
+        std::fs::remove_dir_all(&root).unwrap_or_default();
+        assert!(
+            matches!(out, Outcome::Refuse(w) if w.contains("pass the effort explicitly. For \"read\" the route allows medium or high") && w.contains("on trial"))
+        );
+    }
+
+    #[test]
+    fn kit_mode_refuses_an_effort_outside_the_route_and_logs_it() {
+        let (root, ctx) = kit_clone("higheffort");
+        let out = run(&ctx, &agent_at("extract: x", "haiku", "High"), 1);
+        let log = std::fs::read_to_string(root.join("her/.claude/logs/tier-hook.jsonl"))
+            .unwrap_or_default();
+        std::fs::remove_dir_all(&root).unwrap_or_default();
+        assert!(
+            matches!(out, Outcome::Refuse(w) if w.contains("\"extract\" runs at low or medium effort, not at high") && w.contains("on trial"))
+        );
+        assert!(log.contains("\"effort\":\"high\"") && log.contains("\"decision\":\"deny\""));
+    }
+
+    #[test]
+    fn kit_mode_passes_every_effort_its_route_lists() {
+        let (root, ctx) = kit_clone("okeffort");
+        let outs = [
+            run(&ctx, &agent_at("locate: x", "haiku", "low"), 1),
+            run(&ctx, &agent_at("build: x", "sonnet", "high"), 1),
+            run(&ctx, &agent_at("refute: x", "opus", "xhigh"), 1),
+            run(&ctx, &agent_at("design: x", "fable", "high"), 1),
+            run(&ctx, &agent_at("test: x", "haiku", "high"), 1),
+        ];
+        std::fs::remove_dir_all(&root).unwrap_or_default();
+        assert!(outs.iter().all(|o| *o == Outcome::Pass));
+    }
+
+    #[test]
+    fn the_effort_is_checked_only_in_kit_mode() {
+        let (root, ctx) = clone_with_routes("plaineffort", &[]);
+        let none = run(&ctx, &agent("read: x", "sonnet"), 1);
+        let max = run(&ctx, &agent_at("read: x", "sonnet", "max"), 1);
+        let log = std::fs::read_to_string(root.join("clone/.claude/logs/tier-hook.jsonl"))
+            .unwrap_or_default();
+        std::fs::remove_dir_all(&root).unwrap_or_default();
+        assert!(none == Outcome::Pass && max == Outcome::Pass && !log.contains("effort"));
+    }
+
+    #[test]
+    fn an_effort_is_refused_unless_the_route_lists_it() {
+        let allowed = [json!("high")];
+        assert!(effort_refusal("analyse", &allowed, Some("high")).is_none());
+        assert!(effort_refusal("analyse", &[], Some("high")).is_some());
     }
 
     #[test]

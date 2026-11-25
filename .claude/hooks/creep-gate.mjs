@@ -50,17 +50,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join, isAbsolute, basename } from 'node:path';
 import { homedir } from 'node:os';
 
-// Kit mode (harness kit, 2026-11-25; docs/program/harness-kit-2026-11-25/CONTRACT.md section 2): only with --harness-kit
-// "--project=<folder>": the project is the root (its .claude/logs; paths in prompts are taken relative to it, real paths
-// compared), and a brief a prompt names is also looked for under <project>/.harness/ (briefs/X.md) and
-// <project>/.harness/briefs/. The escape "owner: r57-NNNN" needs <project>/library/journal; where that is absent it
-// passes nothing and every rule holds. A missing or broken kit-mode.mjs leaves the hook as it is without the argument.
-let KIT = null;
-if (process.argv.includes('--harness-kit')) { try { KIT = (await import('./kit-mode.mjs')).kitMode(import.meta.url); } catch { KIT = null; } }
 const here = dirname(fileURLToPath(import.meta.url));
-const ROOT = KIT ? KIT.project : process.env.CREEP_GATE_ROOT ? resolve(process.env.CREEP_GATE_ROOT) : resolve(here, '..', '..');
-// Kit mode: the root's real path too, so a path written through a link (/tmp and /private/tmp on macOS) is the same file.
-const ROOTS = [ROOT, ...(KIT ? [KIT.realOf(ROOT)] : [])].map((r) => r.replace(/\\/g, '/').toLowerCase() + '/');
+const ROOT = process.env.CREEP_GATE_ROOT ? resolve(process.env.CREEP_GATE_ROOT) : resolve(here, '..', '..');
 const LOGDIR = resolve(ROOT, '.claude', 'logs');
 const LOGF = join(LOGDIR, 'creep-gate.jsonl');
 const read = (p) => { try { return readFileSync(p, 'utf8'); } catch { return ''; } };
@@ -83,17 +74,8 @@ const REVIEW_NAME = /refute|review|critique|audit|verdict|findings/i;
 const PATH_RE = /[A-Za-z0-9_.:-]+(?:[\\/][A-Za-z0-9_.-]+)+\.[A-Za-z0-9]{1,6}\b/g;
 const norm = (p) => {
   let s = String(p).replace(/\\/g, '/').toLowerCase();
-  if (!KIT) {
-    const r = ROOT.replace(/\\/g, '/').toLowerCase() + '/';
-    if (s.startsWith(r)) s = s.slice(r.length);
-  } else {
-    const r = ROOTS.find((x) => s.startsWith(x));
-    if (r) s = s.slice(r.length);
-    else if (s.startsWith('/') || /^[a-z]:\//.test(s)) { // an absolute path through another link to the project
-      const rel = KIT.under(String(p), ROOT);
-      if (rel != null) s = rel.toLowerCase();
-    }
-  }
+  const r = ROOT.replace(/\\/g, '/').toLowerCase() + '/';
+  if (s.startsWith(r)) s = s.slice(r.length);
   return s.replace(/^\.\//, '');
 };
 const isBrief = (p) => /(^|\/)briefs?\//.test(norm(p)) || /brief[^/]*\.md$/.test(norm(p));
@@ -103,9 +85,7 @@ function targetOf(prompt) {
   const t = ps.find((p) => !isBrief(p));
   if (t) return norm(t);
   for (const b of ps.filter(isBrief)) {
-    const c = isAbsolute(b) || /^[A-Za-z]:/.test(b) ? [b]
-      : KIT ? [resolve(ROOT, b), resolve(KIT.state, b), resolve(KIT.briefs, basename(b))]
-        : [resolve(ROOT, b), resolve(ROOT, 'research-tree', 'build', b)];
+    const c = isAbsolute(b) || /^[A-Za-z]:/.test(b) ? [b] : [resolve(ROOT, b), resolve(ROOT, 'research-tree', 'build', b)];
     for (const f of c) {
       const bt = [...read(f).matchAll(PATH_RE)].map((m) => m[0]).find((p) => !isBrief(p) && !isContext(p));
       if (bt) return norm(bt);
@@ -228,7 +208,7 @@ export function decide(S, cur, T, refused, escape = false) {
     (D ? (changeTs != null ? `the deliverable (${D}) last changed ${fmtMin(T - changeTs)} ago; ${share}` : `the deliverable (${D}) has not changed in this session yet; all ${fmtTok(total)} tokens so far went elsewhere.`)
       : (changeTs != null ? `a file last changed ${fmtMin(T - changeTs)} ago (${lastAny.path}); ${share}` : `no file changed yet; ${fmtTok(total)} tokens so far.`) +
         ' No deliverable stated: a line "Deliverable: <path>" in the brief or a message names it.') +
-    (KIT ? ' Build the deliverable, one targeted check, finish (the kit\'s rules).' : ' Build the deliverable, one targeted check, finish (CLAUDE.md rule 8).');
+    ' Build the deliverable, one targeted check, finish (CLAUDE.md rule 8).';
   return { why, context, review, target };
 }
 
@@ -299,7 +279,7 @@ try {
   Object.assign(rec, { review: r.review, target: r.target });
   if (r.why) {
     log({ ...rec, decision: 'deny', why: r.why });
-    process.stderr.write((KIT ? 'creep gate (no procedural creep, the kit\'s rules; r57-0063): ' : 'creep gate (CLAUDE.md rule 8, r57-0063): ') + r.why + '\n');
+    process.stderr.write('creep gate (CLAUDE.md rule 8, r57-0063): ' + r.why + '\n');
     process.exit(2);
   }
   log({ ...rec, decision: 'allow', why: escape ? 'owner escape' : r.review ? 'review passes rules 1, 2, 3 and 5' : 'not a review' });

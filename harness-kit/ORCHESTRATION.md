@@ -64,7 +64,7 @@ Never mythos. Source: `.claude/hooks/tier-routes.json` [observed, r57-0005, r57-
 - Agree a cap for the whole job with the person before the first wave. Before each start, tokens spent plus the unused part of running helpers' limits plus the new limit stay under the cap [observed, r57-0614, t8-0110]. In the kit the cap is the line `Cap <n> M tokens` of `.harness/<NAME>-STATE.md`, beside `Session <first 8 characters of the session id>`, and `kit-fanout-gate` refuses a start past it.
 - Read the usage meter in a message before the start, after the previous wave, no older than 26 minutes; never in the same message as the start [observed, r57-0615, r57-0183]. `kit-fanout-gate` refuses a start without such a reading, unless the kit was set up with `--no-usage-tool`.
 - Price every step in the plan, building test cases included [measured, t7-0602].
-- Count tokens as input + cache creation + cache read + output, once per message id, from the transcripts [measured, r58-0102]: `node harness-kit/tokens.mjs` counts so.
+- Count tokens as input + cache creation + cache read + output, once per message id, from the transcripts [measured, r58-0102]: `harness-kit/rust/target/release/kit-tokens` counts so.
 - A helper that reaches its limit stops and reports; you decide whether to extend it [observed, r57-0038].
 - The five-hour and weekly windows reset in full; their sizes are not published [quoted, a1-0327].
 
@@ -113,7 +113,7 @@ Never mythos. Source: `.claude/hooks/tier-routes.json` [observed, r57-0005, r57-
 - "Overthinking": not recorded; no record measures a model running longer than its job needs.
 - Designed, never run: raise effort on the current tier before moving up a tier; Haiku low or medium, Sonnet medium or high [hypothesis, r57-0207].
 - Opus at high and xhigh ran once and worked; no record shows xhigh beat high [observed, r57-0207].
-- No hook checks effort [observed, r57-0120]. A helper's effort changes only when written into CLAUDE.md or a skill [observed, r57-0176, r57-0421].
+- The tier hook checks, on trial and in kit mode only, that a helper start names an effort its route lists; no hook sees the effort a helper really runs at [observed, r57-0120]. A helper's effort changes only when written into CLAUDE.md or a skill [observed, r57-0176, r57-0421].
 - Measuring effort is an open task that needs Bilal's word [a1-0501].
 
 ## Mistakes that cost tokens here

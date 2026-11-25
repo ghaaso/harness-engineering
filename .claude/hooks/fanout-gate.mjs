@@ -42,27 +42,8 @@ import { readFileSync, readdirSync, statSync, existsSync, appendFileSync, mkdirS
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join, basename, isAbsolute } from 'node:path';
 
-// Kit mode (harness kit, 2026-11-25; docs/program/harness-kit-2026-11-25/CONTRACT.md section 2): only with --harness-kit
-// "--project=<folder>" [--no-usage-tool]: the project is the root (its .claude/logs); the state file with the session,
-// the cap and the meter line is a .md file in <project>/.harness/; a brief a prompt names is also looked for under
-// <project>/.harness/; a cited basis is good when it is a measured or observed record in <project>/library/journal (where
-// that exists), an entry of the clone's harness-kit/basis.json (the owner's measured costs of helper roles), or an entry
-// of <project>/.harness/basis.json (her own, written by node harness-kit/tokens.mjs --basis). With --no-usage-tool rule 2
-// (the meter) is off and every decision's log line says so; every other rule as above. A missing or broken
-// kit-mode.mjs leaves the hook as it is without the argument.
-let KIT = null;
-if (process.argv.includes('--harness-kit')) { try { KIT = (await import('./kit-mode.mjs')).kitMode(import.meta.url); } catch { KIT = null; } }
 const here = dirname(fileURLToPath(import.meta.url));
-const ROOT = KIT ? KIT.project : process.env.FANOUT_GATE_ROOT ? resolve(process.env.FANOUT_GATE_ROOT) : resolve(here, '..', '..');
-// Kit mode: a helper killed by an app restart stays reserved until ended by hand; the refusal at the cap names the
-// count gate's command for it, with this machine's paths (repair F2, 2026-11-26).
-function kitEnd(sess) {
-  const sl = (p) => String(p).replace(/\\/g, '/');
-  const prog = `node "${sl(join(here, 'count-gate.mjs'))}"`;
-  const args = ` --harness-kit "--clone=${sl(KIT.clone)}" "--project=${sl(KIT.project)}"`;
-  return ` A helper that died without ending (an app restart) stays reserved until ended by hand: ${prog} --end <helper id> "<why>"${args} (what the count gate counts: ${prog} --status ${(typeof sess === 'string' ? sess : '').slice(0, 8)}${args}).`;
-}
-const BASIS_WHERE = KIT ? 'library/journal, harness-kit/basis.json or .harness/basis.json' : 'library/journal';
+const ROOT = process.env.FANOUT_GATE_ROOT ? resolve(process.env.FANOUT_GATE_ROOT) : resolve(here, '..', '..');
 const NOW = process.env.FANOUT_GATE_NOW ? Date.parse(process.env.FANOUT_GATE_NOW) : Date.now();
 const LOGDIR = resolve(ROOT, '.claude', 'logs');
 
@@ -107,8 +88,7 @@ function briefPaths(prompt) {
   for (const m of String(prompt || '').matchAll(/[A-Za-z0-9_.:\/\\-]+\.md\b/g)) {
     const p = m[0];
     if (!/(^|[\\/])briefs[\\/]/.test(p)) continue; // only brief files: another document's narrative is not a limit
-    const cands = isAbsolute(p) || /^[A-Za-z]:/.test(p) ? [p]
-      : KIT ? [resolve(ROOT, p), resolve(KIT.state, p)] : [resolve(ROOT, p), resolve(ROOT, 'research-tree', 'build', p)];
+    const cands = isAbsolute(p) || /^[A-Za-z]:/.test(p) ? [p] : [resolve(ROOT, p), resolve(ROOT, 'research-tree', 'build', p)];
     const hit = cands.find((c) => { try { return statSync(c).isFile(); } catch { return false; } });
     if (hit && !out.includes(hit)) out.push(hit);
   }
@@ -139,19 +119,13 @@ function journalStatus(id) {
       }
     };
     walk(resolve(ROOT, 'library', 'journal'));
-    // Kit mode: the kit's measured costs and her own; a journal record of the same id keeps its own status.
-    if (KIT) for (const f of [join(KIT.clone, 'harness-kit', 'basis.json'), join(KIT.state, 'basis.json')]) {
-      let b = null; try { b = JSON.parse(read(f) || 'null'); } catch {}
-      const es = Array.isArray(b) ? b : b && Array.isArray(b.entries) ? b.entries : [];
-      for (const e of es) if (e && typeof e.id === 'string' && !journal.has(e.id)) journal.set(e.id, String(e.status || ''));
-    }
   }
   return journal.has(id) ? journal.get(id) : undefined;
 }
 
 // ---- the state file, cap and meter line -------------------------------------------------------------------------
 function stateFile(sess8) {
-  const dir = KIT ? KIT.state : resolve(ROOT, 'research-tree', 'build');
+  const dir = resolve(ROOT, 'research-tree', 'build');
   let names = []; try { names = readdirSync(dir).filter((n) => n.endsWith('.md')); } catch { return null; }
   const re = new RegExp(String.raw`\bsession\s+` + sess8 + String.raw`\b`, 'i');
   const hits = names.map((n) => join(dir, n)).filter((p) => re.test(read(p) || ''));
@@ -319,7 +293,7 @@ try {
     if (!(s.limit > s.expected)) deny(rec, `fanout gate (r57-0038): the limit ${fmt(s.limit)} is not above the expected ${fmt(s.expected)}; a limit is the measured need plus a buffer.`);
     if (!s.ids.length) deny(rec, `fanout gate (r57-0038, r57-0617): the limit in ${s.where} cites no record for its expected figure; write "${form}", the record being one that measured similar work.`);
     const missing = s.ids.filter((id) => journalStatus(id) === undefined);
-    if (missing.length) deny(rec, `fanout gate (r57-0038): ${missing.join(', ')} cited in ${s.where} is not in ${BASIS_WHERE}; cite an existing record${KIT ? ' (node harness-kit/tokens.mjs --basis "<what was measured>" <agent id> adds one of your own)' : ''}.`);
+    if (missing.length) deny(rec, `fanout gate (r57-0038): ${missing.join(', ')} cited in ${s.where} is not in library/journal; cite an existing record.`);
     if (!s.ids.some((id) => ['measured', 'observed'].includes(journalStatus(id)))) {
       deny(rec, `fanout gate (r57-0038, r57-0617): none of ${s.ids.join(', ')} is a measured or observed record; cite the record that measured similar work.`);
     }
@@ -335,8 +309,7 @@ try {
     const found = files(join(projDir, basename(own).replace(/\.jsonl$/, ''), 'subagents'), (n) => n === `agent-${id}.jsonl`);
     own = found[0] || '';
   }
-  if (KIT && !KIT.usageTool) { rec.note = 'meter rule off: --no-usage-tool (no tool reads the plan\'s usage here)'; }
-  else if (!own || !existsSync(own)) { rec.note = 'caller transcript not found; meter not checked'; }
+  if (!own || !existsSync(own)) { rec.note = 'caller transcript not found; meter not checked'; }
   else {
     const why = meterCheck(lines(own), j.tool_use_id, st);
     if (why) deny(rec, `fanout gate: ${why}.`);
@@ -348,7 +321,7 @@ try {
     const c = capCheck(st, main, j.tool_use_id, s.limit);
     Object.assign(rec, { cap: st.cap, spent: c.spent, reserve: c.reserve, running: c.running });
     if (c.total > st.cap) {
-      deny(rec, `fanout gate (r57-0614): spent ${fmt(c.spent)} + the rest of ${c.running} running helpers' limits ${fmt(c.reserve)} + this limit ${fmt(s.limit)} = ${fmt(c.total)}, past the cap of ${fmt(st.cap)} in ${st.rel}; wait for a helper to end, or ask the owner with cap:.${KIT ? kitEnd(j.session_id) : ''}`);
+      deny(rec, `fanout gate (r57-0614): spent ${fmt(c.spent)} + the rest of ${c.running} running helpers' limits ${fmt(c.reserve)} + this limit ${fmt(s.limit)} = ${fmt(c.total)}, past the cap of ${fmt(st.cap)} in ${st.rel}; wait for a helper to end, or ask the owner with cap:.`);
     }
   }
   allow(rec);

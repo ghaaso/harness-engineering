@@ -65,23 +65,13 @@
 // hopefully". So the fixed 500 K line of version 2 is gone: a Fable transcript is held only by the compaction cap,
 // hard line A - K g (0.92 of the window less K calls; 920 K - 10 g on the 1M window), warning K calls before it at the
 // checkpoint's g. It is still not judged by W* or the checkpoint form; every other model as in version 1.
-//
-// Kit mode (2026-11-25, harness kit: docs/program/harness-kit-2026-11-25/CONTRACT.md section 2), only when started with
-// --harness-kit "--project=<folder>": the project is the root (its .claude/logs, its .claude/settings*.json); the
-// sessions that coordinate are named in <project>/.harness/*-STATE.md; past its line a session may write its hand-over
-// under <project>/.harness/ (a *STATE.md file, a brief in .harness/briefs/, a helper's result under .harness/units/),
-// paths compared as real paths. Without --harness-kit nothing of this runs.
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, readdirSync, openSync, readSync, closeSync, fstatSync, renameSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join, basename } from 'node:path';
 import { homedir } from 'node:os';
 
-// Kit mode: only with --harness-kit; a missing or broken kit-mode.mjs leaves the hook as it is without the argument.
-let KIT = null;
-if (process.argv.includes('--harness-kit')) { try { KIT = (await import('./kit-mode.mjs')).kitMode(import.meta.url); } catch { KIT = null; } }
-
 const here = dirname(fileURLToPath(import.meta.url));
-const root = KIT ? KIT.project : resolve(here, '..', '..');
+const root = resolve(here, '..', '..');
 const LOGDIR = process.env.WINDOW_CEILING_LOGDIR || resolve(root, '.claude', 'logs');
 const LOG = join(LOGDIR, 'window-ceiling.jsonl');
 const STATEDIR = join(LOGDIR, 'window-ceiling-state');
@@ -91,11 +81,9 @@ const ORIENT = 17;          // r57-0171: orientation of an Opus root, 17 calls
 const R_REC = 2_330_000;    // r57-0171: those 17 calls cost 2.33 M tokens of context
 const K = 10;               // ORCHESTRATION.md section 5: 10 calls to reach a quiet point and write the checkpoint
 const COMPACT_AT = 0.92;    // ORCHESTRATION.md section 5: the app compacts at 92 % of autoCompactWindow (368 K of 400 K)
-// ORCHESTRATION.md section 5: "near the 1M window" for Fable and Sonnet; Opus 400 K, the window this project ran Opus at
-// when the lines were measured (the owner's setting, r57-0107), so settings with no Opus window still give a line.
-const WINDOW_BY_FAMILY = { fable: 1_000_000, sonnet: 1_000_000, opus: 400_000 };
+const WINDOW_BY_FAMILY = { fable: 1_000_000, sonnet: 1_000_000 }; // ORCHESTRATION.md section 5: "near the 1M window"
 const G_REC = 3_800;        // ORCHESTRATION.md section 5: the builders' Q3 growth, 3.8 K a call (t8-0106: between the median and Q3 of all Opus helpers here)
-const BUILD = process.env.WINDOW_CEILING_BUILD || (KIT ? KIT.state : resolve(root, 'research-tree', 'build')); // where state files name a coordinator
+const BUILD = process.env.WINDOW_CEILING_BUILD || resolve(root, 'research-tree', 'build'); // where state files name a coordinator
 // A Fable transcript: only the compaction cap holds it (version 3; version 2, r57-0098, had a fixed 500 K line).
 const FABLE_ID = 'r58-0001';
 export const isFable = (model) => String(model || '').toLowerCase().startsWith('claude-fable');
@@ -220,7 +208,7 @@ export function isCoordinator(sessionId) {
   if (!/^[0-9a-f]{8}$/.test(s8)) return null;
   const re = new RegExp(String.raw`\bsession\s+` + s8 + String.raw`[0-9a-f-]*\b(?:(?!\bkind\b).)*\bkind\s+orchestrate`, 'i');
   let names = [];
-  try { names = readdirSync(BUILD).filter((n) => (KIT ? /state\.md$/i.test(n) : n.endsWith('.md'))); } catch { return null; }
+  try { names = readdirSync(BUILD).filter((n) => n.endsWith('.md')); } catch { return null; }
   for (const n of names) {
     let t; try { t = readFileSync(join(BUILD, n), 'utf8'); } catch { continue; }
     if (!t.toLowerCase().includes(s8)) continue;
@@ -230,37 +218,16 @@ export function isCoordinator(sessionId) {
 }
 
 // ---------- what passes above the line ----------
-function absOf(p, cwd) {
+function norm(p, cwd) {
   let x = String(p || '').trim().replace(/\\/g, '/');
   const m = /^\/([a-zA-Z])\//.exec(x);
-  if (m && process.platform === 'win32') x = m[1] + ':/' + x.slice(3);
+  if (m) x = m[1] + ':/' + x.slice(3);
   if (!/^[a-zA-Z]:\//.test(x) && !x.startsWith('/')) x = resolve(cwd || root, x).replace(/\\/g, '/');
   else x = resolve(x).replace(/\\/g, '/');
-  return x;
-}
-function norm(p, cwd) {
-  if (!KIT) { // as before kit mode, word for word
-    let x = String(p || '').trim().replace(/\\/g, '/');
-    const m = /^\/([a-zA-Z])\//.exec(x);
-    if (m) x = m[1] + ':/' + x.slice(3);
-    if (!/^[a-zA-Z]:\//.test(x) && !x.startsWith('/')) x = resolve(cwd || root, x).replace(/\\/g, '/');
-    else x = resolve(x).replace(/\\/g, '/');
-    return x.toLowerCase();
-  }
-  return absOf(p, cwd).toLowerCase();
-}
-// Kit mode: the hand-over files of a project, by their path relative to it (real paths compared).
-function kitHandover(p, j) {
-  const rel = KIT.under(absOf(p, j.cwd), root);
-  if (rel == null) return false;
-  const r = rel.toLowerCase();
-  return /^\.harness\/[^/]*state\.md$/.test(r)
-    || /^\.harness\/briefs\/[^/]+\.md$/.test(r)
-    || /^\.harness\/units\/.+/.test(r);
+  return x.toLowerCase();
 }
 function handoverPath(p, j) {
   if (!p) return false;
-  if (KIT && kitHandover(p, j)) return true;
   const x = norm(p, j.cwd);
   const r = resolve(root).replace(/\\/g, '/').toLowerCase() + '/';
   if (j.scratchpad_dir) {
@@ -420,9 +387,7 @@ try {
   if (l.ctx >= l.hard) {
     const ok = handoverCall(j);
     if (ok) { log({ ...base, decision: 'allow', why: ok }); process.exit(0); }
-    const what = KIT
-      ? (rec.agent ? 'result under .harness/units/, then return' : kind === 'coordinator' ? 'a .harness/<NAME>-STATE.md file, a brief under .harness/briefs/, git commit' : 'a .harness/<NAME>-STATE.md file or a result under .harness/units/, git commit')
-      : rec.agent ? 'result under research-tree/build/units/, then return' : kind === 'coordinator' ? 'STATE or TOP-STATE file, a brief, the journal, git commit' : 'a STATE file or a result under research-tree/build/units/, the journal, git commit';
+    const what = rec.agent ? 'result under research-tree/build/units/, then return' : kind === 'coordinator' ? 'STATE or TOP-STATE file, a brief, the journal, git commit' : 'a STATE file or a result under research-tree/build/units/, the journal, git commit';
     const why = `window ceiling (${ids}): context ${kfmt(l.ctx)} is past this ${rec.agent ? 'helper' : kind === 'coordinator' ? 'coordinator' : 'session'}'s line of ${kfmt(l.hard)}${fnote}${sc ? ' (test scale ' + sc + ')' : ''}; only the ${who} passes now: write it (${what}), then ${rec.agent ? 'return LIMIT' : 'say a fresh session is needed and stop'}.`;
     log({ ...base, decision: 'deny' });
     process.stderr.write(why + '\n');

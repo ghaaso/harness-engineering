@@ -3,7 +3,7 @@
 // temporary folder (FANOUT_GATE_ROOT), the clock is fixed (FANOUT_GATE_NOW). With KIT_HOOK_BIN_DIR set the cases run the
 // Rust program kit-fanout-gate instead (.claude/hooks/hook-under-test.mjs). Before this hook every case below was
 // allowed: the "deny" cases are the ones the old setup (no gate) let through.
-import { runHook } from './hook-under-test.mjs';
+import { runHook, RUST } from './hook-under-test.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, copyFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -172,12 +172,12 @@ capCase('C4 a start of the same message with no helper file yet counts whole', '
 { const s = setup(); run('X3 no transcript at all (fails open, logged)', 'allow', s, { ...hookIn(s), transcript_path: join(s.proj, 'missing.jsonl') }); }
 
 // ---- 5. kit mode (harness kit, 2026-11-25): --harness-kit "--project=<folder>" [--no-usage-tool] ----
-// A clone in the temp folder (its .claude/hooks/ holds a copy of this hook and kit-mode.mjs; its harness-kit/basis.json
+// Rust program only. A clone in the temp folder (its .claude/hooks/ holds a copy of this hook; its harness-kit/basis.json
 // the kit's measured costs) and her project, with no library/: state, briefs and her own basis under .harness/.
-if (existsSync(resolve(here, 'kit-mode.mjs'))) {
+if (RUST) {
   const KC = join(base, 'kit-clone'), KH = join(KC, '.claude', 'hooks');
   mkdirSync(KH, { recursive: true }); mkdirSync(join(KC, 'harness-kit'), { recursive: true });
-  copyFileSync(HOOK, join(KH, 'fanout-gate.mjs')); copyFileSync(resolve(here, 'kit-mode.mjs'), join(KH, 'kit-mode.mjs'));
+  copyFileSync(HOOK, join(KH, 'fanout-gate.mjs'));
   writeFileSync(join(KC, 'harness-kit', 'basis.json'), JSON.stringify([
     { id: 'r58-0104', status: 'measured', date: '2026-11-25', claim: 'a Sonnet builder of one small script used 0.20 M' },
     { id: 'r57-0418', status: 'reasoned', date: '2026-11-21', claim: 'a guess' }]));
@@ -244,7 +244,7 @@ if (existsSync(resolve(here, 'kit-mode.mjs'))) {
       && e.includes(tail) && e.includes(`--status abcd1234 --harness-kit "--clone=${sl(KC)}" "--project=${sl(s.root)}"`);
     if (!ok) failed++;
     console.log(`${ok ? 'ok  ' : 'FAIL'} K12 kit: the refusal at the cap names the count gate's --end and --status with this machine's paths: ${r.status} | ${e.trim().slice(0, 400)}`); }
-} else console.log('skip  kit mode: kit-mode.mjs is not beside the hook');
+} else console.log('skip  kit mode, 12 cases: kit mode is in the Rust program only (the JavaScript hook is as on origin/main); run with KIT_HOOK_BIN_DIR');
 
 rmSync(base, { recursive: true, force: true });
 console.log(failed ? `${failed} FAILED of ${n} roots` : `all passed (${HOOK.split(/[\\/]/).pop()})`);

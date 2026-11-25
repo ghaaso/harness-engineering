@@ -1,13 +1,15 @@
-// Tests of harness-kit/parallel: unit.mjs (start, land, list, report) and check.mjs, in toy git repositories made in
-// the OS temp folder, with node --test as the project's check (kit.node.example.json). Each toy project has its own
-// queue folder (<project>/.harness/lane), so no other queue on the machine is touched.
+// Tests of the kit's parallel commands: the programs kit-unit (start, land, list, report) and kit-check, in toy git
+// repositories made in the OS temp folder, with node --test as the project's check (kit.node.example.json). Each toy
+// project has its own queue folder (<project>/.harness/lane), so no other queue on the machine is touched.
+// The programs are taken from KIT_HOOK_BIN_DIR when it is set, else from harness-kit/rust/target/release (build them
+// with: cargo build --release --locked -p kit-unit -p kit-check in harness-kit/rust).
 // Run: node --test harness-kit/parallel/parallel.test.mjs
 // P1 two units changing different files both land, in the order asked; list and report; the first-run notice
 // P2 a unit whose change fails the check is undone: the landing branch's tip is what it was (check_all and named files)
 // P3 two units changing the same lines: the second landing exits 2 and nothing changes
 // P4 a second land while one runs is refused and never interleaves
-// P5 check.mjs runs files side by side (their runs overlap), a failing file is exit 1, shards replace their file
-// P6 check.mjs --measure prints its table and writes check-measure.json, and changes no setting
+// P5 kit-check runs files side by side (their runs overlap), a failing file is exit 1, shards replace their file
+// P6 kit-check --measure prints its table and writes check-measure.json, and changes no setting
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -17,8 +19,11 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const UNIT = path.join(HERE, 'unit.mjs');
-const CHECK = path.join(HERE, 'check.mjs');
+const BIN = path.resolve(process.env.KIT_HOOK_BIN_DIR || path.join(HERE, '..', 'rust', 'target', 'release'));
+const exe = (name) => path.join(BIN, name + (process.platform === 'win32' ? '.exe' : ''));
+const UNIT = exe('kit-unit');
+const CHECK = exe('kit-check');
+for (const p of [UNIT, CHECK]) if (!fs.existsSync(p)) throw new Error(`no program ${p}: build it, or set KIT_HOOK_BIN_DIR to the folder of the built programs`);
 const ENV = Object.assign({}, process.env);
 delete ENV.NODE_TEST_CONTEXT;
 
@@ -55,10 +60,10 @@ function toy(t, kit = {}) {
   Object.assign(cfg, kit);
   write(dir, { '.harness/kit.json': JSON.stringify(cfg, null, 1) });
   const r = { root, dir, g, copies: path.join(root, 'proj-units'), landings: path.join(dir, '.harness', 'landings.jsonl') };
-  r.run = (script, args, cwd = dir) => spawnSync(process.execPath, [script, ...args], { cwd, env: ENV, encoding: 'utf8', timeout: 120000 });
+  r.run = (program, args, cwd = dir) => spawnSync(program, args, { cwd, env: ENV, encoding: 'utf8', timeout: 120000 });
   r.unit = (...args) => r.run(UNIT, args);
   r.check = (...args) => r.run(CHECK, args);
-  r.make = (name, files, msg = `${name}: change`) => { // a unit through unit.mjs start, one commit in its copy
+  r.make = (name, files, msg = `${name}: change`) => { // a unit through kit-unit start, one commit in its copy
     const x = r.unit('start', name);
     assert.equal(x.status, 0, x.stderr);
     const folder = x.stdout.trim();
@@ -176,7 +181,7 @@ test('P4 a second land while one runs is refused and never interleaves', async (
   r.make('quick', { 'b.mjs': 'export const b = 2;\n', 'b.test.mjs': valTest('b', 2) });
   r.unit('start', 'noop');
   const before = r.tip();
-  const first = spawn(process.execPath, [UNIT, 'land', 'slow'], { cwd: r.dir, env: ENV, stdio: 'ignore' });
+  const first = spawn(UNIT, ['land', 'slow'], { cwd: r.dir, env: ENV, stdio: 'ignore' });
   const ended = new Promise((ok) => first.on('exit', ok));
   const lockDir = path.join(r.dir, '.harness', 'land.lock');
   const t0 = Date.now();
@@ -193,7 +198,7 @@ test('P4 a second land while one runs is refused and never interleaves', async (
   assert.equal(y.status, 0, y.stderr);
 });
 
-test('P5 check.mjs runs files side by side; a failing file is exit 1; shards replace their file', (t) => {
+test('P5 kit-check runs files side by side; a failing file is exit 1; shards replace their file', (t) => {
   const r = toy(t);
   const stamps = path.join(r.root, 'stamps').replace(/\\/g, '/');
   const timed = (n) => `import { test } from 'node:test';\nimport fs from 'node:fs';\ntest('t${n}', async () => { fs.appendFileSync('${stamps}', 's ${n} ' + Date.now() + '\\n'); await new Promise((ok) => setTimeout(ok, 1500)); fs.appendFileSync('${stamps}', 'e ${n} ' + Date.now() + '\\n'); });\n`;
@@ -224,7 +229,7 @@ test('P5 check.mjs runs files side by side; a failing file is exit 1; shards rep
   assert.match(x.stdout, /1 file\(s\) in 2 run\(s\)/);
 });
 
-test('P6 check.mjs --measure prints the seconds at 1, 2, 4, 8 at once (never above the processor count) and writes them', (t) => {
+test('P6 kit-check --measure prints the seconds at 1, 2, 4, 8 at once (never above the processor count) and writes them', (t) => {
   const r = toy(t);
   const cpus = typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length;
   const kitBefore = fs.readFileSync(path.join(r.dir, '.harness', 'kit.json'), 'utf8');

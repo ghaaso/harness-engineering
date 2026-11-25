@@ -14,7 +14,7 @@ import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, readFileSync, rmSy
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runHook, hookCommand } from './hook-under-test.mjs';
+import { runHook, hookCommand, RUST } from './hook-under-test.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, '..', '..');
@@ -30,7 +30,6 @@ function fixture(widths) {
   const r = join(dir, 'repo');
   mkdirSync(join(r, '.claude', 'hooks'), { recursive: true });
   copyFileSync(resolve(here, process.env.COUNT_GATE_HOOK || 'count-gate.mjs'), join(r, '.claude', 'hooks', 'count-gate.mjs'));
-  if (existsSync(resolve(here, 'kit-mode.mjs'))) copyFileSync(resolve(here, 'kit-mode.mjs'), join(r, '.claude', 'hooks', 'kit-mode.mjs'));
   mkdirSync(join(r, 'research-tree', 'build'), { recursive: true });
   if (widths != null) writeFileSync(join(r, 'research-tree', 'build', 'WIDTHS.md'), widths);
   const sid = 'aaaabbbb-1111-2222-3333-444455556666';
@@ -400,7 +399,8 @@ test('B4: a finished helper whose transcript was written 0.5 s after its meta wa
 });
 
 // ---- kit mode (harness kit, 2026-11-25): --harness-kit "--project=<folder>" ----
-// Widths and holds from <project>/.harness/WIDTHS.md; log and lock under <project>/.claude/logs.
+// Widths and holds from <project>/.harness/WIDTHS.md; log and lock under <project>/.claude/logs. Rust program only.
+const noKit = !RUST && "kit mode is in the Rust program only (the JavaScript hook is as on origin/main); run with KIT_HOOK_BIN_DIR";
 function kitFixture(widths) {
   const fx = fixture();
   fx.P = join(fx.dir, 'her-project');
@@ -416,7 +416,7 @@ const kitRun = (fx, obj, extra = []) => {
 };
 const W1 = 'width "build: *" 1: one builder at a time, the project has 1 test database\n';
 
-test('kit: a width in <project>/.harness/WIDTHS.md refuses the second builder; a reader passes; the log is under the project', () => {
+test('kit: a width in <project>/.harness/WIDTHS.md refuses the second builder; a reader passes; the log is under the project', { skip: noKit }, () => {
   const fx = kitFixture(W1);
   helper(fx, 'b1', { desc: 'build: first part' });
   const r = kitRun(fx, input(fx, 'build: second part'));
@@ -428,13 +428,13 @@ test('kit: a width in <project>/.harness/WIDTHS.md refuses the second builder; a
   assert.ok(!existsSync(join(fx.P, '.claude', 'logs', 'count-gate.lock')), 'the lock is released');
 });
 
-test('kit: without --harness-kit the project\'s WIDTHS.md is not read (the start passes)', () => {
+test('kit: without --harness-kit the project\'s WIDTHS.md is not read (the start passes)', { skip: noKit }, () => {
   const fx = kitFixture(W1);
   helper(fx, 'b1', { desc: 'build: first part' });
   assert.equal(run(fx, input(fx, 'build: second part')).code, 0);
 });
 
-test('kit: a declaration that does not parse names .harness/WIDTHS.md; the app limit of 20 holds as before', () => {
+test('kit: a declaration that does not parse names .harness/WIDTHS.md; the app limit of 20 holds as before', { skip: noKit }, () => {
   const fx = kitFixture('width "build: *" 1: no number here\n');
   const r = kitRun(fx, input(fx, 'read: x'));
   assert.equal(r.code, 2);
@@ -444,7 +444,7 @@ test('kit: a declaration that does not parse names .harness/WIDTHS.md; the app l
   assert.match(kitRun(fx2, input(fx2, 'read: x')).err, /number 21/);
 });
 
-test('kit: the refusal names --end and --status with the kit arguments and this machine\'s paths (repair F2)', () => {
+test('kit: the refusal names --end and --status with the kit arguments and this machine\'s paths (repair F2)', { skip: noKit }, () => {
   const fx = kitFixture();
   many(fx, 19);
   helper(fx, 'slow', { ago: 10 });
@@ -460,7 +460,7 @@ test('kit: the refusal names --end and --status with the kit arguments and this 
   assert.ok(r.err.trim().endsWith(`--status aaaabbbb${args}).`), r.err);
 });
 
-test('kit: --end writes to the project\'s log, without the kit\'s arguments in its reason', () => {
+test('kit: --end writes to the project\'s log, without the kit\'s arguments in its reason', { skip: noKit }, () => {
   const fx = kitFixture();
   const e = runHook(fx.hook, ['--end', 'ghost', 'killed', 'by', 'a', 'restart', ...fx.args, '--no-usage-tool'], { encoding: 'utf8' });
   assert.equal(e.status, 0, e.stderr);

@@ -3,7 +3,7 @@
 // Every case feeds real PreToolUse JSON on stdin to the hook as a separate process, against transcripts built here
 // in a temporary folder; logs and state go to that folder (WINDOW_CEILING_LOGDIR), never to .claude/logs.
 import { spawnSync } from 'node:child_process';
-import { runHook } from './hook-under-test.mjs';
+import { runHook, RUST } from './hook-under-test.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, existsSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -382,7 +382,7 @@ ok(r.code === 2 && new RegExp(`helper's line of 882 K \\(Fable: the compaction c
 // ---- kit mode (harness kit, 2026-11-25): --harness-kit "--project=<folder>"; the project is the root ----
 // Its state files name the coordinator; its .harness/ holds the hand-over; its .claude/logs the log. The project is
 // reached here through a link as well (a junction on Windows, a symlink elsewhere), as /tmp is on macOS.
-{
+if (RUST) {
   const KP = join(T, 'kitproj');
   mkdirSync(join(KP, '.harness', 'briefs'), { recursive: true });
   writeFileSync(join(KP, '.harness', 'TEAM-STATE.md'), '# state\n\nSession 11111111 (her root), Opus, kind orchestrate.\n');
@@ -431,19 +431,19 @@ ok(r.code === 2 && new RegExp(`helper's line of 882 K \\(Fable: the compaction c
   // without --harness-kit the same input is judged as before (the clone's state folder, not the project's)
   r = run(pre(tpOver, 'Write', { file_path: join(KP, '.harness', 'TEAM-STATE.md'), content: 'x' }));
   ok(r.code === 2, 'without --harness-kit: <project>/.harness/ is no hand-over place', `${r.code} ${r.err}`);
-}
+} else console.log('skip  kit mode, 15 cases: kit mode is in the Rust program only (the JavaScript hook is as on origin/main); run with KIT_HOOK_BIN_DIR');
 
 // Repair F1 (2026-11-26): settings that give no Opus window (a machine without the owner's modelSettings): Opus takes
 // 400 K from the family table, so the compaction line (368 K - 10 g = 348 K) holds; before the repair only W* (437 K
 // here) did, and a session at 400 K passed.
-{
+if (RUST) {
   const NOSET = join(T, 'settings-empty.json');
   writeFileSync(NOSET, '{}');
   const tpNoSet = join(PROJ, '44444444-2222-3333-4444-555555555555.jsonl');
   transcript(tpNoSet, [...Array.from({ length: 17 }, (_, i) => 100000 + i * 12500), ...work(50, 2000, 300000)]); // 400 K: past the 348 K line of a 400 K window, under W* (437 K)
   r = run({ ...pre(tpNoSet, 'Edit', { file_path: ROOT + '/src/app.py', old_string: 'a', new_string: 'b' }), session_id: '44444444-2222-3333-4444-555555555555' }, { WINDOW_CEILING_SETTINGS: NOSET });
   ok(r.code === 2 && /window ceiling/.test(r.err), 'no Opus window in the settings: Opus takes 400 K, a session at 400 K is refused', `${r.code} ${r.err}`);
-}
+} else console.log('skip  repair F1 (no Opus window in the settings), 1 case: a fix made for the kit, in the Rust program only; run with KIT_HOOK_BIN_DIR');
 
 console.log(`window-ceiling: ${pass} passed, ${fail} failed (${pass + fail} cases)`);
 try { rmSync(T, { recursive: true, force: true }); } catch {}

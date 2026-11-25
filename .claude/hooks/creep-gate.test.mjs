@@ -1,7 +1,7 @@
 // Self-tests of the creep gate, version 2 with rule 5. Run: node .claude/hooks/creep-gate.test.mjs
 // With KIT_HOOK_BIN_DIR set to a folder of built programs the same cases run against the Rust port kit-creep-gate
 // (hook-under-test.mjs; harness-kit/rust/DESIGN.md).
-import { runHook } from './hook-under-test.mjs';
+import { runHook, RUST } from './hook-under-test.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -116,6 +116,7 @@ const kitRun = (name, want, s, desc, prompt, says) => {
   if (!ok) failed++;
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}: ${got} | ${(r.stderr || r.stdout).trim().slice(0, 140)}`);
 };
+if (RUST) {
 const kb = setup();
 mkdirSync(join(kb.root, '.harness', 'briefs'), { recursive: true });
 writeFileSync(join(kb.root, '.harness', 'briefs', 'AUDIT.md'), '# brief\nAudit notes/refute/LOCKS.md for faults.\n');
@@ -129,5 +130,6 @@ console.log(`${okKl ? 'ok  ' : 'FAIL'} kit: the log is under <project>/.claude/l
 const kd = setup([dl('docs/x/page.html'), ...write('w1', 'docs/x/page.html', 5)]);
 kitRun('kit: a Write to the deliverable inside the project counts: a check elsewhere passes', 'allow', kd, 'refute: data', 'Check docs/x/rules.json.', 'came after that');
 kitRun('kit: with no record book the escape "owner: r57-NNNN" passes nothing (third review refused)', 'deny', setup([...write('w1', 'docs/x/a.md', 15), ...write('w2', 'docs/x/a.md', 35)], [REV('a1', 't1', 'docs/x/a.md', 1, 10), REV('a2', 't2', 'docs/x/a.md', 20, 30)]), 'refute: a, round 3', 'owner: r57-0071\nReview docs/x/a.md.', 'third review');
+} else console.log('skip  kit mode, 6 cases: kit mode is in the Rust program only (the JavaScript hook is as on origin/main); run with KIT_HOOK_BIN_DIR');
 console.log(failed ? `${failed} FAILED` : 'all passed');
 process.exit(failed ? 1 : 0);

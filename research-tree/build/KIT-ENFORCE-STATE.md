@@ -128,3 +128,14 @@ Cap 95 M tokens (his answer of 2026-11-25 to a second cap: question, "yes 95m al
 - Open, for the owner: record r58-0500 (six points).
 
 Cap 100 M tokens (his answer of 2026-11-25 to a third cap: question, "Yes, 100 M"; replaces the 95 M above).
+
+- About 19:40 UTC, the owner (his words in `OWNER-WORDS.md`, the last message): everything she runs in Rust, the
+  JavaScript duplicates removed, the settings that help here written by the set-up, the small fixes made, nothing
+  about this PC in the kit. One wave of four Opus builders, brief `docs/program/harness-kit-2026-11-25/briefs/RUST-ONLY.md`:
+  S the set-up (limit 11 M), P the parallel commands and the queue (14 M), C the JavaScript duplicates (5 M),
+  T the routing fix, the effort check as a trial and the documents (8 M); basis r58-0110 (0.18 M a KB ported).
+  Four placeholder crates made and the lock file brought to its final state by the coordinator (kit-setup,
+  kit-queue, kit-check, kit-unit). Then one clean-clone check, commits, the pull request branch updated.
+  Not done on purpose: the migration gate's repair-loop rule and this PC's own wiring are not part of the kit.
+
+Cap 140 M tokens (his answer of 2026-11-25 to a fourth cap: question, "Yes, 140 M"; replaces the 100 M above).

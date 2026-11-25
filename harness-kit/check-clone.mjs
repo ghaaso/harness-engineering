@@ -8,16 +8,17 @@
 //    git init, then git fetch --depth 1 of that ref from this repository (no network: a file:// fetch).
 // 2. Copies in every file under harness-kit/, .claude/hooks/ and research-tree/tools/ that differs from <ref> in this
 //    working tree (changed, new and untracked; deleted ones are deleted), and commits them there (--no-overlay: none).
-// 3. Applies the set-up twice: with the clone as the project, and with a second, empty git repository as the project
+// 3. Applies the set-up twice, through its wrapper (harness-kit/setup.cmd on Windows, setup.sh elsewhere, which run
+//    kit-setup with cargo run): with the clone as the project, and with a second, empty git repository as the project
 //    (with --no-usage-tool). The first apply builds the Rust workspace in the clone with the network off
 //    (cargo build --release --locked --offline, CARGO_NET_OFFLINE=true, CARGO_BUILD_JOBS=6), into the clone's own target/.
-//    setup --status must then say all is wired, built and fresh, for each project.
+//    setup --status must then say all is wired, built and fresh, for each project; the three settings it adds are checked.
 // 4. Runs every kit hook's test file both ways, against the JavaScript hook and (KIT_HOOK_BIN_DIR) against its program,
-//    and shows the two counts side by side, skipped cases counted apart from failed ones; then the test files of the
-//    kit's own scripts and of the parallel commands.
+//    and shows the two counts side by side, skipped cases counted apart from failed ones (the start hook's and the token
+//    counter's against their programs only); then the set-up's cargo tests, and the parallel commands' test file
+//    against kit-queue, kit-check and kit-unit.
 // 5. For each project feeds every wired hook, through the exact command written in its settings file, one call that
 //    must pass and one that must be refused (kit-start: it must print the rules and the clone's path).
-// 6. Times one passing call through each JavaScript hook and through its program: the median of 20, after one warm-up.
 // 7. Reads harness-kit/COVERAGE.md: every table row has exactly one of the eight marks; a `hook` row names a hook the
 //    set-up wires; a `command` row names a file that exists in the clone; no row's last column says `missing`.
 //    harness-kit/RULES.md must exist.
@@ -30,7 +31,24 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve, relative, isAbsolute } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { hookOf, isOurs, KIT } from './setup.mjs';
+
+// The kit hooks as kit-setup wires them (harness-kit/rust/crates/kit-setup/src/wiring.rs), and how an entry is known.
+const KIT = [
+  { event: 'SessionStart', matcher: null, hook: 'kit-start', program: 'kit-start' },
+  { event: 'PreToolUse', matcher: '*', hook: 'window-ceiling', program: 'kit-window-ceiling' },
+  { event: 'PreToolUse', matcher: '*', hook: 'tier-hook', program: 'kit-tier-hook' },
+  { event: 'PreToolUse', matcher: 'Agent|Task|SendMessage', hook: 'count-gate', program: 'kit-count-gate' },
+  { event: 'PreToolUse', matcher: 'Agent|Task', hook: 'fanout-gate', program: 'kit-fanout-gate' },
+  { event: 'PreToolUse', matcher: 'Agent|Task', hook: 'creep-gate', program: 'kit-creep-gate' },
+];
+const isOurs = (h) => !!h && typeof h.command === 'string' && /(?:^|\s)--harness-kit(?=\s|$)/.test(h.command);
+function hookOf(command) {
+  const m = /^\s*"([^"]+)"/.exec(String(command)) || /^\s*(\S+)/.exec(String(command));
+  if (!m) return null;
+  const b = m[1].split(/[\\/]/).pop().replace(/\.exe$/i, '');
+  const k = KIT.find((x) => x.program === b);
+  return k ? k.hook : null;
+}
 
 const args = process.argv.slice(2);
 const opt = (k) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : null; };
@@ -113,7 +131,10 @@ git(P, ['init', '-q']);
 // ---- 3: the set-up, twice -----------------------------------------------------------------------------------------------
 const SETUP_ENV = { ...process.env, CARGO_NET_OFFLINE: 'true', CARGO_BUILD_JOBS: '6' };
 delete SETUP_ENV.CARGO_TARGET_DIR; delete SETUP_ENV.KIT_HOOK_BIN_DIR; delete SETUP_ENV.HARNESS_KIT_CARGO;
-const setup = (a, timeout = STEP) => spawnSync(process.execPath, [join(C, 'harness-kit', 'setup.mjs'), ...a], { cwd: C, encoding: 'utf8', env: SETUP_ENV, timeout });
+// Through the wrapper she runs. On Windows a .cmd file runs only through cmd.exe, so the call is one quoted line.
+const setup = (a, timeout = STEP) => (process.platform === 'win32'
+  ? spawnSync([join(C, 'harness-kit', 'setup.cmd'), ...a].map((x) => `"${x}"`).join(' '), { shell: true, cwd: C, encoding: 'utf8', env: SETUP_ENV, timeout })
+  : spawnSync('sh', [join(C, 'harness-kit', 'setup.sh'), ...a], { cwd: C, encoding: 'utf8', env: SETUP_ENV, timeout }));
 const lastLines = (r, n = 3) => ((r.stderr || '') + (r.stdout || '')).trim().split('\n').slice(-n).join(' / ');
 const PROJECTS = [{ name: 'clone', dir: C, D: CF, args: [] }, { name: 'empty repo', dir: P, D: PF, args: ['--project', P, '--no-usage-tool'] }];
 say('setup --apply with the clone as the project (builds the Rust workspace, network off)');
@@ -132,16 +153,25 @@ for (const pr of PROJECTS) {
 }
 const OFF = PROJECTS[0].settings ? (JSON.parse((PROJECTS[0].settings.env || {}).HARNESS_KIT_OFF || '{"skills":[],"deny":[]}')) : { skills: [], deny: [] };
 if (PROJECTS[0].settings) row('set-up', 'FixFlow switched off in the clone (none lean-*)', '', `${OFF.skills.length} skills, ${OFF.deny.length} agents`, OFF.skills.length > 0 && OFF.deny.length > 0 && ![...OFF.skills, ...OFF.deny].some((x) => /lean-/.test(x)));
-if (PROJECTS[1].settings) row('set-up', 'no FixFlow switch in the empty repo', '', PROJECTS[1].settings.env ? 'env set' : 'none', !PROJECTS[1].settings.env && !PROJECTS[1].settings.skillOverrides);
+const OFF1 = PROJECTS[1].settings ? JSON.parse((PROJECTS[1].settings.env || {}).HARNESS_KIT_OFF || '{"skills":[],"deny":[]}') : null;
+if (OFF1) row('set-up', 'no FixFlow switch in the empty repo', '', `${OFF1.skills.length} skills, ${OFF1.deny.length} agents`, !OFF1.skills.length && !OFF1.deny.length && !PROJECTS[1].settings.skillOverrides && !PROJECTS[1].settings.permissions);
+for (const pr of PROJECTS) {
+  const s = pr.settings;
+  if (!s) continue;
+  const fork = (s.env || {}).CLAUDE_CODE_FORK_SUBAGENT === '0';
+  const win = ((s.modelSettings || {})['claude-opus-5-5'] || {}).autoCompactWindow === 400000;
+  const listing = pr === PROJECTS[0] ? s.skillListingMaxDescChars === 1 : s.skillListingMaxDescChars === undefined;
+  row('set-up', `the three settings in project = ${pr.name}`, '', `fork ${fork ? 'off' : '-'}, Opus window ${win ? '400 K' : '-'}, listing ${s.skillListingMaxDescChars ?? 'not set'}`, fork && win && listing);
+}
 const BIN = join(C, 'harness-kit', 'rust', 'target', 'release');
 const built = existsSync(join(BIN, 'kit-tier-hook' + EXE));
 
 // placeholders: a program that still says "not ported yet"
 const placeholder = {};
-for (const p of [...KIT.map((k) => k.program), 'kit-tokens']) {
+for (const p of [...KIT.map((k) => k.program), 'kit-tokens', 'kit-queue', 'kit-check', 'kit-unit']) {
   const f = join(BIN, p + EXE);
   if (!existsSync(f)) { placeholder[p] = 'not built'; continue; }
-  const r = spawnSync(f, [], { input: '{}', encoding: 'utf8', timeout: 20000 });
+  const r = spawnSync(f, [], { cwd: T, input: '{}', encoding: 'utf8', timeout: 20000 });
   if (/not ported yet/.test(r.stderr || '')) placeholder[p] = 'placeholder: not ported yet';
 }
 
@@ -176,13 +206,13 @@ const HOOK_TESTS = [
   { hook: 'creep-gate', file: '.claude/hooks/creep-gate.test.mjs', program: 'kit-creep-gate' },
   { hook: 'count-gate', file: '.claude/hooks/count-gate.test.mjs', program: 'kit-count-gate' },
   { hook: 'fanout-gate', file: '.claude/hooks/fanout-gate.test.mjs', program: 'kit-fanout-gate' },
-  { hook: 'kit-start', file: 'harness-kit/hooks/kit-start.test.mjs', program: 'kit-start' },
-  { hook: 'tokens (command)', file: 'harness-kit/tokens.test.mjs', program: 'kit-tokens' },
+  { hook: 'kit-start', file: 'harness-kit/hooks/kit-start.test.mjs', program: 'kit-start', only: true },
+  { hook: 'tokens (command)', file: 'harness-kit/tokens.test.mjs', program: 'kit-tokens', only: true },
 ];
 say('running the test files both ways');
 for (const h of HOOK_TESTS) {
   if (!existsSync(join(C, h.file))) { row('test file', h.file, '', 'missing', false); continue; }
-  const js = runTest(h.file, false);
+  const js = h.only ? { ok: true, text: 'program only', firstFail: '' } : runTest(h.file, false);
   const switched = /hook-under-test/.test(readFileSync(join(C, h.file), 'utf8'));
   let pr = { ok: false, text: '-', firstFail: '' }, note = '';
   if (!built) note = 'the programs were not built';
@@ -191,10 +221,21 @@ for (const h of HOOK_TESTS) {
   row('test file', h.file, js.text, pr.text, js.ok && pr.ok, [js.ok ? '' : 'JavaScript: ' + js.firstFail, note].filter(Boolean).join('; '));
   say(`  ${h.file}: JavaScript ${js.text}; program ${pr.text}`);
 }
-for (const f of ['harness-kit/setup.test.mjs', 'harness-kit/parallel/parallel.test.mjs', 'research-tree/tools/land.test.mjs']) {
+{
+  const t = Date.now();
+  const r = spawnSync('cargo', ['test', '--offline', '--locked', '-j', '6', '-p', 'kit-setup'], { cwd: join(C, 'harness-kit', 'rust'), encoding: 'utf8', timeout: STEP, maxBuffer: 64 * 1024 * 1024,
+    env: { ...SETUP_ENV, CARGO_TARGET_DIR: join(C, 'harness-kit', 'rust', 'target') } });
+  const out = (r.stdout || '') + (r.stderr || '');
+  const m = /test result: \w+\. (\d+) passed; (\d+) failed/.exec(out);
+  const ok = r.status === 0 && !!m && +m[2] === 0;
+  row('test file', 'cargo test -p kit-setup (the set-up)', '', m ? `${m[1]} passed, ${m[2]} failed in ${((Date.now() - t) / 1000).toFixed(0)} s` : `exit ${r.status ?? 'timeout'}`, ok, ok ? '' : (out.match(/^FAIL .*$/m) || out.match(/^error.*$/m) || [''])[0].slice(0, 120));
+  say(`  cargo test -p kit-setup: ${ok ? 'passed' : 'FAILED'}`);
+}
+for (const [f, rust, progs] of [['harness-kit/parallel/parallel.test.mjs', true, ['kit-queue', 'kit-check', 'kit-unit']], ['research-tree/tools/land.test.mjs', false, []]]) {
   if (!existsSync(join(C, f))) { row('test file', f, 'missing', '', false); continue; }
-  const r = runTest(f, false);
-  row('test file', f, r.text, 'JavaScript only (stays JavaScript)', r.ok, r.ok ? '' : r.firstFail);
+  const r = runTest(f, rust);
+  const ph = progs.filter((p) => placeholder[p]).map((p) => `${p}: ${placeholder[p]}`).join('; ');
+  row('test file', f, rust ? '' : r.text, rust ? r.text : 'JavaScript only (stays JavaScript)', r.ok, r.ok ? '' : [ph, r.firstFail].filter(Boolean).join('; '));
   say(`  ${f}: ${r.text}`);
 }
 
@@ -298,36 +339,6 @@ for (const pr of PROJECTS) {
   }
 }
 
-// ---- 6: the time of one passing call, JavaScript hook against its program ----------------------------------------------
-const median = (xs) => { const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
-// Each run is a call of its own session (the count gate counts a start admitted seconds ago as running).
-let runNo = 0;
-function timeIt(cmd, a, input) {
-  const once = () => {
-    const sid = `abcd1234-0000-4000-8000-${String(++runNo).padStart(12, '0')}`;
-    const t = process.hrtime.bigint();
-    const r = spawnSync(cmd, a, { input: JSON.stringify({ ...input, session_id: sid }), env: ENV, encoding: 'utf8', timeout: 30000 });
-    return { ms: Number(process.hrtime.bigint() - t) / 1e6, code: r.status };
-  };
-  once();
-  const runs = Array.from({ length: 20 }, once);
-  return { ms: median(runs.map((x) => x.ms)), code: runs[runs.length - 1].code };
-}
-if (built) {
-  say('timing one passing call, 20 runs each');
-  const pr = PROJECTS[0];
-  for (const k of KIT) {
-    const [, , input] = CASES[k.hook](pr)[0];
-        const jsFile = k.hook === 'kit-start' ? join(C, 'harness-kit', 'hooks', 'kit-start.mjs') : join(C, '.claude', 'hooks', `${k.hook}.mjs`);
-    const kitArgs = ['--harness-kit', `--project=${pr.dir}`];
-    const js = timeIt(process.execPath, [jsFile, ...kitArgs], input);
-    const pg = timeIt(join(BIN, k.program + EXE), ['--harness-kit', `--clone=${C}`, `--project=${pr.dir}`], input);
-    const real = !placeholder[k.program] && pg.code === js.code && js.code === 0;
-    row('time', `${k.hook}: one passing call, median of 20`, `${js.ms.toFixed(1)} ms (exit ${js.code})`, `${pg.ms.toFixed(1)} ms (exit ${pg.code})`, null,
-      real ? `${(js.ms / pg.ms).toFixed(1)} times faster` : (placeholder[k.program] || (js.code !== 0 ? 'the call did not pass' : 'the program did not end as the hook did')) + ': no gain claimed');
-  }
-}
-
 // ---- 7: COVERAGE.md and RULES.md --------------------------------------------------------------------------------------------
 {
   row('documents', 'harness-kit/RULES.md exists', '', existsSync(RULES) ? 'there' : 'missing', existsSync(RULES), existsSync(RULES) ? '' : 'the writer is not done');
@@ -372,7 +383,7 @@ for (const pr of PROJECTS) {
   const r = setup(['--remove', ...pr.args.filter((x) => x !== '--no-usage-tool')]);
   const f = join(pr.dir, '.claude', 'settings.local.json');
   const left = existsSync(f) ? readFileSync(f, 'utf8') : '';
-  const kitLeft = /--harness-kit|HARNESS_KIT_OFF|kit-[a-z-]+(\.exe)?"/.test(left);
+  const kitLeft = /--harness-kit|HARNESS_KIT_OFF|CLAUDE_CODE_FORK_SUBAGENT|autoCompactWindow|skillListingMaxDescChars|kit-[a-z-]+(\.exe)?"/.test(left);
   row('remove', `--remove, project = ${pr.name}: nothing of the kit left`, '', `exit ${r.status}${existsSync(f) ? '' : ', file deleted'}`, r.status === 0 && !kitLeft, kitLeft ? 'kit entries left' : '');
   row('remove', `--remove leaves .harness/ in project = ${pr.name}`, '', existsSync(join(pr.dir, '.harness', 'kit.json')) ? 'left' : 'gone', existsSync(join(pr.dir, '.harness', 'kit.json')));
 }

@@ -10,16 +10,10 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
-// Kit mode (harness kit, 2026-11-25; docs/program/harness-kit-2026-11-25/CONTRACT.md section 2): only with --harness-kit,
-// the log goes to <project>/.claude/logs and a child session's folder without the hook is told to run the kit's set-up;
-// the routes stay beside this file. A missing or broken kit-mode.mjs leaves the hook as it is without the argument.
-let KIT = null;
-if (process.argv.includes('--harness-kit')) { try { KIT = (await import('./kit-mode.mjs')).kitMode(import.meta.url); } catch { KIT = null; } }
-const LOGDIR = KIT ? KIT.logs : resolve(here, '..', 'logs');
 function log(o) {
   try {
-    mkdirSync(LOGDIR, { recursive: true });
-    appendFileSync(resolve(LOGDIR, 'tier-hook.jsonl'), JSON.stringify(o) + '\n');
+    mkdirSync(resolve(here, '..', 'logs'), { recursive: true });
+    appendFileSync(resolve(here, '..', 'logs', 'tier-hook.jsonl'), JSON.stringify(o) + '\n');
   } catch {}
 }
 function allow(rec) { log({ ...rec, decision: 'allow' }); process.exit(0); }
@@ -58,9 +52,8 @@ if (isSession && typeof ti.cwd === 'string' && ti.cwd.trim() && !['ssh', 'cloud'
     try { return readFileSync(resolve(dir, '.claude', f), 'utf8').includes('tier-hook.mjs'); } catch { return false; }
   });
   if (!wired) {
-    deny({ ...rec, cwd: dir.slice(0, 80) }, KIT
-      ? `tier hook: the folder ${dir} does not carry the kit's hooks. Wire them there first: node "${KIT.clone.replace(/\\/g, '/')}/harness-kit/setup.mjs" --apply --project "${dir}"`
-      : `tier hook (r57-0026): the folder ${dir} does not carry the tier hook. Check and install it first: bash tools/ensure-tier-hook.sh "${dir}" (outside this repository only with the owner's word and --force).`);
+    deny({ ...rec, cwd: dir.slice(0, 80) },
+      `tier hook (r57-0026): the folder ${dir} does not carry the tier hook. Check and install it first: bash tools/ensure-tier-hook.sh "${dir}" (outside this repository only with the owner's word and --force).`);
   }
 }
 
@@ -71,7 +64,9 @@ const where = isHelper ? 'description' : 'title';
 const label = String(isHelper ? (ti.description ?? '') : (ti.title ?? '')).trim();
 const m = /^([a-z-]+)\s*:/i.exec(label);
 const kind = m ? m[1].toLowerCase() : '';
-if (!kind || !kinds[kind]) {
+// Only the routes file's own kinds (2026-11-26): `kinds[kind]` alone also finds `constructor` on every object, and the
+// hook then threw and the start passed unchecked.
+if (!kind || !Object.hasOwn(kinds, kind) || !kinds[kind]) {
   deny({ ...rec, label: label.slice(0, 60) },
     `tier hook: start the ${where} with the kind of job and a colon, for example "extract: ...". Kinds and their models: ${table}.`);
 }

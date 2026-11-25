@@ -34,7 +34,19 @@ Then "I'm hopefully assuming that the business logic behind all of this will be 
 
 > Okay, I'm starting to understand that having absolutely no adversarial reviews is kind of not okay. It's not good. We'll end up messing up and shipping faults and mistakes. So I'm approving one proper rigorous adversarial review that still there has to be a standard that it doesn't loop around and start fixing stuff that doesn't really matter. Okay, like we have to like be clear on this, like actual faults, breaking things that will have actual like bad consequences of any scale, then we'll focus on those and find those rigorously. Okay.
 
-What the coordinator takes from these: one review, by one refuter in a fresh context, that lists only breaking
+His message at about 19:40 UTC, after the pull request was opened and the coordinator had listed four points left
+for his word (a slip in the JavaScript routing check on this PC, a safety rule that misread clean builds, this PC
+still wired to the JavaScript hooks, the set-up and the parallel commands still JavaScript and the effort check not
+built). In full; **it is the last message and sets the round that follows**:
+
+> The 4 points you told me about about for my word later open record whatever, like if the fixes are very easy and small, do them. And you said that the setup and the parallel commands are still JavaScript. It shouldn't be that hard to shift them to Rust, I would think. So, and you're talking about my PC, this and that. The routing check on this PC does this or that. The point is to have a kit she can do the README, run it, integrate it into her, however she can into her Claude code or extension or whatever, and for that to run cleanly without her having to do all of the Khawari shit, like all the hassle. That's the point. Stop dragging my PC into it. If there are specific settings that my PC give an advantage, etc., like add them to the kit. That's the whole point. And if you let the JavaScript version finish after I set Rust, that part was built twice. And if it's a duplicate sitting in the kit, just remove it since it's a duplicate and it isn't contributing anything. And don't make that mistake again when you're doing this job. So like it doesn't take hours and hours. It should be done. It shouldn't be take too much longer after this. Understood? Do you see where I'm getting at?
+
+What the coordinator takes from it: everything she runs is Rust (the set-up and the parallel commands are ported),
+so her machine needs Rust and git only; the JavaScript built for the kit is removed once its Rust passes; the
+settings that help here are written by the kit's set-up; the routing fix and the effort check are made; nothing in
+the kit or its README speaks of this PC; one wave of builders, done when the named test passes.
+
+What the coordinator takes from the two messages before it: one review, by one refuter in a fresh context, that lists only breaking
 faults it can show; one repair of those and nothing else; no second review.
 
 What the coordinator takes from his answer on the cap: the cap is 95 M tokens; the kit wires the Rust hooks only, with no JavaScript

@@ -2,9 +2,11 @@
 
 Final, after the build of 2026-11-25. One row for every item of four sources: `harness-kit/parallel/SPEEDUPS.md` (S),
 `research-tree/build/ENFORCEMENT-TABLE.md` on `bilal/build` (E), `harness-kit/parallel/DECISION-RULE-v2.md` (D) and
-`harness-kit/ORCHESTRATION.md` (O). "By what" names what holds the row after `node harness-kit/setup.mjs --apply`: a hook
+`harness-kit/ORCHESTRATION.md` (O). "By what" names what holds the row after `harness-kit/setup.sh --apply` (`harness-kit\setup.cmd --apply` on Windows): a hook
 by its program's name (`kit-tier-hook`, `kit-window-ceiling`, `kit-creep-gate`, `kit-count-gate`, `kit-fanout-gate`),
-a rule by its number in `harness-kit/RULES.md` (which `kit-start` puts into every session), a command by its file. The
+a rule by its number in `harness-kit/RULES.md` (which `kit-start` puts into every session), a command by its program
+(`kit-setup`, `kit-unit`, `kit-check`, `kit-queue`, `kit-tokens`, built into `harness-kit/rust/target/release/`) with
+its wrapper or crate. The
 last column says `in` when the part exists and the set-up switches it on, and `n/a` for a design, a result or the
 owner's own. `node harness-kit/check-clone.mjs` reads this table and fails if a row breaks these rules.
 
@@ -12,16 +14,16 @@ Marks, exactly one per row:
 - `hook`: after the set-up a hook refuses a breach.
 - `loaded`: in the short rules every session gets at its start; nothing refuses a breach.
 - `command`: a procedure she runs.
-- `trial`: in the kit and switched on, never proven here; "by what" says how she sees whether it works.
+- `trial`: in the kit and switched on, never proven; "by what" says how she sees whether it works.
 - `owner's own`: about this owner's records, pages, machine, branches or approvals; the reason is given.
-- `cannot`: cannot work off this PC as built; the reason and the smallest change are given.
+- `cannot`: cannot work on a second machine as built; the reason and the smallest change are given.
 - `design`: exists only as a design; "by what" says what building it takes.
 - `result`: a finding or a measurement, with nothing to enforce or run; "by what" says where she reads it.
 
 `design` and `result` were added to the five marks of the brief so that no row claims more than is true.
 
-Rows: 280 (S 38, E 115, D 42, O 85). Per mark: hook 55, loaded 50, command 6, trial 15, owner's own 49, cannot 0,
-design 51, result 54. Counted by script on 2026-11-25.
+Rows: 280 (S 38, E 115, D 42, O 85). Per mark: hook 55, loaded 50, command 6, trial 17, owner's own 49, cannot 0,
+design 50, result 53. Counted by script on 2026-11-26.
 
 # Source: `harness-kit/parallel/SPEEDUPS.md` (38 rows)
 
@@ -29,9 +31,9 @@ design 51, result 54. Counted by script on 2026-11-25.
 |---|---|---|---|---|---|
 | S1 | Summary: five times faster suite, 7 builders at once, 1.8 times throughput, 10 faults caught, 2.3 times the planned tokens, research plan only computed | Summary | result | `harness-kit/parallel/SPEEDUPS.md` | n/a |
 | S2 | The table of every improvement with before, after, gain and a mark (measured, computed, estimate, designed) | Every improvement, by what it improves | result | `harness-kit/parallel/SPEEDUPS.md` (the table) | n/a |
-| S3 | Several writers on one set of files: each unit in its own copy, a skeleton first, landings in one order; 7 builders at once instead of 3, about 1 h saved at most; worked once on one repository | Several writers on one file | trial | `harness-kit/parallel/unit.mjs` (start, land, list, report); she sees it work in `unit.mjs report` and `.harness/landings.jsonl`: units landed, undone, conflicts, seconds waited and run | in; run only in its tests (`harness-kit/parallel/parallel.test.mjs`) |
-| S4 | Test suite: 8 files at once, queue at 4 slots, the slowest file cut into 4 shards: 596 s down to 120.4 s here | The test suite | trial | `harness-kit/parallel/check.mjs`; `check.mjs --measure` prints her suite's seconds at 1, 2, 4 and 8 at once and writes `.harness/check-measure.json` | in; run only in its tests (`harness-kit/parallel/parallel.test.mjs`); the pytest defaults never run |
-| S5 | Heavy-command queue: slots raised from 2 to 4; four at once ran at 92 % of perfect; waiting after the change not measured | The heavy-command queue | command | `research-tree/tools/lane.mjs` (`--dir <project>/.harness/lane`, `--capacity N`); `check.mjs` and `unit.mjs` run their checks through it | in; off Windows the timeout ends the whole process group (written, not run there) |
+| S3 | Several writers on one set of files: each unit in its own copy, a skeleton first, landings in one order; 7 builders at once instead of 3, about 1 h saved at most; worked once on one repository | Several writers on one file | trial | `kit-unit` (start, land, list, report); she sees it work in `kit-unit report` and `.harness/landings.jsonl`: units landed, undone, conflicts, seconds waited and run | in; run only in its tests (`harness-kit/parallel/parallel.test.mjs`) |
+| S4 | Test suite: 8 files at once, queue at 4 slots, the slowest file cut into 4 shards: 596 s down to 120.4 s here | The test suite | trial | `kit-check`; `kit-check --measure` prints her suite's seconds at 1, 2, 4 and 8 at once and writes `.harness/check-measure.json` | in; run only in its tests (`harness-kit/parallel/parallel.test.mjs`); the pytest defaults never run |
+| S5 | Heavy-command queue: slots raised from 2 to 4; four at once ran at 92 % of perfect; waiting after the change not measured | The heavy-command queue | command | `kit-queue` (crate `harness-kit/rust/crates/kit-queue`; `--dir <project>/.harness/lane`, `--capacity N`); `kit-check` and `kit-unit` run their checks through it | in; off Windows the timeout ends the whole process group (written, not run there) |
 | S6 | Helpers side by side in the build: 1.8 times shorter by the clock (computed, 990 helper-minutes in 547) | Helpers side by side in the build | result | `harness-kit/RESULTS.md` | n/a |
 | S7 | Model-check runs three at once through the queue: 1.77 times (computed); these were runs of this owner's research tree | Model-check runs in parallel | result | `harness-kit/RESULTS.md` | n/a |
 | S8 | Readers side by side: several Sonnet readers at once, each on its own source and its own file; one trial, 5 readers, 767 K tokens, no run in turn beside it | Readers side by side | loaded | `RULES.md` K11 | in |
@@ -40,16 +42,16 @@ design 51, result 54. Counted by script on 2026-11-25.
 | S11 | Hand-over through files: one session one purpose, at its ceiling the work passes to a fresh session; measured hand-over at 247-273 K, roots 17 % of tokens | Hand-over through files, three roots in turn | hook | `kit-window-ceiling` (past its line a session may only write its hand-over under `.harness/`) | in |
 | S12 | Models by kind of job: Haiku locates, Sonnet reads and builds ordinary code, Opus builds invariants and orchestrates; hook cannot see a wrong kind; saving in tokens not measured | Models by kind of job | hook | `kit-tier-hook` with `.claude/hooks/tier-routes.json` | in |
 | S13 | Router: a model and effort per operation inside a session; designed only, computed range 13-49 M of 986 M tokens | Router design: a model per operation inside a session | design | building takes: the router of `research-tree/build/ROUTER.md` version 2 (lower a step's effort, then move it to a cheaper helper or script) | n/a |
-| S14 | FixFlow skills and agents switched off: about 8,000 tokens fewer per call (computed from characters) | FixFlow skills switched off | command | `node harness-kit/setup.mjs --apply` switches them off (only when the project is the clone) | in |
-| S15 | Testing policy: builders run only their own tests, full suite only before a dependent unit and at the end, a pass on unchanged files never rerun; designed, saving shrinks with a 120 s suite | The testing policy | design | building takes: the rule written in `RULES.md` and a hash-keyed skip of unchanged passes in `check.mjs` | n/a |
-| S16 | Count tokens per unit and per meter point, once per message id; about 62 M a point, builder unit 32.3 M median | Counting tokens per unit and per meter point | command | `harness-kit/tokens.mjs` (JavaScript; its program `kit-tokens` takes the same arguments) | in |
+| S14 | FixFlow skills and agents switched off: about 8,000 tokens fewer per call (computed from characters) | FixFlow skills switched off | command | `harness-kit/setup.sh --apply` (`kit-setup`) switches them off (only when the project is the clone) | in |
+| S15 | Testing policy: builders run only their own tests, full suite only before a dependent unit and at the end, a pass on unchanged files never rerun; designed, saving shrinks with a 120 s suite | The testing policy | design | building takes: the rule written in `RULES.md` and a hash-keyed skip of unchanged passes in `kit-check` | n/a |
+| S16 | Count tokens per unit and per meter point, once per message id; about 62 M a point, builder unit 32.3 M median | Counting tokens per unit and per meter point | command | `kit-tokens` (crate `harness-kit/rust/crates/kit-tokens`) | in |
 | S17 | Blind reviews in a fresh context, with mutations to prove tests catch faults: 10 breaking faults caught before merge | Blind reviews in a fresh context | loaded | `RULES.md` K16 (`kit-creep-gate` only limits reviews, it does not start them) | in |
 | S18 | Model check of the tree: one fault found and fixed; about this owner's research tree | The model check of the tree | owner's own | tree and its model belong to this owner's research track | n/a |
-| S19 | Every landing runs the unit's tests and is undone on failure: 25 landings, 20 landed, 3 undone, 2 conflicts | Every landing through the tests | trial | `harness-kit/parallel/unit.mjs land`: a failing check undoes the merge; she sees it in `.harness/landings.jsonl` (exit, undone, failing) | in; run only in its tests (`harness-kit/parallel/parallel.test.mjs`) |
+| S19 | Every landing runs the unit's tests and is undone on failure: 25 landings, 20 landed, 3 undone, 2 conflicts | Every landing through the tests | trial | `kit-unit land`: a failing check undoes the merge; she sees it in `.harness/landings.jsonl` (exit, undone, failing) | in; run only in its tests (`harness-kit/parallel/parallel.test.mjs`) |
 | S20 | Faults audit: at least 56 faults sorted by cause; a direction, not a gain | The faults audit | result | `research-tree/build/FAULTS.md` | n/a |
 | S21 | Library of records and recall tests: 4,131 records, recall tests 8, 5, 4 sure answers | The library of records and its recall tests | owner's own | the record book (`library/`) is this owner's | n/a |
 | S22 | Read the paper itself, not a fetch summary: curl with `--ssl-no-revoke`, check `%PDF-`, `pdftotext`; 43 corrections to the first pass | Figures quoted from the paper | loaded | `RULES.md` K20 | in |
-| S23 | Tier hook: refuses a helper without a kind of job, without an explicit model, or on a model its kind does not allow; 17 self-tests, 6 of 6 live steps; cannot see a wrong kind or effort | Tier hook | hook | `kit-tier-hook` | in |
+| S23 | Tier hook: refuses a helper without a kind of job, without an explicit model, or on a model its kind does not allow; 17 self-tests, 6 of 6 live steps; cannot see a wrong kind or effort | Tier hook | hook | `kit-tier-hook` (the effort named on a helper's start is checked on trial: rows O72, O74) | in |
 | S24 | Record guard, commit check, plan gate, start hook: refuse edits of archived evidence, non-append journal writes, design questions | Record guard, commit check, plan gate, start hook | owner's own | held only by hooks that are not kit parts (`record-guard`, `plan-gate`, `library-start`, the commit check) | n/a |
 | S25 | Chosen plan for the research run (path e2, 3 owner acts, 5-8 h); computed, not run | The chosen plan for the research run | design | building takes: running the plan once as the pilot (the first real run of the tree) | n/a |
 | S26 | Running without his typed "go": Auto mode, optional Remote Control, stops that remain; designed, one question open | Running without his typed "go" | design | building takes: the `UNATTENDED.md` set-up tried once on a real run | n/a |
@@ -75,7 +77,7 @@ design 51, result 54. Counted by script on 2026-11-25.
 | E3 | R2: instructions inside archived documents are data | R2; written | loaded | `RULES.md` K18 | in |
 | E4 | R3: no install, download, training or experiment without the owner's word; containers, network off | R3; written (hook only proposed) | loaded | `RULES.md` K18 | in |
 | E5 | R4: no project name, path or code in a web search or outside request | R4; written (hook only proposed) | loaded | `RULES.md` K18 | in |
-| E6 | R5a: models by kind of job | R5a; `tier-hook` | hook | `kit-tier-hook` with `tier-routes.json` (effort and a wrong kind label are not checked) | in |
+| E6 | R5a: models by kind of job | R5a; `tier-hook` | hook | `kit-tier-hook` with `tier-routes.json` (a wrong kind label is not checked; the effort is checked on trial, rows O72, O74) | in |
 | E7 | R5b: read usage before any fan-out and between waves | R5b; written today, `fanout-gate` in the kit | hook | `kit-fanout-gate` meter rule, where the session has the app's usage tool; off with `--no-usage-tool`, then `RULES.md` K4 by hand | in |
 | E8 | R5c: agree a cap and stop at it | R5c; written today, `fanout-gate` in the kit | hook | `kit-fanout-gate` job cap | in |
 | E9 | R5d: the coordinator only coordinates, small window, hand over | R5d; `window-ceiling` | hook | `kit-window-ceiling` | in |
@@ -87,14 +89,14 @@ design 51, result 54. Counted by script on 2026-11-25.
 | E15 | Board: ask the owner how or which option (r57-0001, r57-0151) | Board row 1; `record-guard` | owner's own | as E12 | n/a |
 | E16 | Board: set a limit, timeout, threshold, budget (r57-0002) | Board row 2; written | hook | `kit-fanout-gate` refuses a limit without a measured basis | in |
 | E17 | Board: start a helper or child session (r57-0150, r57-0034, r57-0035) | Board row 3; `tier-hook`, `plan-gate` | hook | `kit-tier-hook` (the kind is self-declared) | in |
-| E18 | Board: choose or check a helper's model (r57-0150, r57-0120, r57-0108) | Board row 4; `tier-hook` | hook | `kit-tier-hook` (effort not checked) | in |
-| E19 | Board: how many helpers, sessions, heavy commands at once (r57-0414, r57-0710, r57-0707) | Board row 5; `plan-gate` width, the lane | hook | `kit-count-gate` (at most 20, helpers of helpers counted; widths in `.harness/WIDTHS.md`) and the queue `research-tree/tools/lane.mjs` | in |
+| E18 | Board: choose or check a helper's model (r57-0150, r57-0120, r57-0108) | Board row 4; `tier-hook` | hook | `kit-tier-hook` (the effort on trial, rows O72, O74) | in |
+| E19 | Board: how many helpers, sessions, heavy commands at once (r57-0414, r57-0710, r57-0707) | Board row 5; `plan-gate` width, the lane | hook | `kit-count-gate` (at most 20, helpers of helpers counted; widths in `.harness/WIDTHS.md`) and the queue `kit-queue` | in |
 | E20 | Board: workers one check can feed (c1-0300...) | Board row 6; written design knowledge | result | `harness-kit/parallel/research/c1-report.md` | n/a |
 | E21 | Board: raise what the check can carry (c1-0403...) | Board row 7; written | result | `harness-kit/parallel/research/c1-report.md` | n/a |
 | E22 | Board: batch changes at the check (c1-0311...) | Board row 8; written | result | `harness-kit/parallel/research/c1-report.md` | n/a |
-| E23 | Board: two writers on one file (r57-0415, w1-0400...); the floor is own copies, writing inside one file stays design | Board row 9; written, tree scripts only | trial | `harness-kit/parallel/unit.mjs` (own copies, one landing at a time); she sees it work in `unit.mjs report` | in; run only in its tests (`harness-kit/parallel/parallel.test.mjs`) |
+| E23 | Board: two writers on one file (r57-0415, w1-0400...); the floor is own copies, writing inside one file stays design | Board row 9; written, tree scripts only | trial | `kit-unit` (own copies, one landing at a time); she sees it work in `kit-unit report` | in; run only in its tests (`harness-kit/parallel/parallel.test.mjs`) |
 | E24 | Board: model sessions on one file under version checks (w1-0353...) | Board row 10; written | design | version-checked writes or claims for harness builds, never built (`harness-kit/parallel/research/w1-report.md`) | n/a |
-| E25 | Board: fix the order of writes before units start (w1-0331...) | Board row 11; `plan-gate` dependency order, build only | trial | `harness-kit/parallel/unit.mjs` (landings in the order called); she sees the order in `.harness/landings.jsonl` | in; run only in its tests (`harness-kit/parallel/parallel.test.mjs`) |
+| E25 | Board: fix the order of writes before units start (w1-0331...) | Board row 11; `plan-gate` dependency order, build only | trial | `kit-unit` (landings in the order called); she sees the order in `.harness/landings.jsonl` | in; run only in its tests (`harness-kit/parallel/parallel.test.mjs`) |
 | E26 | Board: a unit waits for a hot place or redoes (w1-0403...) | Board row 12; written | result | `harness-kit/parallel/research/w1-report.md` | n/a |
 | E27 | Board: a job is slow (r57-0414, r57-0129, o2-0401, o2-0403) | Board row 13; written diagnosis | result | `harness-kit/parallel/research/o2-report.md` | n/a |
 | E28 | Board: more work side by side, more tokens? (r57-0414, b1-0125) | Board row 14; written | result | `harness-kit/RESULTS.md` | n/a |
@@ -158,7 +160,7 @@ design 51, result 54. Counted by script on 2026-11-25.
 | E86 | Ruling 0033: no checking every step | Ruling 0033; written | loaded | `RULES.md` K16 | in |
 | E87 | Ruling 0034: a build planned in an orchestration document | Ruling 0034; `plan-gate` | owner's own | `plan-gate` is not a kit part | n/a |
 | E88 | Ruling 0035: Fable for an orchestrator whose children have children | Ruling 0035; `tier-hook` (orchestrate-deep = fable) | hook | `kit-tier-hook` | in |
-| E89 | Ruling 0036: FixFlow skills and agents out | Ruling 0036; `.claude/settings.json` | command | `node harness-kit/setup.mjs --apply` switches them off (only when the project is the clone) | in |
+| E89 | Ruling 0036: FixFlow skills and agents out | Ruling 0036; `.claude/settings.json` | command | `harness-kit/setup.sh --apply` (`kit-setup`) switches them off (only when the project is the clone) | in |
 | E90 | Ruling 0037: the build stops at 69 % of the weekly meter | Ruling 0037; written, past build | owner's own | a past build of his | n/a |
 | E91 | Ruling 0038: a limit is the measured need plus a buffer | Ruling 0038; written | hook | `kit-fanout-gate` (limit above expected, with a measured basis) | in |
 | E92 | Ruling 0039: build on the plan shown, parallelism to the full | Ruling 0039; `plan-gate` (plan half only) | owner's own | `plan-gate` is not a kit part | n/a |
@@ -192,7 +194,7 @@ design 51, result 54. Counted by script on 2026-11-25.
 |---|---|---|---|---|---|
 | D1 | Decision 1: pace a token window only to protect later demand; zero price while the queue fits, else the bid price; until Q37 exists, re-plan at (1 - u)/(1 - s) as the stand-in (hypothesis) | Rule, section 2, decision 1 | design | a function that computes the window's price and start rate; needs Q37 and a usage reading (`parallel/research/BUILD-IN.md`) | n/a |
 | D2 | Decision 2: value per token orders starts inside a short window; the oldest held unit starts first at the reset | Rule, section 2, decision 2 | design | a planner that orders starts by value per token and keeps one reservation per window | n/a |
-| D3 | Decision 3: the floor stays (own copies, every landing through the check in one order, with undo) as a safety floor, not a claim that copies beat one agent | Rule, section 2, decision 3 | trial | `harness-kit/parallel/unit.mjs` (own copies, landings through her check in one order, undo on failure); she sees it work in `unit.mjs report` | in; run only in its tests (`harness-kit/parallel/parallel.test.mjs`) |
+| D3 | Decision 3: the floor stays (own copies, every landing through the check in one order, with undo) as a safety floor, not a claim that copies beat one agent | Rule, section 2, decision 3 | trial | `kit-unit` (own copies, landings through her check in one order, undo on failure); she sees it work in `kit-unit report` | in; run only in its tests (`harness-kit/parallel/parallel.test.mjs`) |
 | D4 | Decision 4: the 29 searched items of V2-108 to V2-112 all stand in the lane reports; search terms not checked | Rule, section 2, decision 4 | result | the rule file, section 2 | n/a |
 | D5 | Decision 5: a unit at its own cap commits a checkpoint and ends; its successor resumes from it (designed only, untested) | Rule, section 2, decision 5 | design | a checkpoint-and-end step plus a resume from the checkpoint; the tree's hand-over R50 was never built | n/a |
 | D6 | Step 0: per class of unit keep busy threads, peak memory, time in and outside the check and window usage; predict as the mean of the last two units; the cap is a limit, never the prediction | Rule, section 3, step 0 | design | a per-class ledger of those figures and a predictor; nothing of it is built | n/a |
@@ -210,24 +212,24 @@ design 51, result 54. Counted by script on 2026-11-25.
 | D18 | Step 4, fit is a filter: a unit that does not fit in every window is not a candidate | Rule, section 3, step 4 | design | the fit test of step 2 used as a filter on the queue | n/a |
 | D19 | Step 4, inside a short window: value per token above the price, the oldest held unit first at the reset | Rule, section 3, step 4 | design | the planner of decision 2 | n/a |
 | D20 | Step 4, waiting for memory or the check: a reservation for the oldest, shorter units backfilled only if they do not delay it | Rule, section 3, step 4 | design | a reservation queue with backfill (EASY) in the start gate | n/a |
-| D21 | Step 4, units that need only a worker: shortest expected check first, then oldest, with an age cap, until Q34 | Rule, section 3, step 4 | design | an order rule in the queue; `lane.mjs` runs commands a few at a time but does not order by expected check time | n/a |
+| D21 | Step 4, units that need only a worker: shortest expected check first, then oldest, with an age cap, until Q34 | Rule, section 3, step 4 | design | an order rule in the queue; `kit-queue` runs commands a few at a time but does not order by expected check time | n/a |
 | D22 | Step 4, the model: value minus summed price × usage, a redo counted; the better model until Q16 | Rule, section 3, step 4 | design | a model and effort per step, the router, which was never built here | n/a |
 | D23 | Step 4, a speculative copy only when the time saved is worth its tokens | Rule, section 3, step 4 | design | a time-against-tokens test before a duplicate start | n/a |
 | D24 | Step 5: a standing queue at the check is the signal | Rule, section 3, steps 5 and 6 | design | a watch on the check's queue length | n/a |
-| D25 | Step 6: throughput against workers is the slow outer check (at least six points) | Rule, section 3, steps 5 and 6 | design | a measuring run over six or more widths; the nearest built thing, `harness-kit/parallel/check.mjs --measure`, runs four (1, 2, 4, 8) | n/a |
-| D26 | Step 7 lever: shorten the run | Rule, section 3, step 7 | trial | `harness-kit/parallel/check.mjs`; she sees the seconds it prints against one at a time (`check.mjs --at 1`) | in; run only in its tests (`harness-kit/parallel/parallel.test.mjs`) |
+| D25 | Step 6: throughput against workers is the slow outer check (at least six points) | Rule, section 3, steps 5 and 6 | design | a measuring run over six or more widths; the nearest built thing, `kit-check --measure`, runs four (1, 2, 4, 8) | n/a |
+| D26 | Step 7 lever: shorten the run | Rule, section 3, step 7 | trial | `kit-check`; she sees the seconds it prints against one at a time (`kit-check --at 1`) | in; run only in its tests (`harness-kit/parallel/parallel.test.mjs`) |
 | D27 | Step 7 lever: batch what waits (capped by p) | Rule, section 3, step 7 | design | batching in the check queue; the cap p needs Q05 and Q07 | n/a |
 | D28 | Step 7 lever: test ahead on the success path | Rule, section 3, step 7 | design | a speculative check started before the landing is known good | n/a |
 | D29 | Step 7 lever: let a waiting worker go on | Rule, section 3, step 7 | design | a worker that continues while its landing waits | n/a |
 | D30 | Step 7 lever: make the queue visible | Rule, section 3, step 7 | design | a view of the check's queue | n/a |
-| D31 | Step 8, the floor: own copies, every landing through the check in one order, with undo | Rule, section 3, step 8 | trial | `harness-kit/parallel/unit.mjs` (own copies, every landing through her check in one order, undo on failure); she sees it work in `unit.mjs report` | in; run only in its tests (`harness-kit/parallel/parallel.test.mjs`) |
+| D31 | Step 8, the floor: own copies, every landing through the check in one order, with undo | Rule, section 3, step 8 | trial | `kit-unit` (own copies, every landing through her check in one order, undo on failure); she sees it work in `kit-unit report` | in; run only in its tests (`harness-kit/parallel/parallel.test.mjs`) |
 | D32 | Step 8: a fixed order only for what a plan declares | Rule, section 3, step 8 | design | a plan format that declares an order and a gate that obeys it | n/a |
 | D33 | Step 8, ranked: reshape shared places | Rule, section 3, step 8 | design | a plan step that moves shared code apart; nothing built | n/a |
 | D34 | Step 8, ranked: version-checked writes (several writers inside one file) | Rule, section 3, step 8 | design | a write that refuses on a changed version; never built here | n/a |
 | D35 | Step 8, ranked: claims below the file | Rule, section 3, step 8 | design | a claim ledger per region of a file; never built here | n/a |
 | D36 | Step 8, ranked: wait for a known hot pair, per pair | Rule, section 3, step 8 | design | a list of hot pairs and a wait rule per pair | n/a |
 | D37 | Step 8, ranked: checkpoints | Rule, section 3, step 8 | design | the checkpoint of decision 5, never built | n/a |
-| D38 | Step 8, ranked: every landing through the check | Rule, section 3, step 8 | trial | `harness-kit/parallel/unit.mjs` and `check.mjs`; she sees each landing's check in `.harness/landings.jsonl` | in; run only in its tests (`harness-kit/parallel/parallel.test.mjs`) |
+| D38 | Step 8, ranked: every landing through the check | Rule, section 3, step 8 | trial | `kit-unit` and `kit-check`; she sees each landing's check in `.harness/landings.jsonl` | in; run only in its tests (`harness-kit/parallel/parallel.test.mjs`) |
 | D39 | Step 8, ranked: structured merge last | Rule, section 3, step 8 | design | a structured merge tool; none chosen | n/a |
 | D40 | Step 8: no default owner; a whole-file CRDT neither used nor ruled out (Q36) | Rule, section 3, step 8 | design | the Q36 measurement before any choice | n/a |
 | D41 | Step 9, the tree: its kind by L against b and R against 1/f; fewer parent wakes first; run-state files written by a script step; split or hand-over open (Q30) | Rule, section 3, step 9 | design | the research tree's own build, which is the owner's track, not built as a kit part | n/a |
@@ -250,13 +252,13 @@ design 51, result 54. Counted by script on 2026-11-25.
 | O16 | Cost per fresh token on the weekly meter against Opus: Sonnet 0.15-0.5, Haiku 0.15-0.8, Fable 2.7-5.6 (one week, r57-0175) | Guide, section 1 | result | `harness-kit/ORCHESTRATION.md` section 1 | n/a |
 | O17 | Whether Sonnet or Haiku gives the same output as Opus here is not measured; the routes ran once (hypothesis) | Guide, section 1 | result | `harness-kit/ORCHESTRATION.md` section 1 | n/a |
 | O18 | The lean helper types load five tools only; their saving is not measured | Guide, section 1 | result | `harness-kit/ORCHESTRATION.md` section 1 | n/a |
-| O19 | A one-command job is done in your own session: a fresh helper carries about 56-60 K tokens before any work (the rule itself is a hypothesis) | Guide, section 1 | trial | `RULES.md` K12; the rule is a hypothesis (r57-0210); she sees a helper's fixed load with `harness-kit/tokens.mjs` (its tokens against the job it did) | in |
+| O19 | A one-command job is done in your own session: a fresh helper carries about 56-60 K tokens before any work (the rule itself is a hypothesis) | Guide, section 1 | trial | `RULES.md` K12; the rule is a hypothesis (r57-0210); she sees a helper's fixed load with `kit-tokens` (its tokens against the job it did) | in |
 | O20 | A session cannot change its own model or effort | Guide, section 1 | result | `harness-kit/ORCHESTRATION.md` section 1 | n/a |
 | O21 | Start together all work that can run together; serial helpers on independent parts were a recorded mistake | Guide, section 2 | loaded | `RULES.md` K11 | in |
 | O22 | Five Sonnet readers at once took 4 minutes and 767,000 tokens (one trial, r57-0115) | Guide, section 2 | result | `harness-kit/ORCHESTRATION.md` section 2 | n/a |
 | O23 | Keep helpers running at once under 20, helpers of helpers counted | Guide, section 2 | hook | `kit-count-gate` | in |
-| O24 | Heavy test commands go through a queue of at most 4 slots (4 files at once took 1.06-1.15 times their time alone; above 4 not measured) | Guide, section 2 | command | `research-tree/tools/lane.mjs` (`--dir <project>/.harness/lane`); `check.mjs` uses it | in; off Windows the timeout ends the whole process group (written, not run there) |
-| O25 | No middle helper between you and leaf helpers (hypothesis, r57-0418) | Guide, section 2 | trial | `RULES.md` K12; a hypothesis (r57-0418); she sees it with `harness-kit/tokens.mjs` on a job run with and without a middle helper | in |
+| O24 | Heavy test commands go through a queue of at most 4 slots (4 files at once took 1.06-1.15 times their time alone; above 4 not measured) | Guide, section 2 | command | `kit-queue` (crate `harness-kit/rust/crates/kit-queue`; `--dir <project>/.harness/lane`); `kit-check` uses it | in; off Windows the timeout ends the whole process group (written, not run there) |
+| O25 | No middle helper between you and leaf helpers (hypothesis, r57-0418) | Guide, section 2 | trial | `RULES.md` K12; a hypothesis (r57-0418); she sees it with `kit-tokens` on a job run with and without a middle helper | in |
 | O26 | Width does not change total tokens, except redone work and re-reads at each wake (hypothesis) | Guide, section 2 | result | `harness-kit/ORCHESTRATION.md` section 2 | n/a |
 | O27 | The best width for ordinary work is not measured (hypothesis) | Guide, section 2 | result | `harness-kit/ORCHESTRATION.md` section 2 | n/a |
 | O28 | Every helper brief carries `token limit N M (expected about E M, basis <record id>)`, N above E, the basis a measured or observed record | Guide, section 3 | hook | `kit-fanout-gate` with `harness-kit/basis.json` and her own `.harness/basis.json` | in |
@@ -271,12 +273,12 @@ design 51, result 54. Counted by script on 2026-11-25.
 | O37 | Agree a cap for the whole job with the person before the first wave; tokens spent plus unused limits plus the new limit stay under it | Guide, section 3 | hook | `kit-fanout-gate` (the job's cap, from the `Cap` line of `.harness/<NAME>-STATE.md`) | in |
 | O38 | Read the usage meter in a message before the start, no older than 26 minutes, never in the same message as the start | Guide, section 3 | hook | `kit-fanout-gate` meter rule, where the session has the app's usage tool; off with `--no-usage-tool`, then `RULES.md` K4 by hand | in |
 | O39 | Price every step in the plan, building test cases included | Guide, section 3 | loaded | `RULES.md` K15 | in |
-| O40 | Count tokens as input + cache creation + cache read + output, once per message id, from the transcripts | Guide, section 3 | command | `harness-kit/tokens.mjs` (counts as the fan-out gate counts; its program `kit-tokens` does the same) | in |
+| O40 | Count tokens as input + cache creation + cache read + output, once per message id, from the transcripts | Guide, section 3 | command | `kit-tokens` (crate `harness-kit/rust/crates/kit-tokens`; counts as the fan-out gate counts) | in |
 | O41 | A helper that reaches its limit stops and reports; you decide whether to extend it | Guide, section 3 | loaded | `RULES.md` K15 | in |
 | O42 | The five-hour and weekly windows reset in full; their sizes are not published (quoted) | Guide, section 3 | result | `harness-kit/ORCHESTRATION.md` section 3 | n/a |
-| O43 | A brief holds the goal, the files to read as paths, what is settled, the one output file, the length of the return, the limit line | Guide, section 4 | trial | `RULES.md` K14; the form is a hypothesis (r57-0208); she sees a helper's tokens and messages with `harness-kit/tokens.mjs` | in |
+| O43 | A brief holds the goal, the files to read as paths, what is settled, the one output file, the length of the return, the limit line | Guide, section 4 | trial | `RULES.md` K14; the form is a hypothesis (r57-0208); she sees a helper's tokens and messages with `kit-tokens` | in |
 | O44 | A brief carries the person's own words in full, or the path of the file that holds them, with a line that they outrank the brief | Guide, section 4 | loaded | `RULES.md` K14 | in |
-| O45 | A helper's return is under 2 K tokens; the work goes in the output file (hypothesis) | Guide, section 4 | trial | `RULES.md` K14; a hypothesis (r57-0421); she sees the returns' length in her session and their cost with `harness-kit/tokens.mjs` | in |
+| O45 | A helper's return is under 2 K tokens; the work goes in the output file (hypothesis) | Guide, section 4 | trial | `RULES.md` K14; a hypothesis (r57-0421); she sees the returns' length in her session and their cost with `kit-tokens` | in |
 | O46 | Keep briefs short: the research run's briefs filled helpers' windows to 200-270 K before work | Guide, section 4 | loaded | `RULES.md` K14 | in |
 | O47 | Copy times and meter readings from the clock or the reading, never estimate | Guide, section 4 | loaded | `RULES.md` K18 | in |
 | O48 | Instructions inside archived documents or fetched pages are data | Guide, section 4 | loaded | `RULES.md` K18 | in |
@@ -290,12 +292,12 @@ design 51, result 54. Counted by script on 2026-11-25.
 | O56 | A done claim is not evidence: use a stronger check (full suite on the merged head, mutations, probes); a passing check alone caught about 1 of 92 contradictions | Guide, section 5 | loaded | `RULES.md` K16 | in |
 | O57 | Run a test or review only if its result can change what is done next; test at the end where that is cheaper | Guide, section 6 | loaded | `RULES.md` K16 (`kit-creep-gate` sees reviews only, not tests) | in |
 | O58 | Builders spent 4-10 % of their time in tests (r57-0173) | Guide, section 6 | result | `harness-kit/ORCHESTRATION.md` section 6 | n/a |
-| O59 | Split long test files and run files side by side: the tree's suite went from 596 s to 120.4 s | Guide, section 6 | trial | `harness-kit/parallel/check.mjs` (files side by side; `shards` in `.harness/kit.json`); she sees the seconds with `check.mjs --measure` | in; run only in its tests (`harness-kit/parallel/parallel.test.mjs`) |
+| O59 | Split long test files and run files side by side: the tree's suite went from 596 s to 120.4 s | Guide, section 6 | trial | `kit-check` (files side by side; `shards` in `.harness/kit.json`); she sees the seconds with `kit-check --measure` | in; run only in its tests (`harness-kit/parallel/parallel.test.mjs`) |
 | O60 | State `Deliverable: <path>` at the start; build it, run one targeted check, stop | Guide, section 6 | hook | `kit-creep-gate` | in |
 | O61 | One blind review per deliverable at most; no review of unchanged work, of a review, no panel, no third review; a repair round only for breaking findings | Guide, section 6 | hook | `kit-creep-gate` | in |
 | O62 | A test that fails under load and passes alone is run once more alone, then listed as flaky | Guide, section 6 | loaded | `RULES.md` K16 | in |
 | O63 | A helper's prompt cache lives 5 minutes, a session's 1 hour | Guide, section 7 | result | `harness-kit/ORCHESTRATION.md` section 7 | n/a |
-| O64 | Keep a helper's shell calls under 240 s and never set a 300,000 ms timeout; run longer work in the background with a log | Guide, section 7 | trial | `RULES.md` K9; the fix was written, never piloted (t9-0102, t7-0501); she sees whether waits still cost by a helper request after a wait of over 5 minutes whose cache creation is near its whole window, and by `harness-kit/tokens.mjs` | in |
+| O64 | Keep a helper's shell calls under 240 s and never set a 300,000 ms timeout; run longer work in the background with a log | Guide, section 7 | trial | `RULES.md` K9; the fix was written, never piloted (t9-0102, t7-0501); she sees whether waits still cost by a helper request after a wait of over 5 minutes whose cache creation is near its whole window, and by `kit-tokens` | in |
 | O65 | Do not poll: a background command's end and a helper's end notify you | Guide, section 7 | loaded | `RULES.md` K9 | in |
 | O66 | The shell tool refuses a bare `sleep N`; wait with a background until-loop | Guide, section 7 | loaded | `RULES.md` K9 (the shell tool also refuses a bare sleep) | in |
 | O67 | A wake re-reads the waiting session's window; after the cache has lapsed it pays cache writes (hypothesis) | Guide, section 7 | result | `harness-kit/ORCHESTRATION.md` section 7 | n/a |
@@ -303,9 +305,9 @@ design 51, result 54. Counted by script on 2026-11-25.
 | O69 | Tell a cache lapse from a prefix break by cache age from request to request | Guide, section 7 | loaded | `RULES.md` K17 | in |
 | O70 | What an effort level costs on the meter, and whether a lower one gives the same output here: not recorded | Guide, section 8 | result | `harness-kit/ORCHESTRATION.md` section 8 | n/a |
 | O71 | "Overthinking": not recorded; no record measures a model running longer than its job needs | Guide, section 8 | result | `harness-kit/ORCHESTRATION.md` section 8 | n/a |
-| O72 | Raise effort on the current tier before moving up a tier; Haiku low or medium, Sonnet medium or high (designed, never run) | Guide, section 8 | design | a model and effort per step (the router), and the effort check: an `effort` per kind in `tier-routes.json` and a refusal in the tier hook of a start with no `effort` or one above its route, about 20 lines and cases like the model's (`docs/program/harness-kit-2026-11-25/in/hooks-report.md`, "Effort") | n/a |
+| O72 | Raise effort on the current tier before moving up a tier; Haiku low or medium, Sonnet medium or high (designed, never run) | Guide, section 8 | trial | `kit-tier-hook`: the efforts per kind in `.claude/hooks/tier-routes.json` (Haiku low or medium, Sonnet medium or high, Opus and Fable high or xhigh, r57-0207); a helper start with no `effort` or one its route does not list is refused, the refusal saying the check is on trial; she sees it in `tier-hook.jsonl`, whose helper lines carry the effort named. Raising effort before moving up a tier stays a design (the router) | in; kit mode only |
 | O73 | Opus at high and xhigh ran once and worked; no record shows xhigh beat high | Guide, section 8 | result | `harness-kit/ORCHESTRATION.md` section 8 | n/a |
-| O74 | No hook checks effort; a helper's effort changes only when written into CLAUDE.md or a skill | Guide, section 8 | result | `harness-kit/ORCHESTRATION.md` section 8 | n/a |
+| O74 | No hook checks effort; a helper's effort changes only when written into CLAUDE.md or a skill | Guide, section 8 | trial | `kit-tier-hook` checks the effort named on a helper's start (`RULES.md` K1); the effort a helper really runs at shows only in its transcript; she sees the check in `tier-hook.jsonl` (an `effort` on every helper line, a deny for none or one off its route) | in; kit mode only |
 | O75 | Measuring effort is an open task that needs Bilal's word | Guide, section 8 | owner's own | his approval of an experiment; not hers to give | n/a |
 | O76 | Mistake 1: builder limits guessed (median unit 32.3 M against 11.7 M planned; build 907.7 M, 2.3 times its plan) | Guide, mistakes | hook | `kit-fanout-gate` (a limit above a measured basis) | in |
 | O77 | Mistake 2: a cost left out of a plan (33.7 M against 9.4 M expected) | Guide, mistakes | loaded | `RULES.md` K15 | in |
