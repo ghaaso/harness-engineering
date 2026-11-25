@@ -1,0 +1,89 @@
+"""Pick B5's frozen configuration on the tuning split only: for each model (dygformer, tgn) the (neighbours, learning rate) with
+the best pooled tuning P@10 (all commits of the three repositories), each repository at its own best tuning epoch, among
+configurations evaluated on all three. 2026-11-25 (review r57-0097, graph B1): the epoch grids differ (clinic and FixFlow
+2,5,10,20,40,70,100; zulip 1,2,3,4,6,8), so a pooled key with the epoch in it kept only epoch 2; the epoch is now chosen per
+repository on tuning (ties: the earlier epoch) and choice.json's "epochs" is {repo: epoch} (final.py reads it per repository).
+Writes /out/choice.json and /out/tune-b5.json (per repository and pooled, against the best untrained arm and against U4's B2 on
+the same commits). usage: select_cfg.py"""
+import glob, json, os, sys
+sys.path.insert(0, '/code'); sys.path.insert(0, '/u4code'); sys.path.insert(0, '/card')
+import numpy as np
+import d4lib as L
+import u4lib as U
+import pandas as pd
+
+OUT = os.environ.get('U6_OUT', '/out'); U4 = os.environ.get('U4_ROOT', '/u4')
+REPOS = L.REPOS
+
+
+def collect():
+    R = {}
+    for f in glob.glob(os.path.join(OUT, 'sweep', '*', '*', '*', 'e*.json')):
+        d = json.load(open(f))
+        R.setdefault((d['kind'], d.get('stream', 'pair'), d['nbr'], d['lr']), {}).setdefault(d['repo'], {})[d['epoch']] = d
+    return R
+
+
+def best_untrained_pc(repo):
+    ch = json.load(open('/cardout/choices.json'))['best_untrained'][repo]
+    pc = {}
+    for f in sorted(glob.glob(os.path.join(U4, 'tables', repo, 'tune', '*.csv.gz'))):
+        df = pd.read_csv(f, usecols=['commit', 'task', 'tie', 'label', ch])
+        pc.update(U.per_commit_table(df['commit'].values, df['task'].values, df[ch].values, df['tie'].values, df['label'].values))
+    return ch, pc
+
+
+def b2_pc(repo):
+    ch = json.load(open(os.path.join(U4, 'rank', 'B2', 'choice.json')))
+    return {int(t): tuple(v) for t, v in ch[repo]['tune']['per_commit'].items()}
+
+
+def stats(a, base):
+    common = sorted(set(a) & set(base))
+    d = [a[c][0] - base[c][0] for c in common]
+    m, lo, hi = L.bootstrap(d)
+    return dict(p10=float(np.mean([a[c][0] for c in common])), r10=float(np.mean([a[c][1] for c in common])), n=len(common),
+                diff=m, lo=lo, hi=hi)
+
+
+def main():
+    R = collect()
+    table = []
+    for key, byrepo in sorted(R.items()):
+        if set(byrepo) != set(REPOS):
+            continue
+        ep = {r: max(byrepo[r], key=lambda e: (byrepo[r][e]['p10'], -e)) for r in REPOS}   # each repository's best tuning epoch
+        allc = [v[0] for r in REPOS for v in byrepo[r][ep[r]]['per_commit'].values()]
+        table.append(dict(kind=key[0], stream=key[1], nbr=key[2], lr=key[3], epochs=ep, pooled=float(np.mean(allc)),
+                          per_repo={r: byrepo[r][ep[r]]['p10'] for r in REPOS},
+                          by_epoch={r: {str(e): byrepo[r][e]['p10'] for e in sorted(byrepo[r])} for r in REPOS}))
+    json.dump(table, open(os.path.join(OUT, 'sweep-table.json'), 'w'), indent=1)
+    choice = {}; base = {r: best_untrained_pc(r) for r in REPOS}; b2 = {r: b2_pc(r) for r in REPOS}
+    for kind in ('dygformer', 'tgn'):
+        rows = [t for t in table if t['kind'] == kind]
+        if not rows:
+            continue
+        best = max(rows, key=lambda t: (t['pooled'], -sum(t['epochs'].values()), -t['lr']))
+        byrepo = {r: R[(kind, best['stream'], best['nbr'], best['lr'])][r][best['epochs'][r]] for r in REPOS}
+        out = dict(stream=best['stream'], nbr=best['nbr'], lr=best['lr'], epochs=best['epochs'], pooled_p10=best['pooled'], per_repo={}, n_configs=len(rows))
+        pooled_b5, pooled_bu, pooled_b2 = {}, {}, {}
+        for r in REPOS:
+            pc = {int(c): tuple(v) for c, v in byrepo[r]['per_commit'].items()}
+            out['per_repo'][r] = dict(b5=stats(pc, pc), vs_best_untrained=stats(pc, base[r][1]), best_untrained=base[r][0],
+                                      best_untrained_p10=stats(base[r][1], base[r][1])['p10'], vs_b2=stats(pc, b2[r]), b2_p10=stats(b2[r], b2[r])['p10'])
+            pooled_b5.update({(r, c): v for c, v in pc.items()}); pooled_bu.update({(r, c): v for c, v in base[r][1].items()})
+            pooled_b2.update({(r, c): v for c, v in b2[r].items()})
+        out['pooled'] = dict(b5=stats(pooled_b5, pooled_b5), vs_best_untrained=stats(pooled_b5, pooled_bu), vs_b2=stats(pooled_b5, pooled_b2),
+                             best_untrained_p10=stats(pooled_bu, pooled_bu)['p10'], b2_p10=stats(pooled_b2, pooled_b2)['p10'])
+        out['by_stream'] = {}
+        for sname in sorted({t['stream'] for t in rows}):
+            rs = [t for t in rows if t['stream'] == sname]
+            bs = max(rs, key=lambda t: (t['pooled'], -sum(t['epochs'].values()), -t['lr']))
+            out['by_stream'][sname] = dict(nbr=bs['nbr'], lr=bs['lr'], epochs=bs['epochs'], pooled_p10=bs['pooled'], per_repo=bs['per_repo'], n_configs=len(rs))
+        choice[kind] = out
+    json.dump(choice, open(os.path.join(OUT, 'choice.json'), 'w'), indent=1)
+    print(json.dumps(choice, indent=1))
+
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,20 @@
+#!/bin/bash
+# U3 stall guard (runs inside the container): runs "$@" and restarts it when no file under $GUARD_DIR changed for $GUARD_STALL s
+# (a CUDA wait that spins at 100 % CPU with the card idle was seen twice on this card). Every command here resumes from its own
+# per-query or per-checkpoint files, so a restart loses at most one group of queries. Gives up after $GUARD_MAX restarts.
+GUARD_DIR=${GUARD_DIR:-/out}; GUARD_STALL=${GUARD_STALL:-1200}; GUARD_MAX=${GUARD_MAX:-6}
+n=0
+while :; do
+  "$@" &
+  pid=$!; last=$(date +%s); sig=""
+  while kill -0 $pid 2>/dev/null; do
+    sleep 15
+    s=$(find $GUARD_DIR -type f -newermt "@$last" 2>/dev/null | head -1)
+    if [ -n "$s" ]; then last=$(date +%s); fi
+    if [ $(( $(date +%s) - last )) -gt $GUARD_STALL ]; then
+      echo "$(date +%T) guard: no file change for ${GUARD_STALL}s, killing pid $pid (restart $((n+1)) of $GUARD_MAX)"; kill -9 $pid; wait $pid 2>/dev/null; sig=stall; break
+    fi
+  done
+  if [ -z "$sig" ]; then wait $pid; exit $?; fi
+  n=$((n+1)); [ $n -gt $GUARD_MAX ] && { echo "guard: giving up"; exit 99; }
+done

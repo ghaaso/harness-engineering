@@ -1,0 +1,68 @@
+"""Put B5's scores into U4's feature tables and write B5's held-out ranking files.
+Text level, like U5's fill_tables.py: every table is read with every field as its exact string, only the B5_DYGFORMER / B5_TGN
+field of each row is set (scores as %.9g; NaN, a cross-fit fold without a model, as the empty string), and the file is replaced
+atomically; afterwards every other column is asserted equal to the original, string for string. One file at a time under the
+directory lock /u4tables/.u6merge.lock (taken with mkdir). Run it only when no fill_tables.py (U5) is running.
+Held-out ranking files: /out/heldout/B5_<KIND>/<repo>/<k>.npy, [tasks, files] float32, -inf outside the table's rows (as U4's).
+usage: merge.py   (mounts: /u4 read-only for data, /u4tables = CR/improve/U4/tables read-write)"""
+import json, os, sys, time
+sys.path.insert(0, '/code')
+import numpy as np
+import pandas as pd
+import d4lib as L
+
+OUT = os.environ.get('U6_OUT', '/out')
+COL = {'dygformer': 'B5_DYGFORMER', 'tgn': 'B5_TGN'}
+
+
+def fmt(x):
+    return '' if np.isnan(x) else '%.9g' % x
+
+
+def main():
+    lock = '/u4tables/.u6merge.lock'
+    for kind, col in COL.items():
+        for r in L.REPOS:
+            sdir = os.path.join(OUT, 'scores', kind, r)
+            if not os.path.isdir(sdir):
+                continue
+            rep = L.Repo(r)
+            n_done = 0
+            for k in rep.block_ids():
+                fp = os.path.join(sdir, '%d.npy' % k)
+                if not os.path.exists(fp):
+                    continue
+                sc = np.load(fp); sp = rep.blocks_meta[k]['split']
+                tp = os.path.join('/u4tables', r, sp, '%d.csv.gz' % k)
+                while True:
+                    try:
+                        os.mkdir(lock); break
+                    except FileExistsError:
+                        time.sleep(1)
+                try:
+                    df = pd.read_csv(tp, dtype=str, keep_default_na=False)
+                    assert len(df) == len(sc), (kind, r, k, len(df), len(sc))
+                    if sp != 'train':
+                        assert np.isfinite(sc).all(), ('non-finite score', kind, r, k)
+                    new = df.copy(); new[col] = [fmt(x) for x in sc]
+                    tmp = tp + '.u6tmp'
+                    new.to_csv(tmp, index=False, compression='gzip')
+                    chk = pd.read_csv(tmp, dtype=str, keep_default_na=False, compression='gzip')   # 2026-11-25 (review r57-0097): the .u6tmp name hid the gzip from pandas
+                    assert list(chk.columns) == list(df.columns) and len(chk) == len(df)
+                    assert all((chk[c].values == df[c].values).all() for c in df.columns if c != col), 'another column changed'
+                    cur = pd.read_csv(tp, dtype=str, keep_default_na=False)
+                    assert all((cur[c].values == df[c].values).all() for c in df.columns), 'table changed meanwhile'
+                    os.replace(tmp, tp); n_done += 1
+                finally:
+                    os.rmdir(lock)
+                if sp == 'test':
+                    b = rep.block(k)
+                    M = np.full((len(b.tasks), b.N), -np.inf, dtype=np.float32)
+                    M[df['task'].astype(np.int64).values, df['cand'].astype(np.int64).values] = sc
+                    d = os.path.join(OUT, 'heldout', 'B5_' + kind.upper(), r); os.makedirs(d, exist_ok=True)
+                    np.save(os.path.join(d, '%d.npy' % k), M)
+            print(kind, r, 'merged', n_done, 'tables', flush=True)
+
+
+if __name__ == '__main__':
+    main()

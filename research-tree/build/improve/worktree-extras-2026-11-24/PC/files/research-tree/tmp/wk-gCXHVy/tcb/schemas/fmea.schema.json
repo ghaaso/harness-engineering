@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "fmea",
+  "description": "FMEA output of a design-check task (CONTRACT 3.4, spec/gate.mjs.md). Exactly one of finding and na_reason is non-null in each cell. Columns per row kind are checked by gate.mjs.",
+  "x-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "cut_sha", "rows", "cells"],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "kind": { "const": "fmea" },
+    "cut_sha": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "rows": { "type": "array", "items": { "$ref": "#/$defs/row" } },
+    "cells": { "type": "array", "items": { "$ref": "#/$defs/cell" } }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,31}$" },
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["row_id", "kind", "name"],
+      "properties": {
+        "row_id": { "$ref": "#/$defs/id" },
+        "kind": { "enum": ["component", "data", "flow"] },
+        "name": { "type": "string", "minLength": 1, "x-maxWords": 8 }
+      }
+    },
+    "cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["row_id", "col", "finding", "na_reason"],
+      "properties": {
+        "row_id": { "$ref": "#/$defs/id" },
+        "col": { "$ref": "#/$defs/id" },
+        "finding": { "type": ["string", "null"] },
+        "na_reason": { "type": ["string", "null"] }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "finding": { "type": "string", "x-maxWords": 40 },
+            "na_reason": { "type": "null" }
+          }
+        },
+        {
+          "properties": {
+            "finding": { "type": "null" },
+            "na_reason": { "type": "string", "x-maxWords": 20 }
+          }
+        }
+      ]
+    }
+  }
+}

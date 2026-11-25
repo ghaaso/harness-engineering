@@ -1,0 +1,70 @@
+#!/bin/bash
+# U6 card job: run_gpu.sh <job name> <script.py> [args...]. Admitted by the card gate (../cardgate.sh, r57-0092; it replaced
+# the one-job CR/GPU.lock on 2026-11-24) with the job's declared card and VM need (cardgate.sh gate_need; GATE_CARD_MIB /
+# GATE_VM_MIB override); network off, 12 GB container cap; logs start, end, exit code and peak card memory to
+# CR/logs/improve-U6.log as before. A sweep job (sw-*) is claimed in CR/improve/U6/claims so that parallel sweep drivers never
+# run one setting twice: a setting claimed by a live job is skipped with exit 3. Out of memory under the gate's cap (exit 76):
+# rerun once alone and uncapped (the job resumes from its checkpoint). Hung (2026-11-25: no output line for T s with the card
+# idle, or for 2 T s; cardgate.sh HANG WATCHDOG): the gate's watch kills its container and the job is requeued here through
+# the gate at once with the same declaration (it resumes from its checkpoint); at most GATE_HANG_MAX (2) requeues.
+export MSYS_NO_PATHCONV=1
+JOB=$1; shift
+CODE="C:/Users/User/Documents/projects/harness-engineering/research-tree/build/improve/code/U6"
+U4CODE="C:/Users/User/Documents/projects/harness-engineering/research-tree/build/improve/code/U4"
+CARD="C:/Users/User/Documents/projects/harness-engineering/research-tree/build/runbig/card/d4"
+CR="C:/Users/User/Documents/projects/card-run-2026-11"
+CRU=/c/Users/User/Documents/projects/card-run-2026-11
+LOG=$CRU/logs/improve-U6.log
+. /c/Users/User/Documents/projects/harness-engineering/research-tree/build/improve/code/cardgate.sh
+mkdir -p $CRU/improve/U6/logs $CRU/improve/U6/claims
+CL=""
+if [[ $JOB == sw-* ]]; then
+  CL=$CRU/improve/U6/claims/$JOB
+  if ! mkdir $CL 2>/dev/null; then
+    op=$(cat $CL/pid 2>/dev/null); age=$(( $(date +%s) - $(stat -c %Y $CL 2>/dev/null || date +%s) ))
+    if { [ -n "$op" ] && kill -0 $op 2>/dev/null; } || { [ -z "$op" ] && [ $age -lt 60 ]; }; then
+      echo "$(date +%T) $JOB claimed by pid ${op:-?}: skipped"; exit 3
+    fi
+    mv $CL $CL.stale.$$ 2>/dev/null && rm -rf $CL.stale.$$
+    mkdir $CL 2>/dev/null || { echo "$(date +%T) $JOB claimed meanwhile: skipped"; exit 3; }
+  fi
+  echo $$ > $CL/pid
+fi
+trap 'gate_release; [ -n "$CL" ] && rm -rf $CL' EXIT
+read NEED_C NEED_V <<< "$(gate_need U6 "$JOB")"
+gate_admit U6 "$JOB" $NEED_C $NEED_V
+trap 'gate_release; [ -n "$CL" ] && rm -rf $CL; echo "$(date -u +%FT%TZ) U6 $JOB lock released" >> $LOG' EXIT
+echo "$(date -u +%FT%TZ) U6 $JOB start: $*" >> $LOG
+T0=$SECONDS
+MEMF=$CRU/improve/U6/logs/gpu-mem-$JOB.txt
+( while sleep 15; do nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null; done ) > $MEMF &
+MON=$!
+run_job() {
+  gate_watch_start U6 "$JOB"
+  docker run --rm --gpus all --name $GATE_NAME --network none --memory 12g -e D4_DATA=/u4/data -e D4_OUT=/out/d4out -e U4_ROOT=/u4 -e U6_OUT=/out \
+    -e PYTHONPATH=/gatesite:/card:/u4code:/code -e GATE_TORCH_MIB=$GATE_TORCH_MIB -e DYGLIB=/dyglib -e PYTHONDONTWRITEBYTECODE=1 -e OMP_NUM_THREADS=8 \
+    -v "$GATE_SITE:/gatesite:ro" -v "$CODE:/code:ro" -v "$U4CODE:/u4code:ro" -v "$CARD:/card:ro" -v "$CR/d4/out:/cardout:ro" -v "$CR/tools/DyGLib:/dyglib:ro" \
+    -v "$CR/improve/U4:/u4:ro" -v "$CR/improve/U6:/out" -w /code d2-embed-gpu:3 python -u "$@"
+  RC=$?
+  gate_watch_stop U6 "$JOB" $RC
+}
+CUR_C=$NEED_C; HANGS=0; OOM=0
+while :; do
+  run_job "$@"
+  if [ "$GATE_HUNG" = 1 ] && [ $HANGS -lt $GATE_HANG_MAX ]; then
+    HANGS=$((HANGS + 1)); echo "$(date +%T) $JOB hung (gate.log HANG): requeued through the gate ($HANGS of $GATE_HANG_MAX)"
+    _g_log "REQUEUE U6 $JOB after a hang ($HANGS of $GATE_HANG_MAX), declared $CUR_C MiB"
+    gate_release; gate_admit U6 "$JOB" $CUR_C $NEED_V; continue
+  fi
+  if [ $RC = 76 ] && [ $OOM = 0 ]; then
+    OOM=1; echo "$(date +%T) $JOB out of memory under the gate's cap ($NEED_C MiB): rerun alone, uncapped"
+    gate_learn U6 "$JOB"; gate_release; CUR_C=$GATE_USABLE; gate_admit U6 "$JOB" $CUR_C $NEED_V; continue
+  fi
+  break
+done
+[ "$GATE_HUNG" = 1 ] && _g_log "HANG U6 $JOB: hung $((HANGS + 1)) times; not requeued again, exit $RC"
+[ $RC = 76 ] && RC=1
+kill $MON 2>/dev/null
+PEAK=$(sort -n $MEMF | tail -1)
+echo "$(date -u +%FT%TZ) U6 $JOB end exit=$RC secs=$((SECONDS-T0)) peak card memory used (nvidia-smi, whole card) ${PEAK} MiB" >> $LOG
+exit $RC

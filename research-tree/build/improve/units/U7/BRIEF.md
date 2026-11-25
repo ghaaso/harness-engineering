@@ -1,0 +1,11 @@
+# U7 brief: fit the two primary stacks on tuning, freeze them, score every new arm on held-out once, kind build, Sonnet
+
+Deliverable: `units/U7/report.md` and `CR/improve/U7/result-heldout.json`; the code under `code/U7/`.
+
+Read `../BRIEF-COMMON.md` first (its rules bind you; the owner's words it points to outrank everything); then `CANDIDATES.md` section 2 (primary arms named in advance: A1 for D2, B1 for D4; every other arm is reported and the best of them is not picked after the fact), the reports of U1 to U6 (`units/U*/report.md`), the refuters' verdicts (`research-tree/build/refute/IMPROVE-*.md`), and the card run's scorers (`research-tree/build/runbig/card/d2/score.py`, `.../d4/`) and reports (`runbig/d2-report.md`, `runbig/d4-report.md`).
+
+1. A1 (D2): LambdaMART over U1's features plus the score columns of A4, A5 and A6 (each only where its unit wrote it for both tuning and held-out). B1 (D4): LambdaMART over U4's features plus B3, B4 and B5. Fit each on tuning with grouped k-fold cross-validation inside tuning (folds by query or block, in time order) to choose feature groups, leaves 7/15/31, trees, learning rate, pooled or per repository; refit on all of tuning with the chosen settings; freeze and save the model and settings before any held-out file is read.
+2. Held-out, once: score every arm's held-out ranking files of this round (A1 to A8 that ran, B1 to B5 that ran) with the card run's scorers unchanged, per repository and pooled (D2: Acc@10 macro and P@2; D4: P@10 and recall@10). Differences against the baselines with a paired bootstrap of 10,000 resamples and 95 % intervals: D2 against BM25 (gate +6 points Acc@10 macro); D4 against the best untrained arm as the card run chose it on tuning per repository (gate +0.02 P@10 pooled). State pass or fail for A1 and B1 by the gate on the point estimate, as the card run did, with the interval beside it.
+3. The report: a table per task (arm, per repository, pooled or macro, difference and interval, gate), the card hours of the whole round from the units' logs, and what was not tested. No CPU-only arm is rerun on held-out after this step.
+
+End your reply with: A1's and B1's held-out differences with intervals and gate verdicts, and the best other arm per task (reported, not chosen).

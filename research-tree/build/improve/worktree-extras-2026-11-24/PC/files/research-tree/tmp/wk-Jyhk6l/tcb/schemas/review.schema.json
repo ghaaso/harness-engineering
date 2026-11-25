@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "review",
+  "description": "A review (CONTRACT 3.4): staging review.json, stored r_*.",
+  "x-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "field", "task", "pack", "sentences", "verdicts", "dismissals", "our_work_findings"],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "kind": { "const": "review" },
+    "field": { "type": "string", "pattern": "^(?!(?:con|prn|aux|nul|com[0-9]|lpt[0-9])$)[a-z][a-z0-9]{0,11}$" },
+    "task": { "type": "string", "pattern": "^(?!(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:$|[.-]))[a-z][a-z0-9-]{1,39}$" },
+    "pack": { "type": "string", "pattern": "^p_[0-9a-f]{16}$" },
+    "parent": { "type": ["string", "null"], "pattern": "^r_[0-9a-f]{16}$" },
+    "sentences": { "type": "array", "items": { "$ref": "sentence.schema.json#/$defs/sentence" } },
+    "verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["approach_id", "verdict", "supports"],
+        "properties": {
+          "approach_id": { "$ref": "#/$defs/slug" },
+          "verdict": { "enum": ["promising", "untested", "wrong-form", "wrong-problem", "not-worth-testing", "unclear"] },
+          "supports": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/sid" } }
+        }
+      }
+    },
+    "dismissals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sid", "verdict", "supports", "outlist"],
+        "properties": {
+          "sid": { "$ref": "#/$defs/sid" },
+          "verdict": { "enum": ["wrong-form", "wrong-problem", "not-worth-testing", "dropped-field"] },
+          "supports": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^c_[0-9a-f]{16}$" } },
+          "outlist": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["approach_id", "measure", "effect"],
+              "properties": {
+                "approach_id": { "$ref": "#/$defs/slug" },
+                "measure": { "$ref": "#/$defs/slug" },
+                "effect": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,47}$" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "our_work_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "locator", "reason", "text"],
+        "properties": {
+          "file": { "type": "string", "minLength": 1, "maxLength": 400 },
+          "locator": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "reason": { "enum": ["wrong-assumption", "wrong-number", "wrong-scope", "other"] },
+          "text": { "type": "string", "minLength": 1, "x-maxWords": 40 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sid": { "type": "string", "pattern": "^s[0-9]{1,4}$" },
+    "slug": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,47}$" }
+  }
+}

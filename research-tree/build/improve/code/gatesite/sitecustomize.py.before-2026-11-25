@@ -1,0 +1,49 @@
+# Card gate (improve/code/cardgate.sh, r57-0092): caps PyTorch's card allocator at the memory the job declared to the
+# gate, so that jobs admitted side by side by their declared needs cannot crowd each other out. It changes nothing
+# else: no batch, length, model or setting. Acts once per container (the first Python process; an environment marker
+# stops its children), only where the card is mounted (/dev/dxg), only when GATE_TORCH_MIB is set and above 0.
+# An out-of-memory error under the cap exits 76; the run script then reruns the job once alone and uncapped, and the
+# job resumes from its own checkpoint. The image's own sitecustomize (/usr/lib/python3.11) is loaded afterwards.
+import os, sys
+
+
+def _gate():
+    mib = int(os.environ.get('GATE_TORCH_MIB', '0') or 0)
+    if os.environ.get('GATE_SEEN') or mib <= 0 or not os.path.exists('/dev/dxg'):
+        return
+    os.environ['GATE_SEEN'] = '1'
+    import torch
+    msg = '[card gate] PyTorch allocator capped at %d MiB (the job declared %d MiB to the gate)' % (
+        mib, mib + int(os.environ.get('GATE_CTX', '400')))
+    print(msg, file=sys.stderr, flush=True)
+
+    def _apply():
+        total = torch.cuda.get_device_properties(0).total_memory
+        torch.cuda.set_per_process_memory_fraction(min(1.0, mib * 2**20 / total), 0)
+    lazy = getattr(torch.cuda, '_lazy_call', None)
+    if lazy is not None and not torch.cuda.is_initialized():
+        lazy(_apply)
+    else:
+        _apply()
+    prev = sys.excepthook
+
+    def _hook(t, v, tb):
+        prev(t, v, tb)
+        if issubclass(t, torch.OutOfMemoryError):
+            print(msg + ': out of memory under the cap; exit 76 (the run script reruns the job alone, uncapped)',
+                  file=sys.stderr, flush=True)
+            os._exit(76)
+    sys.excepthook = _hook
+
+
+try:
+    _gate()
+except Exception as e:  # never silent
+    print('[card gate] FAILED to set the cap: %r' % (e,), file=sys.stderr, flush=True)
+
+_own = '/usr/lib/python3.11/sitecustomize.py'
+if os.path.exists(_own):
+    import importlib.util as _u
+    _s = _u.spec_from_file_location('_image_sitecustomize', _own)
+    _m = _u.module_from_spec(_s)
+    _s.loader.exec_module(_m)

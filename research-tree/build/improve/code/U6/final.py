@@ -1,0 +1,93 @@
+"""After the sweep and select_cfg.py: score every block with the frozen configuration.
+usage: final.py --kind dygformer|tgn --repo R --part tuneheld|f0|f1|f2|f3
+ tuneheld: the model trained on the events before the tuning split (its state at the frozen epoch, saved by the sweep) scores the
+           tuning and held-out blocks (its neighbours and memory only from events before each block's cutoff).
+ f<i>:     training blocks cross-fitted by time: the 4 time folds of the training blocks (in time order); fold i is scored by a model
+           trained from scratch, with the frozen configuration, on the events before fold i's first block (nothing later). A fold
+           with fewer than MIN_EVENTS training events is not scored (NaN scores): there is no model to cross-fit with.
+Scores (logits) go to /out/scores/<kind>/<repo>/<k>.npy aligned with the rows of U4's table of block k."""
+import argparse, json, os, sys
+sys.path.insert(0, '/code')
+import numpy as np
+import torch
+import core
+
+MIN_EVENTS = 300
+N_FOLDS = 4
+
+
+def folds(ctx):
+    ks = ctx.ks('train')
+    return [list(map(int, f)) for f in np.array_split(np.array(ks), N_FOLDS)]
+
+
+def retrain(ctx, r, kind, vn, repo, nbr, lr, ep, ckpt_secs, epoch_secs):
+    """The sweep pruned this setting's state at epoch ep (it keeps the two best epochs only): train it again, same seed, same
+    settings and data (training is seeded by (seed, epoch, batch), so it does not depend on the run's planned length), to epoch ep.
+    Own directory (the sweep's runs folder is not touched); resumable; the state file is kept, the resume checkpoint removed."""
+    rdir = os.path.join(core.OUT, 'retrain', vn, repo, 'n%d_lr%g' % (nbr, lr))
+    sf = os.path.join(rdir, 'state_e%d.pt' % ep)
+    if not os.path.exists(sf):
+        core.log('state of epoch %d was pruned: retraining to it' % ep)
+        r.train(ctx.ks('tune')[0], ep, rdir, ckpt_secs=ckpt_secs, keep_epochs=(ep,), epoch_secs=epoch_secs)
+        ck = os.path.join(rdir, 'ckpt.pt')
+        if os.path.exists(ck):
+            os.remove(ck)
+    return sf
+
+
+def check_retrain(ctx, sc, vn, repo, nbr, lr, ep):
+    """Compare the retrained model's tuning P@10 with the sweep's for the same epoch; write the result next to the retrain."""
+    sj = os.path.join(core.OUT, 'sweep', vn, repo, 'n%d_lr%g' % (nbr, lr), 'e%d.json' % ep)
+    ks = ctx.ks('tune')
+    pc = core.per_commit(ctx, ks, sc)
+    p = float(np.mean([v[0] for v in pc.values()]))
+    ref = json.load(open(sj))['p10'] if os.path.exists(sj) else None
+    res = dict(retrained_p10=p, sweep_p10=ref, same=(ref is not None and abs(p - ref) < 1e-9))
+    core.log('retrain check tuning P@10: retrained %.6f, sweep %s, %s' % (p, ref, 'same' if res['same'] else 'DIFFERENT (GPU sum order or a fault: read before use)'))
+    core.atomic_json(os.path.join(core.OUT, 'retrain', vn, repo, 'n%d_lr%g' % (nbr, lr), 'check_e%d.json' % ep), res)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--kind'); ap.add_argument('--repo'); ap.add_argument('--part'); ap.add_argument('--ckpt-secs', type=int, default=600); ap.add_argument('--epoch-secs', type=int, default=120)
+    a = ap.parse_args()
+    ch = json.load(open(os.path.join(core.OUT, 'choice.json')))[a.kind]
+    nbr, lr, ep = ch['nbr'], ch['lr'], ch['epochs'][a.repo]   # the epoch is chosen per repository (select_cfg.py, 2026-11-25)
+    ctx = core.Ctx(a.repo, sname=ch.get('stream', 'pair'))
+    vn = core.vname(ch.get('stream', 'pair'), a.kind)
+    dev = 'cuda' if torch.cuda.is_available() else 'cpu'
+    sdir = os.path.join(core.OUT, 'scores', a.kind, a.repo)
+    r = core.Runner(ctx, a.kind, nbr, lr, device=dev, seed=0)
+    if a.part == 'tuneheld':
+        ks = ctx.ks('tune') + ctx.ks('test')
+        sf = os.path.join(core.OUT, 'runs', vn, a.repo, 'n%d_lr%g' % (nbr, lr), 'state_e%d.pt' % ep)
+        retrained = False
+        if not os.path.exists(sf):
+            sf = retrain(ctx, r, a.kind, vn, a.repo, nbr, lr, ep, a.ckpt_secs, a.epoch_secs); retrained = True
+        r.load_state(torch.load(sf, map_location='cpu', weights_only=False))
+        r.n_tr = int(ctx.st.u_hend[ctx.hend(ctx.ks('tune')[0])]); r.n_ev = int(ctx.st.ev_hend[ctx.hend(ctx.ks('tune')[0])])
+        if a.kind == 'tgn':
+            assert r.mem_pos == r.n_ev, 'saved memory is not at the end of the training events'
+        sc = r.score_blocks(ks, save_dir=sdir)
+        if retrained:
+            check_retrain(ctx, sc, vn, a.repo, nbr, lr, ep)
+    else:
+        i = int(a.part[1:]); fk = folds(ctx)[i]
+        first = fk[0]
+        n_tr = int(ctx.st.u_hend[ctx.hend(first)])
+        if n_tr < MIN_EVENTS:
+            os.makedirs(sdir, exist_ok=True)
+            for k in fk:
+                np.save(os.path.join(sdir, '%d.npy' % k), np.full(len(ctx.table(k)), np.nan, dtype=np.float32))
+            core.log('fold %d: %d training events < %d: not scored (NaN)' % (i, n_tr, MIN_EVENTS)); return
+        if not all(os.path.exists(os.path.join(sdir, '%d.npy' % k)) for k in fk):
+            rdir = os.path.join(core.OUT, 'folds', vn, a.repo, 'f%d' % i)
+            r.train(first, ep, rdir, ckpt_secs=a.ckpt_secs, epoch_secs=a.epoch_secs)
+            r.n_tr = n_tr
+            r.score_blocks(fk, save_dir=sdir)
+    core.log('done', a.kind, a.repo, a.part)
+
+
+if __name__ == '__main__':
+    main()

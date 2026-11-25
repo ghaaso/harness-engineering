@@ -1,0 +1,12 @@
+# U2 brief: A5, retrievers fine-tuned on our own history (task D2), kind build, Sonnet
+
+Deliverable: `units/U2/report.md`, the code under `code/U2/`, and A5's score columns filled in U1's feature tables for the tuning and held-out queries (plus held-out ranking files of A5 alone).
+
+Read `../BRIEF-COMMON.md` first (its rules bind you; the owner's words it points to outrank everything); then your row A5 in `CANDIDATES.md`, U1's `units/U1/READY.md` and `units/U1/report.md` (the D2 tuning split, the training queries, the feature tables and their empty A5 columns, how to run U1's code), and the card run's dense code in `research-tree/build/runbig/card/d2/`.
+
+1. Training pairs only from commits before the tuning split's first commit (per repository, U1's definition): the query is the commit text; positives are the function chunks the commit edited, taken from the file text at its parent (tree-sitter is in the image); hard negatives from BM25's top list at that snapshot; a consistency filter (drop pairs whose positive the start model ranks below rank 100, as the record's filtered tuning does; sweep on/off).
+2. Two models: SweRankEmbed-Small tuned in full (`CR/models/SweRankEmbed-Small-local`) and Qwen3-Embedding-0.6B with LoRA (peft, in `d2-embed-gpu:3`). Sweep on tuning: learning rate (3 values), epochs 1/2, negatives 3/7, filter on/off, own repository or pooled data; zulip capped at 20,000 training commits. Choose by tuning Acc@10 macro; freeze.
+3. With the frozen models, score the tuning and held-out queries the way the card run's dense arm does (same corpora, cutoffs, chunk-to-file aggregation), write them into U1's A5 columns, and write A5's held-out ranking files (not scored). No scores on U1's training queries (the models saw them).
+4. Card: about 5-7 hours in CANDIDATES.md (CORRECTED 2026-11-25 by coordinator 8: that figure was built on zulip pairs capped at 2,500 commits; on the brief's 20,000 commits (review r57-0097, text B3; r57-0080: no form shrunk) the estimate is about 21 card hours, range 21-49 (`units/REPAIR/report.md`); "twice its estimate" below reads against that: no U2 job is stopped on the old 5-7 h); one job at a time under `CR/GPU.lock`; stop a job that projects past twice its estimate. A test that no training pair comes from a commit at or after the tuning split's start.
+
+End your reply with: the frozen choice per model, its tuning Acc@10 macro against BM25 and against the untuned model on the same tuning queries, card hours used.

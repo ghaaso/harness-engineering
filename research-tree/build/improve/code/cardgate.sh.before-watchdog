@@ -1,0 +1,306 @@
+#!/bin/bash
+# cardgate.sh: memory-aware admission of the improvement round's card jobs (owner, r57-0092: "maximize parallelism where
+# appropriate"; replaces the one-job-at-a-time CR/GPU.lock of r57-0080). Built 2026-11-24 by e3f1df28's GATE helper.
+#
+# Use from a unit's run script:   . cardgate.sh ; gate_admit <unit> <job> <card MiB> <VM MiB>   (blocks until admitted;
+#   sets GATE_NAME (the container name to use), GATE_TORCH_MIB (PyTorch allocator cap, 0 = none) and GATE_SITE)
+#   ... docker run --name $GATE_NAME -v "$GATE_SITE:/gatesite:ro" -e GATE_TORCH_MIB=$GATE_TORCH_MIB -e PYTHONPATH=/gatesite:...
+#   gate_release   (also called by the dead-job sweep when the job's shell is gone and its container has ended)
+# CLI: bash cardgate.sh status | adopt <spec>... (change-over from the old lock, see gate_adopt) | need <unit> <job>
+#
+# THE RULE (numbers measured 2026-11-24, see the GATE helper's report in IMPROVE-STATE.md):
+#   card:  S + X + R + need + max(D, 1,100) + 512 <= 11,944 MiB
+#     11,944 = memory.used + memory.free of the RTX 5070 (12,227 less 284 the driver keeps)
+#     S = declared needs of running jobs (ledger) + the holder of the old CR/GPU.lock if it is not in the ledger
+#     X = card memory of the container VM (Windows counter, process vmwp) above S: anything of ours not declared
+#     R = the need of the oldest waiting job once it has waited 600 s and does not fit (no younger job overtakes it then)
+#     D = desktop and other programs now (memory.used - vmwp); 1,100 = their usual high (350-1,100 measured);
+#         512 = margin (the two ways of reading the desktop differ by up to 461 MiB, measured 19:44 UTC)
+#     A job whose need is over 10,332 (= 11,944 - 1,100 - 512) runs only alone, uncapped (as under the old lock).
+#   VM:    MemAvailable - sum over running jobs of (declared VM - VM now) - this job's VM >= 1,024 MiB
+#     MemAvailable from the container VM's /proc/meminfo (15.2 GiB VM); VM now from docker stats of the job's container.
+#   Each admitted job's PyTorch allocator is capped at its card need less 400 MiB (CUDA context 303 MiB measured) by
+#   gatesite/sitecustomize.py, so declared needs hold; an out-of-memory error under the cap exits 76 and the run script
+#   reruns the job once alone and uncapped (it resumes from its own checkpoint).
+#   Ledger entries whose shell pid is dead and whose container is gone are removed at every admission (exit 137, OOM,
+#   a killed shell: the slot is freed).
+GATE_CRU=${GATE_CRU:-/c/Users/User/Documents/projects/card-run-2026-11}
+GATE_DIR=${GATE_DIR:-$GATE_CRU/gate}
+GATE_OLDLOCK=${GATE_OLDLOCK:-$GATE_CRU/GPU.lock}
+GATE_SITE=${GATE_SITE:-C:/Users/User/Documents/projects/harness-engineering/research-tree/build/improve/code/gatesite}
+GATE_USABLE=${GATE_USABLE:-11944}
+GATE_DESK=${GATE_DESK:-1100}
+GATE_MARGIN=${GATE_MARGIN:-512}
+GATE_VM_MARGIN=${GATE_VM_MARGIN:-1024}
+GATE_CTX=${GATE_CTX:-400}
+GATE_STARVE=${GATE_STARVE:-600}
+GATE_POLL=${GATE_POLL:-20}
+GATE_DOCKER=${GATE_DOCKER:-docker}
+GATE_BUDGET=$((GATE_USABLE - GATE_DESK - GATE_MARGIN))
+GATE_SELF=${GATE_SELF:-/c/Users/User/Documents/projects/harness-engineering/research-tree/build/improve/code/cardgate.sh}
+
+_g_now() { date +%s; }
+_g_log() { mkdir -p "$GATE_DIR"; echo "$(date -u +%FT%TZ) $*" >> "$GATE_DIR/gate.log"; }
+_g_alive() { [[ "$1" =~ ^[0-9]+$ ]] && kill -0 "$1" 2>/dev/null; }
+
+# Card need (MiB, whole container incl. CUDA context) by unit and job, from measured peaks (desktop subtracted):
+# U6 DyGFormer 1,450-1,770, TGN 1,650-2,100 (n20; n32 not measured: +25 %); U2 training 3.9-4.2 GiB allocated (speed.log);
+# U3 A4 7B 4-bit: 7.7 GiB allocated peak, ran under a 8,864 MiB container cap 15:53-17:03; U5 embedding about 5,000,
+# U5 training: a GAT L2 stage-1 run went out of memory under a 2,672 MiB cap at graph build (19:58 UTC) and uncapped took the
+# whole card plus 1.8 GB spilled to system memory (20:32 UTC): it runs alone, capped at the card. U6 VM: zulip 1,586-2,286
+# MiB (docker stats 19:35-20:35), clinic and fixflow smaller (2,048 declared); U6 TGN on zulip took 10.6 GiB uncapped (19:47-19:55 UTC, PyTorch's cache; its need under a cap
+# is not measured: 6,144 declared, the out-of-memory fallback corrects it). VM (MiB): U6 zulip 1,650-2,100; U5 GAT 4.7-5.4
+# GiB on CPU; U2, U3 not measured (estimates; the PEAK lines in gate.log measure them).
+gate_key() { echo "$1:$(echo "$2" | sed -E 's/_lr[^-]*$//; s/-n[0-9]+$//; s/^(sw|final)-//; s/-(tuneheld|f[0-3])$//')"; }
+# after an out-of-memory error under the cap: jobs of that kind declare twice as much from then on (at most the whole card)
+gate_learn() { mkdir -p "$GATE_DIR/learned"; local c=$((${NEED_C:-$GATE_USABLE} * 2)); [ $c -gt $GATE_USABLE ] && c=$GATE_USABLE
+  echo $c > "$GATE_DIR/learned/$(gate_key "$1" "$2" | tr ':' '_')"
+  _g_log "LEARN $1 $2: out of memory under its cap; its kind ($(gate_key "$1" "$2")) declares $c MiB from now on"; }
+gate_need() { # unit job -> "card vm"
+  local u=$1 j=$2 c v L
+  case $u in
+    U6) case $j in *tgn*zulip*) c=6144;; *tgn*) c=2560;; *) c=2048;; esac; [[ $j == *n32* ]] && c=$((c * 5 / 4)); v=2048; [[ $j == *zulip* ]] && v=2560;;
+    U2) c=5376; v=4096;;
+    U3) c=8864; v=6144;;
+    U5) case $j in embed*) c=5120;; *) c=$GATE_USABLE;; esac; v=5632;;
+    *) c=$GATE_USABLE; v=6144;;
+  esac
+  L="$GATE_DIR/learned/$(gate_key "$u" "$j" | tr ':' '_')"; [ -f "$L" ] && c=$(cat "$L")
+  echo "${GATE_CARD_MIB:-$c} ${GATE_VM_MIB:-$v}"
+}
+
+_g_lock() {
+  mkdir -p "$GATE_DIR"
+  until mkdir "$GATE_DIR/mutex" 2>/dev/null; do
+    local o age
+    o=$(cat "$GATE_DIR/mutex/pid" 2>/dev/null)
+    age=$(( $(_g_now) - $(stat -c %Y "$GATE_DIR/mutex" 2>/dev/null || _g_now) ))
+    if { [ -n "$o" ] && ! _g_alive "$o"; } || [ "$age" -gt 120 ]; then
+      _g_log "mutex broken (holder ${o:-?}, ${age} s old)"; rm -rf "$GATE_DIR/mutex"; continue
+    fi
+    sleep 0.$((RANDOM % 5 + 2))
+  done
+  echo $BASHPID > "$GATE_DIR/mutex/pid"
+}
+_g_unlock() { rm -rf "$GATE_DIR/mutex"; }
+
+_g_used() { [ -n "$GATE_FAKE_USED" ] && { cat "$GATE_FAKE_USED"; return; }
+  nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc '0-9'; }
+_g_vmwp() { [ -n "$GATE_FAKE_VMWP" ] && { cat "$GATE_FAKE_VMWP"; return; }
+  powershell.exe -NoProfile -Command '$ids=@(Get-Process vmwp -ErrorAction SilentlyContinue | ForEach-Object Id); $t=0; foreach($x in (Get-Counter "\GPU Process Memory(*)\Dedicated Usage" -ErrorAction SilentlyContinue).CounterSamples){ if($x.InstanceName -match "^pid_(\d+)_" -and $ids -contains [int]$matches[1]){ $t+=$x.CookedValue } }; [int]($t/1MB)' 2>/dev/null | tr -dc '0-9'; }
+_g_memavail() { [ -n "$GATE_FAKE_MEM" ] && { cat "$GATE_FAKE_MEM"; return; }
+  wsl.exe -d docker-desktop -e cat /proc/meminfo 2>/dev/null | tr -d '\r' | awk '/^MemAvailable/{print int($2/1024)}'; }
+_g_vmuse() { # "name MiB" per running container
+  $GATE_DOCKER stats --no-stream --format '{{.Name}} {{.MemUsage}}' 2>/dev/null | awk '{v=$2; m=1; if(v~/GiB/)m=1024; else if(v~/KiB/)m=1/1024; else if(v~/MiB/)m=1; else m=1/1048576; gsub(/[A-Za-z]/,"",v); printf "%s %d\n",$1,v*m}'; }
+
+_g_sweep() { # free the slots of dead jobs; drop dead waiters
+  local f pid unit job card vm st name kind names
+  names=" $($GATE_DOCKER ps --format '{{.Names}}' 2>/dev/null | tr '\n' ' ') "
+  for f in "$GATE_DIR"/run/*; do [ -f "$f" ] || continue
+    read -r pid unit job card vm st name kind < "$f"
+    _g_alive "$pid" && continue
+    [ "$name" != - ] && [[ "$names" == *" $name "* ]] && continue
+    rm -f "$f"; _g_log "FREE $unit $job pid $pid: process gone (slot freed by the sweep)"
+  done
+  for f in "$GATE_DIR"/wait/*; do [ -f "$f" ] || continue
+    read -r pid _ < "$f"; _g_alive "$pid" || { rm -f "$f"; _g_log "drop waiter ${f##*/}: process gone"; }
+  done
+}
+
+# Backfill (EASY backfilling; never on an empty card, 2026-11-25): a younger job may start before the reserved oldest waiter when it fits beside the running
+# jobs without the reservation and will end before any running job can end, so it cannot delay the oldest. Durations come from
+# the units' logs ("end exit=0 secs=N" lines of the same kind; a bip- kind with no history of its own uses its pair kind):
+# this job's longest past run x 1.25 against each running job's shortest past run less its time so far. No history: no backfill.
+_g_hist() { # unit key -> "min max" seconds of past successful runs of that kind
+  awk -v U="$1" -v K="$2" '$2==U && $4=="end" && $5=="exit=0" { n=$3; sub(/_lr[^-]*$/,"",n); sub(/-n[0-9]+$/,"",n); sub(/^(sw|final)-/,"",n); sub(/-(tuneheld|f[0-3])$/,"",n);
+    if (n==K) { split($6,a,"="); v=a[2]+0; if (!c++ || v<mn) mn=v; if (v>mx) mx=v } } END { if (c) print mn, mx }' "$GATE_CRU"/logs/improve-"$1".log 2>/dev/null; }
+_g_dur() { # unit job -> "min max" (bip- falls back to its pair kind)
+  local k h; k=$(gate_key "$1" "$2"); k=${k#*:}; h=$(_g_hist "$1" "$k"); [ -z "$h" ] && [[ $k == bip-* ]] && h=$(_g_hist "$1" "${k#bip-}"); echo "$h"; }
+_g_backfill() { # unit job -> 0 if it ends before any running job can end
+  local mine mx f pid u j c v st nm k h mn left lim=999999999 now nrun=0; now=$(_g_now)
+  mine=$(_g_dur "$1" "$2"); [ -n "$mine" ] || return 1; mx=${mine#* }; mx=$((mx * 5 / 4))
+  for f in "$GATE_DIR"/run/*; do [ -f "$f" ] || continue; read -r pid u j c v st nm k < "$f"; nrun=$((nrun + 1))
+    h=$(_g_dur "$u" "$j"); [ -n "$h" ] || return 1; mn=${h% *}; left=$((mn - (now - st))); [ $left -lt $lim ] && lim=$left
+  done
+  # 2026-11-25 (coordinator 7): with no job running the reserved job can start now, so any backfill delays it (EASY
+  # backfilling admits a job only if it does not delay the reservation). Before this line lim stayed 999999999 on an empty
+  # card and every U6 job overtook U5 fold0, which needs the card alone, for 5.6 h (02:47-08:30 UTC).
+  [ $nrun -gt 0 ] || { GATE_BF="no job running: the reserved job can start now"; return 1; }
+  GATE_BF="expected at most $mx s; first running job can end in $lim s"; [ $mx -lt $lim ]; }
+
+_g_oldneed() { # owner.txt text -> card need of an old-lock holder (uncapped)
+  case "$1" in
+    *U3*) echo $GATE_USABLE;;
+    *U2*) echo 6144;;
+    *U5*) case "$1" in *embed*) echo 5120;; *) echo $GATE_USABLE;; esac;;
+    *U6*) case "$1" in *tgn*) echo 3072;; *) echo 2560;; esac;;
+    *) echo $GATE_USABLE;;
+  esac
+}
+
+# _g_try id unit job card vm waitfile name torch -> 0 admitted (ledger entry written); else 1 and GATE_WHY says why
+_g_try() {
+  local id=$1 unit=$2 job=$3 need=$4 vm=$5 w=$6 name=$7 torch=$8
+  # 2026-11-25 (coordinator 7): a waiter that asked for the whole card only because its kind had learned so (out of memory
+  # under the cap from the allocator fragmented cache, before expandable segments) takes up its kind current need once that
+  # mark was moved to learned.removed-2026-11-25 (gate.log UNLEARN); its wait file is rewritten so reservations see it too.
+  if [ "$need" -ge $GATE_USABLE ] && [ -f "$GATE_DIR/learned.removed-2026-11-25/$(gate_key "$unit" "$job" | tr ":" "_")" ]      && ! [ -f "$GATE_DIR/learned/$(gate_key "$unit" "$job" | tr ":" "_")" ]; then
+    local nn; nn=$(gate_need "$unit" "$job"); nn=${nn%% *}
+    if [ "$nn" -lt "$need" ]; then need=$nn; [ -f "$GATE_DIR/wait/$w" ] && echo "$id $unit $job $need $vm" > "$GATE_DIR/wait/$w"; fi
+  fi
+  local S=0 n=0 f pid u j c v st nm k o op hold=0
+  _g_sweep
+  for f in "$GATE_DIR"/run/*; do [ -f "$f" ] || continue; read -r pid u j c v st nm k < "$f"; S=$((S + c)); n=$((n + 1)); done
+  if [ -d "$GATE_OLDLOCK" ]; then
+    o=$(cat "$GATE_OLDLOCK/owner.txt" 2>/dev/null); op=$(echo "$o" | awk '{print $3}')
+    if ! [ -f "$GATE_DIR/run/$op" ]; then
+      if [[ "$op" =~ ^[0-9]+$ ]] && ! _g_alive "$op"; then :; else hold=$(_g_oldneed "$o"); S=$((S + hold)); n=$((n + 1)); fi
+    fi
+  fi
+  # fairness: the oldest waiter that has waited GATE_STARVE s is reserved for
+  local R=0 RV=0 ow oage
+  ow=$(ls "$GATE_DIR/wait" 2>/dev/null | sort -n | head -1)
+  if [ -n "$ow" ] && [ "$ow" != "$w" ]; then
+    oage=$(( $(_g_now) - ${ow%%-*} ))
+    if [ $oage -ge $GATE_STARVE ]; then read -r _ _ _ R RV < "$GATE_DIR/wait/$ow"; R=${R:-0}; RV=${RV:-0}; fi
+  fi
+  if [ "$need" -gt $GATE_BUDGET ]; then
+    [ $n -eq 0 ] || { GATE_WHY="needs the card alone; $n job(s) on it (declared $S MiB)"; return 1; }
+    [ $R -eq 0 ] || { GATE_WHY="older waiter ${ow} has priority"; return 1; }
+  elif [ $((S + R + need)) -gt $GATE_BUDGET ]; then
+    if [ $R -gt 0 ] && [ $((S + need)) -le $GATE_BUDGET ] && _g_backfill "$unit" "$job"; then
+      _g_log "BACKFILL $unit $job ($GATE_BF) may run before the reserved $ow"; R=0; RV=0
+    else GATE_WHY="declared $S + reserved $R + $need > $GATE_BUDGET MiB"; return 1; fi
+  fi
+  # measured: desktop now and undeclared use of ours
+  local used vmwp D X=0
+  local cache="$GATE_DIR/card.cache"   # one reading serves every admission for 15 s (the counter takes 2-3 s)
+  if [ -z "$GATE_FAKE_USED" ] && [ -f "$cache" ] && [ $(( $(_g_now) - $(stat -c %Y "$cache") )) -lt 15 ]; then read -r used vmwp < "$cache"
+  else used=$(_g_used); vmwp=$(_g_vmwp); echo "$used $vmwp" > "$cache"; fi
+  if [ -n "$vmwp" ] && [ -n "$used" ]; then D=$((used - vmwp)); [ $vmwp -gt $S ] && X=$((vmwp - S))
+  else D=$GATE_DESK; [ -n "$used" ] && [ $used -gt $((S + GATE_DESK)) ] && X=$((used - S - GATE_DESK)); fi
+  [ $D -lt $GATE_DESK ] && D=$GATE_DESK
+  local cneed=$need; [ "$need" -gt $GATE_BUDGET ] && cneed=$((GATE_USABLE - D - GATE_MARGIN - X))
+  GATE_ALONE_MIB=$cneed   # an alone job is capped at what the card holds now, so it fails rather than spills to system memory
+  if [ "$need" -le $GATE_BUDGET ] && [ $((S + X + R + need + D + GATE_MARGIN)) -gt $GATE_USABLE ]; then
+    GATE_WHY="card: declared $S + undeclared $X + reserved $R + $need + desktop $D + margin $GATE_MARGIN > $GATE_USABLE (used ${used:-?}, VM ${vmwp:-?})"; return 1
+  fi
+  if [ "$need" -gt $GATE_BUDGET ] && [ $cneed -lt 8864 ]; then
+    GATE_WHY="alone job: only $cneed MiB free of desktop ($D) and undeclared use ($X)"; return 1
+  fi
+  # VM memory
+  local avail head=0 now uses
+  avail=$(_g_memavail); now=$(_g_now)
+  if [ -n "$avail" ]; then
+    uses=$(_g_vmuse)
+    for f in "$GATE_DIR"/run/*; do [ -f "$f" ] || continue; read -r pid u j c v st nm k < "$f"
+      local cur; cur=$(echo "$uses" | awk -v n="$nm" '$1==n{print $2}')
+      if [ -n "$cur" ]; then [ $v -gt $cur ] && head=$((head + v - cur))
+      elif [ $((now - st)) -lt 300 ]; then head=$((head + v)); fi
+    done
+    if [ $((avail - head - RV - vm)) -lt $GATE_VM_MARGIN ]; then
+      GATE_WHY="VM: available $avail - headroom of running jobs $head - reserved $RV - $vm < $GATE_VM_MARGIN MiB"; return 1
+    fi
+  else
+    GATE_WHY="VM memory unreadable"; _g_log "WARN VM memory unreadable; admitting on the card rule only"
+  fi
+  echo "$id $unit $job $need $vm $now $name ${GATE_KIND:-new}" > "$GATE_DIR/run/$id"
+  rm -f "$GATE_DIR/wait/$w"
+  _g_log "ADMIT $unit $job pid $id card $need (torch cap $torch) vm $vm | declared before $S, undeclared $X, reserved $R, desktop $D, used ${used:-?}, vmwp ${vmwp:-?}, VM avail ${avail:-?} headroom $head; jobs now $((n + 1))"
+  GATE_WHY=""; return 0
+}
+
+gate_admit() { # unit job card vm [pid]
+  local unit=$1 job=$2 card=$3 vm=$4 id=${5:-$$} rc last=0 lastwhy=""
+  mkdir -p "$GATE_DIR/run" "$GATE_DIR/wait"
+  GATE_NAME=gate-$(echo "$unit" | tr 'A-Z' 'a-z')-$id-$(_g_now)
+  GATE_TORCH_MIB=$((card - GATE_CTX)); [ "$card" -gt $GATE_BUDGET ] && GATE_TORCH_MIB=0
+  local w="$(_g_now)-$id"
+  echo "$id $unit $job $card $vm" > "$GATE_DIR/wait/$w"
+  while :; do
+    . "$GATE_SELF"   # a waiting job takes up a corrected gate (the file is replaced by rename, never edited in place)
+    _g_lock; _g_try "$id" "$unit" "$job" "$card" "$vm" "$w" "$GATE_NAME" "$GATE_TORCH_MIB"; rc=$?; _g_unlock
+    [ $rc = 0 ] && break
+    if [ "$GATE_WHY" != "$lastwhy" ] || [ $(( $(_g_now) - last )) -ge 300 ]; then
+      echo "$(date +%T) $unit $job waiting for the card gate ($GATE_WHY)"; last=$(_g_now); lastwhy=$GATE_WHY
+    fi
+    sleep $GATE_POLL
+  done
+  [ "$card" -gt $GATE_BUDGET ] && GATE_TORCH_MIB=$((GATE_ALONE_MIB - GATE_CTX))
+  export GATE_NAME GATE_TORCH_MIB GATE_SITE
+}
+
+gate_release() { # [pid]
+  local id=${1:-$$}
+  if [ -f "$GATE_DIR/run/$id" ]; then
+    local pid u j rest; read -r pid u j rest < "$GATE_DIR/run/$id"
+    rm -f "$GATE_DIR/run/$id"; _g_log "RELEASE $u $j pid $id"
+  fi
+  rm -f "$GATE_DIR"/wait/*-"$id" 2>/dev/null
+}
+
+# VM memory of the job's container, sampled every 30 s (docker stats), logged as PEAK to gate.log at the end: the VM needs
+# of U2, U3 and U5's card jobs are estimates and are to be corrected from these lines.
+gate_watch_start() { ( while sleep 30; do $GATE_DOCKER stats --no-stream --format '{{.MemUsage}}' "$GATE_NAME" 2>/dev/null | awk '{v=$1; m=1; if(v~/GiB/)m=1024; else if(v~/KiB/)m=1/1024; gsub(/[A-Za-z]/,"",v); printf "%d\n",v*m}'; done ) > "$GATE_DIR/vm-$GATE_NAME.txt" 2>/dev/null &
+  GATE_WPID=$!; }
+gate_watch_stop() { kill $GATE_WPID 2>/dev/null; local p; p=$(sort -n "$GATE_DIR/vm-$GATE_NAME.txt" 2>/dev/null | tail -1)
+  _g_log "PEAK $1 $2 VM ${p:-?} MiB (docker stats every 30 s) exit $3"; rm -f "$GATE_DIR/vm-$GATE_NAME.txt"; }
+
+gate_status() {
+  echo "budget $GATE_BUDGET MiB declared (usable $GATE_USABLE, desktop $GATE_DESK, margin $GATE_MARGIN); VM margin $GATE_VM_MARGIN"
+  echo "running:"; for f in "$GATE_DIR"/run/*; do [ -f "$f" ] && echo "  $(cat "$f")"; done
+  echo "waiting:"; for f in "$GATE_DIR"/wait/*; do [ -f "$f" ] && echo "  ${f##*/}: $(cat "$f")"; done
+  [ -d "$GATE_OLDLOCK" ] && echo "old lock: $(cat "$GATE_OLDLOCK/owner.txt" 2>/dev/null)"
+  return 0
+}
+
+# Change-over: jobs that wait in old copies of the run scripts poll CR/GPU.lock and would start whenever it is free,
+# blind to the gate. gate_adopt freezes them (SIGSTOP; a waiting shell loses nothing), queues each in the gate under its
+# own pid, and when the gate admits one: removes the old lock (its holder, if any, is in the ledger), resumes that one
+# shell (SIGCONT) and waits until it has taken the lock, so it starts exactly as it would have. The old lock's holder is
+# entered in the ledger. Specs: run:<pid>:<unit>:<job>:<card>:<vm> (holder), wait:<pid>:<unit>:<job>:<card>:<vm>,
+# in queue order; an optional 7th field keeps a waiter's queue time (epoch s). If this process ends early, every waiter it still holds frozen is resumed (they then take the old
+# lock as before, and the gate counts its holder).
+gate_adopt() {
+  mkdir -p "$GATE_DIR/run" "$GATE_DIR/wait"
+  local s kind pid unit job card vm i=0 pending=() t0
+  t0=$(_g_now)
+  local qt
+  for s in "$@"; do IFS=: read -r kind pid unit job card vm qt <<< "$s"
+    if [ $kind = run ]; then
+      _g_alive $pid || continue
+      echo "$pid $unit $job $card $vm $t0 - old" > "$GATE_DIR/run/$pid"; _g_log "ADOPT running old-lock job $unit $job pid $pid card $card vm $vm"
+    else
+      _g_alive $pid || continue
+      kill -STOP $pid; qt=${qt:-$((t0 - 100 + i))}; echo "$pid $unit $job $card $vm" > "$GATE_DIR/wait/$qt-$pid"; i=$((i + 1))
+      pending+=("$pid:$unit:$job:$card:$vm:$qt-$pid"); _g_log "ADOPT frozen old-lock waiter $unit $job pid $pid card $card vm $vm"
+    fi
+  done
+  trap 'for p in "${pending[@]}"; do kill -CONT ${p%%:*} 2>/dev/null && _g_log "adopt ended: resumed waiter ${p%%:*} unadmitted"; done' EXIT
+  while [ ${#pending[@]} -gt 0 ]; do
+    local left=() p w
+    for p in "${pending[@]}"; do IFS=: read -r pid unit job card vm w <<< "$p"
+      if ! _g_alive $pid; then rm -f "$GATE_DIR/wait/$w"; _g_log "adopt: waiter $pid gone"; continue; fi
+      _g_lock; GATE_KIND=old _g_try "$pid" "$unit" "$job" "$card" "$vm" "$w" - 0; local rc=$?; _g_unlock
+      if [ $rc = 0 ]; then
+        [ -d "$GATE_OLDLOCK" ] && { _g_log "adopt: old lock of '$(cat "$GATE_OLDLOCK/owner.txt" 2>/dev/null)' removed for $pid (holder counted in the ledger)"; rm -rf "$GATE_OLDLOCK"; }
+        kill -CONT $pid
+        local k=0; until grep -q " $pid " "$GATE_OLDLOCK/owner.txt" 2>/dev/null || ! _g_alive $pid || [ $k -ge 150 ]; do sleep 1; k=$((k + 1)); done
+        _g_log "adopt: waiter $unit $job pid $pid resumed; took the old lock after ${k} s"
+      else left+=("$p"); fi
+    done
+    pending=("${left[@]}")
+    [ ${#pending[@]} -gt 0 ] && sleep $GATE_POLL
+  done
+  trap - EXIT; _g_log "adopt: all old-lock waiters admitted"
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  cmd=$1; shift
+  case $cmd in
+    status) gate_status;;
+    adopt) gate_adopt "$@";;
+    need) gate_need "$@";;
+    *) echo "usage: cardgate.sh status | adopt <spec>... | need <unit> <job>"; exit 2;;
+  esac
+fi

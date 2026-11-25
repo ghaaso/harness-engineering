@@ -1,0 +1,60 @@
+#!/bin/bash
+# U2 container runner, network off. usage: run.sh cpu <cmd...> | run.sh gpu <job-name> <cmd...>
+# gpu: admitted by the card gate (../cardgate.sh, r57-0092; it replaced the one-job CR/GPU.lock on 2026-11-24) with the job's
+# declared card and VM need; logs start/end to CR/logs/improve-U2.log as before; out of memory under the gate's cap (exit 76):
+# rerun once alone and uncapped (the job resumes from its checkpoint). Hung (2026-11-25: no output line for T s with the card
+# idle, or for 2 T s; cardgate.sh HANG WATCHDOG): the gate's watch kills its container and the job is requeued here through
+# the gate at once with the same declaration (it resumes from its checkpoint); at most GATE_HANG_MAX (2) requeues.
+export MSYS_NO_PATHCONV=1
+CODE="C:/Users/User/Documents/projects/harness-engineering/research-tree/build/improve/code/U2"
+U1C="C:/Users/User/Documents/projects/harness-engineering/research-tree/build/improve/code/U1"
+D2="C:/Users/User/Documents/projects/harness-engineering/research-tree/build/runbig/card/d2"
+CR="C:/Users/User/Documents/projects/card-run-2026-11"
+CRU=/c/Users/User/Documents/projects/card-run-2026-11
+IMG=${U2_IMAGE:-d2-embed-gpu:3}
+LOG=$CRU/logs/improve-U2.log
+MOUNTS=(-v "$CODE:/code:ro" -v "$U1C:/u1:ro" -v "$D2:/d2:ro" -v "$CR/d2:/cr:ro" -v "$CR/improve/U1:/u1data:ro" -v "$CR/improve/U2:/out" -v "$CR/models:/models:ro"
+  -v "C:/Users/User/Documents/projects/EMS_workshop1:/src/fixflow:ro"
+  -v "C:/Bilal_Migration/User/Downloads/20_Projects/24_Clinic_Workshop:/src/clinic:ro"
+  -v "$CR/repos/zulip:/src/zulip:ro")
+ENVS=(-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -e HF_HUB_OFFLINE=1 -e PYTHONUNBUFFERED=1 -e U1_OUT=/u1data -e PYTHONPATH=/u1:/d2)
+mode=$1; shift
+case $mode in
+  cpu)
+    [ -n "$U2_RW_TABLE" ] && MOUNTS+=(-v "$CR/improve/U1/table:/u1table")
+    docker run --rm --network none --memory ${U2_MEM:-10g} "${ENVS[@]}" "${MOUNTS[@]}" -w /code $IMG "$@";;
+  gpu)
+    job=$1; shift
+    . /c/Users/User/Documents/projects/harness-engineering/research-tree/build/improve/code/cardgate.sh
+    GENVS=("${ENVS[@]/#PYTHONPATH=/PYTHONPATH=/gatesite:}")
+    trap 'gate_release' EXIT
+    read NEED_C NEED_V <<< "$(gate_need U2 "$job")"
+    gate_admit U2 "$job" $NEED_C $NEED_V
+    trap 'gate_release; echo "$(date -u +%FT%TZ) U2 $job lock released" >> $LOG' EXIT
+    echo "$(date -u +%FT%TZ) U2 $job start (lock taken)" >> $LOG
+    s=$SECONDS
+    run_job() {
+      gate_watch_start U2 "$job"
+      docker run --rm --gpus all --name $GATE_NAME --network none --memory ${U2_MEM:-12g} "${GENVS[@]}" -e GATE_TORCH_MIB=$GATE_TORCH_MIB -v "$GATE_SITE:/gatesite:ro" "${MOUNTS[@]}" -w /code $IMG "$@"
+      rc=$?
+      gate_watch_stop U2 "$job" $rc
+    }
+    CUR_C=$NEED_C; HANGS=0; OOM=0
+    while :; do
+      run_job "$@"
+      if [ "$GATE_HUNG" = 1 ] && [ $HANGS -lt $GATE_HANG_MAX ]; then
+        HANGS=$((HANGS + 1)); echo "$(date +%T) $job hung (gate.log HANG): requeued through the gate ($HANGS of $GATE_HANG_MAX)"
+        _g_log "REQUEUE U2 $job after a hang ($HANGS of $GATE_HANG_MAX), declared $CUR_C MiB"
+        gate_release; gate_admit U2 "$job" $CUR_C $NEED_V; continue
+      fi
+      if [ $rc = 76 ] && [ $OOM = 0 ]; then
+        OOM=1; echo "$(date +%T) $job out of memory under the gate's cap ($NEED_C MiB): rerun alone, uncapped"
+        gate_learn U2 "$job"; gate_release; CUR_C=$GATE_USABLE; gate_admit U2 "$job" $CUR_C $NEED_V; continue
+      fi
+      break
+    done
+    [ "$GATE_HUNG" = 1 ] && _g_log "HANG U2 $job: hung $((HANGS + 1)) times; not requeued again, exit $rc"
+    [ $rc = 76 ] && rc=1
+    echo "$(date -u +%FT%TZ) U2 $job end exit=$rc secs=$((SECONDS-s)) peak: $(tail -1 $CRU/improve/U2/gpu.peak 2>/dev/null)" >> $LOG
+    exit $rc;;
+esac

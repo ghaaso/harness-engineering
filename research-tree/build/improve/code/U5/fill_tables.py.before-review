@@ -1,0 +1,58 @@
+"""Write B4's score column (B4_GNN) into U4's feature tables, and nothing else.
+Reads /out/scores/{train,tune,heldout}/<repo>/<k>.npy ([tasks, files]); for each U4 table /u4w/tables/<repo>/<split>/<k>.csv.gz
+sets the B4_GNN field of every row to scores[task, cand] and rewrites the file atomically (tmp file, then replace).
+Text level: every other field is kept as the exact string it was. Afterwards it asserts that all other columns are
+identical to the original and that no row was lost. Restartable: a table whose B4_GNN column is already filled is skipped.
+/u4w is U4's folder mounted read-write for this step only (run_fill.sh). Other units fill their own columns in the same
+files: each file is read and replaced in one short step, one file at a time.
+usage: fill_tables.py [repos]"""
+import gzip, io, json, os, sys
+import numpy as np
+import pandas as pd
+
+OUT = '/out'; T4 = '/u4w/tables'
+SPLITDIR = {'train': 'train', 'tune': 'tune', 'test': 'heldout'}
+COL = 'B4_GNN'
+
+
+def fmt(v):
+    return '' if not np.isfinite(v) and not np.isinf(v) else ('%.9g' % v)
+
+
+def fill(repo):
+    done = skipped = 0
+    for split, sd in SPLITDIR.items():
+        for fp in sorted(os.listdir(os.path.join(T4, repo, split))):
+            if not fp.endswith('.csv.gz'):
+                continue
+            k = int(fp.split('.')[0]); path = os.path.join(T4, repo, split, fp)
+            sc = os.path.join(OUT, 'scores', sd, repo, '%d.npy' % k)
+            if not os.path.exists(sc):
+                raise SystemExit('no scores for %s %s %d' % (repo, split, k))
+            M = np.load(sc)
+            df = pd.read_csv(path, dtype=str, keep_default_na=False)
+            if (df[COL] != '').all() and len(df):
+                skipped += 1; continue
+            ti = df['task'].astype(np.int64).values; ci = df['cand'].astype(np.int64).values
+            v = M[ti, ci]
+            if split == 'train':
+                assert not np.isnan(v).any(), 'a training row without a cross-fitted score: %s %d' % (repo, k)
+            assert np.isfinite(v).all(), 'a non-finite score in a table row: %s %s %d' % (repo, split, k)
+            new = df.copy(); new[COL] = ['%.9g' % x for x in v]
+            tmp = path + '.u5tmp'
+            new.to_csv(tmp, index=False, compression='gzip')
+            chk = pd.read_csv(tmp, dtype=str, keep_default_na=False)
+            others = [c for c in df.columns if c != COL]
+            assert len(chk) == len(df) and list(chk.columns) == list(df.columns)
+            assert all((chk[c].values == df[c].values).all() for c in others), 'another column changed'
+            # re-read the live file just before the swap: if another unit changed it meanwhile, redo this file next run
+            cur = pd.read_csv(path, dtype=str, keep_default_na=False)
+            if not all((cur[c].values == df[c].values).all() for c in df.columns):
+                os.remove(tmp); raise SystemExit('table changed while filling: %s (run again)' % path)
+            os.replace(tmp, path); done += 1
+    print(repo, 'B4 column written in', done, 'tables, already filled', skipped, flush=True)
+
+
+if __name__ == '__main__':
+    for r in (sys.argv[1:] or ['fixflow', 'clinic', 'zulip']):
+        fill(r)

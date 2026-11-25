@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "card",
+  "description": "A card (CONTRACT 3.1): staging wt/.../staging/**/*.card.json, stored store/objects/c_*.json. No status, label, provenance or id field (R27).",
+  "x-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "field", "question_ids", "route", "source", "quote", "measured", "conditions", "what_measured"],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "kind": { "const": "card" },
+    "field": { "$ref": "#/$defs/field" },
+    "question_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/question_key" } },
+    "route": { "enum": ["keyword", "backward", "forward", "contrary", "seed"] },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "canonical_id", "primary_id", "evidence_type"],
+      "properties": {
+        "url": { "type": "string", "pattern": "^[Hh][Tt][Tt][Pp][Ss]?://[^\\s]+$" },
+        "canonical_id": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "primary_id": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "date": { "type": ["string", "null"], "maxLength": 64 },
+        "evidence_type": { "enum": ["controlled", "replicated", "observational", "benchmark", "vendor", "anecdote", "other"] }
+      }
+    },
+    "quote": { "type": "string", "minLength": 1, "x-maxWords": 15 },
+    "measured": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approach_id", "measure", "value", "unit", "baseline", "baseline_kind", "better", "effect"],
+      "properties": {
+        "approach_id": { "$ref": "#/$defs/slug" },
+        "measure": { "$ref": "#/$defs/slug" },
+        "value": { "anyOf": [{ "type": "number" }, { "const": "not stated" }] },
+        "unit": { "type": "string", "maxLength": 64 },
+        "baseline": { "anyOf": [{ "type": "number" }, { "const": "not stated" }] },
+        "baseline_kind": { "enum": ["none", "prior", "control", "vendor-claim", "other"] },
+        "better": { "enum": ["higher", "lower"] },
+        "effect": { "enum": ["improves", "worsens", "no-effect", "mixed"] }
+      }
+    },
+    "conditions": { "$ref": "#/$defs/conditions" },
+    "what_measured": { "type": "string", "minLength": 1, "x-maxWords": 40 },
+    "supersedes": { "type": ["string", "null"], "pattern": "^c_[0-9a-f]{16}$" },
+    "supersede_reason": { "enum": ["wrong-number", "wrong-quote", "wrong-conditions", "wrong-source", "other", null] }
+  },
+  "$defs": {
+    "field": { "type": "string", "pattern": "^(?!(?:con|prn|aux|nul|com[0-9]|lpt[0-9])$)[a-z][a-z0-9]{0,11}$" },
+    "question_key": { "type": "string", "pattern": "^[a-z][a-z0-9]{0,11}-[a-z0-9]{1,12}-[0-9]{2,3}$" },
+    "slug": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,47}$" },
+    "string_list": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
+    "conditions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task", "model_family", "language"],
+      "properties": {
+        "task": { "$ref": "#/$defs/string_list" },
+        "model_family": { "$ref": "#/$defs/string_list" },
+        "repo_size": { "type": ["string", "null"], "maxLength": 200 },
+        "language": { "$ref": "#/$defs/string_list" },
+        "metric": { "type": ["string", "null"], "maxLength": 200 },
+        "other": { "type": ["string", "null"], "x-maxWords": 40 }
+      }
+    }
+  }
+}
