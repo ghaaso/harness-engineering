@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Session monitor</title>
+<style>
+:root{--bg:#f2f3f5;--card:#fff;--ink:#111827;--ink2:#374151;--mute:#6b7280;--faint:#9ca3af;--line:#e5e7eb;--line2:#d1d5db;--work:#1d64d8;--workbg:#eef4ff;--wait:#b45309;--waitbg:#fff6e5;--waitln:#eaa53a;--bad:#c62828;--badbg:#fdeeee;--used:#4b5563;--idle:#d5d9df}
+*{box-sizing:border-box}html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.45 "Segoe UI",system-ui,sans-serif;overflow:hidden}
+#app{height:100vh;padding:12px 16px 16px;display:grid;gap:12px;grid-template-columns:minmax(0,1fr) 410px;grid-template-rows:50px 70px minmax(0,1fr) 112px;grid-template-areas:"top top" "over over" "map side" "bot side"}
+.pane{background:var(--card);border:1px solid var(--line);border-radius:12px;position:relative;min-width:0;min-height:0;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+/* top bar */
+#top{grid-area:top;display:flex;align-items:center;gap:14px;padding:0 2px}
+#verdict{display:flex;align-items:center;gap:10px;font-size:21px;font-weight:650;white-space:nowrap;padding:6px 16px 6px 13px;border-radius:24px}
+#verdict i{width:13px;height:13px;border-radius:50%}
+#verdict.bad{background:var(--bad);color:#fff}#verdict.bad i{background:#fff}
+#verdict.amb{background:var(--waitbg);color:var(--wait);border:1px solid #f0cf94}#verdict.amb i{background:var(--waitln)}
+#verdict.ok{background:#e9f5ee;color:#166534}#verdict.ok i{background:#22a35a}
+.cnt{display:inline-flex;align-items:center;gap:7px;font-size:15px;color:var(--ink2);white-space:nowrap;margin-right:10px}.cnt b{font-size:19px;color:var(--ink);font-weight:650}
+.cnt i{width:10px;height:10px;border-radius:50%;background:#c4c9d1}.cnt.w i{background:var(--work)}.cnt.a i{background:var(--waitln)}
+.cnt.w.on i{animation:pu 1.6s infinite}
+#range{font-size:14px;color:var(--mute);white-space:nowrap}
+#top .sp{flex:1}
+.ctl{display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--mute);white-space:nowrap}
+.seg{display:inline-flex;background:#e4e6ea;border-radius:9px;padding:3px;gap:2px}
+.seg button{font:inherit;font-size:14px;border:0;background:none;color:var(--ink2);padding:4px 12px;border-radius:7px;cursor:pointer;white-space:nowrap}
+.seg button:hover{color:var(--ink);background:rgba(255,255,255,.5)}.seg button.on{background:#fff;color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.14)}
+.seg.big button{font-size:15px;padding:5px 16px}
+select#lens{font:inherit;font-size:14px;padding:4px 8px;border-radius:8px;border:1px solid var(--line2);background:#fff;color:var(--ink)}
+body.vh .lensg{display:none}
+/* overview strip */
+#over{grid-area:over;padding:6px 14px 4px;cursor:crosshair;user-select:none}#over svg{display:block;width:100%;height:100%}
+/* time view */
+#mapp{grid-area:map}#mapw{position:absolute;inset:0;overflow:auto}#map{position:relative}#map>svg{position:absolute;left:0;top:0;pointer-events:none}
+.tlab{position:absolute;top:10px;font-size:12.5px;line-height:1.35;color:var(--mute);white-space:nowrap}.tlab b{color:var(--ink2);font-weight:600}
+.node{position:absolute;background:#fff;border:1px solid var(--line2);border-left:5px solid #c4c9d1;border-radius:10px;padding:9px 11px 8px 11px;cursor:pointer;display:flex;flex-direction:column;gap:5px;transition:opacity .2s,box-shadow .2s;box-shadow:0 1px 2px rgba(16,24,40,.05)}
+.node:hover{box-shadow:0 4px 16px rgba(16,24,40,.14)}.node.sel{box-shadow:0 0 0 3px rgba(29,100,216,.4)}
+.node.dim{opacity:.25}.node.mark{box-shadow:0 0 0 3px var(--bad)}
+.nh{display:flex;align-items:flex-start;gap:8px;min-width:0}
+.dot{width:10px;height:10px;border-radius:50%;background:#c4c9d1;flex:none;margin-top:6px}
+.nm{font-weight:600;font-size:15px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;flex:1;min-width:0}
+.do{font-size:13.5px;color:var(--ink2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;line-height:1.35}
+.node.mid .do{-webkit-line-clamp:1}
+.nf{display:flex;align-items:center;gap:10px;min-width:0;margin-top:auto;font-size:12.5px;color:var(--mute);white-space:nowrap}
+.nf .tag{color:var(--wait);font-weight:600}.nf .hc b{color:var(--work);font-weight:600}
+.prog{display:flex;gap:2px;flex:none}.prog i{width:10px;height:5px;border-radius:2px;background:#e0e3e8}.prog i.d{background:#8b939f}.prog i.n{background:var(--work)}
+.fig{flex:none;font-weight:650;font-size:14px;margin-top:2px}
+.flag{position:absolute;right:-9px;top:-10px;min-width:22px;height:22px;border-radius:11px;box-shadow:0 0 0 2px #fff;font-size:12px;font-weight:700;color:#fff;background:var(--bad);display:flex;align-items:center;justify-content:center;padding:0 6px}
+.st-working{border-left-color:var(--work)}.st-working .dot{background:var(--work);animation:pu 1.6s infinite}
+.st-silent{border-left-color:#8fb1ea}.st-silent .dot{background:#fff;border:2px solid var(--work)}
+.st-waiting{border-left-color:var(--waitln);background:var(--waitbg)}.st-waiting .dot{background:var(--waitln)}
+.st-quiet{background:#fafafb}.st-quiet .nm{color:var(--ink2);font-weight:600}.st-quiet .do{color:var(--mute)}
+.hz-ok{border-left-color:#c4c9d1}.hz-amb{border-left-color:var(--waitln);background:var(--waitbg)}.hz-bad{border-left-color:var(--bad);background:var(--badbg)}.hz-na{background:#f6f7f8}
+.node.cmp{padding:6px 9px;gap:2px}.node.cmp .do,.node.cmp .nf{display:none}.node.cmp .nm{font-size:13.5px;-webkit-line-clamp:3}.node.cmp .fig{font-size:13px}
+@keyframes pu{50%{opacity:.25}}
+#leg{position:absolute;left:16px;bottom:10px;font-size:12.5px;color:var(--mute);display:flex;gap:16px;align-items:center;background:rgba(255,255,255,.92);padding:3px 8px;border-radius:6px}
+#leg i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-2px;border:1px solid var(--line2)}
+/* right column */
+#side{grid-area:side;display:flex;flex-direction:column;overflow:hidden}
+.sx{padding:14px 18px 12px;border-bottom:1px solid var(--line);flex:none}
+.sx:last-child{border-bottom:0}
+.sx h3{margin:0 0 8px;font-size:15.5px;font-weight:650;display:flex;align-items:center;gap:8px}
+.sx h3 .n{font-size:12.5px;font-weight:700;color:#fff;border-radius:10px;padding:0 7px;line-height:19px}.n.b{background:var(--bad)}.n.a{background:var(--waitln)}
+.sx h3 .mt{font-weight:400}
+.mt{color:var(--mute);font-size:13px}
+.none{color:var(--mute);font-size:14px}
+.nd{padding:7px 10px;border-radius:8px;background:var(--waitbg);border:1px solid #f3d7a6;margin-bottom:6px;cursor:pointer;font-size:14px}.nd:hover{border-color:var(--waitln)}
+.nd .q{color:var(--ink2);font-size:13.5px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+#probs{overflow:auto;max-height:42%}
+.pg{margin:0 0 11px}.pg:last-child{margin:0}
+.pg .gt{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:var(--ink)}
+.pg .gt i{width:9px;height:9px;border-radius:50%;flex:none}.pg.bad .gt i{background:var(--bad)}.pg.amb .gt i{background:var(--waitln)}.pg.amb .gt{color:var(--ink2);font-weight:600}
+.pg .gs{padding:1px 0 1px 17px;font-size:13.5px;line-height:1.4}
+.sn{cursor:pointer;color:var(--ink)}.sn:hover{text-decoration:underline}
+.pg.amb .gs{color:var(--mute);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.pg.amb .sn{color:var(--ink2)}
+.hd{padding:6px 0 8px;font-size:14px;cursor:pointer}.hd+.hd{border-top:1px solid #f0f1f3}
+.hd .r{display:flex;align-items:center;gap:10px}.hd .r b{flex:1;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hd .s{color:var(--ink2);font-size:13.5px;line-height:1.35}.hd .s span{color:var(--mute)}
+.hd .prog i{width:13px;height:6px}
+.brd{font-size:13.5px;color:var(--ink2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;margin-top:4px}.brd span{color:var(--mute)}
+#feed{flex:1;overflow:auto;min-height:0}
+.ev{display:grid;grid-template-columns:42px 22px 1fr;gap:4px;padding:3px 0;font-size:13.5px;line-height:1.35;cursor:pointer}.ev:hover{background:#f6f7f9}
+.ev .t{color:var(--mute);font-variant-numeric:tabular-nums}.ev .x{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:var(--ink2)}.ev .x b{color:var(--ink);font-weight:600}
+.ev .ic{width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;margin-top:1px;background:#9ca3af}
+.ev .ic.st{background:var(--work)}.ev .ic.as{background:var(--waitln)}.ev .ic.rf{background:#fff;border:1.5px solid var(--bad);color:var(--bad)}.ev .ic.rp{background:#6b7280}.ev .ic.hp{background:#fff;border:1.5px solid #9ca3af;color:#6b7280}
+.day{font-size:12.5px;color:var(--mute);margin:8px 0 2px;font-weight:600}
+/* method strip */
+#bot{grid-area:bot;padding:10px 14px 10px;display:flex;flex-direction:column;gap:6px}
+#bot .bt{font-size:14.5px;font-weight:650;display:flex;gap:12px;align-items:baseline}#bot .bt span{font-weight:400;font-size:13px;color:var(--mute)}
+#stg{display:flex;align-items:stretch;flex:1;min-height:0}
+.sg{flex:1;padding:5px 10px;border-radius:9px;cursor:pointer;display:flex;flex-direction:column;justify-content:center;gap:4px;min-width:0;border:1px solid transparent}
+.sg:hover,.sg.on{background:#f4f5f7;border-color:var(--line2)}
+.sg .nm2{font-size:13.5px;color:var(--ink2);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sg .fr{font-size:13px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sg .fr b{font-size:17px;color:var(--ink);font-weight:650}.sg .fr em{font-style:normal;font-weight:650}.sg .fr em.x{color:var(--bad)}.sg .fr em.n{color:var(--wait)}
+.bar{display:flex;height:6px;border-radius:3px;overflow:hidden;background:#eceef1;gap:1px}.bar i{display:block}.bar .u{background:#8b939f}.bar .n{background:var(--waitln)}.bar .x{background:var(--bad)}
+.ar{flex:none;width:18px;display:flex;align-items:center;justify-content:center;color:#c4c9d1;font-size:16px}
+/* harness view */
+#hv{display:none;position:absolute;inset:0;overflow:hidden}body.vh #hv{display:block}body.vh #mapw,body.vh #leg{display:none}
+body.vh #app{grid-template-rows:50px 70px minmax(0,1fr) 86px}
+#hm{position:absolute;inset:0;padding:42px 18px 30px 22px;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));column-gap:30px;row-gap:24px;grid-template-rows:auto auto auto;align-content:space-between;align-items:start}
+.hrow{display:flex;align-items:center;gap:8px;min-width:0}.hrow .hbar{flex:1;min-width:20px}.hrow .hst{flex:none}.hrow .hst:only-child{flex:1}
+#ha{position:absolute;left:0;top:0;pointer-events:none}
+.c1{grid-column:1;grid-row:2;display:flex;flex-direction:column;gap:12px;align-self:start}
+.hb{background:#fff;border:1px solid var(--line2);border-radius:11px;padding:9px 11px 9px;display:flex;flex-direction:column;gap:6px;min-width:0;position:relative;cursor:pointer;transition:opacity .2s,box-shadow .2s,border-color .2s;box-shadow:0 1px 2px rgba(16,24,40,.05)}
+.hb:hover{border-color:#9ca3af;box-shadow:0 4px 16px rgba(16,24,40,.12)}
+.hb .ht{display:flex;align-items:center;gap:7px;font-weight:650;font-size:15px;line-height:1.25;min-width:0}
+.hb .ht span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cd{font-size:12px;font-weight:700;padding:1px 6px;border-radius:5px;background:color-mix(in srgb,var(--fc) 13%,#fff);color:var(--fc);flex:none}
+.hst{font-size:13px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.hst b.x{color:var(--bad)}.hst b.o{color:var(--wait)}
+.hbar{display:flex;height:7px;border-radius:4px;overflow:hidden;background:#eceef1;gap:1px}.hbar i{display:block}
+.hbar .u,.pk-used{background:var(--used)}.hbar .i,.pk-idle{background:var(--idle)}.hbar .x,.pk-bypassed{background:var(--bad)}.hbar .o,.pk-noton{background:var(--waitln)}
+.hs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.hs li{display:flex;align-items:center;gap:7px;font-size:13.5px;line-height:18.5px;color:var(--ink2);min-width:0;border-radius:4px}
+.hs li span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hs li i{width:8px;height:8px;border-radius:50%;flex:none}
+.hs li em{font-style:normal;font-size:12px;color:var(--faint);flex:none}
+.k-used i{background:var(--used)}.k-idle i{background:var(--idle)}.k-bypassed i{background:var(--bad)}.k-noton i{background:var(--waitln)}.k-built i{background:#fff;border:1.5px solid #8b939f}.k-designed i{border:1.5px dashed #c4c9d1}
+.k-designed span{color:var(--faint)}.k-bypassed span{color:var(--bad);font-weight:600}
+.hs li.lit span{color:var(--work);font-weight:600}.hs li.lit i{background:var(--work);border:0}.hs li.ring i{box-shadow:0 0 0 2px #fff,0 0 0 3.5px var(--bad)}.hs li.psel{background:#eef4ff}
+.hr{font-size:12.5px;color:var(--mute);margin-top:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hb.nb{background:#f7f8f9;border-style:dashed;box-shadow:none}.hb.nb .ht{color:#7b8390}.hb.nb .cd{opacity:.6}
+.hb.sel{border-color:var(--ink);box-shadow:0 0 0 2px var(--ink)}.hb.nbr{border-color:#6b7280}
+.hb.dim{opacity:.3}
+.hb .live{position:absolute;right:10px;top:12px;width:9px;height:9px;border-radius:50%;background:var(--work);animation:pu 1.6s infinite}
+.pn{position:absolute;right:-9px;top:-10px;min-width:22px;height:22px;border-radius:11px;background:var(--work);color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 2px #fff;z-index:2}
+.alab{position:absolute;transform:translate(-50%,-50%);font-size:12.5px;color:var(--mute);background:#fff;border-radius:6px;padding:0 6px;line-height:17px;white-space:nowrap;transition:opacity .2s}
+.alab.dim{opacity:.25}
+.hleg{grid-column:6;grid-row:3;align-self:end;font-size:12.5px;color:var(--mute);display:flex;flex-direction:column;gap:3px;padding:0 0 4px}
+.hleg b{color:var(--ink2);font-weight:600;font-size:13px}.hleg div{display:flex;align-items:center;gap:7px}.hleg i{width:9px;height:9px;border-radius:50%;flex:none}
+#sess{grid-area:bot;display:none;padding:10px 14px;overflow:hidden;flex-direction:column;gap:8px}body.vh #sess{display:flex}body.vh #bot{display:none}
+#scs{display:flex;flex-wrap:wrap;gap:6px;overflow:auto}
+.sc{max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px;line-height:20px;padding:2px 11px 2px 9px;border-radius:13px;border:1px solid var(--line2);border-left:4px solid #c4c9d1;background:#fafafb;color:var(--ink2);cursor:pointer}
+.sc:hover{border-color:#9ca3af}.sc.s-working{border-left-color:var(--work);background:#fff;color:var(--ink);font-weight:600}.sc.s-silent{border-left-color:#8fb1ea;background:#fff}.sc.s-waiting{border-left-color:var(--waitln);background:var(--waitbg);color:var(--ink)}
+.sc.sel{box-shadow:0 0 0 2.5px rgba(29,100,216,.5)}
+.sc.rl-wrote,.node.rl-wrote{border-left-color:var(--work);background:#e3edfc}.sc.rl-read,.node.rl-read{border-left-color:var(--used);background:#f0f1f3}.sc.rl-skip,.node.rl-skip{border-left-color:var(--bad);background:var(--badbg)}.sc.rl-miss,.node.rl-miss{border-left-color:var(--waitln);background:var(--waitbg)}.sc.rl-noton,.node.rl-noton{border-left-color:var(--waitln);border-style:dashed}.sc.rl-none{opacity:.45}.node.rl-none{opacity:.28}
+.node .rt{font-weight:650;margin-left:auto}.rt.rl-wrote{color:var(--work)}.rt.rl-read{color:var(--ink2)}.rt.rl-skip{color:var(--bad)}.rt.rl-miss,.rt.rl-noton{color:var(--wait)}
+/* harness numbers in the side */
+.hn{display:flex;gap:18px;margin:2px 0 10px}.hn div{display:flex;flex-direction:column}.hn b{font-size:24px;font-weight:650;line-height:1.1}.hn span{font-size:12.5px;color:var(--mute)}.hn .x b{color:var(--bad)}.hn .o b{color:var(--wait)}
+.rlb .hbar{height:9px;margin:5px 0 6px}.r-hook{background:#374151}.r-both{background:#374151}.r-script{background:#8b939f}.r-none{background:#fff;box-shadow:inset 0 0 0 1px #b8bec7}
+.rll{display:flex;flex-wrap:wrap;gap:3px 14px;font-size:13px;color:var(--ink2)}.rll i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.hl2{font-size:13.5px;color:var(--ink2);margin-top:8px}.hl2 b{font-weight:650}
+.lnk{color:var(--work);cursor:pointer}.lnk:hover{text-decoration:underline}
+/* detail layer over the right column */
+#det{position:absolute;inset:0;background:#fff;border-radius:12px;z-index:4;display:none;flex-direction:column}#det.open{display:flex}
+#det .dt{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid var(--line);flex:none}
+#det .dt button{font:inherit;font-size:14px;border:0;background:none;cursor:pointer;color:var(--ink2);padding:4px 10px;border-radius:7px}#det .dt button:hover{background:#f0f1f3}
+#det .dt .sp{flex:1}#det .dt .x{font-size:20px;line-height:1;padding:2px 9px}
+#det .db{flex:1;overflow:auto;padding:14px 18px 18px}
+#det h2{font-size:19px;margin:0 0 3px;line-height:1.3;font-weight:650}
+#det h4{font-size:14px;font-weight:650;color:var(--ink);margin:16px 0 6px}
+#det p,#det .tx{font-size:14px;color:var(--ink2);margin:0}
+.sub{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--ink2)}.sub i{width:10px;height:10px;border-radius:50%;background:#c4c9d1}.sub i.working{background:var(--work)}.sub i.waiting{background:var(--waitln)}.sub i.silent{border:2px solid var(--work);background:#fff}
+.it{display:flex;gap:8px;padding:3px 0;font-size:14px;line-height:1.35}.it .d{width:9px;height:9px;border-radius:50%;margin-top:6px;flex:none}.it .d.bad{background:var(--bad)}.it .d.amb{background:var(--waitln)}
+ol.pl{margin:2px 0;padding-left:22px;font-size:14px;color:var(--ink2)}ol.pl li{padding:1px 0}li.done{color:var(--faint)}li.now{font-weight:650;color:var(--work)}
+.kv{display:grid;grid-template-columns:128px 1fr;gap:3px 12px;font-size:14px}.kv div:nth-child(odd){color:var(--mute)}
+.chip{display:inline-block;font-size:13px;padding:2px 10px;border-radius:12px;margin:2px 5px 3px 0;border:1px solid var(--line2);background:#fff;color:var(--ink2)}
+.chip.used{background:#f0f1f3;border-color:#b8bec7;color:var(--ink)}.chip.unused{background:var(--waitbg);border-color:#efc77f;color:var(--wait)}.chip.bypassed{background:var(--bad);border-color:var(--bad);color:#fff;font-weight:600}.chip.na{color:var(--faint)}
+.chip[data-part],.chip[data-p],.chip[data-id]{cursor:pointer}.chip[data-part]:hover,.chip[data-p]:hover,.chip[data-id]:hover{border-color:var(--ink2)}
+.chain{margin-top:4px}
+.cs{position:relative;padding:0 0 12px 22px}.cs:before{content:'';position:absolute;left:4px;top:15px;bottom:-1px;width:2px;background:#e5e7eb}.cs:last-child:before{display:none}
+.cs>i{position:absolute;left:0;top:6px;width:10px;height:10px;border-radius:50%}
+.cs .ct{font-size:14.5px;font-weight:600;color:var(--ink)}.cs .ct span{font-size:12.5px;color:var(--mute);font-weight:400;margin-left:6px}
+.cs.k-designed .ct{color:var(--faint)}
+.cs .cc{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
+.pc{font-size:13px;padding:2px 10px;border-radius:12px;border:1px solid var(--line2);background:#fff;color:var(--ink2);cursor:pointer;white-space:nowrap}.pc:hover{border-color:var(--ink2)}
+.pc.used{background:#f0f1f3;border-color:#b8bec7;color:var(--ink)}.pc.idle,.pc.norec{color:var(--faint)}.pc.norec{border-style:dotted}.pc.bypassed{background:var(--bad);border-color:var(--bad);color:#fff;font-weight:600}.pc.noton{background:var(--waitbg);border:1px dashed var(--waitln);color:var(--wait)}.pc.psel{outline:2px solid var(--ink);outline-offset:1px}
+.rli{display:flex;gap:9px;font-size:13.5px;line-height:1.4;padding:3px 0;color:var(--ink2)}.rli i{width:10px;height:10px;border-radius:2px;flex:none;margin-top:5px}.rli span span{color:var(--mute)}
+.mono{font:12.5px Consolas,monospace;color:var(--mute);word-break:break-all;margin:2px 0 6px}
+.orl div{padding:4px 0;border-bottom:1px solid #f0f1f3;font-size:13px;word-break:break-all}.orl span{color:var(--mute)}
+</style></head><body>
+<div id="app">
+ <div id="top"><span id="verdict"></span><span id="counts"></span><span id="range"></span><span class="sp"></span>
+  <span class="ctl"><span class="seg big" id="views"><button data-view="time">Sessions over time</button><button data-view="harness">Harness</button></span></span>
+  <span class="ctl">Show <span class="seg"><button data-win="12">Last 12 h</button><button data-win="48" title="In the live page this opens at the moment you last looked">Since I last looked</button><button data-win="all">Everything</button></span></span>
+  <span class="ctl lensg">Colour by <select id="lens"><option value="state">State</option><option value="harness">Method in use</option><option value="tokens">Tokens</option><option value="time">Time working</option><option value="window">Window size</option></select></span></div>
+ <div class="pane" id="over"></div>
+ <div class="pane" id="mapp"><div id="mapw"><div id="map"></div></div><div id="leg"></div><div id="hv"><div id="hm"></div></div></div>
+ <div class="pane" id="side"><div id="sidebody" style="display:flex;flex-direction:column;min-height:0;flex:1"></div><div id="det"><div class="dt"></div><div class="db"></div></div></div>
+ <div class="pane" id="bot"><div class="bt">Is the method in use <span>each step of a session's life, across the sessions shown; point at a step to see which sessions skipped it</span></div><div id="stg"></div></div>
+ <div class="pane" id="sess"></div>
+</div>
+<script>
+const D = /*DATA*/null;
+const S = D.sessions.filter(s => s.nCalls || s.wraps.length), byId = Object.fromEntries(S.map(s => [s.id, s])), NOW = D.made, LIVE = 4 * 60000, HR = 3600000;
+const qs = new URLSearchParams(location.search), T0 = Math.min(...S.map(s => s.t0));
+let lens = qs.get('lens') || 'state', to = NOW, from = qs.get('win') === 'all' ? T0 - HR : NOW - (+qs.get('win') || 48) * HR, hl = null, hlKey = null, winKey = qs.get('win') || '48';
+let view = qs.get('view') || (() => { try { return localStorage.getItem('mon.view'); } catch (e) { return null; } })() || 'time';
+let stack = [], sel = null, part = null, pipe = null, orph = false;
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const KIND = /^(orchestrate-deep|orchestrate|analyse|build-invariant|build|refute|read|collect|run|extract|locate|test):\s*/;
+const name = s => { const n = (s.title || 'Untitled session').replace(/\s*\([a-z]\w*-\d{4}\)/g, '').replace(KIND, ''); return n.charAt(0).toUpperCase() + n.slice(1); };
+const first = t => { const m = /^(.*?[.!?])(\s|$)/.exec(t || ''); return m ? m[1] : (t || ''); };
+const tok = n => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + ' M' : n >= 1e3 ? Math.round(n / 1e3) + ' K' : String(n);
+const dur = ms => { const m = Math.round(ms / 60000); return m < 60 ? m + ' min' : m < 2880 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' m' : Math.round(m / 1440) + ' days'; };
+const tm = t => new Date(t).toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'}), dy = t => new Date(t).toLocaleDateString('en-GB', {weekday:'short', day:'numeric', month:'short'});
+const HOOKN = {'library-start':'Board at start','tier-hook':'Model routes','record-guard':'Record guard','plan-gate':'Build plan','window-ceiling':'Window limit','count-gate':'Helpers at once','fanout-gate':'Usage first','owner-report':'Owner report','journal-watch':'Journal watch'};
+
+// ---- what a session was at a moment T
+const working = (s, T) => s.segs.some(x => x[0] <= T && T <= x[1] + LIVE);
+const lastWrap = (s, T) => { for (let i = s.wraps.length - 1; i >= 0; i--) if (s.wraps[i][0] <= T) return s.wraps[i]; };
+const waiting = (s, T) => { const w = lastWrap(s, T); return !!w && !!w[2] && !working(s, T) && !s.humans.some(h => h > w[0] && h <= T) && !s.segs.some(x => x[0] > w[0] + 60000 && x[0] <= T); };
+const silent = (s, T) => T >= NOW - 60000 && s.turnOpen && !working(s, T);
+const stateAt = (s, T) => working(s, T) ? 'working' : silent(s, T) ? 'silent' : waiting(s, T) ? 'waiting' : 'quiet';
+const lastAct = (s, T) => Math.max(s.t0, ...s.segs.filter(x => x[0] <= T).map(x => Math.min(x[1], T)));
+const stepAt = (s, T) => { for (let i = s.steps.length - 1; i >= 0; i--) if (s.steps[i][0] <= T) return s.steps[i][1]; return ''; };
+const doing = (s, T) => { const w = lastWrap(s, T); return working(s, T) || silent(s, T) ? (stepAt(s, T) || 'Working') : w ? first(w[1]) : stepAt(s, T); };
+const helpersAt = (s, T) => s.helpers.filter(h => h.t0 && h.t0 <= T).map(h => ({ ...h, st: T < h.t1 ? 'run' : h.finished ? 'done' : T <= h.t1 + LIVE ? 'run' : 'stop' }));
+const total = s => s.tokens + s.helpers.reduce((a, h) => a + h.tokens, 0), worked = s => s.segs.reduce((a, x) => a + x[1] - x[0], 0);
+const vis = () => S.filter(s => s.t0 <= to && lastAct(s, to) >= from).sort((a, b) => a.t0 - b.t0);
+
+// ---- the method, as the steps of a session's life. used / unused (nothing forces it) / bypassed (a hook should have, did not) / na
+const built = (h, s) => D.hooks[h].installed && D.hooks[h].installed <= s.t1, off = (h, s) => s.hooksOn && !s.hooksOn.includes(h);
+const STAGES = [
+ ['board', 'Board at start', 'The library board is put into the session when it starts', s => !built('library-start', s) || s.t0 < D.hooks['library-start'].installed ? 'na' : off('library-start', s) || !s.startHook ? 'bypassed' : 'used'],
+ ['library', 'Library looked up', 'The session looked a record up before deciding', s => !s.nCalls ? 'na' : s.lookups ? 'used' : 'unused'],
+ ['usage', 'Usage read before helpers', 'The plan usage was read before helpers were started', s => !(s.helpers.length + s.nStarts) ? 'na' : s.usageReads ? 'used' : 'unused'],
+ ['routes', 'Models by route', 'Every helper and child session was checked against the model routes', s => { const c = s.checks['tier-hook']; return !(s.helpers.length + s.nStarts) || !built('tier-hook', s) ? 'na' : off('tier-hook', s) || !c || c.seen < c.expected ? 'bypassed' : 'used'; }],
+ ['ceiling', 'Window under its limit', 'The window limit hook watched every call', s => !built('window-ceiling', s) || !s.nCalls ? 'na' : off('window-ceiling', s) || !s.hookSeen['window-ceiling'] ? 'bypassed' : (s.ceil && s.ceil.ctx > s.ceil.line) ? 'unused' : 'used'],
+ ['journal', 'Journal written', 'The session wrote its findings to the journal', s => !s.nCalls ? 'na' : s.journalWrites ? 'used' : 'unused'],
+ ['report', 'Closing report', 'The session closed with a short report', s => !s.nCalls ? 'na' : s.wraps.length ? 'used' : 'unused'],
+];
+const stage = (s, k) => STAGES.find(x => x[0] === k)[3](s);
+const hz = s => { const c = STAGES.map(x => x[3](s)); return c.includes('bypassed') ? 'bad' : c.includes('unused') ? 'amb' : c.every(x => x === 'na') ? 'na' : 'ok'; };
+// problems: [level, sentence, kind, short detail]; two levels only: 'bad' is a problem, 'amb' a note
+function problems(s, T) {
+  const p = [], offs = Object.keys(HOOKN).filter(h => built(h, s) && off(h, s));
+  if (offs.length) p.push(['bad', offs.length + ' hooks were not switched on in its folder', 'noton', offs.map(h => HOOKN[h]).join(', ')]);
+  for (const h of ['tier-hook', 'window-ceiling']) { const c = s.checks[h]; if (c && !off(h, s) && c.seen < c.expected) p.push(['bad', HOOKN[h] + ' checked ' + c.seen + ' of ' + c.expected + ' calls', 'unchecked', HOOKN[h] + ', ' + c.seen + ' of ' + c.expected + ' calls']); }
+  if (s.hookErrors) p.push(['bad', 'a hook failed and let ' + s.hookErrors + ' call(s) through', 'hookfail', s.hookErrors + ' call' + (s.hookErrors > 1 ? 's' : '')]);
+  if (s.ceil && s.ceil.ctx > s.ceil.line) p.push(['bad', 'its window went past its limit (' + tok(s.ceil.ctx) + ' against ' + tok(s.ceil.line) + ')', 'window', tok(s.ceil.ctx) + ' against a limit of ' + tok(s.ceil.line)]);
+  if (silent(s, T)) p.push(['amb', 'its turn is open but it has been silent for ' + dur(T - lastAct(s, T)), 'silent', dur(T - lastAct(s, T))]);
+  if (stateAt(s, T) === 'waiting') p.push(['amb', 'asked you something ' + dur(T - lastWrap(s, T)[0]) + ' ago, not answered', 'waiting', dur(T - lastWrap(s, T)[0]) + ' ago']);
+  const st = helpersAt(s, T).filter(h => h.st === 'stop').length; if (st) p.push(['amb', st + ' helper' + (st > 1 ? 's' : '') + ' stopped without handing back', 'stopped', String(st)]);
+  const dn = s.denT.filter(d => d[0] <= T).length; if (dn) p.push(['amb', 'hooks refused ' + dn + ' call' + (dn > 1 ? 's' : ''), 'refused', String(dn)]);
+  return p;
+}
+const PK = { noton: 'Hooks not switched on in its folder', unchecked: 'A hook checked fewer calls than it should', hookfail: 'A hook failed and let calls through', window: 'Window went past its limit', silent: 'Turn open, nothing heard', stopped: 'Helpers stopped without handing back', refused: 'Calls refused by hooks' };
+
+// ---- the overview strip: working stretches kept, quiet hours cut
+let OV = null;
+function ovScale(W) {
+  let iv = []; for (const s of S) for (const x of s.segs) iv.push([x[0] - 6e5, x[1] + 6e5]);
+  iv.sort((a, b) => a[0] - b[0]); const M = []; for (const x of iv) { const l = M[M.length - 1]; if (l && x[0] - l[1] < 90 * 60000) l[1] = Math.max(l[1], x[1]); else M.push([x[0], x[1]]); }
+  M[M.length - 1][1] = Math.max(M[M.length - 1][1], NOW);
+  const GAP = 14, act = M.reduce((a, x) => a + x[1] - x[0], 0), k = (W - GAP * (M.length - 1)) / act; let acc = 0; for (const x of M) { x.x0 = acc; acc += (x[1] - x[0]) * k + GAP; }
+  const X = t => { for (const x of M) { if (t < x[0]) return x.x0; if (t <= x[1]) return x.x0 + (t - x[0]) * k; } return W; };
+  const inv = px => { for (const x of M) { const x1 = x.x0 + (x[1] - x[0]) * k; if (px < x.x0) return x[0]; if (px <= x1) return x[0] + (px - x.x0) / k; } return NOW; };
+  return { M, X, inv, W };
+}
+function drawOver() {
+  const el = $('over'), W = el.clientWidth - 28, Hh = el.clientHeight - 10; OV = ovScale(W);
+  const lanes = [], lane = {}; for (const s of S) { let L = 0; while ((lanes[L] || 0) > s.t0) L++; lanes[L] = s.t1 + 20 * 60000; lane[s.id] = L; }
+  const rh = Math.min(8, (Hh - 20) / lanes.length); let o = '', lastLab = -99, lastDay = '';
+  OV.M.forEach((x, i) => { if (i) o += `<line x1="${x.x0 - 7}" y1="15" x2="${x.x0 - 7}" y2="${Hh}" stroke="#e5e7eb" stroke-dasharray="2 3"/>`; const d = dy(x[0] + 6e5); if (d !== lastDay && x.x0 - lastLab > 70) { o += `<text x="${x.x0}" y="11" font-size="12" fill="#6b7280">${esc(d)}</text>`; lastLab = x.x0; lastDay = d; } });
+  for (const s of S) { const y = 18 + lane[s.id] * rh, bad = problems(s, NOW).some(p => p[0] === 'bad');
+    o += `<line x1="${OV.X(s.t0)}" y1="${y + rh / 2 - 1}" x2="${OV.X(s.t1)}" y2="${y + rh / 2 - 1}" stroke="#e3e6ea" stroke-width="1.5"/>`;
+    for (const x of s.segs) { const a = OV.X(x[0]), b = Math.max(OV.X(x[1]), a + 2.5); o += `<rect x="${a}" y="${y}" width="${b - a}" height="${rh - 2.5}" rx="2" fill="${working(s, NOW) ? '#1d64d8' : bad ? '#d14a4a' : '#a9b0bb'}"/>`; } }
+  const a = OV.X(from), b = OV.X(to);
+  o += `<rect x="${a}" y="14" width="${Math.max(b - a, 6)}" height="${Hh - 14}" fill="rgba(29,100,216,.07)" stroke="#1d64d8" stroke-width="1.5" rx="4"/><rect x="${a - 3}" y="${Hh / 2 - 5}" width="6" height="20" rx="3" fill="#1d64d8"/><rect x="${b - 3}" y="${Hh / 2 - 5}" width="6" height="20" rx="3" fill="#1d64d8"/>`;
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${Hh}" preserveAspectRatio="none">${o}</svg>`;
+}
+(function brush() { const el = $('over'); let mode = null, x0 = 0, f0 = 0, t0 = 0;
+  const px = e => (e.clientX - el.getBoundingClientRect().left - 14);
+  el.addEventListener('mousedown', e => { const x = px(e), a = OV.X(from), b = OV.X(to); mode = Math.abs(x - a) < 8 ? 'l' : Math.abs(x - b) < 8 ? 'r' : x > a && x < b ? 'm' : 'n'; x0 = x; f0 = a; t0 = b; if (mode === 'n') { from = OV.inv(x); to = OV.inv(x + 6); mode = 'r'; } e.preventDefault(); });
+  addEventListener('mousemove', e => { if (!mode) return; const x = px(e), d = x - x0;
+    if (mode === 'l') from = Math.min(OV.inv(x), to - 6e5); else if (mode === 'r') to = Math.max(OV.inv(x), from + 6e5); else { from = OV.inv(f0 + d); to = OV.inv(t0 + d); }
+    to = Math.min(to, NOW); winKey = ''; render(); });
+  addEventListener('mouseup', () => { mode = null; }); })();
+
+// ---- the time view
+function layout(V, W, Hh) {
+  const cols = [], P = {};
+  for (const s of V) { if (!cols.length || s.t0 - cols[cols.length - 1] > 5 * 60000) cols.push(s.t0); P[s.id] = { col: cols.length - 1 }; }
+  const laneEnd = [];
+  for (const s of V) { const p = P[s.id], la = lastAct(s, to); let e = p.col; for (let c = p.col; c < cols.length; c++) if (cols[c] <= la) e = c; if (stateAt(s, to) === 'working' || stateAt(s, to) === 'silent') e = cols.length; p.end = e; }
+  for (const s of V) if (s.parent && P[s.parent]) P[s.parent].end = Math.max(P[s.parent].end, P[s.id].col);
+  for (const s of V) { const p = P[s.id], e = p.end; let L = s.parent && P[s.parent] ? P[s.parent].lane + 1 : 0; while ((laneEnd[L] == null ? -1 : laneEnd[L]) >= p.col) L++; p.lane = L; laneEnd[L] = e; }
+  const nL = Math.max(1, laneEnd.length), padL = 20, padT = 54, padR = 84;
+  const colW = Math.max(150, (W - padL - padR) / Math.max(cols.length, 1)), cw = Math.min(colW - 32, 270), rowH = Math.max(56, Math.min((Hh - padT - 40) / nL, 172)), ch = rowH - 22;
+  const mode = cw >= 160 && ch >= 116 ? 'full' : ch >= 82 ? 'mid' : 'cmp';
+  for (const s of V) { const p = P[s.id]; p.x = padL + p.col * colW; p.y = padT + p.lane * rowH; p.w = cw; p.h = ch; p.my = p.y + ch / 2; }
+  return { P, cols, colW, cw, ch, mode, nowX: padL + cols.length * colW + 20, width: Math.max(W, padL + cols.length * colW + padR), height: Math.max(Hh, padT + nL * rowH + 30), padL };
+}
+function drawMap(V) {
+  const wrap = $('mapw'), L = layout(V, wrap.clientWidth - 2, wrap.clientHeight - 2), { P } = L, map = $('map');
+  map.style.width = L.width + 'px'; map.style.height = L.height + 'px';
+  const val = { tokens: total, time: worked, window: s => s.peak }[lens], mx = val ? Math.max(1, ...V.map(val)) : 1;
+  let svg = '', html = '', prevDay = '';
+  L.cols.forEach((t, c) => { const d = dy(t); html += `<div class="tlab" style="left:${L.padL + c * L.colW}px">${d !== prevDay ? '<b>' + esc(d) + '</b>' : '&nbsp;'}<br>${tm(t)}</div>`; prevDay = d; });
+  svg += `<line x1="${L.nowX}" y1="44" x2="${L.nowX}" y2="${L.height - 8}" stroke="#1d64d8" stroke-width="1.5" stroke-dasharray="4 4"/>`;
+  html += `<div class="tlab" style="left:${L.nowX - 14}px;color:#1d64d8;font-weight:650">&nbsp;<br>${to >= NOW - 60000 ? 'now' : tm(to)}</div>`;
+  for (const s of V) { const p = P[s.id], st = stateAt(s, to), x2 = p.end >= L.cols.length ? L.nowX : L.padL + p.end * L.colW + p.w / 2, live = st === 'working' || st === 'silent', col = live ? '#1d64d8' : '#c4c9d1';
+    if (x2 > p.x + p.w) svg += `<line x1="${p.x + p.w}" y1="${p.my}" x2="${x2}" y2="${p.my}" stroke="${col}" stroke-width="${live ? 2.5 : 2}"${st === 'silent' ? ' stroke-dasharray="6 5"' : ''}/>` + (st === 'working' ? `<circle cx="${x2}" cy="${p.my}" r="5" fill="#1d64d8"><animate attributeName="opacity" values="1;.2;1" dur="1.6s" repeatCount="indefinite"/></circle>` : `<circle cx="${x2}" cy="${p.my}" r="3.5" fill="#c4c9d1"/>`);
+    const pp = s.parent && P[s.parent]; if (pp) { const x = p.x - 15; svg += `<path d="M${x} ${pp.my} V${p.my - 8} q0 8 8 8 H${p.x}" fill="none" stroke="#9ca3af" stroke-width="1.8"/><circle cx="${x}" cy="${pp.my}" r="3.5" fill="#9ca3af"/>`; }
+  }
+  for (const s of V) { const p = P[s.id], st = stateAt(s, to), pr = problems(s, to), bad = pr.filter(x => x[0] === 'bad').length, hs = helpersAt(s, to), run = hs.filter(h => h.st === 'run').length;
+    const rl = part && PART[part] ? rel(s, part) : null;
+    let cls = 'node ' + (L.mode === 'full' ? '' : L.mode + ' ') + (rl ? 'rl-' + rl : lens === 'state' ? 'st-' + st : lens === 'harness' ? 'hz-' + hz(s) : 'st-x'), style = `left:${p.x}px;top:${p.y}px;width:${p.w}px;height:${p.h}px;`, fig = '';
+    if (val && !rl) { const r = val(s) / mx; style += `background:hsl(214 85% ${98 - 40 * r}%);border-left-color:hsl(214 70% ${80 - 40 * r}%);`; fig = `<span class="fig">${lens === 'time' ? dur(val(s)) : tok(val(s))}</span>`; }
+    if (sel === s.id) cls += ' sel'; if (hl) cls += hl.has(s.id) ? ' mark' : ' dim';
+    const plan = (s.plan || []).slice(0, 12).map(x => `<i class="${x.s === 'completed' ? 'd' : x.s === 'in_progress' && st === 'working' ? 'n' : ''}"></i>`).join('');
+    const hc = hs.length ? `<span class="hc">${hs.length} helper${hs.length > 1 ? 's' : ''}${run && st !== 'quiet' ? ` · <b>${run} running</b>` : ''}</span>` : '';
+    html += `<div class="${cls}" style="${style}" data-id="${s.id}" title="${esc(name(s))}"><div class="nh"><span class="dot"></span><span class="nm">${esc(name(s))}</span>${fig}</div>
+      <div class="do">${esc(doing(s, to))}</div><div class="nf">${plan ? `<span class="prog">${plan}</span>` : ''}${hc}${rl && rl !== 'none' ? `<span class="rt rl-${rl}">${RELW[rl]}</span>` : ''}${st === 'silent' ? `<span class="tag">nothing heard for ${dur(to - lastAct(s, to))}</span>` : ''}${st === 'waiting' ? '<span class="tag">asked you</span>' : ''}</div>${bad ? `<span class="flag" title="${bad} problem${bad > 1 ? 's' : ''}">${bad}</span>` : ''}</div>`;
+  }
+  map.innerHTML = `<svg width="${L.width}" height="${L.height}">${svg}</svg>` + html + (V.length ? '' : '<div style="padding:70px;color:#6b7280;font-size:16px">No session worked in this stretch of time.</div>');
+  const sw = (bg, bd, t, x) => `<span><i style="background:${bg};border-left:4px solid ${bd}${x || ''}"></i>${t}</span>`;
+  const LG = { state: sw('#fff', '#1d64d8', 'working') + sw('#fff', '#8fb1ea', 'open, nothing heard') + sw('#fff6e5', '#eaa53a', 'asked you') + sw('#fafafb', '#c4c9d1', 'quiet') + '<span><b style="display:inline-block;width:16px;height:16px;border-radius:8px;background:#c62828;color:#fff;font-size:11px;text-align:center;line-height:16px;margin-right:6px">1</b>problems</span><span>line: how long it stayed open · drop: a session it started</span>',
+    harness: sw('#fff', '#c4c9d1', 'every step used') + sw('#fff6e5', '#eaa53a', 'a step skipped (nothing forces it)') + sw('#fdeeee', '#c62828', 'a hook was bypassed') + sw('#f6f7f8', '#c4c9d1', 'nothing applied'),
+    tokens: sw('hsl(214 85% 97%)', 'hsl(214 70% 78%)', 'few') + sw('hsl(214 85% 60%)', 'hsl(214 70% 42%)', 'most tokens, the session and its helpers together'), time: sw('hsl(214 85% 97%)', 'hsl(214 70% 78%)', 'short') + sw('hsl(214 85% 60%)', 'hsl(214 70% 42%)', 'longest time working'), window: sw('hsl(214 85% 97%)', 'hsl(214 70% 78%)', 'small') + sw('hsl(214 85% 60%)', 'hsl(214 70% 42%)', 'largest window the session reached') };
+  const RLG = sw('#e3edfc', '#1d64d8', 'wrote it') + sw('#f0f1f3', '#4b5563', 'used it') + sw('#fdeeee', '#c62828', 'skipped: a hook should have checked') + sw('#fff6e5', '#eaa53a', 'skipped: the method expects it') + '<span>faded: did not touch it</span>';
+  $('leg').innerHTML = part && PART[part] ? RLG : LG[lens];
+}
+
+// ---- top bar, right column, method strip
+function drawTop(V) {
+  const st = V.map(s => stateAt(s, to)), nW = st.filter(x => x === 'working' || x === 'silent').length, nA = st.filter(x => x === 'waiting').length;
+  let nb = 0, nn = 0; for (const s of V) for (const p of problems(s, to)) p[0] === 'bad' ? nb++ : nn++;
+  const v = $('verdict'); v.className = nb ? 'bad' : nn ? 'amb' : 'ok';
+  v.innerHTML = '<i></i>' + (nb ? nb + ' problem' + (nb > 1 ? 's' : '') : nn ? nn + ' thing' + (nn > 1 ? 's' : '') + ' to note' : 'All normal');
+  $('counts').innerHTML = `<span class="cnt w${nW ? ' on' : ''}"><i></i><b>${nW}</b> working</span><span class="cnt a"><i></i><b>${nA}</b> waiting for you</span><span class="cnt"><i></i><b>${V.length - nW - nA}</b> quiet</span>`;
+  $('range').textContent = dy(from) + ' ' + tm(from) + ' to ' + (to >= NOW - 60000 ? 'now' : dy(to) + ' ' + tm(to));
+}
+function drawSide(V) {
+  const items = []; for (const s of V) for (const p of problems(s, to)) items.push({ lv: p[0], s, k: p[2], sh: p[3] });
+  const wt = V.filter(s => stateAt(s, to) === 'waiting');
+  let h = `<div class="sx"><h3>Needs you${wt.length ? ` <span class="n a">${wt.length}</span>` : ''}</h3>` + (wt.length ? wt.map(s => `<div class="nd" data-id="${s.id}"><div><b>${esc(name(s))}</b> <span class="mt">asked ${dur(to - lastWrap(s, to)[0])} ago</span></div><div class="q">${esc(first(lastWrap(s, to)[1]))}</div></div>`).join('') : '<div class="none">Nothing is waiting for you.</div>') + '</div>';
+  const groups = Object.keys(PK).map(k => [k, items.filter(x => x.k === k)]).filter(g => g[1].length), nb = items.filter(x => x.lv === 'bad').length, nn = items.filter(x => x.lv === 'amb' && x.k !== 'waiting').length;
+  h += `<div class="sx" id="probs"><h3>Problems${nb ? ` <span class="n b">${nb}</span>` : ''}${nn ? ` <span class="mt">and ${nn} note${nn > 1 ? 's' : ''}</span>` : ''}</h3>` + (groups.length ? groups.map(([k, g]) => g[0].lv === 'bad'
+      ? `<div class="pg bad"><div class="gt"><i></i>${PK[k]}</div>${g.map(x => `<div class="gs"><span class="sn" data-id="${x.s.id}">${esc(name(x.s))}</span> <span class="mt">${esc(x.sh)}</span></div>`).join('')}</div>`
+      : `<div class="pg amb"><div class="gt"><i></i>${PK[k]}</div><div class="gs">${g.map(x => `<span class="sn" data-id="${x.s.id}">${esc(name(x.s))}</span> (${esc(x.sh)})`).join(', ')}</div></div>`).join('') : '<div class="none">None.</div>') + '</div>';
+  if (view === 'harness') h += harnessSummary(V);
+  else {
+    let hd = ''; for (const s of V) { const a = stateAt(s, to); if (a === 'quiet') continue; const pl = s.plan || [], i = pl.findIndex(x => x.s === 'in_progress'), nx = pl.find((x, j) => j > i && x.s === 'pending'), dn = pl.filter(x => x.s === 'completed').length;
+      hd += `<div class="hd" data-id="${s.id}"><div class="r"><b>${esc(name(s))}</b>${pl.length ? `<span class="prog">${pl.slice(0, 12).map(x => `<i class="${x.s === 'completed' ? 'd' : x.s === 'in_progress' ? 'n' : ''}"></i>`).join('')}</span><span class="mt">${dn} of ${pl.length}</span>` : ''}</div>` +
+        (a === 'waiting' ? `<div class="s"><span>Waiting for you: </span>${esc(first(lastWrap(s, to)[1]))}</div>` : `<div class="s"><span>Now: </span>${esc(stepAt(s, to) || 'working')}</div>${nx ? `<div class="s"><span>Then: </span>${esc(nx.c)}</div>` : ''}`) + '</div>'; }
+    h += `<div class="sx"><h3>Where it is heading</h3>${hd || '<div class="none">No session is open.</div>'}${D.next ? `<div class="brd" title="${esc(D.next)}"><span>Next on the board: </span>${esc(D.next)}</div>` : ''}</div>`;
+    const ev = [];
+    for (const s of S) { const n = name(s), inw = t => t >= from && t <= to;
+      if (inw(s.t0)) ev.push([s.t0, 'st', '▶', `<b>${esc(n)}</b> started` + (s.parent && byId[s.parent] ? ' by ' + esc(name(byId[s.parent])) : ''), s.id]);
+      for (const w of s.wraps) if (inw(w[0])) ev.push([w[0], w[2] ? 'as' : 'rp', w[2] ? '?' : '■', `<b>${esc(n)}</b> ${w[2] ? 'asked you' : 'reported'}: ${esc(first(w[1]))}`, s.id]);
+      for (const d of s.denT) if (inw(d[0])) ev.push([d[0], 'rf', '✕', `${esc(HOOKN[d[1]] || d[1])} refused a call in <b>${esc(n)}</b>`, s.id]);
+      let g = null; for (const hh of s.helpers) { if (!hh.t0 || !inw(hh.t0)) continue; if (g && hh.t0 - g.t < 120000) { g.k[hh.kind || 'helper'] = (g.k[hh.kind || 'helper'] || 0) + 1; g.n++; } else { g = { t: hh.t0, n: 1, k: { [hh.kind || 'helper']: 1 } }; ev.push([hh.t0, 'hp', '+', g, s.id, n]); } } }
+    ev.sort((a, b) => b[0] - a[0]); let f = '', pd = '';
+    for (const e of ev.slice(0, 90)) { const d = dy(e[0]); if (d !== pd) { f += `<div class="day">${esc(d)}</div>`; pd = d; }
+      const tx = typeof e[3] === 'string' ? e[3] : `<b>${esc(e[5])}</b> started ${e[3].n} helper${e[3].n > 1 ? 's' : ''} <span style="color:#6b7280">(${esc(Object.entries(e[3].k).map(([k, v]) => v + ' ' + k).join(', '))})</span>`;
+      f += `<div class="ev" data-id="${e[4]}"><span class="t">${tm(e[0])}</span><span class="ic ${e[1]}">${e[2]}</span><span class="x">${tx}</span></div>`; }
+    h += `<div class="sx" id="feed"><h3>What happened</h3>${f || '<div class="none">Nothing in this stretch.</div>'}</div>`;
+  }
+  $('sidebody').innerHTML = h;
+}
+function drawStages(V) {
+  $('stg').innerHTML = STAGES.map((g, i) => { const c = { used: [], unused: [], bypassed: [], na: [] }; for (const s of V) c[g[3](s)].push(s.id); const n = c.used.length + c.unused.length + c.bypassed.length, nn = n || 1;
+    return (i ? '<div class="ar">›</div>' : '') + `<div class="sg${hlKey === g[0] ? ' on' : ''}" data-k="${g[0]}" title="${esc(g[2])}"><span class="nm2">${esc(g[1])}</span><span class="fr"><b>${c.used.length}</b> of ${n}${c.bypassed.length ? ` · <em class="x">${c.bypassed.length} bypassed</em>` : ''}${c.unused.length ? ` · <em class="n">${c.unused.length} skipped</em>` : ''}</span><div class="bar"><i class="u" style="width:${100 * c.used.length / nn}%"></i><i class="n" style="width:${100 * c.unused.length / nn}%"></i><i class="x" style="width:${100 * c.bypassed.length / nn}%"></i></div></div>`; }).join('');
+  document.querySelectorAll('.sg').forEach(n => { const k = n.dataset.k, set = () => new Set(V.filter(s => ['unused', 'bypassed'].includes(stage(s, k))).map(s => s.id));
+    n.onmouseenter = () => { if (!hlKey) { hl = set(); mark(); } }; n.onmouseleave = () => { if (!hlKey) { hl = null; mark(); } };
+    n.onclick = () => { hlKey = hlKey === k ? null : k; hl = hlKey ? set() : null; render(); }; });
+}
+function mark() { document.querySelectorAll('.node').forEach(n => { n.classList.toggle('mark', !!hl && hl.has(n.dataset.id)); n.classList.toggle('dim', !!hl && !hl.has(n.dataset.id)); }); }
+
+// ---- the harness: parts, rules, and how a session stands to each part
+const HP = (D.harness && D.harness.parts) || { pipelines: [], links: [], parts: [] }, HRU = (D.harness && D.harness.rules) || null;
+const PART = Object.fromEntries(HP.parts.map(p => [p.id, p])), PIPE = Object.fromEntries(HP.pipelines.map(p => [p.id, p]));
+const RULES = HRU ? (HRU.rules || []).filter(r => !r.same) : [], ENF = Object.fromEntries(((HRU && HRU.enforcers) || []).map(e => [e.id, e]));
+const PC = { S: '#2f5fd0', A: '#0f7b4a', B: '#7c3aed', C: '#9f1239', D: '#c2610c', E: '#475569', F: '#0f766e', G: '#be1a5a' }, pcol = id => PC[id[0]];
+const EXP = { 'hook:library-start': 'board', 'hook:tier-hook': 'routes', 'hook:window-ceiling': 'ceiling', 'script:lookup': 'library', 'doc:board': 'library', 'tool:get_usage': 'usage', 'script:journal': 'journal', 'tool:wrap_up': 'report' };
+const RELW = { wrote: 'wrote it', read: 'used it', skip: 'skipped', miss: 'skipped', noton: 'not switched on', none: 'not touched' };
+// the round 2 counts (checked against the hook logs call by call) come first; the round 3 'hk' counts only where there are none
+const hkInfo = (s, id) => { const c = s.checks && s.checks[id.slice(5)]; if (c) return { e: c.expected, n: c.seen }; const k = s.hk && s.hk[id]; return k ? { e: k[0], n: k[1] } : null; };
+// how a session stands to a part: wrote / read (used) / skip (a hook should have checked, did not) / noton / miss (the method expects it, nothing forces it) / none
+function rel(s, id) { const p = PART[id]; if (!p) return 'none'; const ex = EXP[id] ? stage(s, EXP[id]) : '';
+  if (p.kind === 'hook') { const h = id.slice(5), k = hkInfo(s, id), hs = s.hookSeen && s.hookSeen[h], hk = s.hk && s.hk[id]; if ((k && k.e > 0 && k.n < k.e) || ex === 'bypassed') return 'skip'; if (D.hooks[h] && built(h, s) && off(h, s)) return 'noton'; if (ex === 'unused') return 'miss'; return (k && k.n > 0) || (hs && hs.n > 0) || (hk && (hk[1] > 0 || hk[2] > 0)) || (s.denials && s.denials[h] > 0) ? 'read' : 'none'; }
+  const u = s.use && s.use[id]; if (u) { if (u[1] > 0) return 'wrote'; if (u[0] + u[2] > 0) return 'read'; }
+  return ex === 'unused' ? 'miss' : 'none'; }
+function partState(id, V) { let used = false, byp = false, nt = false; for (const s of V) { const r = rel(s, id); if (r === 'wrote' || r === 'read') used = true; else if (r === 'skip') byp = true; else if (r === 'noton') nt = true; } if (!byp && !used && !nt && PART[id] && PART[id].kind === 'hook') { const h = PART[id].id.slice(5), H = D.hooks[h], ev = V.some(s => (s.hookSeen && s.hookSeen[h]) || (s.hk && s.hk[id])); if (!ev) { if (H && H.lines > 0 && H.installed <= to && (!H.last || H.last >= from)) return 'used'; return 'norec'; } }
+  return byp ? 'bypassed' : used ? 'used' : nt ? 'noton' : 'idle'; }
+function pathOf(s) { const o = {}, order = []; for (const id in PART) { const r = rel(s, id); if (r === 'wrote' || r === 'read') { const u = s.use && s.use[id]; o[id] = u && u[3] ? u[3] : 9e15; } }
+  const ids = Object.keys(o).sort((a, b) => o[a] - o[b]); for (const id of ids) if (!order.includes(PART[id].pipeline)) order.push(PART[id].pipeline); return { ids, pipes: order }; }
+const rkind = r => r.by === 'none' ? 'none' : r.by === 'script' ? 'script' : r.by === 'both' ? 'both' : 'hook';
+const RKW = { hook: 'refused by a hook', both: 'hook and commit check', script: 'checked at commit', none: 'written only' }, NONEWHOLE = 'None is refused in every form; a rule\'s detail says what passes';
+const PSW = { used: 'used', idle: 'idle', norec: 'idle, no record', bypassed: 'bypassed', noton: 'not switched on' };
+const byStep = {}; for (const p of HP.parts) (byStep[p.step] = byStep[p.step] || []).push(p);
+const stepState = (ks, st) => !ks.length ? (st.built ? 'built' : 'designed') : ks.includes('bypassed') ? 'bypassed' : ks.includes('used') ? 'used' : ks.includes('noton') ? 'noton' : 'idle';
+const joined = id => new Set([id, ...HP.links.filter(l => l.from === id).map(l => l.to), ...HP.links.filter(l => l.to === id).map(l => l.from)]);
+
+function drawHarness(V) {
+  const ss = sel && byId[sel], P = ss ? pathOf(ss) : null, near = pipe ? joined(pipe) : null, pp = part && PART[part] ? PART[part] : null;
+  const LIVEP = new Set(); for (const s of V) if (working(s, to)) for (const id in PART) { const r = rel(s, id); if (r === 'wrote' || r === 'read') LIVEP.add(id); }
+  const ST = {}; for (const p of HP.parts) ST[p.id] = partState(p.id, V);
+  const tile = pl => { const ps = HP.parts.filter(p => p.pipeline === pl.id), c = {}; ps.forEach(p => { const k = ST[p.id] === 'norec' ? 'idle' : ST[p.id]; c[k] = (c[k] || 0) + 1; });
+    const dsg = pl.steps.reduce((a, x) => a + x.designed + x.idea, 0), nb = !ps.length && !pl.steps.some(x => x.built), live = ps.some(p => LIVEP.has(p.id));
+    const steps = pl.steps.map((st, i) => { const ch = byStep[pl.id + '.' + i] || [], k = stepState(ch.map(p => ST[p.id]), st);
+      let x = ''; if (ss) { const rs = ch.map(p => rel(ss, p.id)); x = rs.some(r => r === 'wrote' || r === 'read') ? ' lit' : rs.includes('skip') ? ' ring' : ''; }
+      if (pp && pp.step === pl.id + '.' + i) x += ' psel';
+      return `<li class="k-${k}${x}" title="${esc(st.t + ': ' + (ch.length ? ch.map(p => p.name + ' (' + PSW[ST[p.id]] + ')').join(', ') : (st.built ? st.built + ' built' : '') + (st.designed + st.idea ? (st.built ? ', ' : '') + (st.designed + st.idea) + ' designed' : '')))}"><i></i><span>${esc(st.t)}</span>${ch.length ? `<em>${ch.length}</em>` : ''}</li>`; }).join('');
+    const rs = RULES.filter(r => r.pipeline === pl.id), en = rs.filter(r => rkind(r) !== 'none').length;
+    const stat = nb ? `Not built · ${dsg} designed` : ps.length ? `${c.used || 0} of ${ps.length} used` : `No part tracked · ${dsg} designed`;
+    const bar = ps.length ? `<div class="hbar">${['bypassed', 'noton', 'used', 'idle'].map(k => c[k] ? `<i class="pk-${k}" style="flex:${c[k]}"></i>` : '').join('')}</div>` : '';
+    const n = P ? P.pipes.indexOf(pl.id) + 1 : 0, dim = (P && !n && !steps.includes(' ring')) || (near && !near.has(pl.id));
+    const pos = pl.col === 1 ? '' : `grid-column:${pl.id === 'C' ? '1 / 3' : pl.col};grid-row:${pl.row};`;
+    return `<div class="hb${nb ? ' nb' : ''}${pipe === pl.id ? ' sel' : ''}${dim ? ' dim' : ''}" data-p="${pl.id}" style="${pos}--fc:${pcol(pl.id)}"><div class="ht"><span class="cd">${esc(pl.code)}</span><span>${esc(pl.title)}</span></div><div class="hrow">${bar}<span class="hst">${stat}</span></div><ul class="hs">${steps}</ul>${rs.length ? `<div class="hr">Rules: ${en} of ${rs.length} enforced</div>` : ''}${live ? '<span class="live" title="Used by a session working now"></span>' : ''}${n ? `<span class="pn" title="Order in which the selected session reached it">${n}</span>` : ''}</div>`; };
+  let h = ''; for (const pl of HP.pipelines) if (pl.col !== 1) h += tile(pl);
+  const c1 = HP.pipelines.filter(p => p.col === 1).sort((a, b) => (a.half === 'upper' ? 0 : 1) - (b.half === 'upper' ? 0 : 1)); h += `<div class="c1">${c1.map(tile).join('')}</div>`;
+  const li = (k, t) => `<div><i class="${k}"></i>${t}</div>`;
+  h += `<div class="hleg"><b>Parts, in the stretch shown</b>${li('pk-used', 'used')}${li('pk-idle', 'idle')}${li('pk-bypassed', 'bypassed: a hook should have checked')}${li('pk-noton', 'not switched on in a folder')}<div><i style="border:1.5px dashed #c4c9d1"></i>designed, not built</div><div><i style="background:#1d64d8"></i>used by a session working now</div></div>`;
+  $('hm').innerHTML = h + '<svg id="ha"></svg>';
+  $('sess').innerHTML = `<div class="bt" style="font-size:14.5px;font-weight:650">Sessions in this stretch <span style="font-weight:400;font-size:13px;color:#6b7280;margin-left:10px">${part ? 'coloured by how each stands to ' + esc(PART[part].name) : 'click one to trace its path through the harness'}</span></div><div id="scs">` +
+    V.map(s => `<span class="sc ${part ? 'rl-' + rel(s, part) : 's-' + stateAt(s, to)}${sel === s.id ? ' sel' : ''}" data-id="${s.id}" title="${esc(name(s))}">${esc(name(s))}</span>`).join('') + '</div>';
+}
+function drawArrows() {
+  const hm = $('hm'), svg = $('ha'); if (!svg) return; hm.querySelectorAll('.alab').forEach(x => x.remove()); const W = hm.clientWidth, H = hm.clientHeight, hb = hm.getBoundingClientRect(); svg.setAttribute('width', W); svg.setAttribute('height', H);
+  const R = id => { const e = hm.querySelector(`[data-p="${id}"]`); if (!e) return null; const a = e.getBoundingClientRect(); return { l: a.left - hb.left, r: a.right - hb.left, t: a.top - hb.top, b: a.bottom - hb.top, cx: (a.left + a.right) / 2 - hb.left, cy: (a.top + a.bottom) / 2 - hb.top }; };
+  let out = '', labs = ''; const near = pipe ? joined(pipe) : null;
+  for (const l of HP.links) { const a = R(l.from), b = R(l.to); if (!a || !b) continue; const key = l.from + '>' + l.to, on = pipe && (l.from === pipe || l.to === pipe), dim = pipe && !on; let pts, lp;
+    if (key === 'F>S3') { const xs = b.l + .78 * (b.r - b.l), ym = (b.b + a.t) / 2; pts = [[a.cx, a.t], [a.cx, ym], [xs, ym], [xs, b.b]]; lp = [(a.cx + xs) / 2, ym]; }
+    else if (key === 'A1>A3') { const y = 30; pts = [[a.cx, a.t], [a.cx, y], [b.cx, y], [b.cx, b.t]]; lp = [(a.cx + b.cx) / 2, y]; }
+    else if (key === 'B1>B2') { const y = 11; pts = [[a.cx, a.t], [a.cx, y], [b.cx, y], [b.cx, b.t]]; lp = [(a.cx + b.cx) / 2, y]; }
+    else if (key === 'G>B3') { const y = H - 12, x0 = 8; pts = [[a.cx, a.b], [a.cx, y], [x0, y], [x0, b.cy], [b.l, b.cy]]; lp = [(a.cx + x0) / 2, y]; }
+    else if (key === 'C>S1') { pts = [[b.cx, a.t], [b.cx, b.b]]; lp = [b.cx, (a.t + b.b) / 2]; }
+    else if (Math.abs(a.cx - b.cx) < 12) { const up = a.cy > b.cy; pts = up ? [[a.cx, a.t], [a.cx, b.b]] : [[a.cx, a.b], [a.cx, b.t]]; lp = [a.cx, (pts[0][1] + pts[1][1]) / 2]; }
+    else { const lo = Math.max(a.t, b.t) + 10, hi = Math.min(a.b, b.b) - 10, y = lo < hi ? Math.min(hi, Math.max(lo, a.cy)) : b.cy; pts = a.cx < b.cx ? [[a.r, y], [b.l, y]] : [[a.l, y], [b.r, y]]; lp = [(pts[0][0] + pts[1][0]) / 2, y]; }
+    const c = on ? '#111827' : '#a7aeb8';
+    out += `<path d="M${pts.map(p => p.join(' ')).join(' L')}" fill="none" stroke="${c}" stroke-width="${on ? 2.2 : 1.6}"${l.dashed ? ' stroke-dasharray="7 5"' : ''} opacity="${dim ? .25 : 1}" marker-end="url(#${on ? 'mk2' : 'mk'})"/>`;
+    if (l.label) labs += `<div class="alab${dim ? ' dim' : ''}" style="left:${lp[0]}px;top:${lp[1]}px${on ? ';color:#111827;font-weight:600' : ''}">${esc(l.label)}</div>`; }
+  svg.innerHTML = `<defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#a7aeb8"/></marker><marker id="mk2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#111827"/></marker></defs>` + out; hm.insertAdjacentHTML('beforeend', labs);
+}
+function harnessSummary(V) {
+  const st = {}; for (const p of HP.parts) { const k = partState(p.id, V); st[k] = (st[k] || 0) + 1; }
+  const rk = {}; for (const r of RULES) { const k = rkind(r); rk[k] = (rk[k] || 0) + 1; }
+  const dsg = HP.pipelines.reduce((a, p) => a + p.steps.reduce((b, x) => b + x.designed + x.idea, 0), 0), ks = ['hook', 'both', 'script', 'none'];
+  return `<div class="sx"><h3>The harness <span class="mt">in the stretch shown</span></h3>
+    <div class="hn"><div><b>${HP.parts.length}</b><span>parts built</span></div><div><b>${st.used || 0}</b><span>used</span></div><div class="${st.bypassed ? 'x' : ''}"><b>${st.bypassed || 0}</b><span>bypassed</span></div><div><b>${(st.idle || 0) + (st.norec || 0)}</b><span>idle</span></div>${st.noton ? `<div class="o"><b>${st.noton}</b><span>not on</span></div>` : ''}</div>
+    ${RULES.length ? `<div class="rlb"><div style="font-size:14px"><b>${RULES.length}</b> rules</div><div class="hbar">${ks.map(k => rk[k] ? `<i class="r-${k}" style="flex:${rk[k]}"></i>` : '').join('')}</div><div class="rll">${ks.map(k => `<span><i class="r-${k}"></i>${rk[k] || 0} ${RKW[k]}</span>`).join('')}</div><div class="mt" style="margin-top:4px">${NONEWHOLE}.</div></div>` : ''}
+    <div class="hl2"><b>${dsg}</b> designed steps not built yet</div>
+    ${(D.orphans || []).length ? `<div class="hl2"><span class="lnk" data-docs="1"><b>${D.orphansTotal || D.orphans.length}</b> documents written and never read since</span></div>` : ''}</div>`;
+}
+
+// ---- the detail layer over the right column: a stack of session, pipeline, part and the unread documents
+const topOf = k => { for (let i = stack.length - 1; i >= 0; i--) if (stack[i].k === k) return stack[i].id; return null; };
+const sync = () => { sel = topOf('s'); part = topOf('part'); pipe = topOf('pipe'); };
+function push(k, id) { const t = stack[stack.length - 1]; if (t && t.k === k && t.id === id) stack.pop(); else { stack = stack.filter(x => !(x.k === k && x.id === id)); stack.push({ k, id }); } sync(); render(); }
+function pop() { stack.pop(); sync(); render(); }
+function clearDet() { stack = []; sync(); render(); }
+const KN = { s: 'session', pipe: 'pipeline', part: 'part', docs: 'list' };
+function drawDet(V) {
+  const t = stack[stack.length - 1], el = $('det'); if (!t) { el.classList.remove('open'); return; }
+  const prev = stack[stack.length - 2];
+  el.querySelector('.dt').innerHTML = (prev ? `<button data-back="1">‹ Back to the ${KN[prev.k]}</button>` : '') + '<span class="sp"></span><button class="x" data-close="1" title="Close (Esc)">×</button>';
+  el.querySelector('.db').innerHTML = t.k === 's' ? detSession(byId[t.id]) : t.k === 'pipe' ? detPipe(PIPE[t.id], V) : t.k === 'part' ? detPart(PART[t.id], V) : detDocs();
+  el.classList.add('open');
+}
+function detSession(s) {
+  if (!s) return ''; const p = s.parent && byId[s.parent], kids = S.filter(x => x.parent === s.id), hs = helpersAt(s, to), pr = problems(s, to), kinds = {}, a = stateAt(s, to);
+  for (const h of hs) kinds[h.kind || 'other'] = (kinds[h.kind || 'other'] || 0) + 1;
+  const plan = (s.plan || []).map(x => `<li class="${x.s === 'completed' ? 'done' : x.s === 'in_progress' ? 'now' : ''}">${esc(x.c)}</li>`).join('');
+  const pa = pathOf(s), miss = Object.keys(PART).filter(id => ['skip', 'miss'].includes(rel(s, id)));
+  return `<h2>${esc(name(s))}</h2><div class="sub"><i class="${a}"></i>${{ working: 'Working now', waiting: 'Asked you something, not answered', silent: 'Turn open, nothing heard for ' + dur(to - lastAct(s, to)), quiet: 'Quiet since ' + dy(lastAct(s, to)) + ' ' + tm(lastAct(s, to)) }[a]}</div>
+   ${pr.length ? '<h4>To look at</h4>' + pr.map(x => `<div class="it"><span class="d ${x[0]}"></span><span>${esc(x[1].charAt(0).toUpperCase() + x[1].slice(1))}</span></div>`).join('') : ''}
+   <h4>What it last reported</h4><div class="tx">${esc((lastWrap(s, to) || [0, 'Nothing yet.'])[1])}</div>
+   <h4>Its steps</h4>${plan ? '<ol class="pl">' + plan + '</ol>' : '<div class="tx" style="color:#6b7280">It kept no task list.</div>'}
+   <h4>Method in use</h4><div>${STAGES.map(g => { const k = g[3](s); return `<span class="chip ${k}" title="${esc(g[2])}">${esc(g[1])}${{ used: '', unused: ': skipped', bypassed: ': bypassed', na: '' }[k]}</span>`; }).join('')}</div>
+   <h4>Path through the harness</h4><div>${pa.pipes.length ? pa.pipes.map((pl, i) => `<span class="chip used" data-p="${pl}">${i + 1}. ${esc(PIPE[pl].title)}</span>`).join('') : '<span class="tx" style="color:#6b7280">No part recorded.</span>'}</div>
+   ${pa.ids.length ? '<h4>Parts it touched</h4><div>' + pa.ids.slice(0, 40).map(id => `<span class="chip used" data-part="${esc(id)}">${esc(PART[id].name)}</span>`).join('') + (pa.ids.length > 40 ? ' + ' + (pa.ids.length - 40) + ' more' : '') + '</div>' : ''}
+   ${miss.length ? '<h4>Expected and missing</h4><div>' + miss.map(id => `<span class="chip ${rel(s, id) === 'skip' ? 'bypassed' : 'unused'}" data-part="${esc(id)}">${esc(PART[id].name)}</span>`).join('') + '</div>' : ''}
+   <h4>Facts</h4><div class="kv"><div>Started</div><div>${dy(s.t0)} ${tm(s.t0)}${p ? ' by <span class="sn" data-id="' + p.id + '">' + esc(name(p)) + '</span>' : ''}</div><div>Sessions it started</div><div>${kids.length ? kids.map(k => `<span class="sn" data-id="${k.id}">${esc(name(k))}</span>`).join('; ') : 'none'}</div>
+   <div>Time working</div><div>${dur(worked(s))}</div><div>Tokens</div><div>${tok(total(s))} (${Math.round(100 * s.tokens / Math.max(1, total(s)))} % its own, the rest its helpers)</div><div>Largest window</div><div>${tok(s.peak)}${s.ceil ? ' (limit ' + tok(s.ceil.line) + ')' : ''}</div>
+   <div>Helpers</div><div>${hs.length ? hs.length + ': ' + esc(Object.entries(kinds).sort((a, b) => b[1] - a[1]).map(([k, v]) => v + ' ' + k).join(', ')) : 'none'}</div><div>You spoke to it</div><div>${s.owner} time${s.owner === 1 ? '' : 's'}</div><div>Model</div><div>${esc(s.model || 'unknown')}</div></div>`;
+}
+function detPipe(pl, V) {
+  if (!pl) return ''; const ps = HP.parts.filter(p => p.pipeline === pl.id), ST = {}; ps.forEach(p => ST[p.id] = partState(p.id, V));
+  const chain = pl.steps.map((st, i) => { const ch = byStep[pl.id + '.' + i] || [], k = stepState(ch.map(p => ST[p.id]), st), cnt = [st.built ? st.built + ' built' : '', st.designed + st.idea ? (st.designed + st.idea) + ' designed' : ''].filter(Boolean).join(', ');
+    return `<div class="cs k-${k}"><i class="pk-${k === 'built' ? 'idle' : k === 'designed' ? 'x' : k}" style="${k === 'designed' ? 'border:1.5px dashed #c4c9d1;background:#fff' : k === 'built' ? 'border:1.5px solid #8b939f;background:#fff' : ''}"></i><div class="ct">${esc(st.t)}<span>${cnt}</span></div>${ch.length ? `<div class="cc">${ch.map(p => `<span class="pc ${ST[p.id]}${part === p.id ? ' psel' : ''}" data-part="${esc(p.id)}" title="${esc(p.note)}">${esc(p.name)}</span>`).join('')}</div>` : ''}</div>`; }).join('');
+  const rs = RULES.filter(r => r.pipeline === pl.id), ins = HP.links.filter(l => l.to === pl.id), outs = HP.links.filter(l => l.from === pl.id);
+  const used = V.filter(s => ps.some(p => ['wrote', 'read'].includes(rel(s, p.id)))), skip = V.filter(s => ps.some(p => ['skip', 'miss', 'noton'].includes(rel(s, p.id))));
+  const lk = (l, id) => `<span class="chip" data-p="${id}">${esc(PIPE[id].code + ' ' + PIPE[id].title)}${l.label ? ' <span style="color:#6b7280">(' + esc(l.label) + ')</span>' : ''}</span>`;
+  return `<h2><span class="cd" style="--fc:${pcol(pl.id)};font-size:14px;vertical-align:2px">${esc(pl.code)}</span> ${esc(pl.title)}</h2><p>${esc(pl.line || '')}</p>
+   <h4>Steps and their parts</h4><div class="chain">${chain}</div>
+   ${ins.length ? '<h4>Fed by</h4><div>' + ins.map(l => lk(l, l.from)).join('') + '</div>' : ''}${outs.length ? '<h4>Feeds</h4><div>' + outs.map(l => lk(l, l.to)).join('') + '</div>' : ''}
+   <h4>Sessions that used it</h4><div>${used.length ? used.map(s => `<span class="chip" data-id="${s.id}">${esc(name(s))}</span>`).join('') : '<span class="tx" style="color:#6b7280">none in this stretch</span>'}</div>
+   ${skip.length ? '<h4>Sessions that skipped a part of it</h4><div>' + skip.map(s => `<span class="chip unused" data-id="${s.id}">${esc(name(s))}</span>`).join('') + '</div>' : ''}
+   <h4>Rules here (${rs.length})</h4>${rs.length ? rs.map(r => `<div class="rli"><i class="r-${rkind(r)}"></i><span>${esc(r.text)} <span>· ${RKW[rkind(r)]}</span></span></div>`).join('') : '<div class="tx" style="color:#6b7280">No rule is placed here.</div>'}`;
+}
+function detPart(p, V) {
+  if (!p) return ''; const pl = PIPE[p.pipeline], stp = pl && pl.steps[+p.step.split('.').pop()], by = {}, k = partState(p.id, V);
+  for (const s of V) (by[rel(s, p.id)] = by[rel(s, p.id)] || []).push(s);
+  const list = (arr, cls) => arr && arr.length ? arr.map(s => `<span class="chip ${cls}" data-id="${s.id}">${esc(name(s))}</span>`).join('') : '<span class="tx" style="color:#6b7280">none</span>';
+  const rs = RULES.filter(r => (r.carriedBy || []).includes(p.id) || (r.enforcers || []).includes(p.id));
+  const nm = e => PART[e] ? PART[e].name : e, isRef = e => { const a = (ENF[e] || {}).acts; return a === 'refuses' || a === 'refuses at commit' || a === 'settings' || e.startsWith('setting:'); }, en = r => { const E = r.enforcers || [], a = E.filter(isRef).map(nm).join(', '), b = E.filter(e => !isRef(e)).map(nm).join(', '); return (a ? 'refuses: ' + a : 'nothing refuses') + (b ? '; only reminds or reports: ' + b : ''); };
+  return `<h2>${esc(p.name)}</h2><div class="sub"><i class="pk-${k === 'norec' ? 'idle' : k}"></i>${esc(PSW[k].charAt(0).toUpperCase() + PSW[k].slice(1))} in the stretch shown</div><div class="mono">${esc(p.path)}</div><p>${esc(p.note)}</p>
+   <h4>Where it sits</h4><div><span class="chip" data-p="${p.pipeline}">${esc(pl ? pl.code + ' ' + pl.title : p.pipeline)}${stp ? ', step: ' + esc(stp.t) : ''}</span></div>
+   ${by.wrote ? '<h4>Wrote it</h4>' + list(by.wrote, 'used') : ''}<h4>${p.kind === 'hook' && ENF[p.id] ? (ENF[p.id].logsEveryCheck === false ? 'Refused calls of' : 'Checked calls of') : 'Used it'}</h4>${list(by.read, 'used')}${by.noton ? '<h4>Not switched on in the folder of</h4>' + list(by.noton, 'unused') : ''}
+   ${(by.skip || by.miss) ? `<h4>Skipped${p.kind === 'hook' ? ' (a hook should have checked)' : ''}</h4>` + list((by.skip || []).concat(by.miss || []), 'bypassed') : ''}
+   <h4>Rules</h4>${RULES.length ? (rs.length ? rs.map(r => `<div class="rli"><i class="r-${rkind(r)}"></i><span>${esc(r.text)} <span>· ${RKW[rkind(r)]}; ${(r.carriedBy || []).includes(p.id) ? 'carried here; ' + esc(en(r)) : (isRef(p.id) ? 'refused here' : 'reminds or reports here') + '; ' + esc(en(r))}</span></span></div>`).join('') : '<div class="tx" style="color:#6b7280">No rule names this part.</div>') : '<div class="tx" style="color:#6b7280">The rule list is not loaded.</div>'}`;
+}
+function detDocs() {
+  return `<h2>Documents written and never read since</h2><p>${D.orphansTotal || D.orphans.length} documents. Nothing read, named or pointed at them after they were written.</p><h4>Documents</h4><div class="orl">` + D.orphans.map(o => { const s = D.sessions.find(x => x.id.startsWith(o[1])); return `<div>${esc(o[0])}<br><span>${esc(s ? name(s) : 'session ' + o[1])}, ${dy(o[2])} ${tm(o[2])}</span></div>`; }).join('') + '</div>';
+}
+
+// ---- one render for everything; clicks are read from data attributes
+function render() {
+  document.body.classList.toggle('vh', view === 'harness');
+  drawOver(); const V = vis();
+  if (view === 'harness') drawHarness(V); else { drawMap(V); drawStages(V); }
+  drawTop(V); drawSide(V); drawDet(V);
+  document.querySelectorAll('[data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === view));
+  document.querySelectorAll('[data-win]').forEach(b => b.classList.toggle('on', b.dataset.win === winKey)); $('lens').value = lens;
+  if (view === 'harness') requestAnimationFrame(() => requestAnimationFrame(drawArrows));
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-view],[data-win],[data-back],[data-close],[data-docs],[data-part],[data-id],[data-p]'); if (!b) return; const d = b.dataset;
+  if (d.view) { view = d.view; try { localStorage.setItem('mon.view', view); } catch (x) {} render(); if (view === 'time') $('mapw').scrollLeft = 1e6; }
+  else if (d.win) { winKey = d.win; to = NOW; from = d.win === 'all' ? T0 - HR : NOW - (+d.win) * HR; render(); $('mapw').scrollLeft = 1e6; }
+  else if (d.back) pop(); else if (d.close) clearDet(); else if (d.docs) push('docs', 'all');
+  else if (d.part) push('part', d.part); else if (d.id) push('s', d.id); else if (d.p) push('pipe', d.p);
+});
+$('lens').onchange = e => { lens = e.target.value; render(); };
+addEventListener('keydown', e => { if (e.key === 'Escape' && stack.length) pop(); });
+try { new ResizeObserver(() => { if (view === 'harness') drawArrows(); }).observe($('hv')); } catch (e) {}
+let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(render, 120); });
+for (const [k, q] of [['pipe', 'pipe'], ['s', 'sel'], ['part', 'part']]) if (qs.get(q)) stack.push({ k, id: qs.get(q) });
+sync(); render(); $('mapw').scrollLeft = 1e6;
+</script></body></html>

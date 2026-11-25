@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Session monitor</title>
+<style>
+  :root { --bg: #eef1f4; --ink: #1b1f24; --soft: #6b7785; --line: #d8dde3; --blue: #1f4fbf; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 14px/1.3 "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+  #bar { position: fixed; left: 0; right: 0; top: 0; height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 12px;
+    background: #fff; border-bottom: 1px solid var(--line); box-sizing: border-box; white-space: nowrap; overflow: hidden; z-index: 2; }
+  #title { font-size: 18px; font-weight: 700; }
+  #bar button { font: inherit; border: 1px solid #c3c9d0; background: #f7f8fa; border-radius: 6px; padding: 4px 9px; cursor: pointer; color: var(--ink); }
+  #bar button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+  #bar input { font: inherit; border: 1px solid #c3c9d0; border-radius: 6px; padding: 3px 5px; }
+  #legend { position: fixed; left: 0; right: 0; top: 44px; height: 24px; line-height: 24px; padding: 0 12px; color: var(--soft); font-size: 13px;
+    background: #fff; border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; z-index: 2; }
+  #live { color: var(--soft); font-size: 13px; }
+  #canvas { position: fixed; left: 0; right: 0; top: 69px; bottom: 0; cursor: grab; touch-action: none; }
+  #canvas.drag { cursor: grabbing; }
+  svg { width: 100%; height: 100%; display: block; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <span id="title">Where the work went</span>
+  <button data-h="3">Last 3 h</button><button data-h="12">Last 12 h</button><button data-h="24">Last 24 h</button>
+  <input id="from" type="datetime-local"> to <input id="to" type="datetime-local">
+  <button id="fit" title="Fit the whole picture (double-click also fits)">Fit</button>
+  <span id="live"></span>
+</div>
+<div id="legend">square = tokens spent there · arrow = work moving on to the next step · loop = work sent back to that step · thicker = more often · ● working at the frame's end ○ stopped or waiting · dashed line = started that session · ◆ = landed (commits, merges) · red = a rule broke there</div>
+<div id="canvas"><svg id="svg" font-family="Segoe UI, system-ui, sans-serif"><g id="world"></g></svg></div>
+<script>
+const $ = id => document.getElementById(id);
+const GREY = '#6b7785', INK = '#1b1f24', RED = '#c62828', BLUE = '#1f4fbf', GREEN = '#15803d', SQ = '#4a5a6c';
+const NAME = { S1: 'Plan', S2: 'Admit', S3: 'Work', S4: 'Check', S5: 'Land', S6: 'Learn', B5: 'Notes', B3: 'Library', C: 'Guards', D: 'Limits', E: 'Context', F: 'Recovery', G: 'Measure' };
+const MAIN = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'];
+const SIDE = { C: 'S1', D: 'S2', E: 'S3', F: 'S4', G: 'S6' };          // his map: the controls sit under these steps
+const PROB = { hookfail: 'hook failed', window: 'window past limit', noton: 'hook off', nohook: 'hook off', off: 'hook off', norecord: 'start, no record', bypass: 'bypassed' };
+const NF = 4, FW = 940, FH = 512;                                        // four frames; one frame's size on the canvas
+const WORKING = 10 * 60e3;                                               // working at a frame's end = did something in its last 10 minutes
+let D = null, places = [], A = 0, B = 0, REFPM = 1;
+// One scale for every stretch: a full square is the 99th percentile of tokens spent at one place in 45 minutes,
+// taken per minute, so a quiet stretch looks quiet and a busy one busy.
+function scale() {
+  const W = 45 * 60e3, m = {};
+  for (const s of D.sessions) for (const x of [s, ...(s.helpers || [])]) for (const e of x.ev || []) {
+    const k = Math.floor((D.base + e[0] * 1e3) / W) + '|' + String(places[e[2]]).split('.')[0]; m[k] = (m[k] || 0) + e[3];
+  }
+  const v = Object.values(m).sort((p, q) => p - q); REFPM = Math.max(1, v[Math.floor(0.99 * (v.length - 1))] || 1) / 45;
+}
+
+const pad2 = n => String(n).padStart(2, '0');
+const hm = t => { const x = new Date(t); return pad2(x.getHours()) + ':' + pad2(x.getMinutes()); };
+const day = t => new Date(t).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+const toInput = t => { const x = new Date(t); return `${x.getFullYear()}-${pad2(x.getMonth() + 1)}-${pad2(x.getDate())}T${hm(t)}`; };
+const M = v => v >= 1000 ? (v / 1000).toFixed(v >= 10000 ? 0 : 1) + ' M' : v > 0 ? Math.round(v) + ' K' : '';
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+const SHORT = {};
+function shortNames() {                       // whole words up to 14 characters; repeated names numbered by start order
+  const seen = {};
+  for (const s of [...D.sessions].sort((p, q) => p.t0 - q.t0)) {
+    let t = (s.title || '').replace(/^[a-z-]+:\s*/, '').split(/[,:(]/)[0].trim();
+    t = t.replace(/^session monitor/i, 'Monitor').replace(/^top session/i, 'Top').replace(/\bround (\d+)/i, 'r$1');
+    let out = ''; for (const w of t.split(/\s+/)) { if ((out + ' ' + w).trim().length > 14) break; out = (out + ' ' + w).trim(); }
+    out = out.replace(/(\s+(and|the|of|for|to|a|an|in|on|with|against|from))+$/i, '') || t.slice(0, 13) || s.id;
+    out = out.charAt(0).toUpperCase() + out.slice(1);
+    seen[out] = (seen[out] || 0) + 1; SHORT[s.id] = seen[out] > 1 ? out + ' ' + seen[out] : out;
+  }
+}
+const short = s => SHORT[s.id] || s.id;
+
+// ---------- the numbers of one frame (as the approved proof of concept counts them) ----------
+function frame(a, b) {
+  const pipe = i => String(places[i]).split('.')[0];
+  const tok = {}, mv = {}, prob = {}, ref = {}, land = {}, last = {}; let nh = 0, side = 0;
+  for (const s of D.sessions) for (const x of [s, ...(s.helpers || [])]) {
+    let prev = null, any = false;
+    for (const e of x.ev || []) {
+      const t = D.base + e[0] * 1e3, p = pipe(e[2]);
+      if (t >= a && t < b) {
+        any = true; tok[p] = (tok[p] || 0) + e[3]; if (!(last[s.id] > t)) last[s.id] = t;
+        if (places[e[2]] === 'S5.1') land.n = (land.n || 0) + 1;
+        if (prev && prev !== p) { if (MAIN.includes(prev) && MAIN.includes(p)) mv[prev + '>' + p] = (mv[prev + '>' + p] || 0) + 1; else side++; }
+      }
+      if (t >= b) break;
+      prev = p;
+    }
+    if (any && x !== s) nh++;
+    for (const m of x.marks || []) {
+      const t = D.base + m[0] * 1e3; if (t < a || t >= b) continue; const p = pipe(m[1]);
+      if (m[2] === 'refused') ref[p] = (ref[p] || 0) + 1; else { prob[p] = prob[p] || {}; prob[p][m[2]] = (prob[p][m[2]] || 0) + 1; }
+    }
+  }
+  const tags = {};
+  for (const s of D.sessions) {
+    if (!last[s.id]) continue;                                       // only sessions that did something in this frame
+    const ev = (s.ev || []).filter(e => D.base + e[0] * 1e3 < b); if (!ev.length) continue;
+    const p = pipe(ev[ev.length - 1][2]); let col = MAIN.includes(p) || p === 'B5' || p === 'B3' ? p : SIDE[p]; if (!col) col = 'B5';
+    (tags[col] = tags[col] || []).push({ s, n: short(s) + (col !== p ? ' · ' + (NAME[p] || p).toLowerCase() : ''), run: last[s.id] >= b - WORKING, born: s.t0 >= a && s.t0 < b });
+  }
+  return { a, b, tok, mv, prob, ref, land: land.n || 0, nh, side, tags, total: Object.values(tok).reduce((x, y) => x + y, 0), ns: Object.values(tags).flat().length };
+}
+
+// ---------- drawing one frame at (ox, oy) on the canvas ----------
+function drawFrame(fr, ox, oy, MAXT, multiDay) {
+  const sq = (t, cap) => t > 0 ? Math.max(3, Math.min(cap, 90 * Math.sqrt(t / MAXT))) : 0;
+  const BW = 98, GAP = 40, C1 = 80, colX = c => ox + 22 + C1 + GAP + MAIN.indexOf(c) * (BW + GAP);
+  const BY = oy + 128, BH = 168, BM = BY + 72; let o = '';
+  const quiet = fr.total === 0 && fr.ns === 0;
+  o += `<rect x="${ox}" y="${oy}" width="${FW - 6}" height="500" rx="8" fill="#fff" stroke="#d8dde3"/>`;
+  const head = (multiDay ? day(fr.a) + ' ' : '') + `${hm(fr.a)} to ${hm(fr.b)}`;
+  o += `<text x="${ox + 18}" y="${oy + 30}" font-size="20" font-weight="700" fill="${INK}">${head}</text>`;
+  o += `<text x="${ox + 18 + head.length * 10.6 + 16}" y="${oy + 30}" font-size="16" fill="${GREY}">${quiet ? 'nothing ran' : `${M(fr.total) || '0'} tokens · ${fr.ns} session${fr.ns === 1 ? '' : 's'} · ${fr.nh} helper${fr.nh === 1 ? '' : 's'}`}</text>`;
+  let skip = 0; const back = {};
+  for (const [k, n] of Object.entries(fr.mv)) { const [p, q] = k.split('>'), di = MAIN.indexOf(q) - MAIN.indexOf(p); if (di < 0) back[q] = (back[q] || 0) + n; else if (di > 1) skip += n; }
+  for (let c = 0; c < MAIN.length - 1; c++) {
+    const n = fr.mv[MAIN[c] + '>' + MAIN[c + 1]] || 0; if (!n) continue;
+    const x1 = colX(MAIN[c]) + BW + 3, x2 = colX(MAIN[c + 1]) - 3, w = Math.min(18, 2 + 1.5 * n), h = w / 2 + 5, base = x2 - 11;
+    o += `<line x1="${x1}" y1="${BM}" x2="${base}" y2="${BM}" stroke="${GREY}" stroke-width="${w}"/><path d="M${base},${BM - h} L${x2},${BM} L${base},${BM + h} Z" fill="${GREY}"/>`;
+    o += `<text x="${(x1 + x2) / 2}" y="${BM - h - 5}" text-anchor="middle" font-size="13" fill="${GREY}">${n}</text>`;
+  }
+  for (const [q, n] of Object.entries(back)) {
+    const x = colX(q), y0 = BY + BH, w = Math.min(16, 2 + 1.5 * n), L = x + 22, R = x + BW - 14, yb = y0 + 22 + w / 2;
+    o += `<path d="M${R},${y0 + 2} L${R},${yb - 10} Q${R},${yb} ${R - 10},${yb} L${L + 10},${yb} Q${L},${yb} ${L},${yb - 10} L${L},${y0 + 13}" fill="none" stroke="${GREY}" stroke-width="${w}"/>`;
+    o += `<path d="M${L - w / 2 - 6},${y0 + 15} L${L},${y0 + 2} L${L + w / 2 + 6},${y0 + 15} Z" fill="${GREY}"/>`;
+    o += `<text x="${x + BW / 2}" y="${yb + w / 2 + 16}" text-anchor="middle" font-size="13" fill="${GREY}">${n} back</text>`;
+  }
+  const probText = p => Object.entries(fr.prob[p] || {}).map(([k, n]) => `${PROB[k] || k} ${n}`).join(', ');
+  for (const c of MAIN) {
+    const x = colX(c), t = fr.tok[c] || 0, s = sq(t, 90), bad = fr.prob[c];
+    o += `<rect x="${x}" y="${BY}" width="${BW}" height="${BH}" rx="6" fill="#f4f6f8" stroke="${bad ? RED : '#9aa3ad'}" stroke-width="${bad ? 3 : 1.5}"/>`;
+    o += `<text x="${x + BW / 2}" y="${BY + 20}" text-anchor="middle" font-size="16" font-weight="700" fill="${t || bad ? INK : '#9aa3ad'}">${NAME[c]}</text>`;
+    if (s) o += `<rect x="${x + BW / 2 - s / 2}" y="${BY + 72 - s / 2}" width="${s}" height="${s}" fill="${SQ}"/>`;
+    o += `<text x="${x + BW / 2}" y="${BY + 136}" text-anchor="middle" font-size="15" fill="${INK}">${M(t)}</text>`;
+    if (c === 'S5' && fr.land) o += `<text x="${x + BW / 2}" y="${BY + 156}" text-anchor="middle" font-size="14" font-weight="700" fill="${GREEN}">◆ ${fr.land} landed</text>`;
+    if (bad) o += `<text x="${x + BW / 2}" y="${BY + BH + (c === 'S5' && fr.land ? 18 : -10)}" text-anchor="middle" font-size="13" font-weight="700" fill="${RED}">${esc(probText(c))}</text>`;
+  }
+  const chip = (p, x, y, w, h) => {
+    const t = fr.tok[p] || 0, s = sq(t, Math.min(30, h - 20)), bad = fr.prob[p], r = fr.ref[p];
+    o += `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="5" fill="#fafbfc" stroke="${bad ? RED : '#c3c9d0'}" stroke-width="${bad ? 3 : 1}"/>`;
+    o += `<text x="${x + 7}" y="${y + 17}" font-size="14" font-weight="700" fill="${t || bad ? INK : '#9aa3ad'}">${NAME[p]}</text><text x="${x + 7}" y="${y + 34}" font-size="13" fill="${INK}">${M(t)}</text>`;
+    if (r) o += `<text x="${x + 7}" y="${y + h - 6}" font-size="12" fill="${GREY}">${r} refused</text>`;
+    if (bad) o += `<text x="${x + 7}" y="${y + h + 15}" font-size="13" font-weight="700" fill="${RED}">${esc(probText(p))}</text>`;
+    if (s) o += `<rect x="${x + w - 8 - s}" y="${y + h / 2 - s / 2}" width="${s}" height="${s}" fill="${SQ}"/>`;
+  };
+  chip('B5', ox + 22, BY, C1, 78); chip('B3', ox + 22, BY + 90, C1, 78);
+  for (const [p, under] of Object.entries(SIDE)) chip(p, colX(under), oy + 372, BW, 56);
+  // where each session is at the frame's end; dashed line from the session that started it (started in this frame)
+  const at = {}; let tagsSvg = '';
+  for (const [col, list] of Object.entries(fr.tags)) {
+    const x = col === 'B5' || col === 'B3' ? ox + 22 : colX(col);
+    list.sort((p, q) => q.run - p.run); const more = list.length > 5, show = list.slice(0, more ? 4 : 5);
+    show.forEach((g, j) => {
+      const y = BY - 8 - (show.length - 1 - j) * 17 - (more ? 17 : 0); at[g.s.id] = [x + 6, y - 5];
+      tagsSvg += `<g><title>${esc(g.s.title || g.s.id)}</title><circle cx="${x + 6}" cy="${y - 5}" r="5" fill="${g.run ? BLUE : '#fff'}" stroke="${g.run ? BLUE : '#8a939e'}" stroke-width="1.5"/><text x="${x + 15}" y="${y}" font-size="14" fill="${g.run ? INK : '#8a939e'}" font-weight="${g.run ? 600 : 400}" stroke="#fff" stroke-width="4" stroke-linejoin="round" paint-order="stroke">${esc(g.n)}</text></g>`;
+    });
+    if (more) tagsSvg += `<text x="${x + 15}" y="${BY - 8}" font-size="13" fill="${GREY}">+${list.length - 4} more</text>`;
+  }
+  for (const list of Object.values(fr.tags)) for (const g of list) {
+    if (!g.born || !g.s.parent || !at[g.s.id] || !at[g.s.parent]) continue;
+    const [x1, y1] = at[g.s.parent], [x2, y2] = at[g.s.id];
+    const d = Math.abs(x1 - x2) < 1 ? `M${x1 - 6},${y1} C${x1 - 22},${y1} ${x2 - 22},${y2} ${x2 - 6},${y2}` : `M${x1},${y1 - 6} C${x1},${Math.min(y1, y2) - 24} ${x2},${Math.min(y1, y2) - 24} ${x2},${y2 - 6}`;
+    o += `<path d="${d}" fill="none" stroke="${BLUE}" stroke-opacity=".55" stroke-width="1.6" stroke-dasharray="4 3"/>`;
+  }
+  o += tagsSvg;
+  if (quiet) o += `<text x="${ox + FW / 2}" y="${oy + 360}" text-anchor="middle" font-size="18" fill="#9aa3ad">nothing ran in these ${Math.round((fr.b - fr.a) / 60e3)} minutes</text>`;
+  else if (skip || fr.side) o += `<text x="${ox + 18}" y="${oy + 488}" font-size="13" fill="${GREY}">Not drawn: ${skip} move${skip === 1 ? '' : 's'} that skipped a step, ${fr.side} to or from the side boxes.</text>`;
+  return o;
+}
+
+// ---------- the canvas: layout, fit, zoom, pan ----------
+let cols = 2, view = { k: 1, x: 0, y: 0 };
+function layout() {
+  const vw = $('canvas').clientWidth, vh = $('canvas').clientHeight; let best = null;
+  for (const c of [1, 2, 4]) { const r = NF / c, w = c * FW + 20, h = r * FH + 14, k = Math.min(vw / w, vh / h); if (!best || k > best.k) best = { c, w, h, k }; }
+  return best;
+}
+function fit() {
+  const L = layout(), vw = $('canvas').clientWidth, vh = $('canvas').clientHeight;
+  if (L.c !== cols) { cols = L.c; draw(); }
+  view = { k: L.k, x: (vw - L.w * L.k) / 2, y: (vh - L.h * L.k) / 2 }; apply();
+}
+const apply = () => $('world').setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`);
+const cv = $('canvas');
+cv.addEventListener('wheel', e => {
+  e.preventDefault(); const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  const k2 = Math.max(0.15, Math.min(6, view.k * Math.exp(-e.deltaY * 0.0015)));
+  view.x = mx - (mx - view.x) * k2 / view.k; view.y = my - (my - view.y) * k2 / view.k; view.k = k2; apply();
+}, { passive: false });
+let drag = null;
+cv.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y }; cv.setPointerCapture(e.pointerId); cv.classList.add('drag'); });
+cv.addEventListener('pointermove', e => { if (!drag) return; view.x = drag.vx + e.clientX - drag.x; view.y = drag.vy + e.clientY - drag.y; apply(); });
+cv.addEventListener('pointerup', () => { drag = null; cv.classList.remove('drag'); });
+cv.addEventListener('dblclick', fit);
+$('fit').onclick = fit;
+addEventListener('resize', fit);
+
+// ---------- the stretch ----------
+function draw() {
+  if (!D) return;
+  const F = (B - A) / NF, frames = []; for (let i = 0; i < NF; i++) frames.push(frame(A + i * F, A + (i + 1) * F));
+  const MAXT = REFPM * F / 60e3;
+  const multiDay = day(A) !== day(B - 1);
+  let o = '';
+  frames.forEach((fr, i) => { o += drawFrame(fr, 10 + (i % cols) * FW, 8 + Math.floor(i / cols) * FH, MAXT, multiDay); });
+  $('world').innerHTML = o;
+  $('title').textContent = `Where the work went · ${day(A)}, ${hm(A)} to ${multiDay ? day(B) + ', ' : ''}${hm(B)}`;
+  $('from').value = toInput(A); $('to').value = toInput(B);
+  document.querySelectorAll('#bar button[data-h]').forEach(b => b.classList.toggle('on', follow && +b.dataset.h === Math.round((B - A) / 3600e3)));
+}
+let follow = true;                                                   // the stretch ends now and moves with the clock
+function setStretch(a, b, f) { A = a; B = b; follow = f; draw(); const u = new URL(location); if (f) { u.searchParams.delete('from'); u.searchParams.delete('to'); u.searchParams.set('h', Math.round((b - a) / 3600e3)); } else { u.searchParams.delete('h'); u.searchParams.set('from', toInput(a)); u.searchParams.set('to', toInput(b)); } history.replaceState(null, '', u); }
+document.querySelectorAll('#bar button[data-h]').forEach(b => b.onclick = () => { const now = Date.now(); setStretch(now - b.dataset.h * 3600e3, now, true); });
+$('from').onchange = $('to').onchange = () => { const a = new Date($('from').value).getTime(), b = new Date($('to').value).getTime(); if (b > a) setStretch(a, b, false); };
+
+async function load() {
+  const r = await fetch('/data.json', { cache: 'no-store' }); if (!r.ok) return;
+  D = await r.json(); places = D.places; shortNames(); scale();
+  if (follow) { const h = (B - A) || 3 * 3600e3; B = Date.now(); A = B - h; }
+  draw(); liveText();
+}
+// Live: the program pushes 'data' when it has read the session files again, and 'tick' every 15 s.
+let made = 0, alive = false;
+function liveText() {
+  const t = made || (D && D.made);
+  $('live').textContent = alive ? `Live · read ${t ? hm(t) : '…'}` : 'Not live: the monitor program is not running';
+  $('live').style.color = alive ? '#15803d' : RED;
+}
+const es = new EventSource('/live');
+es.addEventListener('tick', e => { alive = true; const m = JSON.parse(e.data); if (m.made) made = m.made;
+  if (follow && D) { const h = B - A; B = Date.now(); A = B - h; draw(); } liveText(); });
+es.addEventListener('data', e => { alive = true; made = JSON.parse(e.data).made; load(); });
+es.onerror = () => { alive = false; liveText(); };
+(function start() {
+  const q = new URLSearchParams(location.search);
+  if (q.get('from') && q.get('to')) { A = new Date(q.get('from')).getTime(); B = new Date(q.get('to')).getTime(); follow = false; }
+  else { const h = +(q.get('h') || 3); B = Date.now(); A = B - h * 3600e3; }
+  load().then(fit);
+})();
+</script>
+</body>
+</html>

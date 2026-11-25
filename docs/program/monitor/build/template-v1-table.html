@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Session monitor: proposal and first picture</title>
+<style>
+:root{--ink:#1c2430;--mute:#5d6878;--bg:#f6f7f9;--card:#fff;--line:#d9dee6;--ok:#1f8a4c;--okbg:#e4f4ea;--bad:#c0392b;--badbg:#fbe6e3;--amb:#9a6410;--ambbg:#fdf1d8;--blue:#2f6fb3;--bluebg:#e6eff9;--off:#8b93a1;--offbg:#eceef2}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 "Segoe UI",system-ui,sans-serif}
+.wrap{max-width:1840px;margin:0 auto;padding:22px 24px 60px}
+h1{font-size:25px;margin:0 0 4px}h2{font-size:19px;margin:34px 0 10px}h3{font-size:15px;margin:0 0 6px}
+p{margin:6px 0}.lead{font-size:16px;max-width:1150px}.mute{color:var(--mute)}.small{font-size:13px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:14px 0}.tile b{display:block;font-size:26px;line-height:1.2}
+.cols3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.alert{border-left:5px solid var(--line)}.alert.bad{border-left-color:var(--bad)}.alert.amb{border-left-color:var(--amb)}.alert.blue{border-left-color:var(--blue)}
+.alert ul{margin:4px 0 0;padding-left:18px}.alert li{margin:3px 0}
+#grid{position:relative;padding:0;overflow:hidden}
+.hdr,.row{display:flex;align-items:stretch}.hdr{height:46px;border-bottom:1px solid var(--line);background:#fafbfc;font-size:12px;color:var(--mute)}
+.row{height:28px;border-bottom:1px solid #eef0f4;cursor:pointer}.row:hover{background:#f1f5fb}.row.sel{background:#e6eff9}
+.lab{width:350px;flex:none;padding:0 8px 0 10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:28px;font-size:13px}
+.hdr .lab{line-height:46px}.lab .n{color:var(--mute);font-variant-numeric:tabular-nums;margin-right:6px}.lab .live{color:var(--blue);font-weight:600}
+.tl{flex:1;min-width:200px}
+.hk{width:58px;flex:none;border-left:1px solid #eef0f4;display:flex;align-items:center;justify-content:center;font-size:12px;font-variant-numeric:tabular-nums;position:relative}
+.hdr .hk{font-size:11px;line-height:1.15;text-align:center;padding:0 2px;color:var(--ink)}
+.c{min-width:34px;text-align:center;padding:1px 5px;border-radius:10px}
+.c.ok{background:var(--okbg);color:var(--ok)}.c.bad{background:var(--badbg);color:var(--bad);font-weight:700}.c.off{background:var(--offbg);color:var(--off)}
+.c.na{color:#c3c8d1}.c.idle{color:#aab1bd}.c.blind{background:repeating-linear-gradient(45deg,#f3f4f7,#f3f4f7 4px,#e6e8ee 4px,#e6e8ee 8px);color:var(--mute)}
+.den{position:absolute;right:2px;top:1px;font-size:9.5px;color:var(--amb);font-weight:700}
+svg#ov{position:absolute;pointer-events:none}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:10px;font-size:13px;color:var(--mute)}.legend span.c{margin-right:5px}
+#drawer{position:fixed;top:0;right:0;width:560px;height:100vh;background:#fff;border-left:1px solid var(--line);box-shadow:-8px 0 24px rgba(20,30,50,.12);padding:18px 20px;overflow:auto;transform:translateX(105%);transition:transform .18s;z-index:5}
+#drawer.open{transform:none}#drawer .x{position:absolute;right:14px;top:10px;border:0;background:none;font-size:22px;cursor:pointer;color:var(--mute)}
+#drawer h3{margin-top:16px}#drawer ol,#drawer ul{margin:4px 0;padding-left:20px}#drawer li{margin:2px 0}
+li.done{color:var(--mute)}li.now{font-weight:600;color:var(--blue)}
+.kv{display:grid;grid-template-columns:150px 1fr;gap:3px 10px;font-size:14px}.kv div:nth-child(odd){color:var(--mute)}
+.pipe{display:flex;align-items:stretch;gap:0}.step{flex:1;background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.step b{display:block;margin-bottom:4px}.step ul{margin:0;padding-left:17px;font-size:13.5px;color:#3b4554}.arrow{flex:none;width:34px;display:flex;align-items:center;justify-content:center;color:var(--mute);font-size:22px}
+.step .tag{display:inline-block;font-size:11.5px;padding:0 7px;border-radius:9px;background:var(--bluebg);color:var(--blue);margin-bottom:6px}
+table.t{border-collapse:collapse;width:100%;font-size:14px}table.t td,table.t th{border-bottom:1px solid #eef0f4;padding:6px 8px;text-align:left;vertical-align:top}table.t th{color:var(--mute);font-weight:600;font-size:13px}
+</style></head><body><div class="wrap">
+
+<h1>Session monitor: proposal and first picture</h1>
+<p class="lead">One page that shows every session in order, who started it, what it is doing, and whether each hook checked it. The picture below is not a sketch: it is drawn from the sessions and hook logs already stored on this PC. <span class="mute" id="made"></span></p>
+
+<div class="tiles" id="tiles"></div>
+<div class="cols3" id="alerts"></div>
+
+<h2>Every session, in the order it ran</h2>
+<p class="mute small">One row per session, oldest first. The bar shows when it was working (quiet hours are cut out at the dashed lines). The small marks under a bar are its helpers. A thin line drops from a session to each session it started. The nine columns on the right are the hooks: did each one check this session. Click a row for what the session was doing.</p>
+<div class="card" id="grid"></div>
+<div class="legend">
+ <span><span class="c ok">12</span>checked every call it should have (the number of calls)</span>
+ <span><span class="c bad">3/5</span>checked fewer calls than it should have</span>
+ <span><span class="c off">off</span>hook existed but was not switched on in that session's folder</span>
+ <span><span class="c blind">?</span>the hook's log does not name the session yet</span>
+ <span><span class="c idle">–</span>nothing for it to check</span>
+ <span><span class="c na">·</span>hook not built yet at that time</span>
+ <span><b style="color:var(--amb)">2✕</b> calls the hook refused</span>
+</div>
+
+<h2>How it works</h2>
+<div class="pipe">
+ <div class="step"><span class="tag">already on disk</span><b>1. What is recorded</b><ul><li>Each session's own log: every call, its time, its plan steps, its closing summary</li><li>Each helper's log, kept beside its session</li><li>Each hook's log: what it allowed and what it refused</li><li>The table of rules and what enforces each</li></ul></div><div class="arrow">→</div>
+ <div class="step"><span class="tag">new, small</span><b>2. Reader</b><ul><li>A small program on this PC</li><li>Follows those files and reads only the new lines</li><li>Calls no model, so it uses no tokens</li><li>Changes nothing it reads</li></ul></div><div class="arrow">→</div>
+ <div class="step"><span class="tag">new</span><b>3. Expected against seen</b><ul><li>From the session's log: the calls a hook should have checked</li><li>From the hook's log: the calls it did check</li><li>A difference is a rule that was not enforced, shown the moment it happens</li></ul></div><div class="arrow">→</div>
+ <div class="step"><span class="tag">new</span><b>4. The page</b><ul><li>Needs-a-look strip at the top</li><li>Sessions in order, who started whom</li><li>What each is doing, in its own words</li><li>Redraws by itself as the files change</li></ul></div><div class="arrow">→</div>
+ <div class="step"><span class="tag">new</span><b>5. Hold switch</b><ul><li>A Hold button on any session</li><li>It writes a flag; the first hook refuses that session's next call</li><li>The session stops within one step, without a message from you and without tokens</li></ul></div>
+</div>
+
+<h2>What the first picture already shows</h2>
+<div class="card"><table class="t" id="finds"></table></div>
+
+<h2>What it cannot see</h2>
+<div class="card"><table class="t">
+<tr><th style="width:330px">Limit</th><th>What it means</th></tr>
+<tr><td>Rules that exist only as text</td><td>A rule with no hook leaves no log, so the page can only list it as "not watched". It cannot say whether it was followed.</td></tr>
+<tr><td>What a session is doing</td><td>Taken from the session's own plan steps and closing summary. It is the session's word, not a check of the work.</td></tr>
+<tr><td>Who started the older sessions</td><td>The app began writing that link only recently. For older sessions it is matched by title, and where no match exists the row shows no parent.</td></tr>
+<tr><td>A few seconds of delay</td><td>A session's log is written slightly after each call, so the page trails the session by seconds.</td></tr>
+<tr><td>Sessions that run in the cloud</td><td>Their logs are not on this PC.</td></tr>
+<tr><td>App updates</td><td>The log format belongs to the app and can change. The reader is one small file, so a change is a small repair.</td></tr>
+</table></div>
+
+<h2>From this picture to the live page</h2>
+<div class="card"><table class="t">
+<tr><th style="width:330px">Step</th><th>What it does</th></tr>
+<tr><td>1. One log line for every hook</td><td>Every hook writes the same line on every call: time, session, helper, call, allowed or refused. Today three hooks do not name the session, which is why some cells show "?".</td></tr>
+<tr><td>2. The rule table as data</td><td>Each rule says which hook enforces it and on which calls. Then "expected" is computed for all nine hooks, not three, and rules with no hook appear as "not watched".</td></tr>
+<tr><td>3. The reader as a live program</td><td>The read step that made this picture, kept running: it follows the files and pushes each change to the page.</td></tr>
+<tr><td>4. The hold switch</td><td>The button and the flag the first hook obeys.</td></tr>
+<tr><td>5. Hooks in every folder</td><td>The page shows which hooks are on in each folder a session runs in, so a run started elsewhere cannot go unwatched without it showing.</td></tr>
+</table>
+<p class="mute small" style="margin-top:10px">Running it costs no tokens. Building it is ordinary code: no install and no download; it uses the Node already on this PC.</p></div>
+
+</div>
+<div id="drawer"><button class="x" onclick="closeD()">×</button><div id="dbody"></div></div>
+
+<script>
+const D = /*DATA*/null;
+const HOOKS = [['library-start','Board at start','Puts the library board into a new session'],['tier-hook','Model routes','Right model for the kind of job, on every helper and session start'],['record-guard','Record guard','Evidence and journal not changed; no design questions'],['plan-gate','Build plan','Helpers of the planned build follow the plan'],['window-ceiling','Window ceiling','A session past its size limit does not go on'],['count-gate','Helpers at once','How many helpers run side by side'],['fanout-gate','Usage first','Limit and meter read before a fan-out'],['owner-report','Owner report','Closing report in plain words'],['journal-watch','Journal watch','Journal only appended to']];
+const BLIND = new Set(['record-guard','owner-report']);
+const S = D.sessions, byId = Object.fromEntries(S.map(s => [s.id, s]));
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const name = s => (s.title || 'untitled session').replace(/\s*\([a-z0-9]+-\d{4}\)/g, '');
+const tok = n => n >= 1e6 ? (n / 1e6).toFixed(1) + ' M' : n >= 1e3 ? Math.round(n / 1e3) + ' K' : String(n);
+const when = t => new Date(t).toLocaleString('en-GB', {weekday:'short', day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+const dur = ms => { const m = Math.round(ms / 60000); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m % 60) + ' min'; };
+const LIVE = 4 * 60000, live = s => D.made - s.t1 < LIVE;
+const depth = s => { let d = 0, p = s; while (p.parent && byId[p.parent] && d < 9) { p = byId[p.parent]; d++; } return d; };
+
+function cell(s, h) {
+  const info = D.hooks[h], den = (s.denials || {})[h] || 0, ck = (s.checks || {})[h], seen = (s.hookSeen || {})[h];
+  let r;
+  if (!info.installed || s.t1 < info.installed) r = ['na', '·', info.installed ? 'Not built yet when this session ran' : 'No log from this hook yet'];
+  else if (s.hooksOn && !s.hooksOn.includes(h)) r = ['off', 'off', 'This hook existed but was not switched on in the folder this session ran in'];
+  else if (ck && ck.expected > 0) r = ck.seen >= ck.expected ? ['ok', ck.expected, 'Checked all ' + ck.expected + ' calls it should have'] : ['bad', ck.seen + '/' + ck.expected, 'Checked ' + ck.seen + ' of the ' + ck.expected + ' calls it should have'];
+  else if (seen) r = ['ok', seen.n, 'Ran ' + seen.n + ' times on this session'];
+  else if (BLIND.has(h)) r = ['blind', '?', "This hook's log does not name the session, so its work cannot be shown per session yet"];
+  else r = ['idle', '–', 'Nothing for it to check in this session'];
+  return { cls: r[0], txt: r[1], tip: r[2] + (den ? '. Refused ' + den + ' call' + (den > 1 ? 's' : '') : ''), den };
+}
+
+// ---- tiles and the needs-a-look strip
+(function () {
+  document.getElementById('made').textContent = 'Read on ' + when(D.made) + '.';
+  const helpers = S.reduce((a, s) => a + s.helpers.length, 0);
+  let exp = 0, seen = 0; for (const s of S) if (s.checks['tier-hook']) { exp += s.checks['tier-hook'].expected; seen += Math.min(s.checks['tier-hook'].seen, s.checks['tier-hook'].expected); }
+  const withParent = S.filter(s => s.parent).length;
+  const T = [[S.length, 'sessions read, 17 to 24 November'], [helpers, 'helpers they started'], [seen + ' of ' + exp, 'helper and session starts checked by the model-routes hook'], [withParent + ' of ' + S.length, 'sessions whose starter the files show']];
+  document.getElementById('tiles').innerHTML = T.map(t => `<div class="card tile"><b>${t[0]}</b><span class="mute">${t[1]}</span></div>`).join('');
+  const bad = [], amb = [], now = [];
+  for (const s of S) {
+    const cs = HOOKS.map(h => [h, cell(s, h[0])]);
+    const off = cs.filter(x => x[1].cls === 'off').map(x => x[0][1]); const miss = cs.filter(x => x[1].cls === 'bad');
+    if (off.length) bad.push(`<b>${esc(name(s))}</b>: ${off.length} hooks that existed were not switched on in its folder (${esc(off.join(', '))}). It started ${s.helpers.length} helpers.`);
+    for (const m of miss) bad.push(`<b>${esc(name(s))}</b>: ${esc(m[0][1])} checked ${esc(m[1].txt)} calls.`);
+    if (s.hookErrors) bad.push(`<b>${esc(name(s))}</b>: a hook failed ${s.hookErrors} time(s) and let the call through.`);
+    const dn = Object.entries(s.denials || {}); if (dn.length) amb.push(`<b>${esc(name(s))}</b>: ` + dn.map(([h, n]) => `${esc((HOOKS.find(x => x[0] === h) || [0, h])[1])} refused ${n}`).join(', ') + '.');
+    if (live(s)) { const cur = (s.plan || []).find(p => p.s === 'in_progress'); now.push(`<b>${esc(name(s))}</b>` + (cur ? ': ' + esc(cur.c) : '') + '.'); }
+  }
+  const box = (cls, title, sub, items, none) => `<div class="card alert ${cls}"><h3>${title}</h3><div class="mute small">${sub}</div><ul>${items.length ? items.map(i => '<li>' + i + '</li>').join('') : '<li class="mute">' + none + '</li>'}</ul></div>`;
+  document.getElementById('alerts').innerHTML = box('bad', 'Not enforced', 'A hook that should have checked a session and did not', bad, 'Nothing found') +
+    box('amb', 'Hooks stepped in', 'Calls a hook refused: the engineering doing its job', amb, 'No refusals') + box('blue', 'Working now', 'Sessions active in the last few minutes, with their current step', now, 'No session is working');
+})();
+
+// ---- the grid: label, time line, hook cells
+let sel = null;
+function draw() {
+  const g = document.getElementById('grid'), RH = 28, HH = 46, LW = 350, KW = 58 * HOOKS.length;
+  g.innerHTML = `<div class="hdr"><div class="lab">Session</div><div class="tl"></div>${HOOKS.map(h => `<div class="hk" title="${esc(h[2])}">${esc(h[1])}</div>`).join('')}</div>` +
+    S.map((s, i) => `<div class="row${sel === s.id ? ' sel' : ''}" data-id="${s.id}"><div class="lab" style="padding-left:${10 + depth(s) * 14}px" title="${esc(name(s))}"><span class="n">${i + 1}</span>${live(s) ? '<span class="live">● </span>' : ''}${esc(name(s))}</div><div class="tl"></div>${HOOKS.map(h => { const c = cell(s, h[0]); return `<div class="hk" title="${esc(h[1] + ': ' + c.tip)}"><span class="c ${c.cls}">${esc(c.txt)}</span>${c.den ? `<span class="den">${c.den}✕</span>` : ''}</div>`; }).join('')}</div>`).join('');
+  const W = g.clientWidth - LW - KW, PAD = 10, GAP = 18;
+  // working intervals of the whole repository; quiet stretches are cut out
+  let iv = []; for (const s of S) { for (const x of s.segs) iv.push([x[0] - 3e5, x[1] + 3e5]); for (const h of s.helpers) if (h.t0) iv.push([h.t0 - 3e5, h.t1 + 3e5]); }
+  iv.sort((a, b) => a[0] - b[0]); const M = []; for (const x of iv) { const l = M[M.length - 1]; if (l && x[0] - l[1] < 45 * 60000) l[1] = Math.max(l[1], x[1]); else M.push([x[0], x[1]]); }
+  const act = M.reduce((a, x) => a + x[1] - x[0], 0), k = (W - 2 * PAD - GAP * (M.length - 1)) / act;
+  let acc = PAD; for (const x of M) { x.x0 = acc; acc += (x[1] - x[0]) * k + GAP; }
+  const X = t => { for (const x of M) { if (t < x[0]) return x.x0; if (t <= x[1]) return x.x0 + (t - x[0]) * k; } const l = M[M.length - 1]; return l.x0 + (l[1] - l[0]) * k; };
+  const H = S.length * RH + HH, row = i => HH + i * RH;
+  let o = '', lastLab = -200;
+  M.forEach((x, i) => { if (i) o += `<line x1="${x.x0 - GAP / 2}" y1="16" x2="${x.x0 - GAP / 2}" y2="${H}" stroke="#c9cfd9" stroke-dasharray="3 4"/>`;
+    if (x.x0 - lastLab > 96) { o += `<text x="${x.x0}" y="18" font-size="11.5" fill="#5d6878">${esc(new Date(x[0] + 3e5).toLocaleString('en-GB', {weekday:'short', day:'numeric', month:'short'}))}</text><text x="${x.x0}" y="33" font-size="11.5" fill="#5d6878">${esc(new Date(x[0] + 3e5).toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'}))}</text>`; lastLab = x.x0; } });
+  S.forEach((s, i) => { const y = row(i);
+    if (s.parent && byId[s.parent]) { const pi = S.indexOf(byId[s.parent]), x = X(s.t0); o += `<path d="M${x} ${row(pi) + 17} V${y + 9} h4" fill="none" stroke="#7d8aa0" stroke-width="1.2"/><circle cx="${x}" cy="${row(pi) + 11}" r="2.4" fill="#7d8aa0"/>`; }
+    for (const h of s.helpers) if (h.t0) { const a = X(h.t0), b = Math.max(X(h.t1), a + 1.5); o += `<rect x="${a}" y="${y + 19}" width="${b - a}" height="4" fill="#8fb0d6" opacity=".55"/>`; }
+    for (const x of s.segs) { const a = X(x[0]), b = Math.max(X(x[1]), a + 3); o += `<rect x="${a}" y="${y + 5}" width="${b - a}" height="12" rx="3" fill="${live(s) ? '#1f8a4c' : '#2f6fb3'}"/>`; }
+    if (live(s)) o += `<circle cx="${X(s.t1) + 6}" cy="${y + 11}" r="4" fill="#1f8a4c"><animate attributeName="opacity" values="1;.25;1" dur="1.6s" repeatCount="indefinite"/></circle>`; });
+  g.insertAdjacentHTML('beforeend', `<svg id="ov" width="${W}" height="${H}" style="left:${LW}px;top:0">${o}</svg>`);
+  g.querySelectorAll('.row').forEach(r => r.onclick = () => openD(r.dataset.id));
+}
+function openD(id) {
+  sel = id; const s = byId[id]; document.querySelectorAll('.row').forEach(r => r.classList.toggle('sel', r.dataset.id === id));
+  const work = s.segs.reduce((a, x) => a + x[1] - x[0], 0), p = s.parent && byId[s.parent], kids = S.filter(x => x.parent === id);
+  const plan = (s.plan || []).map(x => `<li class="${x.s === 'completed' ? 'done' : x.s === 'in_progress' ? 'now' : ''}">${x.s === 'completed' ? '✓ ' : x.s === 'in_progress' ? '▶ ' : ''}${esc(x.c)}</li>`).join('');
+  const hs = s.helpers, shown = hs.slice(0, 14);
+  document.getElementById('dbody').innerHTML = `<h2 style="margin:0 30px 8px 0">${esc(name(s))}</h2>
+   <div class="kv"><div>Started</div><div>${when(s.t0)}</div><div>Last active</div><div>${when(s.t1)}${live(s) ? ' (working now)' : ''}</div><div>Time working</div><div>${dur(work)}</div>
+   <div>Started by</div><div>${p ? esc(name(p)) : 'not shown in the files (you, or an older app version)'}</div><div>Sessions it started</div><div>${kids.length ? kids.map(k => esc(name(k))).join('; ') : 'none'}</div>
+   <div>Model</div><div>${esc(s.model || 'unknown')}</div><div>You spoke to it</div><div>${s.owner} time${s.owner === 1 ? '' : 's'}</div><div>Tokens used</div><div>${tok(s.tokens + hs.reduce((a, h) => a + h.tokens, 0))} with its helpers</div><div>Largest window</div><div>${tok(s.peak)}</div>
+   <div>Folder</div><div>${esc(s.cwd)}</div></div>
+   <h3>What it said it was doing</h3>${plan ? '<ol>' + plan + '</ol>' : '<p class="mute">It kept no task list.</p>'}
+   <h3>Its last summary</h3><p>${s.recap ? esc(s.recap) : '<span class="mute">None written.</span>'}</p>
+   <h3>Hooks on this session</h3><table class="t">${HOOKS.map(h => { const c = cell(s, h[0]); return `<tr><td style="width:130px">${esc(h[1])}</td><td><span class="c ${c.cls}">${esc(c.txt)}</span></td><td class="small">${esc(c.tip)}</td></tr>`; }).join('')}</table>
+   <h3>Helpers (${hs.length})</h3>${hs.length ? '<ul>' + shown.map(h => `<li>${esc(h.desc || 'unnamed')} <span class="mute small">${esc(h.model)}, ${dur(h.t1 - h.t0)}, ${tok(h.tokens)}${h.finished ? '' : ', not finished'}${h.depth > 1 ? ', started by a helper' : ''}</span></li>`).join('') + '</ul>' + (hs.length > shown.length ? `<p class="mute small">and ${hs.length - shown.length} more</p>` : '') : '<p class="mute">None.</p>'}`;
+  document.getElementById('drawer').classList.add('open');
+}
+function closeD() { document.getElementById('drawer').classList.remove('open'); }
+
+// ---- findings, computed from the same data
+(function () {
+  const run = S.filter(s => s.hooksOn && HOOKS.some(h => cell(s, h[0]).cls === 'off'));
+  let exp = 0, seen = 0; for (const s of S) if (s.checks['tier-hook']) { exp += s.checks['tier-hook'].expected; seen += Math.min(s.checks['tier-hook'].seen, s.checks['tier-hook'].expected); }
+  const ref = S.reduce((a, s) => a + Object.values(s.denials || {}).reduce((x, y) => x + y, 0), 0);
+  const big = [...S].sort((a, b) => b.peak - a.peak).slice(0, 3);
+  const F = [
+    ['The order of the sessions can be rebuilt', `All ${S.length} sessions line up by start time, and ${S.filter(s => s.parent).length} show which session started them. The chain of top sessions reads straight off the picture.`],
+    ['The model-routes hook did its job every time', `${seen} of ${exp} helper and session starts since 17 November have a matching line in the hook's log. This is the check the whole page rests on, and it works on real data.`],
+    ['Hooks were seen refusing calls', `${ref} refusals are tied to a session. Most are in the session that built the newest hooks, which is expected.`],
+    ['One large run was only partly covered', run.length ? run.map(s => `${esc(name(s))} ran in its own folder with ${s.hooksOn.length} hooks switched on and started ${s.helpers.length} helpers. The other hooks that existed then did not run there.`).join(' ') + ' Whether that was intended is for the run\'s design to say; the page makes it visible either way.' : 'None found.'],
+    ['Largest windows', big.map(s => `${esc(name(s))}: ${tok(s.peak)}`).join('; ') + '. With the window-ceiling hook\'s own limits in the log, the page can mark a session before it reaches its line.'],
+    ['Some of it cannot be shown yet', 'Record guard and owner report write log lines that do not name the session, and three hooks are one day old, so most of their cells are empty. Step 1 below closes this.'],
+  ];
+  document.getElementById('finds').innerHTML = '<tr><th style="width:330px">Finding</th><th>From the stored data</th></tr>' + F.map(f => `<tr><td>${f[0]}</td><td>${f[1]}</td></tr>`).join('');
+})();
+draw(); let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(draw, 150); });
+addEventListener('keydown', e => { if (e.key === 'Escape') closeD(); });
+</script></body></html>

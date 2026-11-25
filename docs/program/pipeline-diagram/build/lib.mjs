@@ -42,6 +42,7 @@ export const HUES = {
 };
 export const STATUS = { b: '#16a34a', d: '#f59e0b', i: '#94a3b8', n: '#e11d48' };
 export const INK = '#111827', MUTED = '#475569';
+const DIM = 0.35; // opacity of map boxes and arrows for pipelines not drawn in a file
 const LH = 1.25;
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const r = (v) => Math.round(v * 10) / 10;
@@ -115,7 +116,7 @@ export function toSVG(S) {
       if ((e.layer || 'under') !== layer) continue;
       const pts = route(e, byId); e._pts = pts;
       const c = e.color || INK, m = mk[c] + (e.wide ? 'w' : '');
-      o.push(`<polyline points="${pts.map((p) => `${r(p[0])},${r(p[1])}`).join(' ')}" fill="none" stroke="${c}" stroke-width="${e.wide ? 6 : 3}"${e.dash ? ' stroke-dasharray="12 9"' : ''} stroke-linejoin="round" marker-end="url(#${m})"${e.both ? ` marker-start="url(#${m})"` : ''}/>`);
+      o.push(`<polyline points="${pts.map((p) => `${r(p[0])},${r(p[1])}`).join(' ')}" fill="none" stroke="${c}" stroke-width="${e.wide ? 6 : 3}"${e.dash ? ' stroke-dasharray="12 9"' : ''}${e.dim ? ` opacity="${DIM}"` : ''} stroke-linejoin="round" marker-end="url(#${m})"${e.both ? ` marker-start="url(#${m})"` : ''}/>`);
     }
   };
   for (const n of S.nodes) {
@@ -153,6 +154,7 @@ export function toSVG(S) {
       if (m.ll.length) text(x, n.y + n.h - CARD.padB - m.ll.length * CARD.linkFs * LH, m.ll, CARD.linkFs, HUES[n.link[1]].edge, true);
     } else if (n.k === 'mapbox') {
       const h = HUES[n.hue];
+      if (n.dim) o.push(`<g opacity="${DIM}">`);
       o.push(`<rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="14" fill="${n.filled ? h.fill : '#ffffff'}" stroke="${h.edge}" stroke-width="3"/>`);
       const nl = wrap(`${n.code}  ${n.name}`, MAPB.nameFs, n.w - 2 * MAPB.pad, true);
       const ll = n.line ? wrap(n.line, MAPB.lineFs, n.w - 2 * MAPB.pad) : [];
@@ -160,6 +162,7 @@ export function toSVG(S) {
       let y = n.y + (n.h - th) / 2;
       text(n.x + MAPB.pad, y, nl, MAPB.nameFs, h.ink, true); y += nl.length * MAPB.nameFs * LH + 4;
       if (ll.length) text(n.x + MAPB.pad, y, ll, MAPB.lineFs, INK, false);
+      if (n.dim) o.push('</g>');
     } else if (n.k === 'edges') drawEdges(n.layer || 'under');
   }
   for (const e of S.edges) {
@@ -167,15 +170,17 @@ export function toSVG(S) {
     const fs = 15.5, lines = e.label.split('\n');
     const w = Math.max(...lines.map((l) => textWidth(l, fs, true))) + 20, hh = lines.length * fs * LH + 10;
     const [mx, my] = midPoint(e._pts);
+    if (e.dim) o.push(`<rect x="${r(mx - w / 2)}" y="${r(my - hh / 2)}" width="${r(w)}" height="${r(hh)}" rx="7" fill="#ffffff"/>`, `<g opacity="${DIM}">`);
     o.push(`<rect x="${r(mx - w / 2)}" y="${r(my - hh / 2)}" width="${r(w)}" height="${r(hh)}" rx="7" fill="#ffffff" stroke="${e.color || INK}" stroke-width="1.3"/>`);
     text(mx, my - hh / 2 + 5, lines, fs, e.color || INK, true, 'middle');
+    if (e.dim) o.push('</g>');
   }
   o.push('</svg>');
   return o.join('\n');
 }
 
 // ---------- draw.io ----------
-export function toDrawio(S, pageName = 'The whole harness') {
+export function toDrawio(S, pageName = 'Harness pipeline') {
   const byId = Object.fromEntries(S.nodes.filter((n) => n.id).map((n) => [n.id, n]));
   const cells = []; let auto = 0;
   const geo = (x, y, w, h) => `<mxGeometry x="${r(x)}" y="${r(y)}" width="${r(w)}" height="${r(h)}" as="geometry"/>`;
@@ -213,7 +218,7 @@ export function toDrawio(S, pageName = 'The whole harness') {
       const h = HUES[n.hue];
       const html = `<div style="line-height:${LH};font-size:${MAPB.nameFs}px;color:${h.ink};"><b>${esc(n.code)}&nbsp;&nbsp;${esc(n.name)}</b></div>${n.line ? `<div style="line-height:${LH};font-size:${MAPB.lineFs}px;margin-top:4px;">${esc(n.line)}</div>` : ''}`;
       const link = n.target ? `data:action/json,${JSON.stringify({ title: `Go to ${n.code}`, actions: [{ scroll: { cells: [n.target] } }, { highlight: { cells: [n.target], color: h.edge, duration: 1500 } }] })}` : null;
-      vertex(n.id, html, `rounded=1;arcSize=10;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=${MAPB.pad - 2};spacingRight=${MAPB.pad - 2};fillColor=${n.filled ? h.fill : '#ffffff'};strokeColor=${h.edge};strokeWidth=3;${font}fontSize=${MAPB.lineFs};fontColor=${INK};`, n.x, n.y, n.w, n.h, '1', link);
+      vertex(n.id, html, `rounded=1;arcSize=10;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=${MAPB.pad - 2};spacingRight=${MAPB.pad - 2};fillColor=${n.filled ? h.fill : '#ffffff'};strokeColor=${h.edge};strokeWidth=3;${font}fontSize=${MAPB.lineFs};fontColor=${INK};${n.dim ? `opacity=${Math.round(DIM * 100)};textOpacity=${Math.round(DIM * 100)};` : ''}`, n.x, n.y, n.w, n.h, '1', link);
     }
   }
   const frac = (b, side, off) => (side === 'l' ? [0, 0.5 + off / b.h] : side === 'r' ? [1, 0.5 + off / b.h] : side === 't' ? [0.5 + off / b.w, 0] : [0.5 + off / b.w, 1]);
@@ -221,7 +226,7 @@ export function toDrawio(S, pageName = 'The whole harness') {
     const A = byId[e.from], B = byId[e.to], c = e.color || INK;
     const [ex, ey] = frac(A, e.fs || 'r', e.fo || 0), [nx, ny] = frac(B, e.ts || 'l', e.to_ || 0);
     const sameParent = A.parent && A.parent === B.parent && !(e.via && e.via.length);
-    const style = `edgeStyle=${e.via && e.via.length ? 'orthogonalEdgeStyle' : 'none'};rounded=0;html=1;exitX=${r(ex * 1000) / 1000};exitY=${r(ey * 1000) / 1000};exitDx=0;exitDy=0;entryX=${r(nx * 1000) / 1000};entryY=${r(ny * 1000) / 1000};entryDx=0;entryDy=0;endArrow=block;endFill=1;endSize=${e.wide ? 10 : 7};${e.both ? `startArrow=block;startFill=1;startSize=${e.wide ? 10 : 7};` : ''}strokeWidth=${e.wide ? 5 : 3};strokeColor=${c};${e.dash ? 'dashed=1;dashPattern=3 2;' : ''}${font}fontSize=15;fontStyle=1;fontColor=${c};labelBackgroundColor=#ffffff;labelBorderColor=${c};spacing=5;`;
+    const style = `edgeStyle=${e.via && e.via.length ? 'orthogonalEdgeStyle' : 'none'};rounded=0;html=1;exitX=${r(ex * 1000) / 1000};exitY=${r(ey * 1000) / 1000};exitDx=0;exitDy=0;entryX=${r(nx * 1000) / 1000};entryY=${r(ny * 1000) / 1000};entryDx=0;entryDy=0;endArrow=block;endFill=1;endSize=${e.wide ? 10 : 7};${e.both ? `startArrow=block;startFill=1;startSize=${e.wide ? 10 : 7};` : ''}strokeWidth=${e.wide ? 5 : 3};strokeColor=${c};${e.dash ? 'dashed=1;dashPattern=3 2;' : ''}${font}fontSize=15;fontStyle=1;fontColor=${c};labelBackgroundColor=#ffffff;labelBorderColor=${c};spacing=5;${e.dim ? `opacity=${Math.round(DIM * 100)};textOpacity=${Math.round(DIM * 100)};` : ''}`;
     const pts = (e.via || []).map((p) => `<mxPoint x="${r(p[0])}" y="${r(p[1])}"/>`).join('');
     cells.push(`<mxCell id="e${i}" value="${esc((e.label || '').replace(/\n/g, '<br>'))}" style="${style}" edge="1" parent="${sameParent ? A.parent : '1'}" source="${e.from}" target="${e.to}"><mxGeometry relative="1" as="geometry">${pts ? `<Array as="points">${pts}</Array>` : ''}</mxGeometry></mxCell>`);
   });

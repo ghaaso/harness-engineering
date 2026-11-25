@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Session monitor</title>
+<style>
+:root{--bg:#f1f2f5;--card:#fff;--ink:#0f172a;--ink2:#334155;--mute:#64748b;--faint:#94a3b8;--line:#e6e9ee;--bad:#c62828;--wait:#b45309;--waitln:#e8a033;--work:#1d64d8}
+*{box-sizing:border-box}html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:14px/1.4 "Segoe UI",system-ui,sans-serif;overflow:hidden;user-select:none}
+#app{height:100vh;display:grid;grid-template-rows:50px minmax(0,1fr) 82px;gap:8px;padding:10px 12px 10px}
+/* top */
+#top{display:flex;align-items:center;gap:14px;min-width:0}
+#verdict{display:flex;align-items:center;gap:9px;font-size:19px;font-weight:650;white-space:nowrap;padding:5px 15px 5px 12px;border-radius:22px;cursor:pointer;border:0;font-family:inherit}
+#verdict i{width:12px;height:12px;border-radius:50%}
+#verdict.bad{background:var(--bad);color:#fff}#verdict.bad i{background:#fff}
+#verdict.ok{background:#e7f4ec;color:#166534}#verdict.ok i{background:#22a35a}
+.cnt{display:inline-flex;align-items:center;gap:6px;font-size:14.5px;color:var(--ink2);white-space:nowrap}.cnt b{font-size:18px;color:var(--ink);font-weight:650}
+.cnt i{width:10px;height:10px;border-radius:50%;background:#c4c9d1}.cnt.w i{background:var(--work)}.cnt.a i{background:var(--waitln)}
+#needs{display:flex;gap:8px;min-width:0;overflow:hidden}
+.need{background:#fff6e5;border:1px solid #f0cf94;color:#7c3d06;border-radius:16px;padding:3px 12px;font-size:13.5px;white-space:nowrap;cursor:pointer;max-width:330px;overflow:hidden;text-overflow:ellipsis}
+#range{font-size:13.5px;color:var(--mute);white-space:nowrap}
+#top .sp{flex:1}
+.seg{display:inline-flex;background:#e2e5ea;border-radius:9px;padding:3px;gap:2px}
+.seg button{font:inherit;font-size:13.5px;border:0;background:none;color:var(--ink2);padding:4px 12px;border-radius:7px;cursor:pointer;white-space:nowrap}
+.seg button.on{background:#fff;color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.14)}
+.zb{display:inline-flex;gap:4px}.zb button{font:inherit;font-size:16px;width:30px;height:30px;border-radius:8px;border:1px solid #d5d9e0;background:#fff;color:var(--ink2);cursor:pointer;line-height:1}
+/* stage */
+#stage{position:relative;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;min-height:0}
+#heads{position:absolute;left:0;top:0;bottom:0;width:236px;border-right:1px solid var(--line);background:#fff;z-index:3;overflow:hidden}
+#cvw{position:absolute;left:236px;top:0;bottom:30px;right:320px;overflow:hidden;cursor:grab}#cvw.drag{cursor:grabbing}
+#cv{display:block;width:100%;height:100%}
+#gut{position:absolute;right:0;top:0;bottom:0;width:320px;border-left:1px solid var(--line);background:#fff;z-index:3;overflow:hidden}
+.gh{position:absolute;left:0;right:0;top:0;height:26px;padding:5px 12px 0;font-size:12.5px;color:var(--mute);border-bottom:1px solid var(--line);background:#fff}
+.gh b{color:var(--ink);font-weight:650}
+.gc{position:absolute;left:8px;right:8px;padding:5px 9px 6px 26px;border-radius:9px;cursor:pointer;background:#fff;border:1px solid var(--line)}
+.gc:hover{box-shadow:0 2px 10px rgba(15,23,42,.12)}
+.gc i{position:absolute;left:9px;top:11px;width:10px;height:10px;border-radius:50%}
+.gc.working i{animation:pu 1.6s infinite}
+.gc.waiting{background:#fff6e5;border-color:#f0cf94}.gc.waiting i{background:#fff!important;border:3px solid var(--waitln)}
+.gc.silent i{background:#fff!important;border:3px solid currentColor}
+.gc.done{border-color:transparent;padding-top:3px;padding-bottom:3px}.gc.done:hover{border-color:var(--line)}.gc b{display:block;font-size:13.5px;font-weight:650;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gc span{display:block;font-size:12.5px;color:var(--ink2);line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gc em{font-style:normal;font-size:12px;color:var(--mute)}
+.gnote{position:absolute;left:14px;right:14px;font-size:13px;color:var(--mute)}
+@keyframes pu{0%{box-shadow:0 0 0 0 rgba(29,100,216,.45)}70%{box-shadow:0 0 0 8px rgba(29,100,216,0)}100%{box-shadow:0 0 0 0 rgba(29,100,216,0)}}
+/* lane heads */
+.lh{position:absolute;left:0;right:0;padding:0 10px 0 26px;display:flex;align-items:center;gap:7px;cursor:pointer;border-top:1px solid var(--line);overflow:hidden}
+.lh:hover{background:#f6f8fb}
+.lh .cv{position:absolute;left:9px;font-size:10px;color:var(--faint)}
+.lh .cd{flex:none;min-width:21px;height:21px;padding:0 5px;border-radius:6px;background:#eef1f5;color:var(--ink2);font-size:12px;font-weight:700;display:inline-flex;align-items:center;justify-content:center}
+.lh b{font-size:14px;font-weight:600;white-space:nowrap;color:var(--ink2);flex:none}
+.lh.path b{font-size:15.5px;font-weight:700;color:var(--ink)}.lh.path .cd{background:#1e293b;color:#fff}
+.lh .tb{flex:1;height:7px;border-radius:4px;background:#f0f2f5;overflow:hidden;min-width:20px}.lh .tb u{display:block;height:100%;background:#64748b;border-radius:4px}
+.lh .tv{flex:none;font-size:12px;color:var(--mute);min-width:36px;text-align:right;font-variant-numeric:tabular-nums}
+.lh.sub{padding-left:40px}.lh.sub b{font-size:12.5px;font-weight:500;color:var(--ink2)}
+.lh.fold{cursor:default;color:var(--faint);font-size:11.5px;line-height:1.3;padding:4px 8px 0 12px;white-space:normal;align-items:flex-start}.lh.fold:hover{background:none}
+.lh.land b{color:#166534}.lh .ld{flex:none;font-size:12.5px;font-weight:700;color:#166534}.lh .ld.none{color:var(--bad)}
+.grp{position:absolute;left:0;width:236px;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);padding-left:10px;pointer-events:none}
+/* tip, legend, detail */
+#tip{position:absolute;z-index:8;pointer-events:none;background:#0f172a;color:#fff;font-size:12.5px;line-height:1.35;padding:6px 10px;border-radius:8px;max-width:340px;display:none;box-shadow:0 4px 14px rgba(0,0,0,.25)}
+#tip b{font-weight:650}#tip span{color:#cbd5e1}
+#legend{position:absolute;left:236px;right:320px;bottom:0;height:30px;z-index:4;display:flex;gap:18px;align-items:center;font-size:12px;color:var(--mute);background:#fff;padding:0 12px;border-top:1px solid var(--line);overflow:hidden}
+#legend span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+#det{position:absolute;right:0;top:0;bottom:0;width:320px;background:#fff;border-left:1px solid var(--line);z-index:6;padding:14px 16px 16px;overflow:auto;display:none;user-select:text}
+#det h2{font-size:17px;margin:0 30px 4px 0;line-height:1.25}#det h3{font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--mute);margin:16px 0 6px;font-weight:650}
+#det p{margin:4px 0;font-size:13.5px;color:var(--ink2)}#det .x{position:absolute;right:10px;top:10px;border:0;background:#eef1f5;border-radius:8px;width:28px;height:28px;font-size:15px;cursor:pointer}
+.bar{display:grid;grid-template-columns:96px 1fr 48px;gap:8px;align-items:center;font-size:13px;margin:3px 0}.bar u{display:block;height:8px;border-radius:4px;background:#64748b}.bar em{font-style:normal;color:var(--mute);text-align:right;font-variant-numeric:tabular-nums}
+.pth{display:flex;flex-wrap:wrap;gap:4px;font-size:12.5px}.pth span{background:#eef1f5;border-radius:6px;padding:1px 7px}.pth span.l{background:#dcf3e3;color:#166534;font-weight:650}.pth span.c{background:#e6e9f7}
+.pr{font-size:13.5px;margin:5px 0;padding-left:16px;position:relative;cursor:pointer}.pr:before{content:"";position:absolute;left:0;top:6px;width:9px;height:9px;border-radius:50%;background:var(--bad)}.pr.n:before{background:#c4c9d1}
+.pr small{display:block;color:var(--mute);font-size:12.5px}
+.pl{font-size:13px;margin:2px 0;color:var(--mute)}.pl.d{color:var(--ink2)}.pl.c{color:var(--work);font-weight:650}
+/* strip */
+#strip{display:flex;gap:10px;align-items:stretch;min-height:0}
+#play{flex:none;width:64px;border-radius:12px;border:1px solid var(--line);background:#fff;font:inherit;font-size:13px;color:var(--ink2);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
+#play b{font-size:22px;line-height:1;color:var(--work)}
+#over{flex:1;background:#fff;border:1px solid var(--line);border-radius:12px;padding:5px 14px 3px;cursor:crosshair;min-width:0}#over svg{display:block;width:100%;height:100%}
+svg text{font-family:"Segoe UI",system-ui,sans-serif}
+#cv.hl g.ss{opacity:.13}#cv.hl g.ss.on{opacity:1}
+</style></head><body>
+<div id="app">
+ <div id="top">
+  <button id="verdict"></button><span id="cnts"></span><span id="needs"></span><span class="sp"></span><span id="range"></span>
+  <span class="seg" id="win"><button data-w="12">Last 12 h</button><button data-w="48">Since I last looked</button><button data-w="all">Everything</button></span>
+  <span class="zb"><button id="zin" title="Zoom in">+</button><button id="zout" title="Zoom out">&minus;</button></span>
+ </div>
+ <div id="stage">
+  <div id="heads"></div>
+  <div id="cvw"><svg id="cv"></svg></div>
+  <div id="gut"></div>
+  <div id="legend"></div>
+  <div id="det"></div>
+  <div id="tip"></div>
+ </div>
+ <div id="strip"><button id="play"><b>&#9654;</b>Replay</button><div id="over"></div></div>
+</div>
+<script>
+const D = /*DATA*/null;
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const BASE = D.base, NOW = D.made, MIN = 60000, HR = 3600000, LIVE = 4 * MIN;
+const PL = D.places, HP = D.harness.parts, PIPE = Object.fromEntries(HP.pipelines.map(p => [p.id, p]));
+const pipeOf = i => PL[i].slice(0, PL[i].indexOf('.')), stepOf = i => +PL[i].slice(PL[i].indexOf('.') + 1);
+const KIND = /^(orchestrate-deep|orchestrate|analyse|build-invariant|build|refute|read|collect|run|extract|locate|test):\s*/;
+const name = s => { const n = (s.title || 'Untitled session').replace(/\s*\([a-z]\w*-\d{4}\)/g, '').replace(KIND, ''); return n.charAt(0).toUpperCase() + n.slice(1); };
+const cut = (t, n) => t.length > n ? t.slice(0, n - 1).trimEnd() + '…' : t;
+const first = t => { const m = /^(.*?[.!?])(\s|$)/.exec(t || ''); return m ? m[1] : (t || ''); };
+const tok = n => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + ' M' : n >= 1e3 ? Math.round(n / 1e3) + ' K' : String(Math.round(n));
+const dur = ms => { const m = Math.round(ms / MIN); return m < 60 ? m + ' min' : m < 2880 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' m' : Math.round(m / 1440) + ' days'; };
+const tm = t => new Date(t).toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'}), dy = t => new Date(t).toLocaleDateString('en-GB', {weekday:'short', day:'numeric', month:'short'});
+const HOOKN = {'library-start':'Board at start','tier-hook':'Model routes','record-guard':'Record guard','plan-gate':'Build plan','window-ceiling':'Window limit','count-gate':'Helpers at once','fanout-gate':'Usage first','owner-report':'Owner report','journal-watch':'Journal watch','creep-gate':'Creep gate'};
+const MK = { hookfail: 'A hook failed and let the call through', noton: 'A hook was not switched on in this session\'s folder', window: 'The window went past its limit', unchecked: 'A start the model-routes hook has no record of', refused: 'A hook refused a call (the hook did its job)' };
+
+// ---- actors: every session and every helper, each a list of visits to places in the harness
+const S = D.sessions.filter(s => (s.ev && s.ev.length) || s.helpers.some(h => h.ev.length)), byId = Object.fromEntries(S.map(s => [s.id, s]));
+const T = sec => BASE + sec * 1000, ACT = [], ACTIVE = new Set();
+for (const s of S) {
+  const mk = (ev, A) => ev.map(v => { ACTIVE.add(pipeOf(v[2])); return { a: T(v[0]), b: T(v[0] + v[1]), p: v[2], tk: v[3] * 1000, n: v[4], act: A }; });
+  s.act = { s, h: null }; s.act.vis = mk(s.ev || [], s.act); ACT.push(s.act);
+  s.hact = s.helpers.map(h => { const B = { s, h }; B.vis = mk(h.ev || [], B); ACT.push(B); return B; }).filter(B => B.vis.length);
+  s.mk = (s.marks || []).map(m => ({ t: T(m[0]), p: m[1], k: m[2], d: m[3], s })); s.mk.forEach(m => ACTIVE.add(pipeOf(m.p)));
+  s.tc = [...(s.tch || []), ...s.helpers.flatMap(h => h.tch || [])].map(x => ({ t: T(x[0]), p: x[1] })); s.tc.forEach(m => ACTIVE.add(pipeOf(m.p)));
+  s.total = s.tokens + s.helpers.reduce((a, h) => a + h.tokens, 0);
+  s.end = Math.max(s.t1, ...s.act.vis.map(v => v.b), ...s.hact.flatMap(B => B.vis.map(v => v.b)));
+}
+// ---- what a session was at a moment
+const working = (s, t) => s.segs.some(x => x[0] <= t && t <= x[1] + LIVE);
+const lastWrap = (s, t) => { for (let i = s.wraps.length - 1; i >= 0; i--) if (s.wraps[i][0] <= t) return s.wraps[i]; };
+const waiting = (s, t) => { const w = lastWrap(s, t); return !!w && !!w[2] && !working(s, t) && !s.humans.some(h => h > w[0] && h <= t) && !s.segs.some(x => x[0] > w[0] + MIN && x[0] <= t); };
+const silent = (s, t) => t >= NOW - MIN && s.turnOpen && !working(s, t);
+const stateAt = (s, t) => t < s.t0 ? 'none' : working(s, t) ? 'working' : silent(s, t) ? 'silent' : waiting(s, t) ? 'waiting' : 'quiet';
+const stepAt = (s, t) => { for (let i = s.steps.length - 1; i >= 0; i--) if (s.steps[i][0] <= t) return s.steps[i][1]; return ''; };
+const helpersRun = (s, t) => s.helpers.filter(h => h.t0 && h.t0 <= t && (t < h.t1 || (!h.finished && t <= h.t1 + LIVE))).length;
+// ---- one colour per session; sessions open at the same time never share one. Red and amber are kept for trouble.
+const HUES = ['#2563eb', '#0d9488', '#7c3aed', '#4d7c0f', '#c026d3', '#0369a1', '#57534e', '#4338ca', '#0e7490', '#9d5a0a'];
+S.forEach((s, i) => { const used = new Set(S.slice(0, i).filter(o => o.end + HR > s.t0 && o.t0 < s.end + HR).map(o => o.hue)); if (byId[s.parent]) used.add(byId[s.parent].hue); s.hue = HUES.find(h => !used.has(h)) || HUES[i % HUES.length]; });
+const tint = (hex, a) => { const n = parseInt(hex.slice(1), 16), f = c => Math.round(c + (255 - c) * a); return `rgb(${f(n >> 16)},${f(n >> 8 & 255)},${f(n & 255)})`; };
+
+// ---- time: working stretches kept, quiet hours cut to a short break
+const SC = (() => { let iv = []; for (const A of ACT) for (const v of A.vis) iv.push([v.a - 8 * MIN, v.b + 8 * MIN]); iv.sort((a, b) => a[0] - b[0]);
+  const M = []; for (const x of iv) { const l = M[M.length - 1]; if (l && x[0] - l[1] < 75 * MIN) l[1] = Math.max(l[1], x[1]); else M.push([x[0], x[1]]); }
+  M[M.length - 1][1] = Math.max(M[M.length - 1][1], NOW + MIN); const GAP = 22; let acc = 0; for (const x of M) { x.x0 = acc; acc += (x[1] - x[0]) / MIN + GAP; }
+  const X = t => { for (const x of M) { if (t < x[0]) return x.x0 - GAP / 2; if (t <= x[1]) return x.x0 + (t - x[0]) / MIN; } return acc - GAP; };
+  const inv = u => { for (const x of M) { const x1 = x.x0 + (x[1] - x[0]) / MIN; if (u < x.x0) return x[0]; if (u <= x1) return x[0] + (u - x.x0) * MIN; } return NOW; };
+  return { M, X, inv, total: acc - GAP, GAP }; })();
+const qs = new URLSearchParams(location.search);
+let v0 = 0, v1 = SC.total, winKey = qs.get('win') || '48', sel = null, hov = null, open = new Set((qs.get('open') || '').split(',').filter(Boolean)), det = null, oy = 0, playT = null;
+function setWin(k) { winKey = k; v1 = SC.X(NOW) + 1; v0 = k === 'all' ? -2 : SC.X(NOW - (+k) * HR); if (v1 - v0 < 30) v0 = v1 - 30; v1 += (v1 - v0) * 0.012; oy = 0; }
+
+// ---- lanes: the harness, top to bottom. A pipeline is one lane; opened, it becomes one lane per step.
+const GROUPS = [['Knowledge', ['B5', 'B3', 'B2', 'B4', 'A3', 'A2', 'A1', 'B1']], ['The path of a task', ['S1', 'S2', 'S3', 'S4', 'S5', 'S6']], ['Controls', ['C', 'D', 'E', 'F']], ['Measurement and research', ['G']]];
+const laneKey = p => { const id = pipeOf(p); return open.has(id) ? PL[p] : id; };
+const GAPJ = 50 * MIN;
+function pack() { const all = [];
+  for (const s of S) { const by = {}; for (const A of [s.act, ...s.hact]) for (const v of A.vis) { v.lk = laneKey(v.p); (by[v.lk] || (by[v.lk] = [])).push(v); }
+    s.iv = {}; for (const k in by) { const I = []; for (const v of by[k].sort((x, y) => x.a - y.a)) { const l = I[I.length - 1]; if (l && v.a - l.b < GAPJ) l.b = Math.max(l.b, v.b); else I.push({ a: v.a, b: v.b, s, k }); } s.iv[k] = I; all.push(...I); } }
+  const ends = {}; all.sort((x, y) => x.a - y.a || x.s.t0 - y.s.t0).forEach(I => { const R = ends[I.k] || (ends[I.k] = []); let r = 0; while (r < R.length && R[r] > I.a - 6 * MIN) r++; R[r] = I.b + 6 * MIN; I.tr = r; }); }
+pack();
+let TH = 20, LN = [], LBY = {}, rowH = 10, W = 1000, H = 600; const AX = 26;
+function layout() {
+  const from = SC.inv(v0), to = SC.inv(v1); LN = []; LBY = {};
+  for (const [g, ids] of GROUPS) { const fold = []; let firstOf = true;
+    for (const id of ids) { if (!ACTIVE.has(id)) { fold.push(id); continue; } const P = PIPE[id];
+      if (open.has(id)) { LN.push({ key: id + ':t', pid: id, title: true, g, gfirst: firstOf, min: 24 }); P.steps.forEach((st, i) => LN.push({ key: id + '.' + i, pid: id, step: i, g, min: 22 })); }
+      else LN.push({ key: id, pid: id, g, gfirst: firstOf, min: g === 'The path of a task' ? 36 : 26 }); firstOf = false; }
+    if (fold.length) LN.push({ key: 'fold:' + g, fold, g, gfirst: firstOf, min: fold.length > 2 ? 54 : 20 }); }
+  for (const l of LN) { l.n = 0; l.tk = 0; LBY[l.key] = l; }
+  for (const s of S) { for (const k in s.iv) { const l = LBY[k]; if (l) for (const I of s.iv[k]) if (I.b >= from && I.a <= to) l.n = Math.max(l.n, I.tr + 1); }
+    for (const A of [s.act, ...s.hact]) for (const v of A.vis) if (v.a >= from && v.a <= to) { const l = LBY[v.lk]; if (l) l.tk += v.tk; const t = LBY[pipeOf(v.p) + ':t']; if (t) t.tk += v.tk; } }
+  const avail = H - AX - 6, tot = r => LN.reduce((a, l) => a + Math.max(l.min, l.n * r + 8) + (l.gfirst ? 14 : 0), 0);
+  let lo = 7, hi = 34; if (tot(hi) <= avail) rowH = hi; else if (tot(lo) >= avail) rowH = lo; else { for (let i = 0; i < 18; i++) { const m = (lo + hi) / 2; if (tot(m) > avail) hi = m; else lo = m; } rowH = lo; }
+  let y = AX; const spare = Math.max(0, avail - tot(rowH)), pathL = LN.filter(l => l.g === 'The path of a task' && !l.title), wt = l => Math.sqrt(l.tk / 1e6) + 2, pw = LN.reduce((a, l) => a + (l.fold || l.title ? 0 : pathL.includes(l) ? wt(l) : wt(l) - 2), 0) || 1;
+  for (const l of LN) { if (l.gfirst) y += 14; l.y = y; l.h = Math.max(l.min, l.n * rowH + 8) + (l.fold || l.title ? 0 : spare * (pathL.includes(l) ? wt(l) : wt(l) - 2) / pw); l.th = Math.min(70, (l.h - 8) / Math.max(1, l.n)); l.r0 = l.y + (l.h - l.n * l.th) / 2; y += l.h; }
+  LN.total = y; TH = Math.max(12, ...LN.filter(l => l.n).map(l => l.th - 3));
+}
+const px = t => (SC.X(t) - v0) / (v1 - v0) * W;
+const trOf = (s, k, t) => { const I = s.iv[k]; if (!I) return 0; let r = I[0]; for (const x of I) { if (x.a <= t) r = x; else break; } return r.tr; };
+const yOf = (s, k, t) => { const l = LBY[k]; return l ? l.r0 + (Math.min(trOf(s, k, t), Math.max(0, l.n - 1)) + .5) * l.th - oy : -99; };
+const vy = v => yOf(v.act.s, v.lk, v.a);
+const laneOf = p => LBY[laneKey(p)] || LN.find(l => l.fold && l.fold.includes(pipeOf(p)));
+const visAt = (A, t) => { let r = A.vis[0]; for (const v of A.vis) { if (v.a <= t) r = v; else break; } return r; };
+
+// ---- problems: red marks pinned where they happened; refusals are notes
+const visS = () => { const from = SC.inv(v0), to = SC.inv(v1); return S.filter(s => s.t0 <= to && s.end >= from); };
+const probs = () => { const from = SC.inv(v0), to = SC.inv(v1); return S.flatMap(s => s.mk).filter(m => m.k !== 'refused' && m.t >= from && m.t <= to); };
+
+// ---- draw
+let DRAWN = [], MARKS = [];
+function render() {
+  const cvw = $('cvw'); W = cvw.clientWidth; H = cvw.clientHeight; layout(); oy = Math.max(0, Math.min(oy, LN.total - H + 8));
+  const from = SC.inv(v0), to = SC.inv(v1), Tn = Math.min(to, NOW), V = visS(); let o = '', lab = '', top = '';
+  // lanes
+  for (const l of LN) { const y = l.y - oy; if (l.title) { o += `<rect x="0" y="${y}" width="${W}" height="${l.h}" fill="#f6f8fb"/>`; continue; }
+    const land = l.pid === 'S5'; o += `<rect x="0" y="${y}" width="${W}" height="${l.h}" fill="${land ? '#f1faf4' : l.fold ? '#fafbfc' : l.g === 'The path of a task' ? '#fff' : '#fbfcfd'}"/><line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="${l.gfirst ? '#d5dae2' : '#eceff3'}"/>`;
+    if (land) o += `<line x1="0" y1="${y + l.h / 2}" x2="${W}" y2="${y + l.h / 2}" stroke="#86c79a" stroke-dasharray="2 5"/>`; }
+  // time axis: hour ticks, days, and the breaks where quiet hours were cut
+  const span = (to - from) / W * 110, STEPS = [5 * MIN, 15 * MIN, 30 * MIN, HR, 2 * HR, 3 * HR, 6 * HR, 12 * HR, 24 * HR], st = STEPS.find(x => x >= span) || 24 * HR; let lastDay = '', lastX = -200;
+  SC.M.forEach((m, i) => { if (i) { const gx = px(m[0]) - (SC.GAP / 2) / (v1 - v0) * W, gw = SC.GAP / (v1 - v0) * W; if (gx > -gw && gx < W + gw) { o += `<rect x="${gx - gw / 2}" y="${AX}" width="${gw}" height="${H}" fill="#f1f3f6"/>`; if (gw > 46) top += `<text x="${gx}" y="17" text-anchor="middle" font-size="11" fill="#94a3b8">${dur(m[0] - SC.M[i - 1][1])} quiet</text>`; } }
+    const d0 = new Date(m[0]); d0.setMinutes(0, 0, 0); let t = d0.getTime(); if (st >= HR) { const h = d0.getHours(), k = st / HR; t -= (h % k) * HR; }
+    for (; t <= m[1]; t += st) { if (t < m[0]) continue; const x = px(t); if (x < -40 || x > W - 44) continue; const d = dy(t), nd = d !== lastDay; if (x - lastX < 54) continue;
+      o += `<line x1="${x}" y1="${AX}" x2="${x}" y2="${H}" stroke="#f0f2f5"/>`; top += `<text x="${x + 4}" y="17" font-size="12" fill="${nd ? '#0f172a' : '#64748b'}" font-weight="${nd ? 650 : 400}">${nd ? esc(d) + ' ' : ''}${tm(t)}</text>`; lastDay = d; lastX = x + (nd ? 70 : 0); } });
+  // each session: a band in every place it (and its helpers) worked, as thick as the tokens a minute spent there,
+  // and one line, the spine, for where the session itself was
+  DRAWN = []; const BW = 6, nb = Math.ceil(W / BW) + 2, binMin = (v1 - v0) / W * BW, rates = [];
+  for (const s of V) { s.bins = {}; s.dw = [];
+    for (const A of [s.act, ...s.hact]) for (const v of A.vis) { if (v.b < from - HR || v.a > to) continue; const xa = px(v.a), xb = Math.max(px(Math.max(v.b, v.a + MIN)), xa + 1); if (xb < 0 || xa > W) continue;
+      const arr = s.bins[v.lk] || (s.bins[v.lk] = new Float64Array(nb)), b0 = Math.max(0, Math.floor(xa / BW)), b1 = Math.min(nb - 1, Math.floor(xb / BW));
+      for (let b = b0; b <= b1; b++) { const ov = Math.min(xb, (b + 1) * BW) - Math.max(xa, b * BW); if (ov > 0) { arr[b] += v.tk * ov / (xb - xa); if (!A.h) { const d = s.dw[b] || (s.dw[b] = {}); d[v.lk] = (d[v.lk] || 0) + ov + .3; } } } }
+    for (const k in s.bins) for (const x of s.bins[k]) if (x > 0) rates.push(x); }
+  rates.sort((a, b) => a - b); const RMAX = rates.length ? rates[Math.floor(rates.length * .97)] : 1;
+  const boxes = [], place = (x, y, w) => { const b = [x, y - 12, x + w, y + 3]; if (b[1] < AX + 2 || b[2] > W - 2 || boxes.some(q => b[0] < q[2] && b[2] > q[0] && b[1] < q[3] && b[3] > q[1])) return false; boxes.push(b); return true; };
+  const tOfBin = b => SC.inv(v0 + (b + .5) * BW / W * (v1 - v0));
+  for (const s of V) { let q = ''; const fill = tint(s.hue, .5);
+    for (const k in s.bins) { const l = LBY[k]; if (!l) continue; const arr = s.bins[k], th = b => Math.max(2.4, Math.min(l.th - 2, Math.min(1, Math.sqrt(arr[b] / RMAX)) * TH)); let b = 0;
+      while (b < nb) { if (!(arr[b] > 0)) { b++; continue; } let e = b; while (e + 1 < nb && (arr[e + 1] > 0 || (e + 2 < nb && arr[e + 2] > 0))) e++; const up = [], dn = [];
+        for (let i = b; i <= e; i++) { const yc = yOf(s, k, tOfBin(i)), h = arr[i] > 0 ? th(i) : 2.4, x = i * BW; if (i === b) { up.push([x, yc - h / 2]); dn.push([x, yc + h / 2]); } up.push([x + BW / 2, yc - h / 2]); dn.push([x + BW / 2, yc + h / 2]); if (i === e) { up.push([x + BW, yc - h / 2]); dn.push([x + BW, yc + h / 2]); } }
+        q += `<path d="M${up.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join('L')}L${dn.reverse().map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join('L')}Z" fill="${fill}" stroke="${fill}" stroke-width="1" stroke-linejoin="round"/>`; b = e + 1; } }
+    // the spine
+    const nodes = [], yAt = []; let lastK = '';
+    for (let b = 0; b < nb; b++) { if (!s.dw[b]) continue; const sum = {}; for (let j = b - 2; j <= b + 2; j++) { const d = s.dw[j]; if (d) for (const k in d) if (k[0] === 'S') sum[k] = (sum[k] || 0) + d[k]; }
+      let bk = lastK, bv = 0; for (const k in sum) if (sum[k] > bv) { bv = sum[k]; bk = k; } if (!bk) continue; lastK = bk; const y = yOf(s, bk, tOfBin(b)); nodes.push([b, bk, b * BW + BW / 2, y]); yAt[b] = y; }
+    const spineY = b => { for (let j = Math.min(b, nb - 1); j >= 0; j--) if (yAt[j] != null) return yAt[j]; for (let j = b; j < nb; j++) if (yAt[j] != null) return yAt[j]; return null; };
+    let d = '', dd = ''; nodes.forEach((n, i) => { if (!i) { d += `M${n[2]},${n[3]}`; return; } const p = nodes[i - 1], far = n[0] - p[0] > Math.max(3, 25 / binMin);
+      if (far) { { const x0 = Math.max(p[2], n[2] - 16), mx = (x0 + n[2]) / 2; dd += `M${p[2]},${p[3]}L${x0},${p[3]}C${mx},${p[3]} ${mx},${n[3]} ${n[2]},${n[3]}`; } d += `M${n[2]},${n[3]}`; } else if (Math.abs(p[3] - n[3]) < .5) d += `L${n[2]},${n[3]}`; else { const x0 = Math.max(p[2], n[2] - 16), mx = (x0 + n[2]) / 2; d += `L${x0},${p[3]}C${mx},${p[3]} ${mx},${n[3]} ${n[2]},${n[3]}`; } });
+    const P = byId[s.parent]; if (P && P.act.vis.length && nodes.length && s.t0 >= from - HR) { const f = s.act.vis[0], pv = visAt(P.act, f.a), x = px(f.a); q += `<path d="M${x - 14},${yOf(P, pv.lk, f.a)}C${x - 4},${yOf(P, pv.lk, f.a)} ${x - 10},${nodes[0][3]} ${nodes[0][2]},${nodes[0][3]}" fill="none" stroke="${s.hue}" stroke-width="1.8" stroke-dasharray="1 3.5" stroke-linecap="round"/><circle cx="${nodes[0][2]}" cy="${nodes[0][3]}" r="4" fill="#fff" stroke="${s.hue}" stroke-width="2"/>`; }
+    if (dd) q += `<path d="${dd}" fill="none" stroke="${s.hue}" stroke-width="1.3" stroke-dasharray="2 4" opacity=".55"/>`;
+    if (d) q += `<path d="${d}" fill="none" stroke="#fff" stroke-width="5.5" stroke-linejoin="round" stroke-linecap="round" opacity=".85"/><path d="${d}" fill="none" stroke="${s.hue}" stroke-width="2.8" stroke-linejoin="round" stroke-linecap="round"/>`;
+    // landings: a diamond on Land for every commit, tied to the session's line
+    s.landed = 0; for (const A of [s.act, ...s.hact]) for (const v of A.vis) if (pipeOf(v.p) === 'S5') { s.landed++; if (v.a < from || v.a > to) continue; const x = px(v.a), y = vy(v), sy = spineY(Math.floor(x / BW)); DRAWN.push({ v });
+      q += (sy != null && Math.abs(sy - y) > 8 ? `<line x1="${x}" y1="${sy}" x2="${x}" y2="${y}" stroke="${s.hue}" stroke-width="1.2" opacity=".7"/>` : '') + `<path d="M${x - 6.5},${y}L${x},${y - 6.5}L${x + 6.5},${y}L${x},${y + 6.5}Z" fill="${s.hue}" stroke="#fff" stroke-width="1.2"/>`; }
+    // where it stands at the right edge: working, waiting for him, or ended
+    const lv = s.act.vis.length ? visAt(s.act, Tn) : null, ln = nodes[nodes.length - 1]; if (lv && ln && s.t0 <= Tn) { const st = stateAt(s, Tn), y = ln[3], xe = ln[2], xn = px(Tn);
+      if (st === 'working') q += `<line x1="${xe}" y1="${y}" x2="${xn}" y2="${y}" stroke="${s.hue}" stroke-width="2.4" stroke-linecap="round"/><circle cx="${xn}" cy="${y}" r="7" fill="${s.hue}" stroke="#fff" stroke-width="2"/>`;
+      else if (st === 'waiting' || st === 'silent') q += `<line x1="${xe}" y1="${y}" x2="${xn}" y2="${y}" stroke="${st === 'waiting' ? '#e8a033' : s.hue}" stroke-width="2" stroke-dasharray="2 5" stroke-linecap="round"/><circle cx="${xn}" cy="${y}" r="6.5" fill="#fff" stroke="${st === 'waiting' ? '#e8a033' : s.hue}" stroke-width="3"/>`;
+      else if (xe > -10 && xe < W + 10) q += `<circle cx="${xe + 3}" cy="${y}" r="3.2" fill="#fff" stroke="${s.hue}" stroke-width="1.8"/>`; s.head = { y, st }; } else s.head = null;
+    for (const c of s.tc) { if (c.t < from || c.t > to) continue; const l = laneOf(c.p); if (l && !l.fold && (l.g === 'Knowledge' || l.step != null)) q += `<circle cx="${px(c.t)}" cy="${l.y - oy + l.h / 2 + (l.n ? l.h / 2 - 5 : 0)}" r="1.8" fill="${s.hue}" opacity=".55"/>`; }
+    s.lab = nodes.length ? [Math.max(nodes[0][2], 4), nodes[0][3], nodes[nodes.length - 1][2] - Math.max(nodes[0][2], 4)] : null;
+    o += `<g class="ss${sel === s.id || hov === s.id ? ' on' : ''}" data-s="${s.id}">${q}</g>`; }
+  for (const s of [...V].sort((a, b) => b.total - a.total)) { if (!s.lab) continue; const [x, y0, sp] = s.lab, t = cut(name(s), 28), w = t.length * 6.9 + 4; if (sp < w * .8 && sel !== s.id && hov !== s.id) continue;
+    if (place(x + 6, y0 - 8, w) || place(x + 6, y0 + 19, w) || place(x - w - 6, y0 + 4, w) || place(x + 6, y0 - 23, w) || place(x + 6, y0 + 34, w) || place(x + 6, y0 - 38, w)) { const b = boxes[boxes.length - 1]; lab += `<text x="${b[0]}" y="${b[3] - 3}" font-size="12.5" font-weight="650" fill="${s.hue}" paint-order="stroke" stroke="#fff" stroke-width="3.5" stroke-linejoin="round" data-s="${s.id}" style="cursor:pointer">${esc(t)}</text>`; } }
+  // marks: red where a rule was bypassed or a hook failed, a small grey cross where a hook refused a call
+  MARKS = []; let mk = ''; const cl = {};
+  for (const s of V) for (const m of s.mk) { if (m.t < from || m.t > to) continue; const l = laneOf(m.p); if (!l) continue; const x = px(m.t), k = l.key + (m.k === 'refused' ? 'r' : 'b') + Math.round(x / 16); (cl[k] || (cl[k] = { l, x, ms: [], bad: m.k !== 'refused' })).ms.push(m); }
+  for (const c of Object.values(cl)) { const y = c.l.y - oy + 11, i = MARKS.push(c) - 1, m = c.ms[0], sv = m.s.act.vis.length ? visAt(m.s.act, m.t) : null, svy = sv ? yOf(m.s, sv.lk, m.t) : 0;
+    if (c.bad) mk += (sv ? `<line x1="${c.x}" y1="${y}" x2="${c.x}" y2="${svy}" stroke="#c62828" stroke-width="1" opacity=".45" stroke-dasharray="2 2"/>` : '') + `<g data-m="${i}" style="cursor:pointer"><circle cx="${c.x}" cy="${y}" r="9" fill="#c62828" stroke="#fff" stroke-width="2"/><text x="${c.x}" y="${y + 4.5}" text-anchor="middle" font-size="12.5" font-weight="700" fill="#fff">${c.ms.length > 1 ? c.ms.length : '!'}</text></g>`;
+    else mk += `<g data-m="${i}" style="cursor:pointer"><rect x="${c.x - 7}" y="${y - 7}" width="14" height="14" fill="transparent"/><path d="M${c.x - 3.5},${y - 3.5}l7,7m0,-7l-7,7" stroke="#8b95a5" stroke-width="1.8" stroke-linecap="round"/></g>`; }
+  const nowX = px(NOW); if (nowX > 0 && nowX <= W + 1) o += `<line x1="${nowX}" y1="${AX}" x2="${nowX}" y2="${H}" stroke="#1d64d8" stroke-width="1" stroke-dasharray="3 3" opacity=".5"/>`;
+  const play = playT == null ? '' : `<line x1="${px(playT)}" y1="0" x2="${px(playT)}" y2="${H}" stroke="#0f172a" stroke-width="1.5"/><rect x="${px(playT)}" y="${AX}" width="${W}" height="${H}" fill="#fff" opacity=".93"/><text x="${px(playT) + 6}" y="${AX + 14}" font-size="12.5" font-weight="650" fill="#0f172a">${dy(playT)} ${tm(playT)}</text>` +
+    V.filter(s => s.act.vis.length && s.t0 <= playT && playT <= s.end + LIVE).map(s => { const v = visAt(s.act, playT), py = yOf(s, v.lk, playT); return `<circle cx="${px(playT)}" cy="${py}" r="7" fill="${s.hue}" stroke="#fff" stroke-width="2"/><text x="${px(playT) + 12}" y="${py + 4}" font-size="12.5" font-weight="650" fill="${s.hue}">${esc(cut(name(s), 34))}</text>`; }).join('');
+  $('cv').innerHTML = o + mk + lab + play + `<rect x="0" y="0" width="${W}" height="${AX}" fill="#fff"/><line x1="0" y1="${AX}" x2="${W}" y2="${AX}" stroke="#e6e9ee"/>` + top;
+  $('cv').classList.toggle('hl', !!(sel || hov));
+  drawHeads(from, to); drawGut(V, Tn); drawTop(V, from, to); drawOver(); drawLegend();
+}
+function drawHeads(from, to) { let o = ''; const mx = Math.max(1, ...LN.filter(l => !l.title && !l.fold).map(l => l.tk)); const landed = DRAWN.length;
+  for (const l of LN) { const y = l.y - oy; if (l.gfirst) o += `<div class="grp" style="top:${y - 14}px">${esc(l.g)}</div>`;
+    if (l.fold) { o += `<div class="lh fold" style="top:${y}px;height:${l.h}px" title="${esc(l.fold.map(i => PIPE[i].title).join(', '))}">Nothing has run here yet: ${esc(l.fold.map(i => PIPE[i].title).join(', '))}</div>`; continue; }
+    const P = PIPE[l.pid], code = l.pid[0] === 'S' ? l.pid.slice(1) : l.pid, isPath = l.g === 'The path of a task';
+    if (l.step != null) o += `<div class="lh sub" data-l="${l.pid}" style="top:${y}px;height:${l.h}px"><b>${esc(P.steps[l.step].t)}</b><span class="tb"><u style="width:${l.tk / mx * 100}%"></u></span><span class="tv">${l.tk ? tok(l.tk) : ''}</span></div>`;
+    else o += `<div class="lh${isPath ? ' path' : ''}${l.pid === 'S5' ? ' land' : ''}" data-l="${l.pid}" style="top:${y}px;height:${l.h}px" title="${esc(P.line)}"><span class="cv">${l.title ? '&#9662;' : '&#9656;'}</span><span class="cd">${code}</span><b>${esc(P.title)}</b>${l.pid === 'S5' ? `<span class="ld${landed ? '' : ' none'}">${landed ? '&#9670; ' + landed + ' landed' : 'nothing landed'}</span>` : ''}<span class="tb"><u style="width:${l.tk / mx * 100}%"></u></span><span class="tv">${l.tk ? tok(l.tk) : ''}</span></div>`; }
+  $('heads').innerHTML = `<div class="gh"><b>The harness</b> &nbsp;tokens spent here</div>` + o; }
+function drawGut(V, Tn) { const live = V.filter(s => s.head && s.head.st !== 'quiet' && s.head.st !== 'none').sort((a, b) => a.head.y - b.head.y); let o = `<div class="gh"><b>${Tn >= NOW - MIN ? 'Now' : 'At ' + dy(Tn) + ' ' + tm(Tn)}</b> &nbsp;${live.length ? 'where each open session stands' : ''}</div>`, last = AX + 4;
+  for (const s of live) { const st = s.head.st, y = Math.max(last, s.head.y - 22), hr = helpersRun(s, Tn), w = lastWrap(s, Tn); last = y + 64;
+    o += `<div class="gc ${st}" data-s="${s.id}" style="top:${y}px;color:${s.hue}"><i style="background:${s.hue}"></i><b>${esc(name(s))}</b><span>${esc(st === 'waiting' ? 'Asked you ' + dur(Tn - w[0]) + ' ago: ' + first(w[1]) : st === 'silent' ? 'Turn open, nothing heard for ' + dur(Tn - s.end) : stepAt(s, Tn) || 'Working')}</span><em>${hr ? hr + ' helper' + (hr > 1 ? 's' : '') + ' running · ' : ''}${tok(s.total)} so far</em></div>`; }
+  const done = V.filter(s => !live.includes(s)).sort((a, b) => b.end - a.end), y0 = Math.max(last + 10, live.length ? 0 : AX + 8), room = Math.floor((H - y0 - 30) / 50);
+  if (done.length && room > 0) { o += `<div class="gnote" style="top:${y0}px"><b style="color:#0f172a">${live.length ? 'Ended in this stretch' : 'Nothing is running. Ended in this stretch'}</b></div>`; let y = y0 + 24;
+    for (const s of done.slice(0, room)) { o += `<div class="gc done" data-s="${s.id}" style="top:${y}px;color:${s.hue}"><i style="background:#fff;border:2px solid ${s.hue}"></i><b>${esc(name(s))}</b><em>${dy(s.end)} ${tm(s.end)} · ${tok(s.total)} · ${s.landed ? s.landed + ' landed' : 'nothing landed'}</em></div>`; y += 50; }
+    if (done.length > room) o += `<div class="gnote" style="top:${y + 2}px">and ${done.length - room} more</div>`; }
+  $('gut').innerHTML = o; }
+function drawTop(V, from, to) { const Tn = Math.min(to, NOW), P = probs(), c = { working: 0, waiting: 0, quiet: 0 }; for (const s of V) { const st = stateAt(s, Tn); c[st === 'silent' ? 'working' : st === 'none' ? 'quiet' : st]++; }
+  const v = $('verdict'); v.className = P.length ? 'bad' : 'ok'; v.innerHTML = `<i></i>${P.length ? P.length + ' problem' + (P.length > 1 ? 's' : '') : 'No problems'}`;
+  $('cnts').innerHTML = `<span class="cnt w"><i></i><b>${c.working}</b> working</span> &nbsp; <span class="cnt a"><i></i><b>${c.waiting}</b> waiting for you</span> &nbsp; <span class="cnt"><i></i><b>${c.quiet}</b> ended</span>`;
+  $('needs').innerHTML = V.filter(s => stateAt(s, Tn) === 'waiting').map(s => `<span class="need" data-s="${s.id}">Needs you: ${esc(cut(name(s), 30))}</span>`).join('');
+  $('range').textContent = dy(from) + ' ' + tm(from) + ' to ' + (to >= NOW - MIN ? 'now' : dy(to) + ' ' + tm(to));
+  document.querySelectorAll('#win button').forEach(b => b.classList.toggle('on', b.dataset.w === winKey)); }
+function drawLegend() { $('legend').innerHTML = `<span><svg width="34" height="14"><rect x="1" y="2" width="32" height="10" rx="5" fill="#93b4f1"/><line x1="1" y1="7" x2="33" y2="7" stroke="#2563eb" stroke-width="2.4"/></svg>line: a session · band: its work and its helpers', thicker = more tokens a minute</span><span><svg width="14" height="14"><path d="M1,7L7,1L13,7L7,13Z" fill="#166534"/></svg>landed (a commit)</span><span><svg width="18" height="18"><circle cx="9" cy="9" r="8" fill="#c62828"/><text x="9" y="13.5" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">!</text></svg>a rule was bypassed</span><span><svg width="12" height="12"><path d="M2,2l8,8m0,-8l-8,8" stroke="#8b95a5" stroke-width="1.8" stroke-linecap="round"/></svg>a hook refused a call</span><span>places are inferred from each call</span>`; }
+
+// ---- the strip: everything since the first session; the frame is the stretch shown above
+let OVW = 1;
+function drawOver() { const el = $('over'), Wd = el.clientWidth - 28, Hh = el.clientHeight - 8; OVW = Wd; const X = t => SC.X(t) / SC.total * Wd, lanes = [], lane = {};
+  for (const s of S) { let L = 0; while ((lanes[L] || 0) > s.t0) L++; lanes[L] = s.end + 20 * MIN; lane[s.id] = L; }
+  const rh = Math.min(8, (Hh - 18) / lanes.length); let o = '', lastLab = -99, lastDay = '';
+  SC.M.forEach((m, i) => { const x = m.x0 / SC.total * Wd; if (i) o += `<line x1="${x - 5}" y1="15" x2="${x - 5}" y2="${Hh}" stroke="#e5e7eb" stroke-dasharray="2 3"/>`; const d = dy(m[0] + 8 * MIN); if (d !== lastDay && x - lastLab > 76) { o += `<text x="${x}" y="11" font-size="12" fill="#64748b">${esc(d)}</text>`; lastLab = x; lastDay = d; } });
+  for (const s of S) { const y = 17 + lane[s.id] * rh; o += `<line x1="${X(s.t0)}" y1="${y + rh / 2 - 1}" x2="${X(s.end)}" y2="${y + rh / 2 - 1}" stroke="#e3e6ea" stroke-width="1.5"/>`;
+    for (const x of s.segs) { const a = X(x[0]), b = Math.max(X(x[1]), a + 2.5); o += `<rect x="${a}" y="${y}" width="${b - a}" height="${Math.max(2, rh - 2.5)}" rx="2" fill="${s.hue}" opacity="${sel && sel !== s.id ? .25 : .85}"/>`; }
+    for (const m of s.mk) if (m.k !== 'refused') o += `<circle cx="${X(m.t)}" cy="${y + rh / 2 - 1}" r="3" fill="#c62828"/>`; }
+  const a = v0 / SC.total * Wd, b = v1 / SC.total * Wd; o += `<rect x="${a}" y="14" width="${Math.max(b - a, 6)}" height="${Hh - 14}" fill="rgba(29,100,216,.07)" stroke="#1d64d8" stroke-width="1.5" rx="4"/><rect x="${a - 3}" y="${Hh / 2 - 4}" width="6" height="20" rx="3" fill="#1d64d8"/><rect x="${b - 3}" y="${Hh / 2 - 4}" width="6" height="20" rx="3" fill="#1d64d8"/>`;
+  if (playT != null) o += `<line x1="${X(playT)}" y1="12" x2="${X(playT)}" y2="${Hh}" stroke="#0f172a" stroke-width="1.5"/>`;
+  el.innerHTML = `<svg viewBox="0 0 ${Wd} ${Hh}" preserveAspectRatio="none">${o}</svg>`; }
+(function brush() { const el = $('over'); let mode = null, x0 = 0, a0 = 0, b0 = 0; const u = e => (e.clientX - el.getBoundingClientRect().left - 14) / OVW * SC.total;
+  el.addEventListener('mousedown', e => { const x = u(e), tol = 8 / OVW * SC.total; mode = Math.abs(x - v0) < tol ? 'l' : Math.abs(x - v1) < tol ? 'r' : x > v0 && x < v1 ? 'm' : 'n'; x0 = x; a0 = v0; b0 = v1; if (mode === 'n') { v0 = x; v1 = x + 10; mode = 'r'; } e.preventDefault(); });
+  addEventListener('mousemove', e => { if (!mode) return; const x = u(e), d = x - x0; if (mode === 'l') v0 = Math.min(x, v1 - 10); else if (mode === 'r') v1 = Math.max(x, v0 + 10); else { v0 = a0 + d; v1 = b0 + d; } winKey = ''; req(); });
+  addEventListener('mouseup', () => { mode = null; }); })();
+
+// ---- the canvas: wheel zooms time about the pointer, drag moves it, a click opens the detail
+let raf = 0; const req = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; render(); }); };
+function zoom(f, cx) { const u = v0 + cx / W * (v1 - v0), n = Math.max(8, Math.min(SC.total * 1.1, (v1 - v0) * f)); v0 = u - cx / W * n; v1 = v0 + n; winKey = ''; req(); }
+(function canvas() { const el = $('cvw'); let d = null, moved = false;
+  el.addEventListener('wheel', e => { e.preventDefault(); if (e.shiftKey) { const sh = e.deltaY / W * (v1 - v0); v0 += sh; v1 += sh; winKey = ''; req(); } else zoom(Math.pow(1.0018, e.deltaY), e.clientX - el.getBoundingClientRect().left); }, { passive: false });
+  el.addEventListener('mousedown', e => { d = { x: e.clientX, y: e.clientY, a: v0, b: v1, oy }; moved = false; el.classList.add('drag'); });
+  addEventListener('mousemove', e => { if (d) { const dx = (e.clientX - d.x) / W * (d.b - d.a); if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) > 4) moved = true; if (moved) { v0 = d.a - dx; v1 = d.b - dx; oy = d.oy - (e.clientY - d.y); winKey = ''; req(); } return; }
+    const r = el.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top, tip = $('tip'); if (mx < 0 || my < 0 || mx > r.width || my > r.height) { tip.style.display = 'none'; if (hov) { hov = null; req(); } return; }
+    const m = e.target.closest && e.target.closest('[data-m]'); let html = '', h = null;
+    if (m) { const c = MARKS[+m.dataset.m]; html = `<b>${esc(MK[c.ms[0].k])}</b>${c.ms.length > 1 ? ' × ' + c.ms.length : ''}<br><span>${esc(HOOKN[c.ms[0].d] || '')} · ${esc(name(c.ms[0].s))} · ${tm(c.ms[0].t)}</span>`; h = c.ms[0].s.id; }
+    else { const hit = hitAt(mx, my); if (hit) { const P = PIPE[hit.l.pid], hr = helpersRun(hit.s, hit.t); h = hit.s.id; html = `<b>${esc(name(hit.s))}</b><br><span>${esc(P.title)}${hit.l.step != null ? ': ' + esc(P.steps[hit.l.step].t) : ''} · ${dy(hit.t)} ${tm(hit.t)}${hit.tk ? ' · ' + tok(hit.tk / ((v1 - v0) / W * 6)) + ' tokens a minute here' : ''}${hr ? ' · ' + hr + ' helpers running' : ''}</span>`; } }
+    if (html) { tip.innerHTML = html; tip.style.display = 'block'; const sr = $('stage').getBoundingClientRect(); tip.style.left = Math.min(e.clientX - sr.left + 14, sr.width - 350) + 'px'; tip.style.top = (e.clientY - sr.top + 16) + 'px'; } else tip.style.display = 'none';
+    if (h !== hov) { hov = h; document.querySelectorAll('#cv g.ss').forEach(g => g.classList.toggle('on', g.dataset.s === sel || g.dataset.s === hov)); $('cv').classList.toggle('hl', !!(sel || hov)); } });
+  addEventListener('mouseup', e => { if (!d) return; el.classList.remove('drag'); const was = d; d = null; if (moved) return; const r = el.getBoundingClientRect(), mx = was.x - r.left, my = was.y - r.top;
+    const m = e.target.closest && e.target.closest('[data-m]'), t = e.target.closest && e.target.closest('text[data-s]');
+    if (m) { det = { k: 'mark', c: MARKS[+m.dataset.m] }; sel = det.c.ms[0].s.id; } else if (t) { sel = t.dataset.s; det = { k: 's', id: sel }; } else { const hit = hitAt(mx, my); if (hit) { sel = hit.s.id; det = { k: 's', id: sel }; } else { sel = null; det = null; } } drawDet(); req(); });
+  el.addEventListener('dblclick', e => zoom(.5, e.clientX - el.getBoundingClientRect().left)); })();
+function hitAt(mx, my) { const l = LN.find(l => !l.title && !l.fold && my + oy >= l.y && my + oy < l.y + l.h); if (!l || !l.n) return null; const tr = Math.floor((my + oy - l.r0) / l.th), b = Math.floor(mx / 6), pad = 5 / W * (v1 - v0) * MIN, t = SC.inv(v0 + mx / W * (v1 - v0));
+  for (const s of visS()) { const I = (s.iv[l.key] || []).find(I => I.tr === tr && I.a - pad <= t && t <= I.b + pad); if (I && s.bins && s.bins[l.key]) return { s, l, tk: s.bins[l.key][b] || 0, t }; } return null; }
+$('heads').addEventListener('click', e => { const l = e.target.closest('[data-l]'); if (!l) return; const id = l.dataset.l; if (open.has(id)) open.delete(id); else open.add(id); pack(); req(); });
+function fit(s) { const a = SC.X(s.t0), b = SC.X(Math.min(s.end, NOW)), m = Math.max(6, (b - a) * .12); v0 = a - m; v1 = b + m; winKey = ''; }
+$('gut').addEventListener('mouseover', e => { const c = e.target.closest('[data-s]'), h = c ? c.dataset.s : null; if (h !== hov) { hov = h; req(); } });
+$('gut').addEventListener('mouseleave', () => { if (hov) { hov = null; req(); } });
+$('gut').addEventListener('dblclick', e => { const c = e.target.closest('[data-s]'); if (c) { fit(byId[c.dataset.s]); req(); } });
+$('gut').addEventListener('click', e => { const c = e.target.closest('[data-s]'); if (c) { sel = c.dataset.s; det = { k: 's', id: sel }; drawDet(); req(); } });
+$('top').addEventListener('click', e => { const b = e.target.closest('#win button'), n = e.target.closest('.need'); if (b) { setWin(b.dataset.w); req(); } else if (n) { sel = n.dataset.s; det = { k: 's', id: sel }; drawDet(); req(); } else if (e.target.closest('#verdict')) { det = { k: 'probs' }; drawDet(); } else if (e.target.id === 'zin') zoom(.6, W / 2); else if (e.target.id === 'zout') zoom(1.6, W / 2); });
+addEventListener('keydown', e => { if (e.key === 'Escape') { det = null; sel = null; drawDet(); req(); } });
+addEventListener('resize', req);
+
+// ---- replay: the stretch shown is drawn again from left to right
+let playing = 0;
+$('play').addEventListener('click', () => { if (playing) { cancelAnimationFrame(playing); playing = 0; playT = null; $('play').innerHTML = '<b>&#9654;</b>Replay'; render(); return; }
+  const a = v0, b = SC.X(Math.min(SC.inv(v1), NOW)), t0 = performance.now(), LEN = 14000; $('play').innerHTML = '<b>&#9632;</b>Stop';
+  const step = now => { const f = Math.min(1, (now - t0) / LEN); playT = SC.inv(a + (b - a) * f); render(); if (f < 1) playing = requestAnimationFrame(step); else { playing = 0; playT = null; $('play').innerHTML = '<b>&#9654;</b>Replay'; render(); } };
+  playing = requestAnimationFrame(step); });
+
+// ---- detail, one click down
+function drawDet() { const el = $('det'); if (!det) { el.style.display = 'none'; return; } let o = '<button class="x" id="detx">&#10005;</button>';
+  const bars = (rows, mx) => rows.map(([n, v]) => `<div class="bar"><span>${esc(n)}</span><span><u style="width:${Math.max(1, v / mx * 100)}%"></u></span><em>${tok(v)}</em></div>`).join('');
+  if (det.k === 's') { const s = byId[det.id], st = stateAt(s, NOW), tk = {}, all = [s.act, ...s.hact]; for (const A of all) for (const v of A.vis) { const p = pipeOf(v.p); tk[p] = (tk[p] || 0) + v.tk; }
+    const rows = Object.entries(tk).sort((a, b) => b[1] - a[1]).map(([p, v]) => [PIPE[p].title, v]), seq = s.act.vis.map(v => pipeOf(v.p)).filter((p, i, a) => p !== a[i - 1]), w = lastWrap(s, NOW), kinds = {}; for (const h of s.helpers) kinds[h.kind || 'other'] = (kinds[h.kind || 'other'] || 0) + 1;
+    const landed = all.reduce((a, A) => a + A.vis.filter(v => pipeOf(v.p) === 'S5').length, 0), P = byId[s.parent];
+    o += `<h2 style="color:${s.hue}">${esc(name(s))}</h2><p><a href="#" id="fitb" style="color:#1d64d8">Fit the picture to this session</a></p><p>${st === 'working' ? 'Working now' : st === 'waiting' ? 'Waiting for you' : st === 'silent' ? 'Turn open, nothing heard' : 'Ended ' + dy(s.end) + ' ' + tm(s.end)} · started ${dy(s.t0)} ${tm(s.t0)}${P ? ' by ' + esc(name(P)) : ''} · ${esc(s.model || '')}</p><p><b>${tok(s.total)}</b> tokens · ${s.helpers.length} helpers · ${landed ? landed + ' landed' : '<b style="color:#c62828">nothing landed</b>'}</p>`;
+    if (w) o += `<h3>Its last report</h3><p>${esc(w[1])}</p>`;
+    o += `<h3>Where its tokens went</h3>${bars(rows, rows.length ? rows[0][1] : 1)}<h3>Its own path through the harness</h3><div class="pth">${seq.slice(0, 60).map(p => `<span class="${p === 'S5' ? 'l' : p === 'S4' ? 'c' : ''}">${esc(PIPE[p].title)}</span>`).join('')}${seq.length > 60 ? '<span>…</span>' : ''}</div>`;
+    if (s.helpers.length) o += `<h3>Helpers</h3><p>${Object.entries(kinds).sort((a, b) => b[1] - a[1]).map(([k, n]) => n + ' ' + esc(k)).join(' · ')}</p>`;
+    if (s.mk.length) { const g = {}; for (const m of s.mk) (g[m.k + m.d] || (g[m.k + m.d] = [])).push(m); o += '<h3>Problems and notes</h3>' + Object.values(g).sort((a, b) => (a[0].k === 'refused') - (b[0].k === 'refused')).map(a => `<div class="pr${a[0].k === 'refused' ? ' n' : ''}" data-t="${a[0].t}">${esc(MK[a[0].k])}${a.length > 1 ? ' × ' + a.length : ''}<small>${esc(HOOKN[a[0].d] || a[0].d)} · ${dy(a[0].t)} ${tm(a[0].t)}</small></div>`).join(''); }
+    if (s.plan && s.plan.length) o += '<h3>Its plan</h3>' + s.plan.map(x => `<div class="pl ${x.s === 'completed' ? 'd' : x.s === 'in_progress' ? 'c' : ''}">${x.s === 'completed' ? '&#10003;' : x.s === 'in_progress' ? '&#9656;' : '&#9675;'} ${esc(x.c)}</div>`).join(''); }
+  else if (det.k === 'mark') { const c = det.c, m = c.ms[0]; o += `<h2>${esc(MK[m.k])}${c.ms.length > 1 ? ' × ' + c.ms.length : ''}</h2><p>${esc(PIPE[pipeOf(m.p)].title)}: ${esc(PIPE[pipeOf(m.p)].steps[stepOf(m.p)].t)}</p>` + c.ms.map(x => `<div class="pr${x.k === 'refused' ? ' n' : ''}" data-s="${x.s.id}">${esc(HOOKN[x.d] || x.d)}<small>${esc(name(x.s))} · ${dy(x.t)} ${tm(x.t)}${x.k === 'window' ? ' · ' + x.d.split('/').map(n => tok(+n)).join(' against a limit of ') : ''}</small></div>`).join(''); }
+  else if (det.k === 'probs') { const P = probs(), g = {}; for (const m of P) (g[m.k] || (g[m.k] = [])).push(m); o += `<h2>${P.length ? P.length + ' problems in the stretch shown' : 'No problems in the stretch shown'}</h2>` + Object.entries(g).map(([k, a]) => `<h3>${esc(MK[k])} (${a.length})</h3>` + a.slice(0, 12).map(x => `<div class="pr" data-s="${x.s.id}" data-t="${x.t}">${esc(name(x.s))}<small>${esc(HOOKN[x.d] || (k === 'window' ? x.d.split('/').map(n => tok(+n)).join(' against a limit of ') : x.d))} · ${dy(x.t)} ${tm(x.t)}</small></div>`).join('')).join(''); }
+  el.innerHTML = o; el.style.display = 'block'; }
+$('det').addEventListener('click', e => { if (e.target.id === 'fitb') { e.preventDefault(); fit(byId[det.id]); req(); return; } if (e.target.id === 'detx') { det = null; sel = null; drawDet(); req(); return; } const r = e.target.closest('.pr'); if (!r) return; if (r.dataset.t) { const u = SC.X(+r.dataset.t), n = v1 - v0; if (u < v0 || u > v1) { v0 = u - n / 2; v1 = u + n / 2; winKey = ''; } } if (r.dataset.s) { sel = r.dataset.s; } req(); });
+
+setWin(winKey === 'all' || +winKey ? winKey : '48'); if (qs.get('sel') && byId[qs.get('sel')]) { sel = qs.get('sel'); det = { k: 's', id: sel }; if (qs.get('fit')) fit(byId[sel]); }
+render(); drawDet(); if (qs.get('play')) { playT = SC.inv(v0 + (v1 - v0) * +qs.get('play')); render(); }
+</script></body></html>

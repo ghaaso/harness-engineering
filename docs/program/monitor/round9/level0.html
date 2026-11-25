@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Level 0: overview</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #fff; color: #18212d; font-family: "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+  #head { height: 58px; display: flex; align-items: center; gap: 14px; padding: 0 28px; border-bottom: 1px solid #e3e6eb; box-sizing: border-box; }
+  #clock { font-size: 21px; font-weight: 700; margin-right: 14px; font-variant-numeric: tabular-nums; }
+  .chip { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px; border-radius: 17px; font-size: 15.5px; font-weight: 600; border: 1.6px solid; }
+  .chip.work { color: #0f6f49; background: #ecf9f2; border-color: #178f60; }
+  .chip.wait { color: #fff; background: #1463dd; border-color: #1463dd; }
+  .chip.nowait { color: #5a6676; background: #fff; border-color: #cfd4db; font-weight: 400; }
+  .chip.fail { color: #fff; background: #d42a1c; border-color: #d42a1c; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #178f60; }
+  #pic { display: block; width: 100vw; height: calc(100vh - 58px); }
+  #err { color: #d42a1c; padding: 20px; white-space: pre-wrap; font: 14px Consolas, monospace; }
+</style></head>
+<body>
+<div id="head"><span id="clock"></span></div>
+<svg id="pic" xmlns="http://www.w3.org/2000/svg" font-family='"Segoe UI", system-ui, sans-serif'></svg>
+<div id="err"></div>
+<script src="../round8/clickable/shared/data.js"></script>
+<script>
+// One fixed state: Tue 24 Nov 2026 at 03:29, layers up to 0. No buttons, no replay.
+var CFG = { level: 0, hour: 3, minute: 29, open: 'BR1' };
+// Round 9 proof of concept. One picture, drawn from TOOL_DATA at one fixed minute.
+// Layers: 0 = you and the open sessions; 1 = + hooks; 2 = + one session opened; 3 = + the day's history.
+function renderPicture(D, cfg, measureText) {
+  var hm = D.hm, now = cfg.now, LEVEL = cfg.level;
+  var DAY0 = Math.floor(now / 1440) * 1440;
+  var st = D.stateAt(now), stById = {};
+  st.sessions.forEach(function (s) { stById[s.id] = s; });
+  function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function F(size, weight) { return (weight || 400) + ' ' + size + 'px "Segoe UI", system-ui, sans-serif'; }
+  function tw(t, size, weight) { return measureText(String(t), F(size, weight)); }
+  function fit(t, size, weight, maxW) {
+    t = String(t); if (tw(t, size, weight) <= maxW) return t;
+    var s = t; while (s.length > 1 && tw(s + '…', size, weight) > maxW) s = s.slice(0, -1);
+    return s.replace(/[\s,;:·]+$/, '') + '…';
+  }
+  function wrap(t, size, weight, maxW, maxLines) {
+    var words = String(t).split(/\s+/), lines = [], i = 0;
+    while (i < words.length) {
+      if (lines.length === maxLines - 1) { lines.push(fit(words.slice(i).join(' '), size, weight, maxW)); break; }
+      var cur = words[i++];
+      while (i < words.length && tw(cur + ' ' + words[i], size, weight) <= maxW) cur += ' ' + words[i++];
+      lines.push(cur);
+    }
+    return lines;
+  }
+  function dur(m) { m = Math.max(1, Math.round(m)); if (m < 60) return m + ' min'; var h = Math.floor(m / 60), r = m % 60; return h + ' h' + (r ? ' ' + (r < 10 ? '0' : '') + r + ' min' : ''); }
+  function hookName(id) { return (D.partById[id] || { name: id }).name; }
+  function uniq(a) { return a.filter(function (v, i) { return a.indexOf(v) === i; }); }
+
+  var C = { ink: '#18212d', grey: '#566272', faint: '#8691a0', line: '#a9b2be', soft: '#eef0f3', softer: '#f5f6f8',
+    work: '#178f60', workBg: '#ecf9f2', wait: '#1463dd', waitBg: '#e6f0ff', fail: '#d42a1c', failBg: '#fdebe8',
+    ref: '#c97a00', refBg: '#fff4dc', pass: '#54a889', quiet: '#7a8695' };
+
+  // ---------- sessions of the day, as a tree ----------
+  var all = D.sessions.filter(function (s) { return s.start <= now && (s.end === null || s.end >= DAY0); }).map(function (s) {
+    var x = stById[s.id], state = x ? x.state : 'ended';
+    return { s: s, id: s.id, tag: s.tag, name: s.name, start: s.start, state: state, open: state !== 'ended', x: x, kids: [], parent: null };
+  });
+  var byId = {}; all.forEach(function (n) { byId[n.id] = n; });
+  all.forEach(function (n) { var p = n.s.parent && byId[n.s.parent]; if (p) { n.parent = p; p.kids.push(n); } });
+  all.sort(function (a, b) { return a.start - b.start; });
+  all.forEach(function (n) { n.kids.sort(function (a, b) { return a.start - b.start; }); });
+  function hasOpen(n) { return n.open || n.kids.some(hasOpen); }
+  function vis(n) { return LEVEL >= 3 || hasOpen(n); }
+  // a session that has ended hands its line to one child (the one that leads to work still open, else its last)
+  all.forEach(function (n) { n.heir = null; if (!n.open && n.kids.length) { var w = n.kids.filter(hasOpen); n.heir = w.length ? w[w.length - 1] : n.kids[n.kids.length - 1]; } });
+
+  all.forEach(function (n) {
+    var ev = D.events.filter(function (e) { return e.session === n.id && e.t >= DAY0 && e.t <= now && e.result === 'failed'; });
+    n.failParts = uniq(ev.map(function (e) { return e.part; }));
+    n.failNames = n.failParts.map(hookName);
+    n.unseen = n.x ? n.x.marks : [];
+    n.unseenFailNames = uniq(n.unseen.filter(function (m) { return m.result === 'failed'; }).map(function (m) { return hookName(m.part); }));
+  });
+
+  // ---------- node sizes ----------
+  var CW = 232, WW = 300, PILL_H = 26;
+  all.forEach(function (n) {
+    if (n.open) {
+      n.card = true; var waiting = n.state === 'waiting'; n.w = waiting ? WW : CW;
+      n.titleLines = wrap(n.name, 15.5, 600, n.w - 24, 2);
+      var h = 37 + n.titleLines.length * 19;
+      if (waiting) { n.reportLines = wrap('“' + n.x.wait.report + '”', 13.5, 400, n.w - 24, 4); h += 3 + n.reportLines.length * 17; }
+      else { n.stepLine = n.x.step ? fit(n.x.step, 13.5, 400, n.w - 24) : ''; if (n.stepLine) h += 19; }
+      if (n.x.helpersRunning.length) h += 19;
+      h += 9; if (n.failNames.length) h += 9; n.h = h;
+    } else {
+      n.card = false; n.h = PILL_H; n.titleFit = fit(n.name, 13, 400, 122); n.mark = n.failNames.length ? 17 : 0;
+      n.pillW = 10 + n.mark + tw(n.tag, 13, 700) + 7 + tw(n.titleFit, 13, 400) + 11;
+      n.badgeW = n.unseenFailNames.length ? 7 + tw(n.unseenFailNames.join(', ') + ' failed', 13, 600) : 0;
+      n.w = n.pillW + n.badgeW;
+    }
+  });
+
+  // ---------- quiet stretches (nothing in a turn, no helper running) ----------
+  var GAP_MIN = 30, iv = [];
+  D.sessions.forEach(function (s) { s.segs.forEach(function (g) { iv.push([g[0], g[1]]); }); s.helpers.forEach(function (h) { iv.push([h.start, h.end]); }); });
+  iv = iv.map(function (p) { return [Math.max(p[0], DAY0), Math.min(p[1], now)]; }).filter(function (p) { return p[1] >= p[0]; }).sort(function (a, b) { return a[0] - b[0]; });
+  var gaps = [], curT = DAY0;
+  iv.forEach(function (p) { if (p[0] - curT >= GAP_MIN) gaps.push({ from: curT, to: p[0] }); curT = Math.max(curT, p[1]); });
+  if (now - curT >= GAP_MIN) gaps.push({ from: curT, to: now, trailing: true });
+  gaps.forEach(function (g) {
+    g.waited = D.sessions.filter(function (s) { return s.waits.some(function (w) { return Math.min(w[1], g.to) - Math.max(w[0], g.from) >= Math.min(10, (g.to - g.from) / 2); }); }).map(function (s) { return s.tag; });
+  });
+
+  // ---------- rows: start order runs downward ----------
+  var ROW = 29, BAND_H = 30, CARD_GAP = 26, rowY = 0, rowT = -1e9, rowIds = {}, maxBottom = 0, first = true, bands = [], rows = [];
+  all.forEach(function (n) {
+    var same = !first && (n.start - rowT) <= 3 && !(n.parent && rowIds[n.parent.id]);
+    var y = first ? 0 : (same ? rowY : rowY + ROW);
+    var g = null; gaps.forEach(function (q) { if (!g && !q.used && !q.trailing && q.to <= n.start + 1 && q.from >= rowT - 1) g = q; });
+    if (g) { g.used = true; g.y = maxBottom + 14; bands.push(g); y = Math.max(y, g.y + BAND_H + 16); }
+    if (n.parent) {
+      var p = n.parent; y = Math.max(y, p.y + p.h + (p.card ? CARD_GAP : (p.heir === n ? 5 : 12)));
+      for (var i = 0; i < p.kids.length; i++) { var sib = p.kids[i]; if (sib === n) break; if (sib.card && y !== sib.y && y < sib.y + sib.h + CARD_GAP) y = sib.y + sib.h + CARD_GAP; }
+    }
+    if (!same || y !== rowY) { rowY = y; rowT = n.start; rowIds = {}; rows.push({ y: y, t: n.start, n: n }); }
+    rowIds[n.id] = 1; n.y = y; maxBottom = Math.max(maxBottom, y + n.h); first = false;
+  });
+  gaps.forEach(function (q) { if (q.trailing) { q.y = maxBottom + 14; bands.push(q); maxBottom = q.y + BAND_H; } });
+  var treeBottom = maxBottom;
+
+  // ---------- columns: a session keeps its own line; the child that takes over continues it ----------
+  var occ = [];
+  function isFree(c, a, b) { return !(occ[c] || []).some(function (p) { return a < p[1] && b > p[0]; }); }
+  function take(c, a, b) { (occ[c] = occ[c] || []).push([a, b]); }
+  var maxCol = -1;
+  function place(n, col) {
+    n.col = col; maxCol = Math.max(maxCol, col); take(col, n.y - 8, n.open ? 1e9 : n.y + n.h + 8);
+    if (n.heir) { take(col, n.y, n.heir.y); place(n.heir, col); }
+    n.kids.forEach(function (k) { if (k === n.heir) return; var c = col + 1; while (!isFree(c, k.y - 22, k.open ? 1e9 : k.y + k.h + 8)) c++; place(k, c); });
+  }
+  all.filter(function (n) { return !n.parent; }).forEach(function (r) { place(r, maxCol + 1); });
+  var cols = []; for (var ci = 0; ci <= maxCol; ci++) cols.push({ L: 40, R: 40 });
+  all.forEach(function (n) { var c = cols[n.col]; c.L = Math.max(c.L, n.card ? n.w / 2 : n.pillW / 2); c.R = Math.max(c.R, n.card ? n.w / 2 : n.w - n.pillW / 2); });
+  var CG = 26, xx = 0; cols.forEach(function (c) { c.x = xx + c.L; xx += c.L + c.R + CG; });
+  var treeW = xx - CG; all.forEach(function (n) { n.cx = cols[n.col].x - treeW / 2; });
+
+  // ---------- hooks ----------
+  var GROUPS = [
+    { cap: 'when a session starts', hooks: ['hook:library-start'] },
+    { cap: 'the session’s window', hooks: ['hook:window-ceiling'] },
+    { cap: 'when a helper starts', hooks: ['hook:tier-hook', 'hook:plan-gate', 'hook:count-gate', 'hook:fanout-gate', 'hook:creep-gate'] },
+    { cap: 'writes to the record', hooks: ['hook:record-guard', 'hook:journal-watch'] },
+    { cap: 'what reaches you', hooks: ['hook:owner-report'] }];
+  var GIN = 12, GOUT = 30, gates = {}, gateList = [], wallW = 0, rank = { passed: 1, refused: 2, failed: 3 };
+  var ROWS = [['failed', 'failed'], ['refused', 'refused'], ['passed', 'let through'], ['earlier', 'failed earlier']];
+  GROUPS.forEach(function (g) { g.hooks.forEach(function (h) { gates[h] = { id: h, name: hookName(h), group: g, rows: { failed: [], refused: [], passed: [], earlier: [] }, inc: [] }; gateList.push(gates[h]); }); });
+  st.sessions.forEach(function (x) {
+    var m = {}; (x.hooks || []).forEach(function (h) { m[h] = 'passed'; });
+    x.marks.forEach(function (k) { if (!m[k.part] || rank[k.result] > rank[m[k.part]]) m[k.part] = k.result; });
+    Object.keys(m).forEach(function (h) { if (gates[h]) gates[h].rows[m[h]].push(x.tag); });
+    if (byId[x.id]) byId[x.id].hookRes = m;
+  });
+  all.forEach(function (n) { n.failParts.forEach(function (h) { if (gates[h] && gates[h].rows.failed.indexOf(n.tag) < 0) gates[h].rows.earlier.push(n.tag); }); });
+  function tagW(t) { return tw(t, 12.5, 700) + 12; }
+  var maxRows = 1;
+  gateList.forEach(function (g) {
+    g.fired = D.events.some(function (e) { return e.part === g.id && e.t >= DAY0 && e.t <= now; });
+    var w = tw(g.name, 15.5, 600) + 30, nr = 0;
+    ROWS.forEach(function (r) { var tags = g.rows[r[0]]; if (!tags.length) return; nr++; var rw = 12 + 18 + tw(r[1], 13, 600) + 8; tags.forEach(function (t) { rw += tagW(t) + 5; }); w = Math.max(w, rw + 7); });
+    if (!g.fired) w = Math.max(w, tw('not fired today', 13, 400) + 26);
+    g.w = Math.max(w, 112); g.nr = nr; maxRows = Math.max(maxRows, nr);
+  });
+  var GH = 31 + maxRows * 25 + 6;
+  GROUPS.forEach(function (g, gi) { g.x0 = wallW; g.hooks.forEach(function (h, i) { gates[h].x = wallW; wallW += gates[h].w + (i < g.hooks.length - 1 ? GIN : 0); }); g.x1 = wallW; if (gi < GROUPS.length - 1) wallW += GOUT; });
+  GROUPS.forEach(function (g) { g.x0 -= wallW / 2; g.x1 -= wallW / 2; }); gateList.forEach(function (g) { g.x -= wallW / 2; });
+  var yA = treeBottom + 8, yWall = treeBottom + 92, wallBottom = yWall + GH + 30;
+  all.forEach(function (n) {
+    n.hookLines = [];
+    if (!n.open || !n.hookRes) return;
+    Object.keys(n.hookRes).forEach(function (h) {
+      var res = n.hookRes[h]; if (!gates[h]) return;
+      if (res === 'failed' ? LEVEL >= 1 : (LEVEL >= 2 && n.tag === cfg.open)) { var l = { n: n, gate: gates[h], result: res }; n.hookLines.push(l); gates[h].inc.push(l); }
+    });
+  });
+
+  // ---------- drawing ----------
+  var o = [], bb = { x0: 1e9, y0: 1e9, x1: -1e9, y1: -1e9 };
+  function ext(x0, y0, x1, y1) { bb.x0 = Math.min(bb.x0, x0); bb.y0 = Math.min(bb.y0, y0); bb.x1 = Math.max(bb.x1, x1); bb.y1 = Math.max(bb.y1, y1); }
+  function text(x, y, t, size, weight, fill, anchor, extra) { return '<text x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" font-size="' + size + '" font-weight="' + (weight || 400) + '" fill="' + fill + '"' + (anchor ? ' text-anchor="' + anchor + '"' : '') + (extra || '') + '>' + esc(t) + '</text>'; }
+  function tri(x, y, s, fill, stroke) { return '<path d="M' + x + ',' + (y - s) + ' L' + (x + s) + ',' + (y + s * 0.8) + ' L' + (x - s) + ',' + (y + s * 0.8) + ' Z" fill="' + fill + '" stroke="' + (stroke || fill) + '" stroke-width="1.6" stroke-linejoin="round"/>'; }
+  function dia(x, y, s, fill) { return '<path d="M' + x + ',' + (y - s) + ' L' + (x + s) + ',' + y + ' L' + x + ',' + (y + s) + ' L' + (x - s) + ',' + y + ' Z" fill="' + fill + '"/>'; }
+
+  o.push('<defs><marker id="ar" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="' + C.line + '"/></marker>' +
+    '<marker id="arw" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="' + C.wait + '"/></marker>' +
+    '<pattern id="hatch" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="9" height="9" fill="#f1f2f5"/><line x1="0" y1="0" x2="0" y2="9" stroke="#d5d9df" stroke-width="3"/></pattern></defs>');
+
+  var shown = all.filter(vis), roots = shown.filter(function (n) { return !n.parent; });
+  var yYou = -78, yBus = -34;
+  var rootXs = roots.map(function (n) { return n.cx; });
+  var xYou = rootXs.length ? (Math.min.apply(null, rootXs) + Math.max.apply(null, rootXs)) / 2 : 0;
+  var gutterX = -treeW / 2 - 30;
+
+  // quiet-stretch bands (history)
+  if (LEVEL >= 3) bands.forEach(function (g) {
+    var bx0 = gutterX - 150, bx1 = treeW / 2 + 16;
+    o.push('<rect x="' + bx0 + '" y="' + g.y + '" width="' + (bx1 - bx0) + '" height="' + BAND_H + '" rx="6" fill="url(#hatch)"/>');
+    var label = hm(g.from) + ' to ' + hm(g.to) + '   nothing ran for ' + dur(g.to - g.from), lw = tw(label, 14.5, 600);
+    var chip = g.waited.length ? g.waited.join(', ') + ' waited for you' : '', cw = chip ? tw(chip, 13.5, 600) + 36 : 0;
+    var x0 = -(lw + (cw ? cw + 30 : 0)) / 2;
+    o.push('<rect x="' + (x0 - 12) + '" y="' + (g.y + 3) + '" width="' + (lw + 24 + (cw ? cw + 22 : 0)) + '" height="' + (BAND_H - 6) + '" rx="5" fill="#fff"/>');
+    o.push(text(x0, g.y + 20.5, label, 14.5, 600, C.ink, null, ' xml:space="preserve"'));
+    if (chip) { var cx0 = x0 + lw + 26; o.push('<rect x="' + cx0 + '" y="' + (g.y + 4.5) + '" width="' + cw + '" height="' + (BAND_H - 9) + '" rx="10.5" fill="' + C.waitBg + '" stroke="' + C.wait + '" stroke-width="1.5"/>');
+      o.push('<rect x="' + (cx0 + 11) + '" y="' + (g.y + 9.5) + '" width="3.4" height="11" fill="' + C.wait + '"/><rect x="' + (cx0 + 17) + '" y="' + (g.y + 9.5) + '" width="3.4" height="11" fill="' + C.wait + '"/>');
+      o.push(text(cx0 + 27, g.y + 20, chip, 13.5, 600, C.wait)); }
+    ext(bx0, g.y, bx1, g.y + BAND_H);
+  });
+
+  // you
+  if (roots.length) {
+    var ux0 = Math.min(xYou, Math.min.apply(null, rootXs)), ux1 = Math.max(xYou, Math.max.apply(null, rootXs));
+    o.push('<path d="M' + xYou + ',' + (yYou + 24) + ' V' + yBus + ' M' + ux0 + ',' + yBus + ' H' + ux1 + '" fill="none" stroke="' + C.line + '" stroke-width="2"/>');
+    roots.forEach(function (n) { o.push('<path d="M' + n.cx + ',' + yBus + ' V' + (n.y - 2) + '" fill="none" stroke="' + C.line + '" stroke-width="2" marker-end="url(#ar)"/>'); });
+  }
+  o.push('<circle cx="' + xYou + '" cy="' + yYou + '" r="24" fill="' + C.ink + '"/><circle cx="' + xYou + '" cy="' + (yYou - 7) + '" r="7.2" fill="#fff"/><path d="M' + (xYou - 12.5) + ',' + (yYou + 14) + ' a12.5,11.5 0 0 1 25,0 z" fill="#fff"/>');
+  o.push(text(xYou - 35, yYou + 6.5, 'You', 19, 700, C.ink, 'end'));
+  ext(xYou - 80, yYou - 26, xYou + 30, yYou + 26);
+
+  // lines of the tree
+  shown.forEach(function (p) {
+    var endY = p.y + p.h;
+    if (p.heir && vis(p.heir)) endY = Math.max(endY, p.heir.y);
+    p.kids.forEach(function (k) { if (k !== p.heir && vis(k)) endY = Math.max(endY, k.y - 10); });
+    if (p.open && p.hookLines.length) endY = Math.max(endY, yA);
+    if (LEVEL >= 2 && p.tag === cfg.open && p.open) endY = Math.max(endY, yA);
+    if (endY > p.y + p.h) o.push('<path d="M' + p.cx + ',' + (p.y + p.h) + ' V' + (endY - (p.heir && vis(p.heir) && endY === p.heir.y ? 2 : 0)) + '" fill="none" stroke="' + C.line + '" stroke-width="2"' + (p.heir && vis(p.heir) && endY === p.heir.y ? ' marker-end="url(#ar)"' : '') + '/>');
+    p.kids.forEach(function (k) {
+      if (k === p.heir || !vis(k)) return; var ry = k.y - 10, dir = k.cx > p.cx ? 1 : -1;
+      o.push('<path d="M' + p.cx + ',' + ry + ' H' + (k.cx - 7 * dir) + ' Q' + k.cx + ',' + ry + ' ' + k.cx + ',' + (ry + 5) + ' V' + (k.y - 2) + '" fill="none" stroke="' + C.line + '" stroke-width="2" marker-end="url(#ar)"/>');
+    });
+  });
+
+  // hook lines (drawn under the nodes): a failure, and everything of the opened session
+  if (LEVEL >= 1) {
+    gateList.forEach(function (g) { g.inc.sort(function (a, b) { return a.n.cx - b.n.cx; }); });
+    var order = { passed: 0, refused: 1, failed: 2 }, lines = [];
+    all.forEach(function (n) { n.hookLines.forEach(function (l) { lines.push(l); }); });
+    lines.sort(function (a, b) { return order[a.result] - order[b.result]; });
+    lines.forEach(function (l) {
+      var g = l.gate, i = g.inc.indexOf(l), gx = g.x + g.w / 2 + (i - (g.inc.length - 1) / 2) * 16, x0 = l.n.cx, my = (yA + yWall) / 2;
+      var col = l.result === 'failed' ? C.fail : l.result === 'refused' ? C.ref : C.pass, sw = l.result === 'failed' ? 3.2 : l.result === 'refused' ? 2.4 : 1.8;
+      o.push('<path d="M' + x0 + ',' + yA + ' C' + x0 + ',' + (my + 22) + ' ' + gx + ',' + (my - 22) + ' ' + gx + ',' + (yWall - 3) + '" fill="none" stroke="' + col + '" stroke-width="' + sw + '"/>');
+      if (l.result === 'failed') o.push(tri(gx, yWall - 7, 6, C.fail)); else if (l.result === 'refused') o.push(dia(gx, yWall - 7, 6, C.ref)); else o.push('<circle cx="' + gx + '" cy="' + (yWall - 5) + '" r="3.8" fill="' + C.pass + '"/>');
+    });
+  }
+
+  // the waiting line back to you
+  shown.forEach(function (n) {
+    if (n.state !== 'waiting') return; var wx = n.cx + n.w / 2 - 44;
+    o.push('<path d="M' + wx + ',' + (n.y - 2) + ' V' + (yYou + 14) + ' Q' + wx + ',' + yYou + ' ' + (wx - 14) + ',' + yYou + ' H' + (xYou + 30) + '" fill="none" stroke="' + C.wait + '" stroke-width="2.6" stroke-dasharray="7 5" marker-end="url(#arw)"/>');
+    o.push(text(xYou + 46, yYou - 9, n.tag + ' waits for your answer', 14, 600, C.wait));
+    ext(xYou, yYou - 26, wx + 6, n.y);
+  });
+
+  // session nodes
+  shown.forEach(function (n) {
+    var x = n.cx - (n.card ? n.w / 2 : n.pillW / 2), y = n.y;
+    var fails = LEVEL >= 3 ? n.failNames : n.unseenFailNames, strong = n.unseenFailNames.length > 0;
+    if (!n.card) {
+      o.push('<rect x="' + x + '" y="' + y + '" width="' + n.pillW + '" height="' + n.h + '" rx="13" fill="' + C.soft + '" stroke="' + (fails.length ? C.fail : '#d9dde3') + '" stroke-width="' + (fails.length ? 1.6 : 1) + '"/>');
+      if (fails.length) o.push(tri(x + 16, y + 13, 5.5, strong ? C.fail : '#fff', C.fail));
+      o.push(text(x + 10 + n.mark, y + 17.8, n.tag, 13, 700, C.grey)); o.push(text(x + 10 + n.mark + tw(n.tag, 13, 700) + 7, y + 17.8, n.titleFit, 13, 400, C.grey));
+      if (strong) o.push(text(x + n.pillW + 7, y + 17.8, n.unseenFailNames.join(', ') + ' failed', 13, 600, C.fail));
+      ext(x, y, x + n.w, y + n.h); return;
+    }
+    var waiting = n.state === 'waiting', working = n.state === 'working', opened = LEVEL >= 2 && n.tag === cfg.open;
+    var stroke = waiting ? C.wait : working ? C.work : '#b5bdc8', fill = waiting ? C.waitBg : working ? C.workBg : '#fafbfc', sw = waiting ? 3 : working ? 2.2 : 1.5;
+    if (opened) o.push('<rect x="' + (x - 6) + '" y="' + (y - 6) + '" width="' + (n.w + 12) + '" height="' + (n.h + 12) + '" rx="16" fill="none" stroke="' + C.work + '" stroke-width="2" stroke-dasharray="3 4"/>');
+    o.push('<rect x="' + x + '" y="' + y + '" width="' + n.w + '" height="' + n.h + '" rx="11" fill="' + fill + '" stroke="' + stroke + '" stroke-width="' + sw + '"/>');
+    var tgW = tw(n.tag, 13.5, 700) + 16, chipFill = waiting ? C.wait : working ? C.work : C.quiet;
+    o.push('<rect x="' + (x + 10) + '" y="' + (y + 9) + '" width="' + tgW + '" height="23" rx="6" fill="' + chipFill + '"/>' + text(x + 10 + tgW / 2, y + 25.5, n.tag, 13.5, 700, '#fff', 'middle'));
+    var stx = x + n.w - 12;
+    if (waiting) { var wl = 'waits for you · ' + dur(now - n.x.wait.from); o.push(text(stx, y + 25.5, wl, 14, 700, C.wait, 'end')); var px = stx - tw(wl, 14, 700) - 15; o.push('<rect x="' + px + '" y="' + (y + 14) + '" width="3.6" height="12" fill="' + C.wait + '"/><rect x="' + (px + 6.4) + '" y="' + (y + 14) + '" width="3.6" height="12" fill="' + C.wait + '"/>'); }
+    else if (working) { o.push(text(stx, y + 25.5, 'working', 13.5, 600, C.work, 'end')); o.push('<circle cx="' + (stx - tw('working', 13.5, 600) - 10) + '" cy="' + (y + 21) + '" r="4.5" fill="' + C.work + '"/>'); }
+    else { var last = 0; n.s.segs.forEach(function (g) { if (g[1] <= now) last = Math.max(last, g[1]); }); n.s.helpers.forEach(function (h) { if (h.end <= now) last = Math.max(last, h.end); }); o.push(text(stx, y + 25.5, 'quiet ' + dur(now - last), 13.5, 400, C.grey, 'end')); }
+    var ty = y + 52;
+    n.titleLines.forEach(function (l) { o.push(text(x + 12, ty, l, 15.5, 600, working || waiting ? C.ink : C.grey)); ty += 19; });
+    if (waiting) { ty += 1; n.reportLines.forEach(function (l) { o.push(text(x + 12, ty, l, 13.5, 400, C.ink)); ty += 17; }); }
+    else if (n.stepLine) { o.push(text(x + 12, ty - 1, n.stepLine, 13.5, 400, C.grey)); ty += 19; }
+    var hr = n.x.helpersRunning.length;
+    if (hr) { for (var i = 0; i < hr; i++) o.push('<circle cx="' + (x + 17 + i * 13) + '" cy="' + (ty - 5) + '" r="4.6" fill="' + C.work + '"/>'); o.push(text(x + 17 + hr * 13 + 1, ty - 0.5, hr + (hr === 1 ? ' helper' : ' helpers'), 13, 400, C.grey)); }
+    if (fails.length) { var ft = fails.join(', ') + ' failed', fw = tw(ft, 13, 700) + 34, fx0 = x + 12, fy = y + n.h - 12;
+      o.push('<rect x="' + fx0 + '" y="' + fy + '" width="' + fw + '" height="24" rx="12" fill="' + (strong ? C.fail : '#fff') + '" stroke="' + C.fail + '" stroke-width="1.6"/>' + tri(fx0 + 15, fy + 12, 5.5, strong ? '#fff' : C.fail) + text(fx0 + 26, fy + 16.6, ft, 13, 700, strong ? '#fff' : C.fail)); }
+    ext(x - 8, y - 8, x + n.w + 8, y + n.h + 14);
+  });
+
+  // history: the clock beside the tree
+  if (LEVEL >= 3) {
+    var lastLab = ''; rows.forEach(function (r) { var lab = r.t < DAY0 ? D.dayName(r.t).slice(0, 3) + ' ' + hm(r.t) : hm(r.t); if (lab === lastLab) return; lastLab = lab; o.push(text(gutterX, r.y + (r.n.card ? 25.5 : 17.8), lab, 13.5, 600, C.grey, 'end', ' style="font-variant-numeric:tabular-nums"')); });
+    o.push(text(gutterX, treeBottom + 12, 'now ' + hm(now), 14, 700, C.ink, 'end'));
+    var yAt = function (t) { for (var i = 0; i < rows.length; i++) if (rows[i].t >= t - 0.5) return rows[i].y + (rows[i].n.card ? 20 : 13); return treeBottom + 6; };
+    D.owner.away.forEach(function (a) {
+      if (a.back < DAY0 || a.left > now) return; var y0 = yAt(Math.max(a.left, DAY0)), y1 = a.back > now ? treeBottom + 6 : yAt(a.back), ax = gutterX - 66;
+      if (y1 - y0 < 26) y1 = y0 + 26;
+      o.push('<rect x="' + ax + '" y="' + y0 + '" width="6" height="' + (y1 - y0) + '" rx="3" fill="#9bb8ee"/>');
+      o.push(text(ax - 9, (y0 + y1) / 2 - 2, 'you away', 13, 600, '#3f63ad', 'end') + text(ax - 9, (y0 + y1) / 2 + 14, dur(Math.min(a.back, now) - Math.max(a.left, DAY0)), 13, 400, '#3f63ad', 'end'));
+    });
+    ext(gutterX - 150, 0, gutterX, treeBottom + 16);
+  }
+
+  // the wall of hooks
+  if (LEVEL >= 1) {
+    o.push('<rect x="' + (-wallW / 2 - 16) + '" y="' + (yWall - 12) + '" width="' + (wallW + 32) + '" height="' + (GH + 44) + '" rx="12" fill="' + C.softer + '" stroke="#e1e4e9"/>');
+    o.push(text(-wallW / 2 - 16, yWall - 21, 'Hooks', 14.5, 700, C.grey));
+    GROUPS.forEach(function (g) { o.push(text((g.x0 + g.x1) / 2, yWall + GH + 22, g.cap, 13, 400, C.grey, 'middle')); if (g.hooks.length > 1) o.push('<path d="M' + g.x0 + ',' + (yWall + GH + 6) + ' H' + g.x1 + '" stroke="#cfd4db" stroke-width="1.5"/>'); });
+    gateList.forEach(function (g) {
+      var f = g.rows.failed.length > 0, r = g.rows.refused.length > 0, p = g.rows.passed.length > 0, stroke = f ? C.fail : r ? C.ref : p ? C.pass : '#c3c9d2';
+      o.push('<rect x="' + g.x + '" y="' + yWall + '" width="' + g.w + '" height="' + GH + '" rx="9" fill="' + (g.fired ? '#fff' : 'none') + '" stroke="' + stroke + '" stroke-width="' + (f ? 3 : r ? 2.2 : 1.6) + '"' + (g.fired ? '' : ' stroke-dasharray="5 4"') + '/>');
+      o.push(text(g.x + g.w / 2, yWall + 23, g.name, 15.5, 600, g.fired ? C.ink : C.faint, 'middle'));
+      if (!g.fired) o.push(text(g.x + g.w / 2, yWall + 47, 'not fired today', 13, 400, C.faint, 'middle'));
+      var shownRows = ROWS.filter(function (rw) { return g.rows[rw[0]].length && !(rw[0] === 'earlier' && LEVEL < 3); }).length;
+      if (g.fired && !shownRows) o.push(text(g.x + g.w / 2, yWall + 47, 'quiet now', 13, 400, C.grey, 'middle'));
+      var ry = yWall + 33;
+      ROWS.forEach(function (rw) {
+        var tags = g.rows[rw[0]]; if (!tags.length) return; var k = rw[0];
+        if (k === 'earlier' && LEVEL < 3) return;
+        var x = g.x + 12, cy = ry + 11;
+        if (k === 'failed') o.push(tri(x + 6, cy, 5.5, C.fail)); else if (k === 'earlier') o.push(tri(x + 6, cy, 5.5, '#fff', C.fail)); else if (k === 'refused') o.push(dia(x + 6, cy, 6, C.ref)); else o.push('<path d="M' + (x + 1) + ',' + cy + ' l3.6,4 l6.4,-8.4" fill="none" stroke="' + C.pass + '" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>');
+        o.push(text(x + 18, ry + 15.6, rw[1], 13, 600, k === 'refused' ? '#9a5d00' : k === 'passed' ? '#3c7f66' : C.fail)); x += 18 + tw(rw[1], 13, 600) + 8;
+        tags.forEach(function (t) { var w = tagW(t);
+          o.push('<rect x="' + x + '" y="' + (ry + 1) + '" width="' + w + '" height="20" rx="5" fill="' + (k === 'failed' ? C.fail : k === 'refused' ? C.refBg : '#fff') + '" stroke="' + (k === 'failed' || k === 'earlier' ? C.fail : k === 'refused' ? C.ref : C.pass) + '" stroke-width="1.3"/>' + text(x + w / 2, ry + 15.4, t, 12.5, 700, k === 'failed' ? '#fff' : k === 'earlier' ? C.fail : k === 'refused' ? '#8a5300' : '#0f6f49', 'middle')); x += w + 5; });
+        ry += 25;
+      });
+    });
+    ext(-wallW / 2 - 16, yWall - 36, wallW / 2 + 16, yWall + GH + 34);
+  }
+
+  // one session opened: its helpers and the parts they touch
+  var op = all.filter(function (n) { return n.tag === cfg.open && n.open; })[0];
+  if (LEVEL >= 2 && op) {
+    var grp = GROUPS[2], gcx = (grp.x0 + grp.x1) / 2, yTop = yWall - 12, my2 = (yA + yTop) / 2;
+    o.push('<path d="M' + op.cx + ',' + yA + ' C' + op.cx + ',' + (my2 + 24) + ' ' + gcx + ',' + (my2 - 24) + ' ' + gcx + ',' + yTop + '" fill="none" stroke="' + C.work + '" stroke-width="5" opacity="0.45"/>');
+    var hs = op.s.helpers.filter(function (h) { return h.start <= now; }).map(function (h) { return { h: h, run: now <= h.end }; });
+    hs.sort(function (a, b) { return (a.run - b.run) || (a.h.start - b.h.start); });
+    var HH = 48, yH = wallBottom + 54, HG = 10, hx = 0, done = hs.filter(function (q) { return !q.run; }), run = hs.filter(function (q) { return q.run; });
+    var capD = done.length ? tw('finished', 13, 400) + 10 : 0, capR = run.length ? tw('running now', 13, 600) + 10 : 0;
+    hx = capD;
+    done.forEach(function (q) { q.label = q.h.kind + ' · ' + q.h.model; q.w = tw(q.label, 13, 400) + 22; q.hh = 28; q.x = hx; hx += q.w + HG; });
+    if (done.length && run.length) hx += 20;
+    var runCapX = hx; hx += capR;
+    run.forEach(function (q) { q.w = Math.max(tw(q.h.kind, 15.5, 600), tw(q.h.model, 13.5, 400)) + 36; q.hh = HH; q.x = hx; hx += q.w + HG; });
+    var hW = hx - HG, hOff = Math.max(-wallW / 2, Math.min(wallW / 2 - hW, gcx - hW / 2));
+    if (hW > wallW) hOff = -hW / 2;
+    hs.forEach(function (q) { q.x += hOff; q.cx = q.x + q.w / 2; q.y = yH + (HH - q.hh) / 2; });
+    hs.forEach(function (q) { var my3 = (wallBottom + q.y) / 2 + 4;
+      o.push('<path d="M' + gcx + ',' + (wallBottom + 2) + ' C' + gcx + ',' + (my3 + 14) + ' ' + q.cx + ',' + (my3 - 14) + ' ' + q.cx + ',' + q.y + '" fill="none" stroke="' + (q.run ? C.work : '#c3c9d2') + '" stroke-width="' + (q.run ? 2.6 : 1.3) + '"/>'); });
+    // parts
+    var pm = {}, plist = [];
+    hs.forEach(function (q) { q.h.parts.forEach(function (p) { if (p.indexOf('kind:') === 0) return; var e = pm[p]; if (!e) { e = pm[p] = { id: p, part: D.partById[p] || { name: p, group: '' }, from: [], run: false }; plist.push(e); } e.from.push(q); if (q.run) e.run = true; }); });
+    plist.forEach(function (e) { var src = e.run ? e.from.filter(function (q) { return q.run; }) : e.from; e.src = src; e.bary = src.reduce(function (a, q) { return a + q.cx; }, 0) / src.length; e.w = tw(e.part.name, 14, e.run ? 600 : 400) + 44; });
+    plist.sort(function (a, b) { return (a.run - b.run) || (a.bary - b.bary); });
+    var pW = plist.reduce(function (a, e) { return a + e.w + 10; }, -10), yP = yH + HH + 66, pmid = hOff + hW / 2, px0 = Math.max(-wallW / 2, Math.min(wallW / 2 - pW, pmid - pW / 2));
+    if (pW > wallW) px0 = -pW / 2;
+    var pLeft = px0;
+    plist.forEach(function (e) { e.x = px0; e.cx = px0 + e.w / 2; px0 += e.w + 10; });
+    plist.forEach(function (e) { e.src.forEach(function (q) { var y0 = q.y + q.hh, my4 = (y0 + yP) / 2;
+      o.push('<path d="M' + q.cx + ',' + y0 + ' C' + q.cx + ',' + (my4 + 12) + ' ' + e.cx + ',' + (my4 - 12) + ' ' + e.cx + ',' + yP + '" fill="none" stroke="' + (q.run ? '#6f7d8f' : '#cdd2d9') + '" stroke-width="' + (q.run ? 1.7 : 1.1) + '"/>'); }); });
+    hs.forEach(function (q) {
+      if (q.run) { o.push('<rect x="' + q.x + '" y="' + q.y + '" width="' + q.w + '" height="' + q.hh + '" rx="24" fill="' + C.workBg + '" stroke="' + C.work + '" stroke-width="2.2"/>' + text(q.cx, q.y + 21.5, q.h.kind, 15.5, 600, C.ink, 'middle') + text(q.cx, q.y + 39, q.h.model, 13.5, 400, C.grey, 'middle')); }
+      else o.push('<rect x="' + q.x + '" y="' + q.y + '" width="' + q.w + '" height="' + q.hh + '" rx="14" fill="' + C.soft + '" stroke="#d9dde3"/>' + text(q.cx, q.y + 18.6, q.label, 13, 400, C.grey, 'middle'));
+    });
+    if (done.length) o.push(text(hOff, yH + HH / 2 + 4.5, 'finished', 13, 400, C.faint));
+    if (run.length) o.push(text(hOff + runCapX, yH + HH / 2 + 4.5, 'running now', 13, 600, C.work));
+    o.push(text(-wallW / 2 - 16, yH - 12, 'Helpers of ' + op.tag, 14.5, 700, C.grey));
+    var icon = function (g, x, y, col) {
+      if (g === 'Documents') return '<path d="M' + x + ',' + y + ' h8 l4,4 v12 h-12 z" fill="none" stroke="' + col + '" stroke-width="1.5" stroke-linejoin="round"/><path d="M' + (x + 3) + ',' + (y + 8) + ' h6 M' + (x + 3) + ',' + (y + 12) + ' h6" stroke="' + col + '" stroke-width="1.2"/>';
+      if (g === 'Scripts') return '<rect x="' + (x - 1) + '" y="' + (y + 1) + '" width="15" height="14" rx="2.5" fill="none" stroke="' + col + '" stroke-width="1.5"/><path d="M' + (x + 2.5) + ',' + (y + 5) + ' l3,3 l-3,3 M' + (x + 8) + ',' + (y + 11.5) + ' h3.5" fill="none" stroke="' + col + '" stroke-width="1.4"/>';
+      if (g === 'Stores and settings') return '<ellipse cx="' + (x + 6.5) + '" cy="' + (y + 3) + '" rx="6.5" ry="2.8" fill="none" stroke="' + col + '" stroke-width="1.5"/><path d="M' + x + ',' + (y + 3) + ' v10 a6.5,2.8 0 0 0 13,0 v-10" fill="none" stroke="' + col + '" stroke-width="1.5"/>';
+      if (g === 'Tests and git') return '<circle cx="' + (x + 6.5) + '" cy="' + (y + 8) + '" r="7" fill="none" stroke="' + col + '" stroke-width="1.5"/><path d="M' + (x + 3) + ',' + (y + 8) + ' l2.6,2.8 l4.6,-5.6" fill="none" stroke="' + col + '" stroke-width="1.5"/>';
+      return '<rect x="' + x + '" y="' + (y + 1) + '" width="13" height="14" rx="3" fill="none" stroke="' + col + '" stroke-width="1.5"/><path d="M' + (x + 4.5) + ',' + (y + 4.5) + ' l5,3.5 l-5,3.5 z" fill="' + col + '"/>';
+    };
+    plist.forEach(function (e) { var col = e.run ? C.ink : C.faint;
+      o.push('<rect x="' + e.x + '" y="' + yP + '" width="' + e.w + '" height="34" rx="7" fill="#fff" stroke="' + (e.run ? '#6f7d8f' : '#d3d8df') + '" stroke-width="' + (e.run ? 1.8 : 1.2) + '"/>' + icon(e.part.group, e.x + 11, yP + 9, e.run ? C.grey : C.faint) + text(e.x + 32, yP + 22.5, e.part.name, 14, e.run ? 600 : 400, col)); });
+    o.push(text(-wallW / 2 - 16, yP - 12, 'Parts they touch', 14.5, 700, C.grey));
+    ext(Math.min(-wallW / 2 - 16, hOff, pLeft), yH - 28, Math.max(hOff + hW, px0), yP + 38);
+  }
+
+  // header facts
+  var waitingTags = st.sessions.filter(function (s) { return s.state === 'waiting'; }).map(function (s) { return s.tag; });
+  var failHooks = uniq(st.marks.filter(function (m) { return m.result === 'failed'; }).map(function (m) { return hookName(m.part); }));
+  var failTags = uniq(st.marks.filter(function (m) { return m.result === 'failed'; }).map(function (m) { return m.tag; })).reverse();
+  return { svg: o.join('\n'), bb: bb, clock: st.clock, day: st.day, working: st.counts.working, helpers: st.counts.helpers, waitingTags: waitingTags, failHooks: failHooks, failTags: failTags,
+    debug: { cols: all.map(function (n) { return n.tag + ':c' + n.col + ' y' + n.y + ' h' + n.h + ' x' + Math.round(n.cx); }), gaps: gaps.map(function (g) { return hm(g.from) + '-' + hm(g.to) + ' ' + g.waited; }), treeW: treeW, wallW: wallW } };
+}
+
+(function () {
+  try {
+    var D = window.TOOL_DATA, ctx = document.createElement('canvas').getContext('2d');
+    function measure(t, font) { ctx.font = font; return ctx.measureText(t).width; }
+    var r = renderPicture(D, { level: CFG.level, now: D.minuteOf(6, CFG.hour, CFG.minute), open: CFG.open }, measure);
+    var svg = document.getElementById('pic'), W = window.innerWidth, H = window.innerHeight - 58, pad = 26, maxScale = 1.3;
+    var bw = r.bb.x1 - r.bb.x0 + pad * 2, bh = r.bb.y1 - r.bb.y0 + pad * 2, s = Math.min(W / bw, H / bh, maxScale);
+    var vw = W / s, vh = H / s, cx = (r.bb.x0 + r.bb.x1) / 2, cy = (r.bb.y0 + r.bb.y1) / 2;
+    svg.setAttribute('viewBox', (cx - vw / 2) + ' ' + (cy - vh / 2) + ' ' + vw + ' ' + vh);
+    svg.innerHTML = r.svg;
+    var h = document.getElementById('head'), html = '<span id="clock">' + r.day + ' · ' + r.clock + '</span>';
+    html += '<span class="chip work"><span class="dot"></span>' + r.working + ' working</span>';
+    html += r.waitingTags.length ? '<span class="chip wait">&#10073;&#10073; ' + r.waitingTags.join(', ') + ' waits for you</span>' : '<span class="chip nowait">nothing waits for you</span>';
+    if (r.failHooks.length) html += '<span class="chip fail">&#9650; ' + r.failHooks.join(', ') + ' failed on ' + r.failTags.join(', ') + '</span>';
+    h.innerHTML = html;
+    document.title += ' (scale ' + s.toFixed(2) + ')';
+    document.body.setAttribute('data-scale', s.toFixed(3));
+  } catch (e) { document.getElementById('err').textContent = String(e && e.stack || e); }
+})();
+</script>
+</body></html>
