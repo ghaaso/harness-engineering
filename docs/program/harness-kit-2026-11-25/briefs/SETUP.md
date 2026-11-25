@@ -2,7 +2,27 @@
 
 The owner's words are in `../OWNER-WORDS.md`. Read them first. They outrank this brief.
 
-token limit 7 M (expected about 3 M, basis r58-0105)
+token limit 8 M (expected about 4 M, basis r58-0105)
+
+**Changed after this brief was first written (the owner, 2026-11-25): the kit wires Rust hooks only, with no
+JavaScript hook behind them.** `../CONTRACT.md` section 7 says how; read it first, it outranks the points below
+where they differ. In short, for you:
+- the set-up needs `cargo` on the machine; without it, it stops and says what to install (rustup; the pinned
+  version comes from `harness-kit/rust/rust-toolchain.toml`) and changes nothing;
+- `--apply` builds the programs first: `cargo build --release --locked --offline` in `harness-kit/rust/`. If that
+  fails because a crate is not in the machine's cargo cache, it prints the crates `Cargo.lock` names and that they
+  come from crates.io, and stops; with `--fetch` it runs the same build without `--offline`. On this PC never use
+  `--fetch`: the crates are cached;
+- it wires, for each hook, the built program with the arguments section 7 gives (`--harness-kit`, `--clone=`,
+  `--project=`, `--no-usage-tool` when asked), `.exe` added on Windows, and refuses to wire a program that is not
+  built;
+- `--status` also says for each hook whether its program is built and newer than its sources;
+- `check-clone.mjs` builds the workspace in the temp clone with the network off, runs every hook's test file both
+  ways (against the JavaScript reference and, through `KIT_HOOK_BIN_DIR`, against the programs) and shows the two
+  counts side by side, feeds the wired programs their passing and refused calls, and prints the time of one passing
+  call through a JavaScript hook and through its program (the median of 20), so the gain is a number she can see;
+- four builders are porting the large hooks while you work. A hook whose program is not there yet, or fails a
+  case, is a line of the check that fails and names it. Do not fix it; report it.
 
 Deliverable: harness-kit/setup.mjs
 
@@ -13,9 +33,10 @@ session she starts, in the clone or in a repository of her own, is to be held to
 three hooks into the clone only. Two builders have just made the rest ready; you wire it and prove it from a clean
 clone.
 
-Read `../CONTRACT.md` in full (section 6 binds you), then the two hand-backs: `../in/hooks-report.md` (for each hook
-the exact command line the set-up must write: event, matcher, arguments) and `../in/parallel-report.md` (the
-commands, the config and its example file, the test files). Then `harness-kit/setup.mjs`, `setup.test.mjs` and
+Read `../CONTRACT.md` in full (sections 6 and 7 bind you), then the hand-backs: `../in/hooks-report.md` (for each
+hook its event, matcher and arguments), `../in/rust-core-report.md` and `harness-kit/rust/DESIGN.md` (the workspace,
+the programs' names, how a test file runs against a program) and `../in/parallel-report.md` (the commands, the
+config and its example file, the test files). Then `harness-kit/setup.mjs`, `setup.test.mjs` and
 `check-clone.mjs` as they are. Where a report and the contract disagree, the report says what was built: follow it
 and note the difference in your hand-back.
 

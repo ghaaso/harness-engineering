@@ -6,6 +6,23 @@ token limit 6 M (expected about 3 M, basis r58-0105)
 
 Deliverable: harness-kit/README.md
 
+**Changed after this brief was first written (the owner, 2026-11-25, his last two messages in `../OWNER-WORDS.md`):
+the kit's hooks are Rust programs, and no JavaScript hook stands behind them.** `../CONTRACT.md` section 7 says
+how. For what you write this means:
+- the README says what her machine needs (the Rust toolchain through rustup, Node for the set-up and the commands,
+  git), that the set-up builds the programs, that her first build fetches the crates `Cargo.lock` names from
+  crates.io and needs the `--fetch` flag for it, and that without Rust nothing is wired (his word: no fallback; a
+  fault is fixed when it shows);
+- the hooks table names each hook by its program; the per-call time of a JavaScript hook against its program is in
+  `../in/rust-core-report.md` and, once it exists, the set-up builder's report: quote the number with what it was
+  measured on;
+- one short part "Still JavaScript" lists the set-up, the clean-clone check, the test files, the parallel commands
+  and the queue, each with the reason (section 7), so nothing reads as forgotten;
+- macOS: the programs were built and tested on Windows only; nothing was built for or on a Mac. Say it once, plainly,
+  with the places most likely to need a change there (the reports name them);
+- the hand-backs to read now also include `../in/rust-core-report.md` and `../in/rust-A-report.md` to
+  `rust-D-report.md`, and `../in/setup2-report.md`.
+
 ## Who reads what you write
 
 The teammate, who has not followed this project, works on a Mac in a repository of her own (Python, Postgres,

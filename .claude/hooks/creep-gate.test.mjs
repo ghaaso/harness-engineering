@@ -105,5 +105,27 @@ const rp = spawnSync(process.execPath, [HOOK, '--replay', two.main], { env: { ..
 const okRp = rp.status === 0 && /2 starts refused|0 of 2 starts refused/.test(rp.stdout);
 if (!okRp) failed++;
 console.log(`${okRp ? 'ok  ' : 'FAIL'} replay runs: ${rp.stdout.trim().split('\n').pop()}`);
+// kit mode (harness kit, 2026-11-25): --harness-kit "--project=<folder>"; the project is the root, briefs under .harness/
+const kitRun = (name, want, s, desc, prompt, says) => {
+  const input = JSON.stringify({ session_id: SESS, transcript_path: s.main, hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'cur', tool_input: { description: desc, prompt } });
+  const r = spawnSync(process.execPath, [HOOK, '--harness-kit', `--project=${s.root}`], { input, env: { ...process.env, CREEP_GATE_ROOT: join(base, 'not-this') }, encoding: 'utf8' });
+  const got = r.status === 2 ? 'deny' : r.status === 0 ? 'allow' : 'exit ' + r.status;
+  const ok = got === want && (!says || (r.stderr + r.stdout).includes(says));
+  if (!ok) failed++;
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}: ${got} | ${(r.stderr || r.stdout).trim().slice(0, 140)}`);
+};
+const kb = setup();
+mkdirSync(join(kb.root, '.harness', 'briefs'), { recursive: true });
+writeFileSync(join(kb.root, '.harness', 'briefs', 'AUDIT.md'), '# brief\nAudit notes/refute/LOCKS.md for faults.\n');
+kitRun('kit: a brief found under <project>/.harness/briefs/ names a review\'s output: refused', 'deny', kb, 'audit: the locks', 'Follow briefs/AUDIT.md.', 'review of a review');
+kitRun('kit: the same brief named by its folder .harness/briefs/: refused', 'deny', kb, 'audit: the locks', 'Follow .harness/briefs/AUDIT.md.', 'review of a review');
+kitRun('kit: a build start passes with the context line', 'allow', kb, 'build: page', 'Build docs/x/b.md.', "the kit's rules");
+const kbLog = join(kb.root, '.claude', 'logs', 'creep-gate.jsonl');
+const okKl = readFileSync(kbLog, 'utf8').trim().split('\n').length === 3;
+if (!okKl) failed++;
+console.log(`${okKl ? 'ok  ' : 'FAIL'} kit: the log is under <project>/.claude/logs`);
+const kd = setup([dl('docs/x/page.html'), ...write('w1', 'docs/x/page.html', 5)]);
+kitRun('kit: a Write to the deliverable inside the project counts: a check elsewhere passes', 'allow', kd, 'refute: data', 'Check docs/x/rules.json.', 'came after that');
+kitRun('kit: with no record book the escape "owner: r57-NNNN" passes nothing (third review refused)', 'deny', setup([...write('w1', 'docs/x/a.md', 15), ...write('w2', 'docs/x/a.md', 35)], [REV('a1', 't1', 'docs/x/a.md', 1, 10), REV('a2', 't2', 'docs/x/a.md', 20, 30)]), 'refute: a, round 3', 'owner: r57-0071\nReview docs/x/a.md.', 'third review');
 console.log(failed ? `${failed} FAILED` : 'all passed');
 process.exit(failed ? 1 : 0);

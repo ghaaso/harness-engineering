@@ -28,6 +28,7 @@ function fixture(widths) {
   const r = join(dir, 'repo');
   mkdirSync(join(r, '.claude', 'hooks'), { recursive: true });
   copyFileSync(resolve(here, process.env.COUNT_GATE_HOOK || 'count-gate.mjs'), join(r, '.claude', 'hooks', 'count-gate.mjs'));
+  if (existsSync(resolve(here, 'kit-mode.mjs'))) copyFileSync(resolve(here, 'kit-mode.mjs'), join(r, '.claude', 'hooks', 'kit-mode.mjs'));
   mkdirSync(join(r, 'research-tree', 'build'), { recursive: true });
   if (widths != null) writeFileSync(join(r, 'research-tree', 'build', 'WIDTHS.md'), widths);
   const sid = 'aaaabbbb-1111-2222-3333-444455556666';
@@ -179,12 +180,17 @@ test('2026-11-23 replayed: 13 running and a batch of 16 at once: 7 pass, 9 are r
   for (const r of rs.filter((x) => x.code === 2)) assert.match(r.err, /number 21/);
 });
 
-test('old hooks: the plan gate lets the 21st start through (nothing counted before this gate)', () => {
+// The two cases that read this PC's research-tree/build/plan.json and WIDTHS.md skip, saying so, in a clone without them.
+const PLAN = resolve(repo, 'research-tree', 'build', 'plan.json'), REAL_WIDTHS = resolve(repo, 'research-tree', 'build', 'WIDTHS.md');
+const noPlan = !existsSync(PLAN) && 'research-tree/build/plan.json (the owner\'s plan) is not in this clone';
+const noWidths = !existsSync(REAL_WIDTHS) && 'research-tree/build/WIDTHS.md (the owner\'s widths) is not in this clone';
+
+test('old hooks: the plan gate lets the 21st start through (nothing counted before this gate)', { skip: noPlan }, () => {
   const fx = fixture();
   many(fx, 20);
   const pg = join(fx.r, '.claude', 'hooks', 'plan-gate.mjs');
   copyFileSync(resolve(here, 'plan-gate.mjs'), pg);
-  copyFileSync(resolve(repo, 'research-tree', 'build', 'plan.json'), join(fx.r, 'research-tree', 'build', 'plan.json'));
+  copyFileSync(PLAN, join(fx.r, 'research-tree', 'build', 'plan.json'));
   const old = spawnSync(process.execPath, [pg], { input: JSON.stringify(input(fx, 'orchestrate: wave2 f4c memory')), encoding: 'utf8' });
   assert.equal(old.status, 0);
   assert.equal(run(fx, input(fx, 'orchestrate: wave2 f4c memory')).code, 2);
@@ -278,8 +284,8 @@ test('odd input passes at once: empty, not JSON, other events and tools, no tran
   assert.ok(Date.now() - t0 < 5000, `took ${Date.now() - t0} ms`);
 });
 
-test('the repository\'s WIDTHS.md declares nothing yet; its indented and fenced examples are not declarations', () => {
-  const real = readFileSync(resolve(repo, 'research-tree', 'build', 'WIDTHS.md'), 'utf8');
+test('the repository\'s WIDTHS.md declares nothing yet; its indented and fenced examples are not declarations', { skip: noWidths }, () => {
+  const real = readFileSync(REAL_WIDTHS, 'utf8');
   const fx = fixture(real + '\n```\nwidth "x" 0: an example in a fence, line 9\n```\n    hold "a" while "b": indented example\n');
   many(fx, 2);
   assert.equal(run(fx, input(fx, 'x')).code, 0);
@@ -388,4 +394,57 @@ test('B4: a finished helper whose transcript was written 0.5 s after its meta wa
   utimesSync(mp, (now - 6500) / 1000, (now - 6500) / 1000);
   utimesSync(tp, (now - 6000) / 1000, (now - 6000) / 1000);
   assert.equal(run(fx, input(fx, 'analyse: x')).code, 2); // the old gate (1 s) did not count it: 20 would run
+});
+
+// ---- kit mode (harness kit, 2026-11-25): --harness-kit "--project=<folder>" ----
+// Widths and holds from <project>/.harness/WIDTHS.md; log and lock under <project>/.claude/logs.
+function kitFixture(widths) {
+  const fx = fixture();
+  fx.P = join(fx.dir, 'her-project');
+  mkdirSync(join(fx.P, '.harness'), { recursive: true });
+  if (widths != null) writeFileSync(join(fx.P, '.harness', 'WIDTHS.md'), widths);
+  fx.args = ['--harness-kit', `--project=${fx.P}`];
+  fx.kitLog = join(fx.P, '.claude', 'logs', 'count-gate.jsonl');
+  return fx;
+}
+const kitRun = (fx, obj, extra = []) => {
+  const r = spawnSync(process.execPath, [fx.hook, ...fx.args, ...extra], { input: JSON.stringify(obj), encoding: 'utf8', env, timeout: 20000 });
+  return { code: r.status, err: r.stderr || '' };
+};
+const W1 = 'width "build: *" 1: one builder at a time, the project has 1 test database\n';
+
+test('kit: a width in <project>/.harness/WIDTHS.md refuses the second builder; a reader passes; the log is under the project', () => {
+  const fx = kitFixture(W1);
+  helper(fx, 'b1', { desc: 'build: first part' });
+  const r = kitRun(fx, input(fx, 'build: second part'));
+  assert.equal(r.code, 2);
+  assert.match(r.err, /declared width 1 \(WIDTHS\.md line 1: one builder at a time/);
+  assert.equal(kitRun(fx, input(fx, 'read: the schema')).code, 0);
+  assert.ok(existsSync(fx.kitLog), 'log under <project>/.claude/logs');
+  assert.ok(!existsSync(fx.log), 'nothing in the clone\'s log');
+  assert.ok(!existsSync(join(fx.P, '.claude', 'logs', 'count-gate.lock')), 'the lock is released');
+});
+
+test('kit: without --harness-kit the project\'s WIDTHS.md is not read (the start passes)', () => {
+  const fx = kitFixture(W1);
+  helper(fx, 'b1', { desc: 'build: first part' });
+  assert.equal(run(fx, input(fx, 'build: second part')).code, 0);
+});
+
+test('kit: a declaration that does not parse names .harness/WIDTHS.md; the app limit of 20 holds as before', () => {
+  const fx = kitFixture('width "build: *" 1: no number here\n');
+  const r = kitRun(fx, input(fx, 'read: x'));
+  assert.equal(r.code, 2);
+  assert.match(r.err, /count gate: \.harness\/WIDTHS\.md line 1 is not a declaration/);
+  const fx2 = kitFixture();
+  many(fx2, 20);
+  assert.match(kitRun(fx2, input(fx2, 'read: x')).err, /number 21/);
+});
+
+test('kit: --end writes to the project\'s log, without the kit\'s arguments in its reason', () => {
+  const fx = kitFixture();
+  const e = spawnSync(process.execPath, [fx.hook, '--end', 'ghost', 'killed', 'by', 'a', 'restart', ...fx.args, '--no-usage-tool'], { encoding: 'utf8' });
+  assert.equal(e.status, 0, e.stderr);
+  const last = JSON.parse(readFileSync(fx.kitLog, 'utf8').trim().split('\n').pop());
+  assert.equal(last.why, 'killed by a restart');
 });

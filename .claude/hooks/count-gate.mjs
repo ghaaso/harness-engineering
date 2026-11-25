@@ -42,9 +42,16 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join, basename } from 'node:path';
 import { homedir } from 'node:os';
 
+// Kit mode (harness kit, 2026-11-25; docs/program/harness-kit-2026-11-25/CONTRACT.md section 2): only with --harness-kit
+// "--project=<folder>": widths and holds are read from <project>/.harness/WIDTHS.md, the log and the lock are under
+// <project>/.claude/logs, and --status looks for the session among the project's transcripts. Every rule as above. A
+// missing or broken kit-mode.mjs leaves the hook as it is without the argument.
+let KIT = null;
+if (process.argv.includes('--harness-kit')) { try { KIT = (await import('./kit-mode.mjs')).kitMode(import.meta.url); } catch { KIT = null; } }
 const here = dirname(fileURLToPath(import.meta.url));
-const root = resolve(here, '..', '..');
-const WIDTHS = resolve(root, 'research-tree', 'build', 'WIDTHS.md');
+const root = KIT ? KIT.project : resolve(here, '..', '..');
+const WIDTHS = KIT ? join(KIT.state, 'WIDTHS.md') : resolve(root, 'research-tree', 'build', 'WIDTHS.md');
+const WIDTHS_REL = KIT ? '.harness/WIDTHS.md' : 'research-tree/build/WIDTHS.md';
 const LOGDIR = resolve(root, '.claude', 'logs');
 const LOG = resolve(LOGDIR, 'count-gate.jsonl');
 const LOCK = resolve(LOGDIR, 'count-gate.lock');
@@ -79,7 +86,14 @@ function log(o) { try { append(o); } catch {} }
 // ---- command line: --end, --status ------------------------------------------------------------------------------
 if (process.argv[2] === '--end') {
   const id = normAgent(process.argv[3] || '');
-  const why = process.argv.slice(4).join(' ').trim();
+  const words = process.argv.slice(4);
+  if (KIT) { // the kit's own arguments are not part of the reason
+    for (let i = words.length - 1; i >= 0; i--) {
+      if (words[i] === '--project' && i + 1 < words.length) words.splice(i, 2);
+      else if (/^--(harness-kit|no-usage-tool|project=)/.test(words[i])) words.splice(i, 1);
+    }
+  }
+  const why = words.join(' ').trim();
   if (!id || !why) { process.stderr.write('usage: node .claude/hooks/count-gate.mjs --end <agent id> <why>\n'); process.exit(1); }
   try { append({ ev: 'end', agent: id, manual: true, why: why.slice(0, 200) }); } catch (e) {
     process.stderr.write(`count gate: could not write ${LOG} (${short(e)})\n`); process.exit(1);
@@ -90,14 +104,19 @@ if (process.argv[2] === '--end') {
 if (process.argv[2] === '--status') {
   const arg = String(process.argv[3] || '').trim();
   const proj = join(homedir(), '.claude', 'projects', root.replace(/[^A-Za-z0-9]/g, '-'));
+  // Kit mode: also the folder named after the project's real path, under CLAUDE_CONFIG_DIR when that is set.
+  const projs = KIT ? [...new Set([root, KIT.realOf(root)].flatMap((p) => [process.env.CLAUDE_CONFIG_DIR, join(homedir(), '.claude')]
+    .filter(Boolean).map((c) => join(c, 'projects', p.replace(/[^A-Za-z0-9]/g, '-')))))] : [proj];
   let dir = null, sid = arg;
-  try {
-    if (arg && existsSync(join(arg, 'subagents'))) dir = join(arg, 'subagents');
-    else if (arg) {
-      const d = readdirSync(proj).find((n) => n.startsWith(arg) && !n.endsWith('.jsonl'));
-      if (d) { dir = join(proj, d, 'subagents'); sid = d; }
+  if (arg && existsSync(join(arg, 'subagents'))) dir = join(arg, 'subagents');
+  else if (arg) {
+    for (const pr of projs) {
+      try {
+        const d = readdirSync(pr).find((n) => n.startsWith(arg) && !n.endsWith('.jsonl'));
+        if (d) { dir = join(pr, d, 'subagents'); sid = d; break; }
+      } catch {}
     }
-  } catch {}
+  }
   if (!dir) { process.stderr.write(`usage: node .claude/hooks/count-gate.mjs --status <session id or prefix> (looked in ${proj})\n`); process.exit(1); }
   const now = Date.now();
   const t0 = process.hrtime.bigint();
@@ -144,7 +163,7 @@ const rec = { sess, by, tu, ...(revive ? { agent: revive } : {}), desc: norm(des
 
 let decl;
 try { decl = declarations(); } catch (e) {
-  refuse(`count gate: research-tree/build/WIDTHS.md ${short(e)}; every start waits until that line is fixed or removed (a width a plan declares is never silently off).`);
+  refuse(`count gate: ${WIDTHS_REL} ${short(e)}; every start waits until that line is fixed or removed (a width a plan declares is never silently off).`);
 }
 
 let why = null;

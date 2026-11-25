@@ -3,7 +3,7 @@
 // Every case feeds real PreToolUse JSON on stdin to the hook as a separate process, against transcripts built here
 // in a temporary folder; logs and state go to that folder (WINDOW_CEILING_LOGDIR), never to .claude/logs.
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, existsSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -377,6 +377,60 @@ ok(r.code === 0 && r.out === '', 'v3: a Fable helper at 341 K passes (its line i
 transcript(join(PROJ, SESS, 'subagents', `agent-${AGFB}.jsonl`), helperCtx(222), { side: true, model: FABLE }); // 899.8 K
 r = run(pre(parentSmall, 'Bash', { command: 'npm test' }, { agent_id: AGFB }));
 ok(r.code === 2 && new RegExp(`helper's line of 882 K \\(Fable: the compaction cap only, ${FID}\\)`).test(r.err), 'v3: a Fable helper past the cap (920 K - 10 x 3.8 K = 882 K) is refused', `${r.code} ${r.err}`);
+
+// ---- kit mode (harness kit, 2026-11-25): --harness-kit "--project=<folder>"; the project is the root ----
+// Its state files name the coordinator; its .harness/ holds the hand-over; its .claude/logs the log. The project is
+// reached here through a link as well (a junction on Windows, a symlink elsewhere), as /tmp is on macOS.
+{
+  const KP = join(T, 'kitproj');
+  mkdirSync(join(KP, '.harness', 'briefs'), { recursive: true });
+  writeFileSync(join(KP, '.harness', 'TEAM-STATE.md'), '# state\n\nSession 11111111 (her root), Opus, kind orchestrate.\n');
+  writeFileSync(join(KP, '.harness', 'NOTES.md'), 'Session 33333333 (not a state file), kind orchestrate.\n');
+  const KENV = { ...process.env, WINDOW_CEILING_SETTINGS: SETTINGS };
+  const kit = (input, proj = KP) => {
+    const x = spawnSync(process.execPath, [HOOK, '--harness-kit', `--project=${proj}`], { input: JSON.stringify(input), env: KENV, encoding: 'utf8' });
+    return { code: x.status, out: x.stdout, err: x.stderr };
+  };
+  const kpre = (tp, tool, input, more = {}) => ({ ...pre(tp, tool, input, more), cwd: KP });
+  let k = kit(kpre(tpOver, 'Bash', { command: 'npm test' }));
+  ok(k.code === 2 && /coordinator's line of 292 K/.test(k.err) && /\.harness\/<NAME>-STATE\.md/.test(k.err), 'kit: a session named in <project>/.harness/*-STATE.md is a coordinator; past its line npm test is refused', `${k.code} ${k.err}`);
+  ok(existsSync(join(KP, '.claude', 'logs', 'window-ceiling.jsonl')), 'kit: the log is under <project>/.claude/logs');
+  for (const [tool, input, more] of [
+    ['Write', { file_path: join(KP, '.harness', 'TEAM-STATE.md'), content: 'x' }],
+    ['Edit', { file_path: '.harness/NEXT-STATE.md', old_string: 'a', new_string: 'b' }],
+    ['Write', { file_path: join(KP, '.harness', 'briefs', 'NEXT.md'), content: 'x' }],
+    ['Write', { file_path: join(KP, '.harness', 'units', 'U1', 'result.md'), content: 'x' }, { agent_id: 'nofile2' }],
+    ['Bash', { command: 'git add .harness/TEAM-STATE.md && git commit -F msg.txt' }],
+  ]) {
+    k = kit(kpre(tpOver, tool, input, more));
+    ok(k.code === 0, `kit: past the line the hand-over passes: ${tool} ${JSON.stringify(input).slice(0, 60)}`, `${k.code} ${k.err}`);
+  }
+  for (const [tool, input] of [
+    ['Write', { file_path: join(KP, 'src', 'app.py'), content: 'x' }],
+    ['Write', { file_path: join(KP, '.harness', 'WIDTHS.md'), content: 'x' }],
+    ['Write', { file_path: ROOT + '/research-tree/build/TOP-STATE.md', content: 'x' }],
+  ]) {
+    k = kit(kpre(tpOver, tool, input));
+    ok(k.code === 2, `kit: past the line refused: ${tool} ${JSON.stringify(input).slice(0, 70)}`, `${k.code} ${k.err}`);
+  }
+  k = kit({ ...kpre(tpOver, 'Bash', { command: 'npm test' }), session_id: '33333333-2222-3333-4444-555555555555' });
+  ok(k.code === 0, 'kit: a session named only in a .md that is not a state file gets the checkpoint (330 K): 308 K passes', `${k.code} ${k.err}`);
+  // the same project through a link: the hand-over by its real path passes, a file elsewhere is still refused
+  const LINK = join(T, 'kitlink');
+  let linked = true;
+  try { symlinkSync(KP, LINK, process.platform === 'win32' ? 'junction' : 'dir'); } catch { linked = false; }
+  if (linked) {
+    k = kit({ ...kpre(tpOver, 'Write', { file_path: join(KP, '.harness', 'TEAM-STATE.md'), content: 'x' }), cwd: LINK }, LINK);
+    ok(k.code === 0, 'kit: project given through a link, hand-over named by its real path: passes', `${k.code} ${k.err}`);
+    k = kit({ ...kpre(tpOver, 'Write', { file_path: join(LINK, '.harness', 'briefs', 'B.md'), content: 'x' }), cwd: LINK });
+    ok(k.code === 0, 'kit: project given by its real path, hand-over named through the link: passes', `${k.code} ${k.err}`);
+    k = kit({ ...kpre(tpOver, 'Write', { file_path: join(LINK, 'src', 'x.py'), content: 'x' }), cwd: LINK }, LINK);
+    ok(k.code === 2, 'kit: through a link, a file outside .harness is refused', `${k.code} ${k.err}`);
+  } else console.log('skip  kit: could not make a link to the project folder');
+  // without --harness-kit the same input is judged as before (the clone's state folder, not the project's)
+  r = run(pre(tpOver, 'Write', { file_path: join(KP, '.harness', 'TEAM-STATE.md'), content: 'x' }));
+  ok(r.code === 2, 'without --harness-kit: <project>/.harness/ is no hand-over place', `${r.code} ${r.err}`);
+}
 
 console.log(`window-ceiling: ${pass} passed, ${fail} failed (${pass + fail} cases)`);
 try { rmSync(T, { recursive: true, force: true }); } catch {}

@@ -40,4 +40,23 @@ Then: `node harness-kit/check-clone.mjs` exits 0; commits on `bilal/build`; a br
   now": they are not table rows.
 - Wave 1 running since about 17:40 UTC (meter 84 % all models, 54 % Fable): the hooks builder and the parallel
   builder, both Opus. Their hand-backs: `in/hooks-report.md`, `in/parallel-report.md`.
-- Next: on both hand-backs, read the meter, start wave 2 (set-up builder and writer, briefs ready).
+- About 17:45 UTC: the starting session relayed the owner's added instruction: the hooks in Rust, not JavaScript,
+  where possible (his words are in `OWNER-WORDS.md`). Found: Rust 1.100.0 on this PC (host
+  x86_64-pc-windows-msvc only, no macOS target); a probe program with serde_json and regex builds with the network
+  off in 8 s from the cargo cache; the Rust skills are those of the session tool's move (`rust-best-practices` and the
+  Microsoft guidelines excerpt), copied to `docs/program/harness-kit-2026-11-25/in/rust-skills/` so that a kit helper's
+  brief does not name the session tool's folders (the migration gate holds those). The six hooks are 98,353 bytes of
+  JavaScript; a port with the same tests passing measured 8.4 M per 47,870 bytes on Opus (r57-0191).
+- 17:50 UTC: his answer to the second cap: question: "yes 95m also no fallbacks needed we willl fix errors if they
+  occue". So the kit wires Rust hooks only; her machine needs the Rust toolchain; no JavaScript hook behind them.
+  The set-up, the parallel commands and the queue stay JavaScript in this job and are listed as that (no measured
+  gain from porting a command she runs a few times a day; the hooks run on every tool call).
+- Plan after that answer: when the JavaScript hooks builder hands back (its kit mode and test cases are what the
+  Rust is ported from and tested by): wave R0 one Opus builder (workspace, `kit-core`, tier hook, start hook, the
+  test switch; limit 6 M, expected 3 M, basis r57-0191); wave R1 four Opus builders at once (window-ceiling 9 M;
+  creep-gate 7 M; count-gate 8 M; fanout-gate and the token counter 8 M; expected 5, 3.9, 4.4, 4.6 M) with the
+  set-up builder (8 M, expected 4 M); then the writer; then the clean-clone check and one review.
+- To record by `tools/journal.mjs` at the end: his two cap answers, the Rust instruction and "no fallbacks", the
+  measured costs of this job's helpers, what was built.
+
+Cap 95 M tokens (his answer of 2026-11-25 to a second cap: question, "yes 95m also no fallbacks needed we willl fix errors if they occue"; replaces the 60 M above).

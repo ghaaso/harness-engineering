@@ -14,6 +14,21 @@ His later messages of the same day on the kit, in full:
 
 (The last message ends there.)
 
+A later message of the same day, relayed at about 17:45 UTC by the session that started the kit job (the owner
+typed it there; it reached the kit's coordinator as a message from that session), in full:
+
+> Also, do tell it to like make the hooks in Rust instead of JavaScript. We're already aiming to migrate the JavaScript stuff to Rust. So if it's possible to like do the coding and stuff in Rust, okay. We do have Rust skills downloaded somewhere on this repo, so like you can load those up as
+
+(That message ends there too.)
+
+His answer at about 17:50 UTC to the coordinator's cap: question for the Rust hooks (it had said that the
+JavaScript hooks would stay as the fallback for a machine without Rust), in full:
+
+> yes 95m also no fallbacks needed we willl fix errors if they occue
+
+What the coordinator takes from it: the cap is 95 M tokens; the kit wires the Rust hooks only, with no JavaScript
+hook behind them on a machine without Rust; a fault found later is fixed then.
+
 What the top session understood at the third message, and he corrected it with the ones above: one folder at the root, `harness-kit/`, that a second person
 can find and use: a setup that works on her machine, a README of how to use it properly, an orchestration guide her
 sessions follow so that helpers do not burn tokens or run on a model or effort larger than the job needs, and the

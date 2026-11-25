@@ -94,6 +94,55 @@ are added so that no row claims more than is true.
 Each unit hands back in `docs/program/harness-kit-2026-11-25/in/<unit>-report.md` (what it built, each file, each
 test count, what is not tested, what it could not do), and returns under 1,500 tokens.
 
+## 7. The hooks in Rust (the owner's instruction of 2026-11-25; his answer: "no fallbacks needed")
+
+This section outranks sections 2, 3 and 5 where they differ.
+
+- **The kit wires Rust hooks only.** No JavaScript hook stands behind them on a machine without Rust. The JavaScript
+  hooks stay as they are on the owner's PC (its `.claude/settings.json` is not changed by this job) and are the
+  reference: a Rust hook is done when the test file of its JavaScript one passes against it, case for case, in both
+  modes (with and without `--harness-kit`).
+- **Workspace** `harness-kit/rust/`: `Cargo.toml` (edition 2024, rust-version 1.100, the lint table and release
+  profile the owner's other Rust work uses, copied whole into it), `rust-toolchain.toml` (1.100.0, minimal, clippy,
+  rustfmt), `Cargo.lock` committed, `.gitignore` holding `target/`.
+- **Crates**: `crates/kit-core` (a library: arguments and kit mode, the hook's input, logs, refusing and passing,
+  reading transcript lines, counting tokens) and one program per hook: `kit-window-ceiling`, `kit-tier-hook`,
+  `kit-creep-gate`, `kit-count-gate`, `kit-fanout-gate`, `kit-start`, `kit-tokens`.
+- **Dependencies**: `serde_json` 1 and `regex` 1, nothing else. Both, with all they need, are in this PC's cargo
+  cache: every cargo call on this PC carries `--offline` (a call without it once fetched a crate nobody approved:
+  r57-0621).
+- **Same behaviour**: a program takes the same arguments, reads the same input and the same environment variables
+  its JavaScript one reads (the test overrides included), prints the same text, exits with the same code, writes
+  the same log lines and fails the same way on its own error (open or closed, as its JavaScript one does). It never
+  panics on real data.
+- **Where the clone is**: the argument `--clone=<folder>` (the set-up writes it); without it, the nearest folder above
+  the program that holds `.claude/hooks/tier-routes.json`. Files that ship beside the JavaScript hooks
+  (`tier-routes.json`) are read from `<clone>/.claude/hooks/`.
+- **The wired command** becomes
+  `"<clone>/harness-kit/rust/target/release/kit-<hook>" --harness-kit "--clone=<clone>" "--project=<project>" [--no-usage-tool]`
+  (`.exe` added on Windows).
+- **The test switch**: with the environment variable `KIT_HOOK_BIN_DIR` set to a folder of built programs, a hook's
+  test file runs `<that folder>/kit-<hook>` in place of `node <hook>.mjs`. One small helper module does this for
+  every test file. Without the variable the test file runs the JavaScript hook as today.
+- **Stays JavaScript in this job, and is listed as that**: the set-up (it must run before anything is built), the
+  clean-clone check and the test files (they drive both), the parallel commands and the queue (run a few times a
+  day, no measured gain from a port; the queue is in live use here).
+- **Her machine** needs the Rust toolchain (rustup brings the pinned version), Node and git. Her first build fetches
+  the crates from crates.io unless they are in her cache; the set-up says so before it does and needs a flag for it.
+
+Rules for a helper that writes Rust here:
+- Read first: `in/rust-skills/rust-best-practices/SKILL.md` with its chapters 1, 2, 4 and 5 as needed, and
+  `in/rust-skills/ms-rust-guidelines/all-excerpt.txt`. These are the skills the owner had vetted for Rust builders.
+- No `unsafe`. No `#[allow(...)]`, `#[expect(...)]`, `todo!`, `unimplemented!`, no stub that returns a fixed answer.
+  Never change a test case to make it pass; a case that cannot apply to a program is listed in the report with the
+  reason, and the behaviour gets a Rust test.
+- `cargo clippy --offline` is clean under the workspace's lint table; `cargo fmt` is run.
+- While several builders work at once each sets its own `CARGO_TARGET_DIR` outside the repository and `-j 6`.
+  `cargo check` while working, one release build at the end. Shell calls under 150 s.
+- A builder owns its own crate folder and its hook's test file. It does not edit `kit-core` after the first unit has
+  delivered it: what it misses there it puts in its own crate and names in its report.
+- If the same case still fails after three different fixes, stop and report it with the failing input.
+
 ## 6. Rules that bind every helper of this job
 
 - Another session is working in this folder and every hook in `.claude/hooks/` is live for it. Change a live hook

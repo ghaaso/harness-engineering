@@ -3,7 +3,7 @@
 // temporary folder (FANOUT_GATE_ROOT), the clock is fixed (FANOUT_GATE_NOW). Before this hook every case below was
 // allowed: the "deny" cases are the ones the old setup (no gate) let through.
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, copyFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -169,6 +169,62 @@ capCase('C4 a start of the same message with no helper file yet counts whole', '
 { const s = setup(); run('X1 another tool', 'allow', s, { ...hookIn(s), tool_name: 'Read', tool_input: { file_path: 'a' } }); }
 { const s = setup(); run('X2 unreadable input', 'allow', s, 'not json'); }
 { const s = setup(); run('X3 no transcript at all (fails open, logged)', 'allow', s, { ...hookIn(s), transcript_path: join(s.proj, 'missing.jsonl') }); }
+
+// ---- 5. kit mode (harness kit, 2026-11-25): --harness-kit "--project=<folder>" [--no-usage-tool] ----
+// A clone in the temp folder (its .claude/hooks/ holds a copy of this hook and kit-mode.mjs; its harness-kit/basis.json
+// the kit's measured costs) and her project, with no library/: state, briefs and her own basis under .harness/.
+if (existsSync(resolve(here, 'kit-mode.mjs'))) {
+  const KC = join(base, 'kit-clone'), KH = join(KC, '.claude', 'hooks');
+  mkdirSync(KH, { recursive: true }); mkdirSync(join(KC, 'harness-kit'), { recursive: true });
+  copyFileSync(HOOK, join(KH, 'fanout-gate.mjs')); copyFileSync(resolve(here, 'kit-mode.mjs'), join(KH, 'kit-mode.mjs'));
+  writeFileSync(join(KC, 'harness-kit', 'basis.json'), JSON.stringify([
+    { id: 'r58-0104', status: 'measured', date: '2026-11-25', claim: 'a Sonnet builder of one small script used 0.20 M' },
+    { id: 'r57-0418', status: 'reasoned', date: '2026-11-21', claim: 'a guess' }]));
+  let kn = 0;
+  const kitSetup = ({ state = null, own = true, journal = false } = {}) => {
+    const P = join(base, 'her' + (++kn));
+    mkdirSync(join(P, '.harness', 'briefs'), { recursive: true });
+    if (own) writeFileSync(join(P, '.harness', 'basis.json'), JSON.stringify([{ id: 'own-0001', status: 'measured', date: '2026-11-26', claim: 'read: schema, 0.6 M' }]));
+    if (state) writeFileSync(join(P, '.harness', 'TEAM-STATE.md'), state);
+    if (journal) { mkdirSync(join(P, 'library', 'journal', 'd'), { recursive: true }); writeFileSync(join(P, 'library', 'journal', 'd', 'x.jsonl'), '{"id":"r57-0165","kind":"fact","status":"measured","claim":"x"}\n'); }
+    const proj = join(P, 'transcripts');
+    mkdirSync(join(proj, SESS, 'subagents'), { recursive: true });
+    return { root: P, proj, main: join(proj, SESS + '.jsonl') };
+  };
+  const kitRun = (name, want, s, input, expectText, extra = [], logText) => {
+    const r = spawnSync(process.execPath, [join(KH, 'fanout-gate.mjs'), '--harness-kit', `--project=${s.root}`, ...extra], {
+      input: JSON.stringify(input), env: { ...process.env, FANOUT_GATE_ROOT: join(base, 'not-this'), FANOUT_GATE_NOW: at(2) }, encoding: 'utf8' });
+    const got = r.status === 2 ? 'deny' : r.status === 0 ? 'allow' : 'exit ' + r.status;
+    let ok = got === want && (!expectText || (r.stderr || '').includes(expectText));
+    if (ok && logText) { let lg = ''; try { lg = readFileSync(join(s.root, '.claude', 'logs', 'fanout-gate.jsonl'), 'utf8'); } catch {} ok = lg.includes(logText); }
+    if (!ok) failed++;
+    console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}: ${got}${r.stderr ? ' | ' + r.stderr.trim().slice(0, 150) : ''}`);
+  };
+  const L = (basis, lim = 2, exp = 1) => `token limit ${lim} M (expected about ${exp} M, basis ${basis})`;
+  { const s = kitSetup(); write(s.main, readThenStart(L('r58-0104')));
+    kitRun('K1 kit: a basis from the clone\'s harness-kit/basis.json passes; the log is under the project', 'allow', s, hookIn(s, L('r58-0104')), null, [], '"decision":"allow"'); }
+  { const s = kitSetup(); write(s.main, readThenStart(L('own-0001')));
+    kitRun('K2 kit: a basis from her own .harness/basis.json passes', 'allow', s, hookIn(s, L('own-0001'))); }
+  { const s = kitSetup(); write(s.main, readThenStart(L('r57-0165')));
+    kitRun('K3 kit: a record in neither basis file, no record book: refused', 'deny', s, hookIn(s, L('r57-0165')), 'is not in library/journal, harness-kit/basis.json or .harness/basis.json'); }
+  { const s = kitSetup({ journal: true }); write(s.main, readThenStart(L('r57-0165')));
+    kitRun('K4 kit: the project\'s own library/journal counts where it exists', 'allow', s, hookIn(s, L('r57-0165'))); }
+  { const s = kitSetup(); write(s.main, readThenStart(L('r57-0418')));
+    kitRun('K5 kit: an entry of basis.json that is not measured or observed: refused', 'deny', s, hookIn(s, L('r57-0418')), 'is a measured or observed record'); }
+  { const s = kitSetup(); write(s.main, [asst('m2', [use('toolu_X', 'Agent', { prompt: L('r58-0104') })], 1)]);
+    kitRun('K6 kit: no meter reading, a usage tool exists: refused (rule 5 as today)', 'deny', s, hookIn(s, L('r58-0104')), 'read the meter'); }
+  { const s = kitSetup(); write(s.main, [asst('m2', [use('toolu_X', 'Agent', { prompt: L('r58-0104') })], 1)]);
+    kitRun('K7 kit --no-usage-tool: no meter reading passes and the log says the meter rule is off', 'allow', s, hookIn(s, L('r58-0104')), null, ['--no-usage-tool'], 'meter rule off: --no-usage-tool'); }
+  { const s = kitSetup(); const p = L('r58-0104', 1, 1); write(s.main, [asst('m2', [use('toolu_X', 'Agent', { prompt: p })], 1)]);
+    kitRun('K8 kit --no-usage-tool: a limit not above its expected figure is still refused', 'deny', s, hookIn(s, p), 'is not above the expected', ['--no-usage-tool']); }
+  { const s = kitSetup({ state: '# her state\nSession abcd1234, Opus.\nCap agreed: 20 M tokens for this piece.\n' }); write(s.main, readThenStart('Build it.'));
+    kitRun('K9 kit: a cap in .harness/TEAM-STATE.md refuses a start with no limit', 'deny', s, hookIn(s, 'Build it.'), '.harness/TEAM-STATE.md'); }
+  { const s = kitSetup(); writeFileSync(join(s.root, '.harness', 'briefs', 'B1.md'), '# brief\n' + L('own-0001') + '\n'); const p = 'Read briefs/B1.md and build it.';
+    write(s.main, readThenStart(p));
+    kitRun('K10 kit: the limit line of a brief under .harness/briefs/ is read', 'allow', s, hookIn(s, p), null, [], '"in":"B1.md"'); }
+  { const s = kitSetup(); write(s.main, readThenStart(L('r58-0104')));
+    run('K11 without --harness-kit the kit\'s basis files are not read: refused', 'deny', { root: s.root }, hookIn(s, L('r58-0104')), 'is not in library/journal;'); }
+} else console.log('skip  kit mode: kit-mode.mjs is not beside the hook');
 
 rmSync(base, { recursive: true, force: true });
 console.log(failed ? `${failed} FAILED of ${n} roots` : `all passed (${HOOK.split(/[\\/]/).pop()})`);
