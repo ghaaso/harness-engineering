@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Harness work split</title>
+<style>
+  :root {
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --line: #e4e3dd;
+    --panel: #f6f6f3;
+    --surface: #fcfcfb;
+    --accent: #2a78d6;
+    --you: #2a78d6;
+    --you-next: #a9c9f0;
+    --me: #eb6834;
+    --both: #1baf7a;
+    --deferred: #b5b3ab;
+    --cut: #dedcd5;
+    --mono: "JetBrains Mono", "DejaVu Sans Mono", monospace;
+  }
+  @page { size: A4; margin: 16mm 15mm 16mm 15mm; }
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    margin: 0 auto; max-width: 860px; padding: 0 16px; background: #fff; color: var(--ink);
+    font-family: "Inter", "DejaVu Sans", sans-serif; font-size: 10.2pt; line-height: 1.45;
+  }
+  h1 { font-size: 21pt; line-height: 1.12; margin: 6px 0 10px; letter-spacing: -0.01em; }
+  h2 { font-size: 15pt; margin: 26px 0 6px; padding-bottom: 6px; border-bottom: 2px solid var(--accent); break-after: avoid; }
+  h3 { font-size: 11.5pt; margin: 16px 0 4px; break-after: avoid; }
+  p { margin: 6px 0; }
+  .kicker { color: var(--accent); font-size: 8.5pt; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 600; margin-top: 4px; }
+  .lede { color: var(--ink-2); font-size: 10.6pt; margin: 4px 0 8px; }
+  .small { font-size: 8.4pt; color: var(--ink-2); }
+  .caption { font-size: 8.2pt; color: var(--ink-2); margin: 4px 0 10px; }
+  code { font-family: var(--mono); font-size: 8.6pt; }
+  .id { font-family: var(--mono); font-size: 8.6pt; font-weight: 600; white-space: nowrap; }
+  .tag { display: inline-block; font-family: var(--mono); font-size: 7.2pt; border: 1px solid #9aa1ad; border-radius: 3px; padding: 0 3px; line-height: 1.35; color: #3b414c; vertical-align: 1px; }
+  .chip { display: inline-block; font-size: 7.8pt; font-weight: 600; border-radius: 10px; padding: 1px 7px; white-space: nowrap; }
+  .chip.you { background: var(--you); color: #fff; }
+  .chip.me { background: var(--me); color: var(--ink); }
+  .chip.both { background: var(--both); color: var(--ink); }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 4px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 8.2pt; color: var(--ink-2); margin: 6px 0; }
+
+  /* stat tiles and split bar */
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0 10px; }
+  .tile { border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; }
+  .tile .label { color: var(--ink-2); font-size: 8.3pt; }
+  .tile .value { font-size: 17pt; font-weight: 600; line-height: 1.15; margin-top: 2px; }
+  .tile .sub { color: var(--muted); font-size: 7.8pt; }
+  .split { position: relative; margin: 20px 0 2px; }
+  .split .bar { display: flex; gap: 2px; height: 28px; }
+  .split .seg { border-radius: 4px; display: flex; align-items: center; padding: 0 9px; font-size: 8.8pt; font-weight: 600; }
+  .split .seg.you { background: var(--you); color: #fff; }
+  .split .seg.me { background: var(--me); color: var(--ink); justify-content: flex-end; flex: 1; }
+  .split .mark { position: absolute; top: -5px; bottom: -5px; border-left: 1.5px dashed var(--ink); }
+  .split .mark span { position: absolute; top: -17px; left: -16px; font-size: 7.5pt; color: var(--ink-2); white-space: nowrap; }
+
+  /* package map */
+  .pkgs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin: 8px 0; }
+  .pkg { border: 1px solid var(--line); border-left-width: 6px; border-radius: 5px; padding: 5px 7px; break-inside: avoid; background: #fff; }
+  .pkg.you { border-left-color: var(--you); }
+  .pkg.me { border-left-color: var(--me); }
+  .pkg.both { border-left-color: var(--both); }
+  .pkg .top { display: flex; justify-content: space-between; gap: 6px; }
+  .pkg .name { font-weight: 600; font-size: 8.8pt; }
+  .pkg .ideas { font-size: 7.6pt; color: var(--muted); white-space: nowrap; }
+  .pkg .who { font-size: 7.9pt; color: var(--ink-2); margin-top: 2px; }
+  .pkg .add { font-size: 7.6pt; color: var(--ink); background: var(--panel); border-radius: 3px; padding: 0 4px; margin-top: 3px; display: inline-block; }
+
+  /* tables */
+  table { width: 100%; border-collapse: collapse; margin: 8px 0 4px; font-size: 8.9pt; }
+  th { text-align: left; font-weight: 600; color: var(--ink-2); background: var(--panel); padding: 5px 6px; border-bottom: 1px solid var(--line); font-size: 8.3pt; }
+  td { padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr { break-inside: avoid; }
+  td.num, th.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  tfoot td, tr.total td { font-weight: 600; background: var(--panel); }
+  td .done { font-style: italic; }
+
+  /* figures */
+  figure { margin: 10px 0 6px; break-inside: avoid; }
+  figure svg { width: 100%; height: auto; display: block; }
+  .seg-bar { display: flex; gap: 2px; height: 28px; margin: 8px 0 4px; }
+  .seg-bar div { border-radius: 4px; display: flex; align-items: center; padding-left: 7px; font-size: 8.6pt; font-weight: 600; min-width: 0; overflow: hidden; }
+  .steps { display: flex; gap: 0; margin: 10px 0 4px; }
+  .step { flex: 1; position: relative; text-align: center; font-size: 7.8pt; color: var(--ink-2); padding: 0 2px; }
+  .step::before { content: ""; position: absolute; top: 9px; left: -50%; width: 100%; height: 2px; background: var(--grid); z-index: 0; }
+  .step:first-child::before { display: none; }
+  .step .dot { position: relative; z-index: 1; width: 20px; height: 20px; border-radius: 50%; margin: 0 auto 4px; display: flex; align-items: center; justify-content: center; font-size: 10pt; font-weight: 700; }
+  .step.done .dot { background: var(--ink); color: #fff; }
+  .step.now .dot { background: linear-gradient(90deg, var(--ink) 50%, #fff 50%); border: 2px solid var(--ink); }
+  .step.todo .dot { background: #fff; border: 2.5px solid var(--me); }
+  .step b { display: block; color: var(--ink); font-size: 8pt; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .box { border: 1px solid var(--line); border-radius: 6px; padding: 8px 11px; break-inside: avoid; }
+  .box h3 { margin-top: 2px; }
+  ul, ol { margin: 6px 0; padding-left: 20px; }
+  li { margin: 3px 0; }
+  .foot { margin-top: 22px; color: var(--muted); font-size: 7.8pt; border-top: 1px solid var(--line); padding-top: 6px; }
+  .pb { break-before: page; }
+  .avoid { break-inside: avoid; }
+  @media (max-width: 640px) {
+    .tiles { grid-template-columns: 1fr 1fr; }
+    .pkgs { grid-template-columns: 1fr 1fr; }
+    .cols { grid-template-columns: 1fr; }
+    table { display: block; overflow-x: auto; }
+  }
+</style>
+</head>
+<body>
+
+<div class="kicker">Harness programme · our split · 17 November 2026</div>
+<h1>Our harness work: who takes what</h1>
+<p class="lede">You take 24.75 days and I take 21.75. You build on your own testbed and I wire your pieces into the clinic testbed and FixFlow. Sizes: <span class="tag">E</span> estimated in the 14 Nov edition, <span class="tag">G</span> my guess.</p>
+
+<div class="tiles">
+  <div class="tile"><div class="label">Your share</div><div class="value">53 %</div><div class="sub">24.75 days · 12 rows</div></div>
+  <div class="tile"><div class="label">My share</div><div class="value">47 %</div><div class="sub">21.75 days · 15 rows</div></div>
+  <div class="tile"><div class="label">Packages with an owner</div><div class="value">17 of 17</div><div class="sub">the 16, plus your testbed</div></div>
+  <div class="tile"><div class="label">Blocks the most</div><div class="value">D07</div><div class="sub">the token budget, day 0</div></div>
+</div>
+
+<div class="split">
+  <div class="bar"><div class="seg you" style="width:53.2%">You · 24.75 d · 53.2 %</div><div class="seg me">Me · 21.75 d · 46.8 %</div></div>
+  <div class="mark" style="left:50%"><span>50 / 50</span></div>
+  <div class="mark" style="left:60%"><span>60 / 40 cap</span></div>
+</div>
+<p class="caption">Days are focused work. Where I split a package the edition sized, both halves keep its <span class="tag">E</span>. My FixFlow pre-flight (P0a) is not counted. Nor is the time my decisions take, except working out D07 from the November tally, which is my first row.</p>
+
+<h2>Every package and who holds it</h2>
+<div class="legend"><span><i class="swatch" style="background:var(--you)"></i>You</span><span><i class="swatch" style="background:var(--me)"></i>Me</span><span><i class="swatch" style="background:var(--both)"></i>Both: each of us has a part, named in the box</span><span><i class="swatch" style="background:var(--panel);border:1px solid var(--line)"></i>Grey label: added on 17 Nov</span><span>The number is how many of the 484 catalogued ideas the package carries.</span></div>
+<div class="pkgs">
+  <div class="pkg me"><div class="top"><span class="name"><span class="id">WP1</span> Machine and recovery</span><span class="ideas">25 ideas</span></div><div class="who">Me</div></div>
+  <div class="pkg both"><div class="top"><span class="name"><span class="id">WP2a</span> The clinic check</span><span class="ideas">26 ideas</span></div><div class="who">You build the queue, heartbeat and reaper · I wire and measure</div></div>
+  <div class="pkg both"><div class="top"><span class="name"><span class="id">WP2b</span> FixFlow gates and CI</span><span class="ideas">19 ideas</span></div><div class="who">You build the CI steps · I port them</div></div>
+  <div class="pkg both"><div class="top"><span class="name"><span class="id">WP3</span> Gate and merge scripts</span><span class="ideas">45 ideas</span></div><div class="who">You write the scripts · I run them on my record and the clinic</div></div>
+  <div class="pkg me"><div class="top"><span class="name"><span class="id">WP4</span> Planner and lanes</span><span class="ideas">22 ideas</span></div><div class="who">Me</div></div>
+  <div class="pkg both"><div class="top"><span class="name"><span class="id">WP5</span> Token budget</span><span class="ideas">45 ideas</span></div><div class="who">I set D07 · you measure levers 3 and 4</div></div>
+  <div class="pkg you"><div class="top"><span class="name"><span class="id">WP6a</span> The library</span><span class="ideas">20 ideas</span></div><div class="who">You</div></div>
+  <div class="pkg me"><div class="top"><span class="name"><span class="id">WP6b</span> Knowledge store</span><span class="ideas">39 ideas</span></div><div class="who">Me for the audit · both for a build</div></div>
+  <div class="pkg both"><div class="top"><span class="name"><span class="id">WP6c</span> Docs true to code</span><span class="ideas">9 ideas</span></div><div class="who">You build the check · I port it</div></div>
+  <div class="pkg both"><div class="top"><span class="name"><span class="id">WP7</span> Retrieval and graphs</span><span class="ideas">42 ideas</span></div><div class="who">You build graph v2's measuring side · I close the GNN run and replay on my lookups</div><span class="add">+ GNN and embeddings run, graph v2</span></div>
+  <div class="pkg me"><div class="top"><span class="name"><span class="id">WP8</span> Measurement</span><span class="ideas">45 ideas</span></div><div class="who">Me</div></div>
+  <div class="pkg both"><div class="top"><span class="name"><span class="id">WP9</span> First use, real hosts</span><span class="ideas">22 ideas</span></div><div class="who">You build it · I rerun it on the clinic</div></div>
+  <div class="pkg me"><div class="top"><span class="name"><span class="id">WP10a</span> Briefs and workflows</span><span class="ideas">83 ideas</span></div><div class="who">Me</div><span class="add">+ distributed-systems lecture pass</span></div>
+  <div class="pkg both"><div class="top"><span class="name"><span class="id">WP10b</span> Skills and agents</span><span class="ideas">17 ideas</span></div><div class="who">You build the CI check · I review and tally</div></div>
+  <div class="pkg you"><div class="top"><span class="name"><span class="id">WP11</span> Decisions and pages</span><span class="ideas">23 ideas</span></div><div class="who">You</div></div>
+  <div class="pkg both"><div class="top"><span class="name"><span class="id">WP12</span> Orchestration B+ tree</span><span class="ideas">2 ideas</span></div><div class="who">I run the trial · you build the key table</div><span class="add">+ key table (WP12b)</span></div>
+  <div class="pkg you"><div class="top"><span class="name"><span class="id">WP13</span> Your testbed</span><span class="ideas">new</span></div><div class="who">You</div><span class="add">new on 17 Nov</span></div>
+</div>
+<p class="caption">All 484 ideas are tagged to one of the 16 packages. The grey labels mark what I added on 17 Nov: your testbed (WP13), and four pieces of research no package covered (the GNN run and graph v2 on WP7, the lecture pass on WP10a, the key table on WP12).</p>
+
+<h2>Your work</h2>
+<p class="small">In the order I suggest. 12 rows, 24.75 days.</p>
+<table>
+  <thead><tr><th style="width:3%">#</th><th style="width:19%">Package</th><th>What you deliver, and when it is done</th><th style="width:18%">Needs</th><th class="num" style="width:7%">Days</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><span class="id">WP11</span> Decisions and pages</td><td>One board for every decision I owe (D05, D07–D25, KS-D1, KS-D1b, LIB, GT-1, GT-2), built from a JSON file the way the FixFlow owner view is. Beside it goes the shared queue where agent runs on my PC are booked against my D07 budget. We each have our own budget now, so only runs on my PC are booked, and heavy checks still take an <code>ff-slot.sh</code> slot. <span class="done">Done when no package waits on me for more than a day <span class="tag">T</span> and every wait is logged.</span></td><td>My answers. Start here.</td><td class="num">1.5 <span class="tag">G</span></td></tr>
+    <tr><td>2</td><td><span class="id">WP10b-CI</span> Skills: CI check</td><td>A CI check for skill and agent files: valid frontmatter, a pinned model and a short tool list. Prove it on this repo's <code>.claude/</code> folder (13 skills, 12 agents), record-only first. I add it to FixFlow.</td><td>Nothing.</td><td class="num">1.0 <span class="tag">G</span></td></tr>
+    <tr><td>3</td><td><span class="id">WP13</span> Your testbed</td><td>A project of your own, built with Claude Code lanes on your Mac: Python and Postgres with pytest, like the clinic, so what we learn carries over; a check that takes minutes; migrations; GitHub Actions; and lanes in worktrees. <span class="done">Done when the check runs in a container, CI is green and two lane waves have merged.</span> It keeps growing as you use it for the rows below.</td><td>D24 (your own Claude plan) and D07 for your account.</td><td class="num">3.0 <span class="tag">G</span></td></tr>
+    <tr><td>4</td><td><span class="id">WP6c</span> Docs true to code</td><td>Turn the facts a CLAUDE.md states, such as the migration head, into a CI check. <span class="done">Done when a planted wrong fact turns CI red on your testbed.</span> I port it to FixFlow.</td><td>WP13.</td><td class="num">1.0 <span class="tag">G</span></td></tr>
+    <tr><td>5</td><td><span class="id">WP2b</span> Gates and CI</td><td>CI steps that fail on skipped integration tests and on an empty test run, plus a step that re-runs a failing test once under the version CI pins before calling it a real failure. Prove them with planted skips and an empty run on your testbed's pytest suite; I prove the Jest and Node 22 side on a FixFlow branch when I port it. Then analyse the gate waits I export for you on day 0.</td><td>WP13. My gate-wait export.</td><td class="num">2.0 <span class="tag">G</span></td></tr>
+    <tr><td>6</td><td><span class="id">WP2a-build</span> The check: build half</td><td>A slot queue sized from one memory number; a heartbeat with no gap longer than 60 s <span class="tag">T</span> that names the test when a check stalls; and a reaper that only lists what its own scripts made. Prove all three on your testbed's container check, and I wire them into the clinic.</td><td>WP13.</td><td class="num">2.0 <span class="tag">E</span></td></tr>
+    <tr><td>7</td><td><span class="id">WP3a</span> Gate and merge scripts</td><td>The replay seal; a claims file and a schema-validated typed verdict; a verdict script that re-runs cited tests at parent and head; a merge-queue script that only records; and the transcript-audit script (who read the final head, whether the gate ran before each fix, root edits per merge). <span class="done">Done when, on your testbed, the verdict script flags the overstatements you plant with under 10 % false flags <span class="tag">T</span>, and the merge queue flags the unread final heads you plant by itself.</span></td><td>WP13. D12–D20 as I answer them.</td><td class="num">3.5 <span class="tag">E</span></td></tr>
+    <tr><td>8</td><td><span class="id">WP9</span> First use, real hosts</td><td>A zero-seed walk (first use on an empty database) as a gate step, a load drill of your own modelled on the clinic's 12-user drill, and, after D21, a rehearsal of your testbed on a rented host. <span class="done">Done when the walk catches a planted first-use gap and passes after the fix.</span></td><td>WP2a-build. D21 for the host.</td><td class="num">2.5 <span class="tag">E</span></td></tr>
+    <tr><td>9</td><td><span class="id">WP7</span> Graph v2, measuring side</td><td>My test set of 4,829 recorded lookups already exists, with the index-only and scripted-search baselines measured on it (14 Nov) <span class="tag">M</span>. Build the same from your own sessions, on your testbed and in this repo. Then build the lookup-level replay at zero tokens, the leak and cut rules, the CQ registry (the questions graph v2 must answer, stored as data with their answer shapes) and a quality card for each build. <span class="done">Done when the replay runs on your lookups and runs unchanged on mine on my PC.</span></td><td>D23. WP8.</td><td class="num">3.5 <span class="tag">G</span></td></tr>
+    <tr><td>10</td><td><span class="id">WP5</span> Levers 3 and 4</td><td>Before-and-after numbers on your own sessions for batching lookups (lever 3) and writing big files by script (lever 4), with the token-spend scripts in this repo.</td><td>WP13. D07.</td><td class="num">1.25 <span class="tag">G</span></td></tr>
+    <tr><td>11</td><td><span class="id">WP12b</span> The key table</td><td>The split rule's key table made safe for several writers: versioned compare-and-swap writes, and a lease and epoch per scope so an old owner's late write is refused (split rule 1.10, point 11). <span class="done">Done when simulated sessions never give a scope two owners or lose a row, with two children, the old session they replace and a parent restarted after a crash all writing at once.</span> It goes into my second trial wave.</td><td>Split rule 1.6–1.8.</td><td class="num">2.0 <span class="tag">G</span></td></tr>
+    <tr><td>12</td><td><span class="id">WP6a</span> The library</td><td>Draft the library's limitation list from <code>LIBRARY-PATHWAYS-2026-11.md</code>, each item with its "alone" and "last" weights, for me to agree (LIB). Then write the held-out pilot against my WP8 contract.</td><td>LIB. WP8.</td><td class="num">1.5 <span class="tag">G</span></td></tr>
+    <tr class="total"><td></td><td colspan="3">Your total</td><td class="num">24.75</td></tr>
+  </tbody>
+</table>
+
+<h2>My work</h2>
+<p class="small">In my order. D07 and the gate-wait export happen on day 0; the rest comes after P0a. 15 rows, 21.75 days.</p>
+<table>
+  <thead><tr><th style="width:3%">#</th><th style="width:19%">Package</th><th>What I deliver, and when it is done</th><th style="width:18%">Needs</th><th class="num" style="width:7%">Days</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><span class="id">WP5</span> D07</td><td>On day 0, whatever the state of P0a, I work out D07 from the November tally (the proposal is about an hour <span class="tag">E</span>) and answer it, with one budget for each of our accounts. The same day I export the gate waits from FixFlow's slot logs for your WP2b.</td><td>Nothing.</td><td class="num">0.25 <span class="tag">G</span></td></tr>
+    <tr><td>2</td><td><span class="id">WP1</span> Machine and recovery</td><td>A nightly copy of what is not on GitHub (EMS worktrees, scratchpads, transcripts, the clinic testbed), a resume list and the sensor logger. <span class="done">Done when the copy is never more than 24 h old <span class="tag">T</span> and a clone from it shows the same heads; after a reboot the resume list shows and the databases are healthy within 3 min <span class="tag">T</span>; and the next unexpected shutdown leaves a logger trace that ends at it.</span></td><td>My D04, D02 and D05 steps.</td><td class="num">1.5 <span class="tag">E</span></td></tr>
+    <tr><td>3</td><td><span class="id">WP8</span> Measurement</td><td>The rate sheet from the record, each rate tagged and updated after each wave, and the frozen validation contract and protocols.</td><td>Your fresh read before I freeze it.</td><td class="num">2.0 <span class="tag">G</span></td></tr>
+    <tr><td>4</td><td><span class="id">WP7-finish</span> The GNN and embeddings run</td><td>I close the run on my PC. Its tuning verdicts (does any fused arm "add" on the late 50 tuning commits) were written before the held-out run, which only describes. I let the held-out run finish, then grade it, audit it for leaks and have it refuted, as the run's end order sets out. I write the result next to the graph test and answer D25.</td><td>My PC and its GPU.</td><td class="num">1.5 <span class="tag">G</span></td></tr>
+    <tr><td>5</td><td><span class="id">WP12</span> The 300k trial</td><td>The trial as part 6.6 of the split rule sets it out: D07; the count that scores it; whether two sessions can hold different compaction windows; the baseline over recorded summaries; then one trial wave beside a matched wave that compacts earlier. It acts on the same tokens as lever 1 (capping long windows), so lever 1 is measured with it.</td><td>D07. A FixFlow or clinic lane wave.</td><td class="num">2.5 <span class="tag">G</span></td></tr>
+    <tr><td>6</td><td><span class="id">WP10a</span> Briefs and workflows</td><td>The save-as-run rule and one saved review workflow, with raw outputs kept under a hash manifest. Once your WP3a seal exists, it must catch a brief edit that flips a recorded verdict. New from the after-compaction count: a card of PC facts that survives compaction (no <code>python</code> on PATH, shell length limits), tried as a rule.</td><td>D07.</td><td class="num">1.5 <span class="tag">G</span></td></tr>
+    <tr><td>7</td><td><span class="id">WP6b</span> Knowledge store audit</td><td>The recurrence audit KS-0 over FixFlow's history, with no code. It decides whether we build the knowledge store.</td><td>KS-D1. Never ahead of a ship phase.</td><td class="num">1.0 <span class="tag">E</span></td></tr>
+    <tr><td>8</td><td><span class="id">MTH-67</span> Lecture pass</td><td>I copy the lecture list into this repo, map each of the eleven bottleneck blocks to the lectures that bear on it, and enter every candidate borrow as an idea with a refuter pass. I also answer the overlap-and-sequence question I left open. <span class="done">Done when every block has a lecture row or "none found".</span></td><td>The lecture library on my PC.</td><td class="num">1.5 <span class="tag">G</span></td></tr>
+    <tr><td>9</td><td><span class="id">WP2a</span> Wire and measure</td><td>I wire your queue, heartbeat and reaper into the clinic's container check, run Windows and container side by side, and take one check's peak memory. The memory table and a second slot follow WP1's logger. <span class="done">Done when the median gate is near 230 s <span class="tag">T</span> with no Linux-only failures on main, and after each merge the worktree and container counts return to the active slices plus one.</span></td><td>Your WP2a-build. WP1. D09–D11.</td><td class="num">2.0 <span class="tag">E</span></td></tr>
+    <tr><td>10</td><td><span class="id">WP4</span> Planner and lanes</td><td>The plan check replayed on FixFlow's first lane wave, then run record-only on the next: its collision graph and lane count, as a recommendation to FixFlow's coordinator session.</td><td>WP8.</td><td class="num">2.0 <span class="tag">G</span></td></tr>
+    <tr><td>11</td><td><span class="id">WP3b</span> Run your scripts</td><td>I run your transcript-audit script over my recorded transcripts. <span class="done">Done when it finds the unread final heads of 10 and 11 November by itself and gives a root-edit count per merge.</span> Then I replay your other WP3a scripts, record-only, over the clinic's 65 merges, and make the first count of claims a script can recheck with your verdict script (PR-HALLU).</td><td>Your WP3a.</td><td class="num">1.0 <span class="tag">E</span></td></tr>
+    <tr><td>12</td><td>Ports</td><td>I put your pieces into our projects. The WP6c check goes in record-only over recent merges first, with the corrections PR that settles the contradictions the knowledge-store design lists (PR #183) (0.75). The WP2b CI steps go in with every gate kind taking the per-lane lock first and the Jest re-run proven under Node 22 (0.75). The WP10b-CI check follows (0.25). On the clinic, your WP9 walk must fail before <code>fb55599</code> and pass after it, and I rerun the clinic's 12-user load drill (1.0).</td><td>Your rows 2, 4, 5 and 8.</td><td class="num">2.75 <span class="tag">G</span></td></tr>
+    <tr><td>13</td><td><span class="id">WP10b</span> Skills review</td><td>I check the skills and agents for domain correctness (Android, Odoo, accounting), run the trigger tally under D07, and compare the pinned cheaper agents' token use with the built-in agent's.</td><td>Your WP10b-CI.</td><td class="num">1.0 <span class="tag">G</span></td></tr>
+    <tr><td>14</td><td><span class="id">WP7</span> Replay on my lookups</td><td>I run your lookup-level replay over my 4,829 recorded lookups on my PC and score it against D23's marks. That is the edition's WP7 done-when.</td><td>Your WP7. D23.</td><td class="num">0.5 <span class="tag">G</span></td></tr>
+    <tr><td>15</td><td>Reviews</td><td>I read your scripts before any of them may refuse anything, and agree the LIB list with you. This is spread across the round.</td><td>Your work.</td><td class="num">0.75 <span class="tag">G</span></td></tr>
+    <tr class="total"><td></td><td colspan="3">My total</td><td class="num">21.75</td></tr>
+  </tbody>
+</table>
+
+<h2>Order of work and hand-offs</h2>
+<figure>
+<!--CHART:gantt-->
+<svg viewBox="0 0 1000 350" role="img" aria-label="Order of work: your twelve rows and fourteen of my fifteen rows as blocks sized by days, my reviews as a thin strip, and five numbered hand-offs between us" xmlns="http://www.w3.org/2000/svg" font-family="Inter, DejaVu Sans, sans-serif">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#52514e"/></marker></defs>
+<rect x="0" y="0" width="1000" height="350" fill="#fcfcfb"/>
+<line x1="92" y1="26" x2="92" y2="294" stroke="#e1e0d9" stroke-width="1"/>
+<text x="92" y="308" font-size="13" fill="#898781" text-anchor="middle">0</text>
+<line x1="270.4" y1="26" x2="270.4" y2="294" stroke="#e1e0d9" stroke-width="1"/>
+<text x="270.4" y="308" font-size="13" fill="#898781" text-anchor="middle">5</text>
+<line x1="448.8" y1="26" x2="448.8" y2="294" stroke="#e1e0d9" stroke-width="1"/>
+<text x="448.8" y="308" font-size="13" fill="#898781" text-anchor="middle">10</text>
+<line x1="627.1999999999999" y1="26" x2="627.1999999999999" y2="294" stroke="#e1e0d9" stroke-width="1"/>
+<text x="627.1999999999999" y="308" font-size="13" fill="#898781" text-anchor="middle">15</text>
+<line x1="805.6" y1="26" x2="805.6" y2="294" stroke="#e1e0d9" stroke-width="1"/>
+<text x="805.6" y="308" font-size="13" fill="#898781" text-anchor="middle">20</text>
+<line x1="984" y1="26" x2="984" y2="294" stroke="#e1e0d9" stroke-width="1"/>
+<text x="984" y="308" font-size="13" fill="#898781" text-anchor="middle">25</text>
+<text x="984" y="326" font-size="13" fill="#898781" text-anchor="end">days of work, counted from the start of each lane</text>
+<text x="8" y="56" font-size="17" font-weight="700" fill="#0b0b0b">You</text>
+<text x="8" y="74" font-size="12" fill="#52514e">24.75 d</text>
+<text x="8" y="214" font-size="17" font-weight="700" fill="#0b0b0b">Me</text>
+<text x="8" y="230" font-size="12" fill="#52514e">21.75 d,</text>
+<text x="8" y="244" font-size="12" fill="#52514e">after P0a</text>
+<rect x="93.0" y="34" width="51.5" height="50" rx="4" fill="#2a78d6"><title>WP11: 1.5 days</title></rect>
+<text x="118.8" y="56" font-size="15" font-weight="700" fill="#ffffff" text-anchor="middle">11</text>
+<text x="118.8" y="73" font-size="12" fill="#ffffff" text-anchor="middle" opacity="0.9">1.5 d</text>
+<rect x="146.5" y="34" width="33.7" height="50" rx="4" fill="#2a78d6"><title>WP10b-CI: 1 days</title></rect>
+<text x="163.4" y="64" font-size="13" font-weight="700" fill="#ffffff" text-anchor="middle">10b</text>
+<rect x="182.2" y="34" width="105.0" height="50" rx="4" fill="#2a78d6"><title>WP13: 3 days</title></rect>
+<text x="234.7" y="56" font-size="15" font-weight="700" fill="#ffffff" text-anchor="middle">13</text>
+<text x="234.7" y="73" font-size="12" fill="#ffffff" text-anchor="middle" opacity="0.9">3 d</text>
+<rect x="289.2" y="34" width="33.7" height="50" rx="4" fill="#2a78d6"><title>WP6c: 1 days</title></rect>
+<text x="306.1" y="64" font-size="13" font-weight="700" fill="#ffffff" text-anchor="middle">6c</text>
+<rect x="324.9" y="34" width="69.4" height="50" rx="4" fill="#2a78d6"><title>WP2b: 2 days</title></rect>
+<text x="359.6" y="56" font-size="15" font-weight="700" fill="#ffffff" text-anchor="middle">2b</text>
+<text x="359.6" y="73" font-size="12" fill="#ffffff" text-anchor="middle" opacity="0.9">2 d</text>
+<rect x="396.3" y="34" width="69.4" height="50" rx="4" fill="#2a78d6"><title>WP2a-build: 2 days</title></rect>
+<text x="431.0" y="56" font-size="15" font-weight="700" fill="#ffffff" text-anchor="middle">2a</text>
+<text x="431.0" y="73" font-size="12" fill="#ffffff" text-anchor="middle" opacity="0.9">2 d</text>
+<rect x="467.6" y="34" width="122.9" height="50" rx="4" fill="#2a78d6"><title>WP3a: 3.5 days</title></rect>
+<text x="529.1" y="56" font-size="15" font-weight="700" fill="#ffffff" text-anchor="middle">3a</text>
+<text x="529.1" y="73" font-size="12" fill="#ffffff" text-anchor="middle" opacity="0.9">3.5 d</text>
+<rect x="592.5" y="34" width="87.2" height="50" rx="4" fill="#2a78d6"><title>WP9: 2.5 days</title></rect>
+<text x="636.1" y="56" font-size="15" font-weight="700" fill="#ffffff" text-anchor="middle">9</text>
+<text x="636.1" y="73" font-size="12" fill="#ffffff" text-anchor="middle" opacity="0.9">2.5 d</text>
+<rect x="681.7" y="34" width="122.9" height="50" rx="4" fill="#2a78d6"><title>WP7: 3.5 days</title></rect>
+<text x="743.2" y="56" font-size="15" font-weight="700" fill="#ffffff" text-anchor="middle">7</text>
+<text x="743.2" y="73" font-size="12" fill="#ffffff" text-anchor="middle" opacity="0.9">3.5 d</text>
+<rect x="806.6" y="34" width="42.6" height="50" rx="4" fill="#2a78d6"><title>WP5: 1.25 days</title></rect>
+<text x="827.9" y="64" font-size="13" font-weight="700" fill="#ffffff" text-anchor="middle">5</text>
+<rect x="851.2" y="34" width="69.4" height="50" rx="4" fill="#2a78d6"><title>WP12b: 2 days</title></rect>
+<text x="885.9" y="56" font-size="15" font-weight="700" fill="#ffffff" text-anchor="middle">12b</text>
+<text x="885.9" y="73" font-size="12" fill="#ffffff" text-anchor="middle" opacity="0.9">2 d</text>
+<rect x="922.6" y="34" width="51.5" height="50" rx="4" fill="#2a78d6"><title>WP6a: 1.5 days</title></rect>
+<text x="948.3" y="56" font-size="15" font-weight="700" fill="#ffffff" text-anchor="middle">6a</text>
+<text x="948.3" y="73" font-size="12" fill="#ffffff" text-anchor="middle" opacity="0.9">1.5 d</text>
+<rect x="93.0" y="196" width="6.9" height="50" rx="4" fill="#eb6834"><title>D07: 0.25 days</title></rect>
+<text x="96.5" y="276" font-size="12" font-weight="700" fill="#52514e" text-anchor="middle">D07</text>
+<rect x="101.9" y="196" width="51.5" height="50" rx="4" fill="#eb6834"><title>WP1: 1.5 days</title></rect>
+<text x="127.7" y="218" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="middle">1</text>
+<text x="127.7" y="235" font-size="12" fill="#0b0b0b" text-anchor="middle" opacity="0.9">1.5 d</text>
+<rect x="155.4" y="196" width="69.4" height="50" rx="4" fill="#eb6834"><title>WP8: 2 days</title></rect>
+<text x="190.1" y="218" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="middle">8</text>
+<text x="190.1" y="235" font-size="12" fill="#0b0b0b" text-anchor="middle" opacity="0.9">2 d</text>
+<rect x="226.8" y="196" width="51.5" height="50" rx="4" fill="#eb6834"><title>WP7-finish: 1.5 days</title></rect>
+<text x="252.6" y="218" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="middle">7f</text>
+<text x="252.6" y="235" font-size="12" fill="#0b0b0b" text-anchor="middle" opacity="0.9">1.5 d</text>
+<rect x="280.3" y="196" width="87.2" height="50" rx="4" fill="#eb6834"><title>WP12: 2.5 days</title></rect>
+<text x="323.9" y="218" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="middle">12</text>
+<text x="323.9" y="235" font-size="12" fill="#0b0b0b" text-anchor="middle" opacity="0.9">2.5 d</text>
+<rect x="369.5" y="196" width="51.5" height="50" rx="4" fill="#eb6834"><title>WP10a: 1.5 days</title></rect>
+<text x="395.3" y="218" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="middle">10a</text>
+<text x="395.3" y="235" font-size="12" fill="#0b0b0b" text-anchor="middle" opacity="0.9">1.5 d</text>
+<rect x="423.0" y="196" width="33.7" height="50" rx="4" fill="#eb6834"><title>WP6b: 1 days</title></rect>
+<text x="439.9" y="226" font-size="13" font-weight="700" fill="#0b0b0b" text-anchor="middle">6b</text>
+<rect x="458.7" y="196" width="51.5" height="50" rx="4" fill="#eb6834"><title>MTH-67: 1.5 days</title></rect>
+<text x="484.5" y="218" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="middle">MTH</text>
+<text x="484.5" y="235" font-size="12" fill="#0b0b0b" text-anchor="middle" opacity="0.9">1.5 d</text>
+<rect x="512.2" y="196" width="69.4" height="50" rx="4" fill="#eb6834"><title>WP2a: 2 days</title></rect>
+<text x="546.9" y="218" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="middle">2a</text>
+<text x="546.9" y="235" font-size="12" fill="#0b0b0b" text-anchor="middle" opacity="0.9">2 d</text>
+<rect x="583.6" y="196" width="69.4" height="50" rx="4" fill="#eb6834"><title>WP4: 2 days</title></rect>
+<text x="618.3" y="218" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="middle">4</text>
+<text x="618.3" y="235" font-size="12" fill="#0b0b0b" text-anchor="middle" opacity="0.9">2 d</text>
+<rect x="655.0" y="196" width="33.7" height="50" rx="4" fill="#eb6834"><title>WP3b: 1 days</title></rect>
+<text x="671.8" y="226" font-size="13" font-weight="700" fill="#0b0b0b" text-anchor="middle">3b</text>
+<rect x="690.6" y="196" width="96.1" height="50" rx="4" fill="#eb6834"><title>Ports: 2.75 days</title></rect>
+<text x="738.7" y="218" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="middle">ports</text>
+<text x="738.7" y="235" font-size="12" fill="#0b0b0b" text-anchor="middle" opacity="0.9">2.75 d</text>
+<rect x="788.8" y="196" width="33.7" height="50" rx="4" fill="#eb6834"><title>WP10b: 1 days</title></rect>
+<text x="805.6" y="226" font-size="13" font-weight="700" fill="#0b0b0b" text-anchor="middle">10b</text>
+<rect x="824.4" y="196" width="15.8" height="50" rx="4" fill="#eb6834"><title>WP7-replay: 0.5 days</title></rect>
+<text x="832.4" y="276" font-size="12" font-weight="700" fill="#52514e" text-anchor="middle">7r</text>
+<text x="96.5" y="290" font-size="11" fill="#52514e" text-anchor="start">day 0</text>
+<rect x="92" y="252" width="749.3" height="5" rx="2.5" fill="#eb6834" opacity="0.45"/>
+<text x="849.28" y="258" font-size="12" fill="#52514e">+ reviews, 0.75 d, spread</text>
+<path d="M217.8,192 L217.8,174 L724.7,174 L724.7,88" fill="none" stroke="#fcfcfb" stroke-width="6"/>
+<path d="M217.8,192 L217.8,174 L724.7,174 L724.7,88" fill="none" stroke="#52514e" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#ah)"/>
+<path d="M460.6,87 C460.6,127.5 519.2,127.5 519.2,192" fill="none" stroke="#fcfcfb" stroke-width="6"/>
+<path d="M460.6,87 C460.6,127.5 519.2,127.5 519.2,192" fill="none" stroke="#52514e" stroke-width="2" marker-end="url(#ah)"/>
+<path d="M585.5,87 C585.5,127.5 662.0,127.5 662.0,192" fill="none" stroke="#fcfcfb" stroke-width="6"/>
+<path d="M585.5,87 C585.5,127.5 662.0,127.5 662.0,192" fill="none" stroke="#52514e" stroke-width="2" marker-end="url(#ah)"/>
+<path d="M674.7,87 C674.7,127.5 697.6,127.5 697.6,192" fill="none" stroke="#fcfcfb" stroke-width="6"/>
+<path d="M674.7,87 C674.7,127.5 697.6,127.5 697.6,192" fill="none" stroke="#52514e" stroke-width="2" marker-end="url(#ah)"/>
+<path d="M799.6,87 C799.6,127.5 831.4,127.5 831.4,192" fill="none" stroke="#fcfcfb" stroke-width="6"/>
+<path d="M799.6,87 C799.6,127.5 831.4,127.5 831.4,192" fill="none" stroke="#52514e" stroke-width="2" marker-end="url(#ah)"/>
+<circle cx="287.8" cy="174.0" r="11" fill="#ffffff" stroke="#0b0b0b" stroke-width="1.5"/>
+<text x="287.8" y="178.5" font-size="13" font-weight="700" fill="#0b0b0b" text-anchor="middle">4</text>
+<circle cx="489.9" cy="127.5" r="11" fill="#ffffff" stroke="#0b0b0b" stroke-width="1.5"/>
+<text x="489.9" y="132.0" font-size="13" font-weight="700" fill="#0b0b0b" text-anchor="middle">1</text>
+<circle cx="623.7" cy="127.5" r="11" fill="#ffffff" stroke="#0b0b0b" stroke-width="1.5"/>
+<text x="623.7" y="132.0" font-size="13" font-weight="700" fill="#0b0b0b" text-anchor="middle">2</text>
+<circle cx="686.2" cy="127.5" r="11" fill="#ffffff" stroke="#0b0b0b" stroke-width="1.5"/>
+<text x="686.2" y="132.0" font-size="13" font-weight="700" fill="#0b0b0b" text-anchor="middle">3</text>
+<circle cx="815.5" cy="127.5" r="11" fill="#ffffff" stroke="#0b0b0b" stroke-width="1.5"/>
+<text x="815.5" y="132.0" font-size="13" font-weight="700" fill="#0b0b0b" text-anchor="middle">5</text>
+</svg>
+<!--/CHART:gantt-->
+<div class="legend" style="margin-top:6px">
+  <span><b>1</b> Your queue, heartbeat and reaper → my WP2a</span>
+  <span><b>2</b> Your WP3a scripts → my WP3b</span>
+  <span><b>3</b> Your checks (WP9, and 10b, 6c, 2b before it) → my ports</span>
+  <span><b>4</b> My WP8 contract → your WP7 (dashed)</span>
+  <span><b>5</b> Your replay → my run on my lookups</span>
+</div>
+</figure>
+<p class="caption">Blocks are table rows, as wide as their days; arrows are where one of us waits on the other. My lane starts after P0a, except D07 on day 0.</p>
+
+</body>
+</html>
