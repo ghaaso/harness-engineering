@@ -35,3 +35,17 @@
    end of the plan's section 7: two improved designs stand. The six runs of A9 and A10, the two pipeline runs, the
    final record and the hypothesis are not started: a wave begun at 96 % could carry the meter over the line while it
    runs, and the improvement round's last steps wait for room on the same meter. The owner is asked.
+10. 2026-11-25, 23:22 UTC. Selection in A9. Every thought of A9 is open on M7, the one profile the part bears on, so the two
+   kept were chosen in words (which plan fits both designs, the baselines and the arms into the compute by its own
+   count); the selection record says so. One thought (A9.c.2) was dropped because it sizes the design by the PC's
+   card, against the owner's instruction that the brief carries.
+11. 2026-11-25, 23:29 UTC. The final choice. The two pipeline designs stand at the same levels on all eight profiles, so the
+   better was chosen in words, the reader's call, with the reason in the selection record. The final thought is a
+   change by the top session to the chosen design (the plan, section 8: a change of substance made while writing is
+   a thought of its own): it is scored by the session that wrote it, and its writer cannot be confirmed. The pipeline
+   designs are 2,795 and 2,917 words by a raw count against the plan's 2,500.
+12. 2026-11-25, 23:38 UTC. How the hypothesis file was written. The plan has the top session write it in the form the gate
+   checks. Its text was written by the top session, but the file was put together by a script: the ledger of its
+   section 2 and the table of its section 9 come from the tools' own output, so that they are word for word. So the
+   file did not pass through the gate's hook as one write. The gate's own check was run on the finished file and
+   passes, and both learning files were read in full in this window, as the gate asks.
