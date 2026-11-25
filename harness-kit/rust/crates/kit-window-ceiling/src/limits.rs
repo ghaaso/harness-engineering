@@ -20,8 +20,13 @@ const K: f64 = 10.0;
 const COMPACT_AT: f64 = 0.92;
 /// The builders' Q3 growth, 3.8 K a call.
 const G_REC: f64 = 3_800.0;
-/// "near the 1M window" for Fable and Sonnet, in this order.
-const WINDOW_BY_FAMILY: [(&str, f64); 2] = [("fable", 1_000_000.0), ("sonnet", 1_000_000.0)];
+/// "near the 1M window" for Fable and Sonnet, in this order; Opus 400 K, the window this project ran Opus at when the
+/// lines were measured (the owner's setting, r57-0107), so a machine whose settings give no Opus window still has a line.
+const WINDOW_BY_FAMILY: [(&str, f64); 3] = [
+    ("fable", 1_000_000.0),
+    ("sonnet", 1_000_000.0),
+    ("opus", 400_000.0),
+];
 
 /// Which form judges a transcript.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

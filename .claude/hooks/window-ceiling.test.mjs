@@ -433,6 +433,18 @@ ok(r.code === 2 && new RegExp(`helper's line of 882 K \\(Fable: the compaction c
   ok(r.code === 2, 'without --harness-kit: <project>/.harness/ is no hand-over place', `${r.code} ${r.err}`);
 }
 
+// Repair F1 (2026-11-26): settings that give no Opus window (a machine without the owner's modelSettings): Opus takes
+// 400 K from the family table, so the compaction line (368 K - 10 g = 348 K) holds; before the repair only W* (437 K
+// here) did, and a session at 400 K passed.
+{
+  const NOSET = join(T, 'settings-empty.json');
+  writeFileSync(NOSET, '{}');
+  const tpNoSet = join(PROJ, '44444444-2222-3333-4444-555555555555.jsonl');
+  transcript(tpNoSet, [...Array.from({ length: 17 }, (_, i) => 100000 + i * 12500), ...work(50, 2000, 300000)]); // 400 K: past the 348 K line of a 400 K window, under W* (437 K)
+  r = run({ ...pre(tpNoSet, 'Edit', { file_path: ROOT + '/src/app.py', old_string: 'a', new_string: 'b' }), session_id: '44444444-2222-3333-4444-555555555555' }, { WINDOW_CEILING_SETTINGS: NOSET });
+  ok(r.code === 2 && /window ceiling/.test(r.err), 'no Opus window in the settings: Opus takes 400 K, a session at 400 K is refused', `${r.code} ${r.err}`);
+}
+
 console.log(`window-ceiling: ${pass} passed, ${fail} failed (${pass + fail} cases)`);
 try { rmSync(T, { recursive: true, force: true }); } catch {}
 process.exit(fail ? 1 : 0);

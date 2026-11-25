@@ -54,6 +54,14 @@ let KIT = null;
 if (process.argv.includes('--harness-kit')) { try { KIT = (await import('./kit-mode.mjs')).kitMode(import.meta.url); } catch { KIT = null; } }
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = KIT ? KIT.project : process.env.FANOUT_GATE_ROOT ? resolve(process.env.FANOUT_GATE_ROOT) : resolve(here, '..', '..');
+// Kit mode: a helper killed by an app restart stays reserved until ended by hand; the refusal at the cap names the
+// count gate's command for it, with this machine's paths (repair F2, 2026-11-26).
+function kitEnd(sess) {
+  const sl = (p) => String(p).replace(/\\/g, '/');
+  const prog = `node "${sl(join(here, 'count-gate.mjs'))}"`;
+  const args = ` --harness-kit "--clone=${sl(KIT.clone)}" "--project=${sl(KIT.project)}"`;
+  return ` A helper that died without ending (an app restart) stays reserved until ended by hand: ${prog} --end <helper id> "<why>"${args} (what the count gate counts: ${prog} --status ${(typeof sess === 'string' ? sess : '').slice(0, 8)}${args}).`;
+}
 const BASIS_WHERE = KIT ? 'library/journal, harness-kit/basis.json or .harness/basis.json' : 'library/journal';
 const NOW = process.env.FANOUT_GATE_NOW ? Date.parse(process.env.FANOUT_GATE_NOW) : Date.now();
 const LOGDIR = resolve(ROOT, '.claude', 'logs');
@@ -340,7 +348,7 @@ try {
     const c = capCheck(st, main, j.tool_use_id, s.limit);
     Object.assign(rec, { cap: st.cap, spent: c.spent, reserve: c.reserve, running: c.running });
     if (c.total > st.cap) {
-      deny(rec, `fanout gate (r57-0614): spent ${fmt(c.spent)} + the rest of ${c.running} running helpers' limits ${fmt(c.reserve)} + this limit ${fmt(s.limit)} = ${fmt(c.total)}, past the cap of ${fmt(st.cap)} in ${st.rel}; wait for a helper to end, or ask the owner with cap:.`);
+      deny(rec, `fanout gate (r57-0614): spent ${fmt(c.spent)} + the rest of ${c.running} running helpers' limits ${fmt(c.reserve)} + this limit ${fmt(s.limit)} = ${fmt(c.total)}, past the cap of ${fmt(st.cap)} in ${st.rel}; wait for a helper to end, or ask the owner with cap:.${KIT ? kitEnd(j.session_id) : ''}`);
     }
   }
   allow(rec);

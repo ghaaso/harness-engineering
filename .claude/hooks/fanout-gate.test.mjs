@@ -225,6 +225,25 @@ if (existsSync(resolve(here, 'kit-mode.mjs'))) {
     kitRun('K10 kit: the limit line of a brief under .harness/briefs/ is read', 'allow', s, hookIn(s, p), null, [], '"in":"B1.md"'); }
   { const s = kitSetup(); write(s.main, readThenStart(L('r58-0104')));
     run('K11 without --harness-kit the kit\'s basis files are not read: refused', 'deny', { root: s.root }, hookIn(s, L('r58-0104')), 'is not in library/journal;'); }
+  // Repair F2 (2026-11-26): at the cap, kit mode names the count gate's --end with this machine's paths, and --status.
+  { const s = kitSetup({ state: '# her state\nSession abcd1234, Opus.\nCap agreed: 20 M tokens for this piece.\n' });
+    const p = L('r58-0104', 6, 4);
+    write(s.main, [
+      asst('m0', [use('toolu_H', 'Agent', { prompt: L('r58-0104', 10, 7) })], -5, tok(3e6)), user([res('toolu_H', 'launched')], -5),
+      asst('m1', [use('tu_u', GU)], 0, tok(2e6)), user([res('tu_u', usage(40))], 0),
+      asst('m2', [use('toolu_X', 'Agent', { prompt: p })], 1)]);
+    const sub = join(s.proj, SESS, 'subagents', 'agent-h1');
+    write(sub + '.jsonl', [asst('h1', [{ type: 'text', text: 'work' }], -4, tok(2e6))]);
+    writeFileSync(sub + '.meta.json', JSON.stringify({ toolUseId: 'toolu_H', description: 'build: H' }));
+    const sl = (x) => x.replace(/\\/g, '/');
+    const tail = ` --end <helper id> "<why>" --harness-kit "--clone=${sl(KC)}" "--project=${sl(s.root)}"`;
+    const r = runHook(join(KH, 'fanout-gate.mjs'), ['--harness-kit', `--project=${s.root}`], {
+      input: JSON.stringify(hookIn(s, p)), env: { ...process.env, FANOUT_GATE_ROOT: join(base, 'not-this'), FANOUT_GATE_NOW: at(2) }, encoding: 'utf8' });
+    const e = r.stderr || '';
+    const ok = r.status === 2 && e.includes('past the cap') && /count-gate[.a-z]*"$/.test(e.slice(0, e.indexOf(tail)))
+      && e.includes(tail) && e.includes(`--status abcd1234 --harness-kit "--clone=${sl(KC)}" "--project=${sl(s.root)}"`);
+    if (!ok) failed++;
+    console.log(`${ok ? 'ok  ' : 'FAIL'} K12 kit: the refusal at the cap names the count gate's --end and --status with this machine's paths: ${r.status} | ${e.trim().slice(0, 400)}`); }
 } else console.log('skip  kit mode: kit-mode.mjs is not beside the hook');
 
 rmSync(base, { recursive: true, force: true });

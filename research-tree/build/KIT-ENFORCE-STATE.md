@@ -93,3 +93,25 @@ Then: `node harness-kit/check-clone.mjs` exits 0; commits on `bilal/build`; a br
   measured costs of this job's helpers, what was built.
 
 Cap 95 M tokens (his answer of 2026-11-25 to a second cap: question, "yes 95m also no fallbacks needed we willl fix errors if they occue"; replaces the 60 M above).
+
+## After the build (2026-11-25, 19:00 to 19:25 UTC by the clock)
+
+- 19:01: the last programs and the documents committed (fa860edc). `node harness-kit/check-clone.mjs` passed every
+  line, exit 0, 176 s (log in the scratchpad; its table is in `in/setup2-report.md` for the earlier run).
+- 19:03: the owner approved one rigorous adversarial review held to breaking faults only (his words in
+  `OWNER-WORDS.md`; record r58-0020). Brief `briefs/REVIEW.md`; one Opus refuter, fresh context, 9.10 M.
+- 19:05: eight records appended (r58-0018 to r58-0020, r58-0108 to r58-0110, r58-0602, r58-0500). The promotion's
+  entries file `docs/program/harness-kit-2026-11-25/promote-kit-enforce.json` passes the dry run (93 files).
+- 19:18: the review's result, `in/breaking-faults.md`: 2 breaking faults. F1: the window ceiling gives an Opus
+  session no line on a machine without the owner's model settings. F2: under a cap a helper killed by an app
+  restart keeps its limit reserved and nothing in the kit names the command that ends it. Sound: the programs
+  against the JavaScript on real transcripts, the set-up applied and removed, the landing with its failure cases.
+  Four notes not breaking, not to be fixed now (in its section 4).
+- 19:22: the repair started (brief `briefs/REPAIR.md`, one Opus builder, limit 3.8 M); the session's total 90.3 M.
+  His answer to a third cap: question, for the repair and the delivery: "Yes, 100 M".
+- Left: on the repair's hand-back, one run of the clean-clone check; commit; `node tools/promote.mjs
+  docs/program/harness-kit-2026-11-25/promote-kit-enforce.json --apply`; push `bilal/build` and `bilal/kit-enforce`;
+  open the pull request to `main` (not merged); two more records (the cap of 100 M, the review and its repair);
+  remove `in/rust-skills/`; report.
+
+Cap 100 M tokens (his answer of 2026-11-25 to a third cap: question, "Yes, 100 M"; replaces the 95 M above).

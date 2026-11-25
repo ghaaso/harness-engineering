@@ -444,6 +444,22 @@ test('kit: a declaration that does not parse names .harness/WIDTHS.md; the app l
   assert.match(kitRun(fx2, input(fx2, 'read: x')).err, /number 21/);
 });
 
+test('kit: the refusal names --end and --status with the kit arguments and this machine\'s paths (repair F2)', () => {
+  const fx = kitFixture();
+  many(fx, 19);
+  helper(fx, 'slow', { ago: 10 });
+  const r = kitRun(fx, input(fx, 'analyse: x'));
+  assert.equal(r.code, 2);
+  const sl = (x) => x.replace(/\\/g, '/');
+  const args = ` --harness-kit "--clone=${sl(fx.r)}" "--project=${sl(fx.P)}"`;
+  const tail = ` --end <helper id> "<why>"${args} (ids and silences: `;
+  const i = r.err.indexOf(tail);
+  assert.ok(i > 0, r.err);
+  assert.match(r.err.slice(0, i), /to end one at once: .*count-gate[.a-z]*"$/);
+  assert.match(r.err.slice(i + tail.length), /count-gate[.a-z]*" --status aaaabbbb /);
+  assert.ok(r.err.trim().endsWith(`--status aaaabbbb${args}).`), r.err);
+});
+
 test('kit: --end writes to the project\'s log, without the kit\'s arguments in its reason', () => {
   const fx = kitFixture();
   const e = runHook(fx.hook, ['--end', 'ghost', 'killed', 'by', 'a', 'restart', ...fx.args, '--no-usage-tool'], { encoding: 'utf8' });

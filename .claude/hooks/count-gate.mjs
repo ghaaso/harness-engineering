@@ -51,6 +51,9 @@ if (process.argv.includes('--harness-kit')) { try { KIT = (await import('./kit-m
 const here = dirname(fileURLToPath(import.meta.url));
 const root = KIT ? KIT.project : resolve(here, '..', '..');
 const WIDTHS = KIT ? join(KIT.state, 'WIDTHS.md') : resolve(root, 'research-tree', 'build', 'WIDTHS.md');
+// Kit mode: the command that ends a helper by hand, with this machine's paths (repair F2, 2026-11-26).
+const KIT_END = KIT ? { prog: `node "${fileURLToPath(import.meta.url).replace(/\\/g, '/')}"`,
+  args: ` --harness-kit "--clone=${KIT.clone.replace(/\\/g, '/')}" "--project=${KIT.project.replace(/\\/g, '/')}"` } : null;
 const WIDTHS_REL = KIT ? '.harness/WIDTHS.md' : 'research-tree/build/WIDTHS.md';
 const LOGDIR = resolve(root, '.claude', 'logs');
 const LOG = resolve(LOGDIR, 'count-gate.jsonl');
@@ -90,7 +93,7 @@ if (process.argv[2] === '--end') {
   if (KIT) { // the kit's own arguments are not part of the reason
     for (let i = words.length - 1; i >= 0; i--) {
       if (words[i] === '--project' && i + 1 < words.length) words.splice(i, 2);
-      else if (/^--(harness-kit|no-usage-tool|project=)/.test(words[i])) words.splice(i, 1);
+      else if (/^--(harness-kit|no-usage-tool|project=|clone=)/.test(words[i])) words.splice(i, 1);
     }
   }
   const why = words.join(' ').trim();
@@ -178,7 +181,9 @@ try {
   const nested = c.running.filter((r) => (r.depth ?? 1) > 1).length;
   // No helper is named for --end: every one counted wrote within T_QUIET, so none is known dead (a dead one drops out
   // by itself after T_QUIET of silence).
-  const stale = c.running.length ? ` A helper that died without ending (an app restart) drops out after ${T_QUIET_MS / 60000} min silent; to end one at once: node .claude/hooks/count-gate.mjs --end <id> "<why>" (ids and silences: --status ${String(sess).slice(0, 8)}).` : '';
+  const stale = !c.running.length ? '' : KIT_END
+    ? ` A helper that died without ending (an app restart) drops out after ${T_QUIET_MS / 60000} min silent; to end one at once: ${KIT_END.prog} --end <helper id> "<why>"${KIT_END.args} (ids and silences: ${KIT_END.prog} --status ${String(sess).slice(0, 8)}${KIT_END.args}).`
+    : ` A helper that died without ending (an app restart) drops out after ${T_QUIET_MS / 60000} min silent; to end one at once: node .claude/hooks/count-gate.mjs --end <id> "<why>" (ids and silences: --status ${String(sess).slice(0, 8)}).`;
   const verb = revive ? `reviving ${revive}` : 'this start';
   if (all.length + 1 > lim) {
     why = `count gate: ${c.running.length} helpers run in this session now (${nested} of them started by helpers)${c.pending.length ? ` and ${c.pending.length} were just admitted` : ''}; the app allows ${lim} at once, helpers of helpers counted (t7-0603), so ${verb} would be number ${all.length + 1}. Retry after the next finish notice, not by polling.${stale}`;

@@ -91,7 +91,9 @@ const ORIENT = 17;          // r57-0171: orientation of an Opus root, 17 calls
 const R_REC = 2_330_000;    // r57-0171: those 17 calls cost 2.33 M tokens of context
 const K = 10;               // ORCHESTRATION.md section 5: 10 calls to reach a quiet point and write the checkpoint
 const COMPACT_AT = 0.92;    // ORCHESTRATION.md section 5: the app compacts at 92 % of autoCompactWindow (368 K of 400 K)
-const WINDOW_BY_FAMILY = { fable: 1_000_000, sonnet: 1_000_000 }; // ORCHESTRATION.md section 5: "near the 1M window"
+// ORCHESTRATION.md section 5: "near the 1M window" for Fable and Sonnet; Opus 400 K, the window this project ran Opus at
+// when the lines were measured (the owner's setting, r57-0107), so settings with no Opus window still give a line.
+const WINDOW_BY_FAMILY = { fable: 1_000_000, sonnet: 1_000_000, opus: 400_000 };
 const G_REC = 3_800;        // ORCHESTRATION.md section 5: the builders' Q3 growth, 3.8 K a call (t8-0106: between the median and Q3 of all Opus helpers here)
 const BUILD = process.env.WINDOW_CEILING_BUILD || (KIT ? KIT.state : resolve(root, 'research-tree', 'build')); // where state files name a coordinator
 // A Fable transcript: only the compaction cap holds it (version 3; version 2, r57-0098, had a fixed 500 K line).

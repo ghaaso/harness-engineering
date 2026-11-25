@@ -26,7 +26,18 @@ JavaScript hooks would stay as the fallback for a machine without Rust), in full
 
 > yes 95m also no fallbacks needed we willl fix errors if they occue
 
-What the coordinator takes from it: the cap is 95 M tokens; the kit wires the Rust hooks only, with no JavaScript
+His two later messages to the coordinator, typed in its session, in full. At about 18:50 UTC:
+
+> Why the fuck is this taking so long? You aren't doing unnecessary rounds of adversarial reviews and JavaScript versus Rust comparisons, are you? Like, if you're doing all of the redundant extra shit that doesn't really contribute much in the whole scheme of things, then like don't do that, bro. Come on, it's been like how long has it been? It's been very long since we started this. It shouldn't be that hard.
+
+Then "I'm hopefully assuming that the business logic behind all of this will be sound.", and at about 19:03 UTC:
+
+> Okay, I'm starting to understand that having absolutely no adversarial reviews is kind of not okay. It's not good. We'll end up messing up and shipping faults and mistakes. So I'm approving one proper rigorous adversarial review that still there has to be a standard that it doesn't loop around and start fixing stuff that doesn't really matter. Okay, like we have to like be clear on this, like actual faults, breaking things that will have actual like bad consequences of any scale, then we'll focus on those and find those rigorously. Okay.
+
+What the coordinator takes from these: one review, by one refuter in a fresh context, that lists only breaking
+faults it can show; one repair of those and nothing else; no second review.
+
+What the coordinator takes from his answer on the cap: the cap is 95 M tokens; the kit wires the Rust hooks only, with no JavaScript
 hook behind them on a machine without Rust; a fault found later is fixed then.
 
 What the top session understood at the third message, and he corrected it with the ones above: one folder at the root, `harness-kit/`, that a second person

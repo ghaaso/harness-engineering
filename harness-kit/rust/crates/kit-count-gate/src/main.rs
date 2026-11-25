@@ -45,6 +45,17 @@ struct Places {
     widths: PathBuf,
     /// `WIDTHS.md` as named in a refusal.
     widths_rel: &'static str,
+    /// Kit mode: this program and the kit arguments, as the command that ends a helper by hand is written in a
+    /// refusal (repair F2, 2026-11-26).
+    kit_end: Option<KitEnd>,
+}
+
+/// The kit form of the command that ends a helper by hand, with this machine's paths.
+struct KitEnd {
+    /// `"<this program>"`.
+    prog: String,
+    /// ` --harness-kit "--clone=<clone>" "--project=<project>"`.
+    args: String,
 }
 
 impl Places {
@@ -55,6 +66,19 @@ impl Places {
                 logdir: ctx.logs(),
                 widths: k.state.join("WIDTHS.md"),
                 widths_rel: ".harness/WIDTHS.md",
+                kit_end: Some(KitEnd {
+                    prog: format!(
+                        "\"{}\"",
+                        std::env::current_exe()
+                            .map(|p| kit_core::paths::slashes(&p))
+                            .unwrap_or_else(|_| "kit-count-gate".to_owned())
+                    ),
+                    args: format!(
+                        " --harness-kit \"--clone={}\" \"--project={}\"",
+                        kit_core::paths::slashes(&ctx.clone),
+                        kit_core::paths::slashes(&k.project)
+                    ),
+                }),
             },
             None => Self {
                 root: ctx.clone.clone(),
@@ -65,6 +89,7 @@ impl Places {
                     .join("build")
                     .join("WIDTHS.md"),
                 widths_rel: "research-tree/build/WIDTHS.md",
+                kit_end: None,
             },
         }
     }
@@ -474,7 +499,14 @@ fn hook(input: &Input, places: &Places, clock: &Clock) -> Outcome {
         .and_then(|ends| count::count(&dir, now, &ends, &sess, &mut book));
     match counted {
         Ok(c) => {
-            why = decide(&c, &decl, &desc, revive.as_deref(), &sess);
+            why = decide(
+                &c,
+                &decl,
+                &desc,
+                revive.as_deref(),
+                &sess,
+                places.kit_end.as_ref(),
+            );
             let all = c.running.len().saturating_add(c.pending.len());
             let lim = limit();
             let timing = |r: Record| {
@@ -518,6 +550,7 @@ fn decide(
     desc: &str,
     revive: Option<&str>,
     sess: &str,
+    kit_end: Option<&KitEnd>,
 ) -> Option<Vec<u16>> {
     let all: Vec<&Entry> = c.running.iter().chain(c.pending.iter()).collect();
     let lim = limit();
@@ -525,6 +558,17 @@ fn decide(
     // No helper is named for --end: every one counted wrote within T_QUIET, so none is known dead.
     let stale = if c.running.is_empty() {
         W::new()
+    } else if let Some(k) = kit_end {
+        W::new()
+            .s(&format!(
+                " A helper that died without ending (an app restart) drops out after {} min silent; to end one at once: {} --end <helper id> \"<why>\"{} (ids and silences: {} --status ",
+                js::number_to_string(T_QUIET_MS / 60000.0),
+                k.prog,
+                k.args,
+                k.prog
+            ))
+            .u(&cut(sess, 8))
+            .s(&format!("{}).", k.args))
     } else {
         W::new()
             .s(&format!(

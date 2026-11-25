@@ -109,8 +109,14 @@ characters are printed by `node <clone>/harness-kit/tokens.mjs`):
     Meter line 80 %
 
 `kind orchestrate` makes the window ceiling treat the session as a coordinator (hand-over line W*, measured 247-273 K,
-r57-0171); without it a session gets the checkpoint line (about 330 K on Opus). The cap is what the fan-out gate keeps
-the job under. The meter line is optional: with it, a start is refused once the usage reading, plus what the meter can have moved since, reaches it.
+r57-0171); without it a session gets the checkpoint line (about 330 K on Opus).
+Without an Opus window in your settings the window ceiling takes 400 K, the window this project measured its lines under.
+If your Opus sessions compact before about 330 K that line is never reached; the setting that gives the same window is
+`modelSettings.<model id>.autoCompactWindow`, read from `~/.claude/settings.json`, `<clone>/.claude/settings.json` and
+`<clone>/.claude/settings.local.json`: `"modelSettings": {"claude-opus-5-5": {"autoCompactWindow": 400000}}`.
+The cap is what the fan-out gate keeps the job under.
+A helper killed by an app restart stays counted against the cap until ended by hand (the refusal prints this with your paths): `"<clone>/harness-kit/rust/target/release/kit-count-gate" --end <helper id> "<why>" --harness-kit "--clone=<clone>" "--project=<project>"`.
+The meter line is optional: with it, a start is refused once the usage reading, plus what the meter can have moved since, reaches it.
 
 **Speed of the programs.** One passing call, median of 20, on the owner's PC (Windows 11, Ryzen 9 7900X), JavaScript
 hook against its program, from the clean-clone check of 2026-11-25: `kit-start` 42.5 against 6.7 ms; `kit-window-ceiling`

@@ -300,14 +300,15 @@ fn decide(p: &Patterns, w: &Where<'_>, j: &Value, rec: &mut Record) -> Js<End> {
         rec.set("running", c.running.to_string());
         if c.total.number() > cap_limit {
             return Ok(End::Deny(format!(
-                "fanout gate (r57-0614): spent {} + the rest of {} running helpers' limits {} + this limit {} = {}, past the cap of {} in {}; wait for a helper to end, or ask the owner with cap:.",
+                "fanout gate (r57-0614): spent {} + the rest of {} running helpers' limits {} + this limit {} = {}, past the cap of {} in {}; wait for a helper to end, or ask the owner with cap:.{}",
                 fmt(c.spent.number()),
                 c.running,
                 fmt(c.reserve),
                 fmt(s.limit),
                 fmt(c.total.number()),
                 fmt(cap_limit),
-                st.rel
+                st.rel,
+                w.kit.map_or_else(String::new, |k| kit_end(w.clone, k, j))
             )));
         }
     }
@@ -315,6 +316,31 @@ fn decide(p: &Patterns, w: &Where<'_>, j: &Value, rec: &mut Record) -> Js<End> {
 }
 
 /// `null` as JSON text.
+/// Kit mode: a helper killed by an app restart stays reserved until ended by hand; the refusal at the cap names the
+/// count gate's command for it, with this machine's paths (repair F2, 2026-11-26).
+fn kit_end(clone: &Path, k: &Kit, j: &Value) -> String {
+    let exe = format!("kit-count-gate{}", std::env::consts::EXE_SUFFIX);
+    let prog = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join(&exe)))
+        .map_or(exe, |p| paths::slashes(&p));
+    let args = format!(
+        " --harness-kit \"--clone={}\" \"--project={}\"",
+        paths::slashes(clone),
+        paths::slashes(&k.project)
+    );
+    let sess: String = j
+        .get("session_id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .chars()
+        .take(8)
+        .collect();
+    format!(
+        " A helper that died without ending (an app restart) stays reserved until ended by hand: \"{prog}\" --end <helper id> \"<why>\"{args} (what the count gate counts: \"{prog}\" --status {sess}{args})."
+    )
+}
+
 fn null() -> String {
     "null".to_owned()
 }
