@@ -35,6 +35,13 @@ say what was not tested, and do not rule a family of methods out after one exper
    He is shown results and reasoning, not choices. Open the record from the files before deciding; do
    not work from memory of it. Do no round of work he has not asked for. (Added 2026-11-18 after a
    round that broke this: `research-tree/START-HERE.md`.)
+8. **The deliverable first; no procedural creep.** Say what is to be delivered and when it is done; build it;
+   one targeted check where a fault would change what is done next; stop. No panel of reviewers, no review of
+   unchanged work or of a review, no third repair round over small faults, no spec or critique for a feature he
+   has not asked for. The tokens go on the thing the owner judges: in UI/UX work that is the screen, built by
+   the designer with real screenshots and shown to him at the first working state, before anything behind it is
+   checked. (Added 2026-11-24 after round 3 of the session monitor spent most of a 30 M cap on data checks and
+   repair rounds while the screen barely improved; the hook `.claude/hooks/creep-gate.mjs` enforces it.)
 
 8. **No procedural creep** (r57-0063, 2026-11-24; few big steps, r57-0062): build the deliverable, run targeted
    tests, merge or run it once it meets its criteria. One review at most per deliverable, never a review of a review,

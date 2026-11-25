@@ -83,11 +83,12 @@ for (const [g, w] of [[1300, 246800], [2300, 272500]]) {
   const x = show(f, 'coordinator');
   ok(near(x.Wstar, w, 1000), `r57-0171 reproduced at g ${g}`, x.WstarK);
 }
-// Fable: no setting, the 1M family window, so the compaction cap does not bind.
+// Fable: no setting, the 1M family window. Version 1 gave W* here (292 K), version 2 (r57-0098) a fixed 500 K line;
+// since version 3 only the compaction cap holds it: 920 K - 10 x 2.3 K = 897 K (section "version 3" below).
 const tpFable = join(PROJ, 'fable.jsonl');
 transcript(tpFable, main(30), { model: 'claude-fable-1' });
 s = show(tpFable, 'coordinator');
-ok(s.window === 1000000 && near(s.hard, 291900), 'Fable: 1M window, hard line from W*', JSON.stringify({ w: s.window, h: s.hardK }));
+ok(s.window === 1000000 && near(s.hard, 897000, 1) && s.form === 'fable', 'Fable: 1M window, only the compaction cap (897 K), not W* nor 500 K', JSON.stringify({ w: s.window, h: s.hardK }));
 // Unknown model: no compaction cap, W* still applies.
 const tpUnk = join(PROJ, 'unk.jsonl');
 transcript(tpUnk, main(30), { model: 'claude-other-9' });
@@ -296,6 +297,86 @@ writeFileSync(join(BUILD, 'ROOT-STATE.md'), 'Root session 44444444-2222-3333-444
 r = run({ ...pre(tpOver, 'Agent', { description: 'build: x', prompt: 'y' }), session_id: '44444444-2222-3333-4444-555555555555' });
 ok(r.code === 2 && /coordinator's line of 292 K/.test(r.err), 'B3: a root named with its full id is a coordinator (STATE.md form)', r.err);
 ok(/"kind":"coordinator","by":"ROOT-STATE.md"/.test(logTxt()) && /"kind":"session"/.test(logTxt()), 'B3: the log says which form judged the call and which file named a coordinator');
+
+// ---- version 3 (2026-11-25, FID): a Fable transcript is held only by the compaction cap; every other model as before ----
+// (Version 2, r57-0098, had one line at 500 K; the owner withdrew it with his top session at about 497 K.)
+const FABLE = 'claude-fable-5-2';
+const FID = 'r58-0001';
+const lastLog = () => logTxt().trim().split('\n').map((l) => JSON.parse(l)).filter((x) => x.ctx).pop();
+const tpF338 = join(PROJ, 'fable-338.jsonl');
+transcript(tpF338, main(73), { model: FABLE }); // 337.9 K, the session is named "kind orchestrate" in TESTX-STATE.md
+s = show(tpF338, 'coordinator');
+ok(s.form === 'fable' && near(s.hard, 897000, 1) && near(s.warn, 874000, 1) && s.Wstar === undefined, 'v3: Fable coordinator: hard line at the compaction cap 920 K - 10 g = 897 K, warning 10 calls before it, no W*', `${s.hardK} ${s.warnK}`);
+r = run(pre(tpF338, 'Agent', { description: 'build: x', prompt: 'y', model: 'opus' }));
+ok(r.code === 0 && r.out === '', 'v3: a Fable session named as a coordinator at 338 K passes', `${r.code} ${r.err}`);
+const tpF510 = join(PROJ, 'fable-510.jsonl');
+transcript(tpF510, main(148), { model: FABLE }); // 510.4 K
+r = run(pre(tpF510, 'Bash', { command: 'npm test' }));
+ok(r.code === 0 && r.out === '', 'v3: a Fable coordinator at 510 K passes silently (the 500 K line is gone)', `${r.code} ${r.err} ${r.out}`);
+ok(lastLog().form === 'fable' && lastLog().kind === 'coordinator' && near(lastLog().line, 897000, 1) && lastLog().decision === 'allow', 'v3: the log marks the decision form "fable" with the cap as its line', JSON.stringify(lastLog()));
+const tpF883 = join(PROJ, 'fable-883.jsonl');
+transcript(tpF883, main(310), { model: FABLE }); // 883 K
+r = run(pre(tpF883, 'Bash', { command: 'npm test' }));
+ctxNote = ''; try { ctxNote = JSON.parse(r.out).hookSpecificOutput.additionalContext; } catch {}
+ok(r.code === 0 && new RegExp(`hand-over point 874 K, hard line 897 K \\(Fable: the compaction cap only, ${FID}\\)`).test(ctxNote) && new RegExp(`${FID}\\)\\.`).test(ctxNote), 'v3: a Fable coordinator at 883 K gets the notice naming the cap and the ruling', r.out);
+const tpF906 = join(PROJ, 'fable-906.jsonl');
+transcript(tpF906, main(320), { model: FABLE }); // 906 K, past the cap
+r = run(pre(tpF906, 'Bash', { command: 'npm test' }));
+ok(r.code === 2 && new RegExp(`coordinator's line of 897 K \\(Fable: the compaction cap only, ${FID}\\)`).test(r.err) && new RegExp(`\\(r57-0008, r57-0056, ${FID}\\)`).test(r.err) && r.err.trim().split('\n').length === 1, 'v3: past the compaction cap an ordinary call is refused in one line naming the cap and the ruling', r.err);
+ok(lastLog().form === 'fable' && lastLog().decision === 'deny' && near(lastLog().line, 897000, 1), 'v3: the refusal is logged with form "fable"', JSON.stringify(lastLog()));
+for (const [tool, input] of [['Write', { file_path: ROOT + '/research-tree/build/TOP-STATE.md', content: 'x' }], ['Bash', { command: 'git status' }], ['mcp__ccd_session__start_session', { title: 'x' }]]) {
+  r = run(pre(tpF906, tool, input));
+  ok(r.code === 0, `v3: past the compaction cap a hand-over call passes: ${tool}`, r.err);
+}
+// Opus is unchanged: a coordinator at 338 K whose W* is near 230 K is still refused at W* + 10 g.
+const tpO338 = join(PROJ, 'opus-338.jsonl');
+transcript(tpO338, [...orient, ...work(198, 850)]); // 338.3 K at 0.85 K a call
+s = show(tpO338, 'coordinator');
+r = run(pre(tpO338, 'Bash', { command: 'npm test' }));
+ok(near(s.Wstar, 230100, 100) && r.code === 2 && /coordinator's line of 239 K;/.test(r.err) && !/r57-0098|Fable/.test(r.err), 'r57-0098: an Opus coordinator at 338 K with W* 230 K is still refused (line 239 K)', `${s.WstarK} ${r.code} ${r.err}`);
+ok(lastLog().form === undefined && lastLog().model === 'claude-opus-5-5', 'r57-0098: an Opus decision carries no "fable" form', JSON.stringify(lastLog()));
+// The current model is the last one: Opus -> Fable is judged as Fable, Fable -> Opus as Opus; read through the state file.
+const sw = main(73);
+const tpSw = join(PROJ, 'switch.jsonl');
+transcript(tpSw, sw.slice(0, 40)); // Opus to 222.9 K
+r = run(pre(tpSw, 'Agent', {}));
+ok(r.code === 0 && lastLog().model === 'claude-opus-5-5', 'switch: the Opus part is read and kept in the state file', `${r.code} ${r.err}`);
+appendFileSync(tpSw, sw.slice(40).map((c, i) => callLines(40 + i, c, { model: FABLE })).join('')); // Fable to 337.9 K
+r = run(pre(tpSw, 'Bash', { command: 'npm test' }));
+ok(r.code === 0 && lastLog().model === FABLE && lastLog().ctx === show(tpSw, 'coordinator').ctx, 'switch Opus -> Fable: at 338 K judged by its last model, Fable, and passes', `${r.code} ${r.err}`);
+const tpSw2 = join(PROJ, 'switch2.jsonl');
+transcript(tpSw2, sw.slice(0, 40), { model: FABLE });
+r = run(pre(tpSw2, 'Agent', {}));
+appendFileSync(tpSw2, sw.slice(40).map((c, i) => callLines(40 + i, c)).join('')); // Opus to 337.9 K
+r = run(pre(tpSw2, 'Bash', { command: 'npm test' }));
+ok(r.code === 2 && /coordinator's line of 292 K;/.test(r.err) && lastLog().model === 'claude-opus-5-5', 'switch Fable -> Opus: judged as Opus again (W* line 292 K)', `${r.code} ${r.err}`);
+// The state file: version 1's fields unchanged, so its files are read on; one without the model is read again.
+const stateOf = (name) => join(LOGDIR, 'window-ceiling-state', `projects-${name}.json`);
+const V1_KEYS = ['v', 'path', 'off', 'n', 'lastId', 'seg', 'boundary', 'segN', 'segFirst', 'segF', 'segLast', 'first17', 'recent', 'model'];
+let st = JSON.parse(readFileSync(stateOf('switch'), 'utf8'));
+ok(JSON.stringify(Object.keys(st)) === JSON.stringify(V1_KEYS) && st.v === 2 && st.model === FABLE && st.off === readFileSync(tpSw).length, 'state file: version 1\'s fields, the model kept, read to the end', JSON.stringify(Object.keys(st)));
+const tpNoModel = join(PROJ, 'nomodel.jsonl');
+transcript(tpNoModel, main(73), { model: FABLE });
+run(pre(tpNoModel, 'Agent', {}));
+st = JSON.parse(readFileSync(stateOf('nomodel'), 'utf8')); delete st.model; writeFileSync(stateOf('nomodel'), JSON.stringify(st));
+r = run(pre(tpNoModel, 'Bash', { command: 'npm test' }));
+st = JSON.parse(readFileSync(stateOf('nomodel'), 'utf8'));
+ok(r.code === 0 && st.model === FABLE && st.n === 90, 'a state file without the model is read again from the start (Fable found, 338 K passes)', `${r.code} ${r.err} ${st.model} ${st.n}`);
+// A Fable autoCompactWindow in the settings sets the cap like any model's (400 K: 368 K - 10 g).
+const SET_F = join(T, 'settings-fable.json');
+writeFileSync(SET_F, JSON.stringify({ modelSettings: { 'claude-opus-5-5': { autoCompactWindow: 400000 }, [FABLE]: { autoCompactWindow: 400000 } } }));
+const tpFcap = join(PROJ, 'fable-cap.jsonl');
+transcript(tpFcap, main(78), { model: FABLE }); // 349.4 K
+r = run(pre(tpFcap, 'Bash', { command: 'npm test' }), { WINDOW_CEILING_SETTINGS: SET_F });
+ok(r.code === 2 && new RegExp(`line of 345 K \\(Fable: the compaction cap only, ${FID}\\)`).test(r.err), 'v3: a Fable window set to 400 K in the settings: the cap 368 K - 10 x 2.3 K = 345 K holds', r.err);
+// A helper on Fable gets the same line (version 1: the 330 K checkpoint; version 2: 500 K).
+const AGFB = 'fb5fb5fb5fb5fb5fb';
+transcript(join(PROJ, SESS, 'subagents', `agent-${AGFB}.jsonl`), helperCtx(75), { side: true, model: FABLE }); // 341.2 K
+r = run(pre(parentSmall, 'Bash', { command: 'npm test' }, { agent_id: AGFB }));
+ok(r.code === 0 && r.out === '', 'v3: a Fable helper at 341 K passes (its line is the cap, not 330 K)', `${r.code} ${r.err}`);
+transcript(join(PROJ, SESS, 'subagents', `agent-${AGFB}.jsonl`), helperCtx(222), { side: true, model: FABLE }); // 899.8 K
+r = run(pre(parentSmall, 'Bash', { command: 'npm test' }, { agent_id: AGFB }));
+ok(r.code === 2 && new RegExp(`helper's line of 882 K \\(Fable: the compaction cap only, ${FID}\\)`).test(r.err), 'v3: a Fable helper past the cap (920 K - 10 x 3.8 K = 882 K) is refused', `${r.code} ${r.err}`);
 
 console.log(`window-ceiling: ${pass} passed, ${fail} failed (${pass + fail} cases)`);
 try { rmSync(T, { recursive: true, force: true }); } catch {}

@@ -48,6 +48,23 @@
 // node .claude/hooks/window-ceiling.mjs --test-off removes it.
 // node .claude/hooks/window-ceiling.mjs --show <transcript.jsonl> [helper|coordinator] prints the figures for a
 // transcript (default: a session that is not a coordinator).
+//
+// Version 2, 2026-11-25, ruling r57-0098 (brief research-tree/build/briefs/WINDOW-CEILING-FABLE.md). The owner: "we'll
+// do compaction at 500k tokens since ur fable ur quality is not likely to decrease since its good for long horizon
+// tasks"; "modify that guard such that it doesnt do these problems for fable specifically only for opus on the other
+// models". So a transcript whose current model is Fable (the model of its last assistant message with usage, an id
+// beginning "claude-fable"; a session switched from Opus is judged as Fable from its first Fable message on) gets one
+// line only: the hard line at FABLE_LINE = 500 K, the warning K calls before it at the checkpoint's g. Neither W* nor
+// the checkpoint puts it lower; only the compaction cap A - K g does, if it is ever below 500 K. Every other model
+// (Opus coordinators W*, the rest the checkpoint) is judged exactly as in version 1. The model is kept in the state
+// file (field "model", as in version 1); a cached state without it is read again from the start. Logging, the
+// fail-open rule, the hand-over calls and the test scale are unchanged; a Fable decision is logged with form "fable".
+//
+// Version 3, 2026-11-25, ruling r58-0001 (brief research-tree/build/briefs/WINDOW-CEILING-FABLE-2.md). The owner,
+// with his Fable top session at about 497 K: "no need to compact fable is good across long horizon tasks we'll be fine
+// hopefully". So the fixed 500 K line of version 2 is gone: a Fable transcript is held only by the compaction cap,
+// hard line A - K g (0.92 of the window less K calls; 920 K - 10 g on the 1M window), warning K calls before it at the
+// checkpoint's g. It is still not judged by W* or the checkpoint form; every other model as in version 1.
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, readdirSync, openSync, readSync, closeSync, fstatSync, renameSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join, basename } from 'node:path';
@@ -67,6 +84,9 @@ const COMPACT_AT = 0.92;    // ORCHESTRATION.md section 5: the app compacts at 9
 const WINDOW_BY_FAMILY = { fable: 1_000_000, sonnet: 1_000_000 }; // ORCHESTRATION.md section 5: "near the 1M window"
 const G_REC = 3_800;        // ORCHESTRATION.md section 5: the builders' Q3 growth, 3.8 K a call (t8-0106: between the median and Q3 of all Opus helpers here)
 const BUILD = process.env.WINDOW_CEILING_BUILD || resolve(root, 'research-tree', 'build'); // where state files name a coordinator
+// A Fable transcript: only the compaction cap holds it (version 3; version 2, r57-0098, had a fixed 500 K line).
+const FABLE_ID = 'r58-0001';
+export const isFable = (model) => String(model || '').toLowerCase().startsWith('claude-fable');
 
 const kfmt = (x) => (Number.isFinite(x) ? `${Math.round(x / 1000)} K` : 'none');
 function log(o) {
@@ -119,7 +139,7 @@ export function readTranscript(path, helper, useCache = true) {
   const sp = join(STATEDIR, key.replace(/[^A-Za-z0-9_.-]/g, '_') + '.json');
   let s = null;
   if (useCache) { try { s = JSON.parse(readFileSync(sp, 'utf8')); } catch {} }
-  if (!s || s.v !== 2 || s.path !== path) s = freshState(path);
+  if (!s || s.v !== 2 || s.path !== path || typeof s.model !== 'string') s = freshState(path); // r57-0098: the model is needed
   const fd = openSync(path, 'r');
   try {
     const size = fstatSync(fd).size;
@@ -166,6 +186,10 @@ export function lines(s, kind) {
   const out = { ctx, calls: s.n, seg: s.seg, segCalls: s.segN, model: s.model, window, A, kind, gFrom: own ? 'own' : 'recorded' };
   const hardC = A - K * gC, warnC = hardC - K * gC;
   out.g = gC; out.hard = hardC; out.warn = warnC;
+  if (isFable(s.model)) { // version 3 (FABLE_ID): only the compaction cap, A - K g; no W*, no fixed line
+    out.form = 'fable';
+    return out;
+  }
   if (kind !== 'coordinator') return out;
   const R = s.first17.length >= ORIENT ? s.first17.slice(0, ORIENT).reduce((a, b) => a + b, 0) : R_REC;
   const F = s.segF;
@@ -345,7 +369,7 @@ try {
   const s = readTranscript(path, !!rec.agent);
   if (!s.n) { log({ ...rec, src, decision: 'allow', note: 'no call with usage yet' }); process.exit(0); }
   // Both forms are silent below the coordinator's warning line (it is the lower), so the state files are read only
-  // above it.
+  // above it. A Fable transcript gets the same line whatever its kind (r57-0098); the kind still sets the texts.
   const sc = testScale(j, Date.now());
   let kind = rec.agent ? 'helper' : 'coordinator', l = lines(s, kind), by = null;
   if (!rec.agent && l.ctx >= l.warn * (sc || 1)) {
@@ -355,20 +379,23 @@ try {
   if (sc) { l.hard *= sc; l.warn *= sc; }
   const base = { ...rec, src, ctx: l.ctx, warn: Math.round(l.warn) || null, line: Math.round(l.hard) || null,
     g: Math.round(l.g), gFrom: l.gFrom, kind, ...(by ? { by } : {}), ...(kind === 'coordinator' && l.Wstar !== undefined ? { W: Number.isFinite(l.Wstar) ? Math.round(l.Wstar) : null } : {}),
-    model: l.model, ...(sc ? { test: sc } : {}) };
+    model: l.model, ...(l.form ? { form: l.form } : {}), ...(sc ? { test: sc } : {}) };
   const who = kind === 'coordinator' ? 'hand-over' : 'checkpoint';
+  const fable = l.form === 'fable';
+  const ids = fable ? `r57-0008, r57-0056, ${FABLE_ID}` : 'r57-0008, r57-0056';
+  const fnote = !fable ? '' : ` (Fable: the compaction cap only, ${FABLE_ID})`;
   if (l.ctx >= l.hard) {
     const ok = handoverCall(j);
     if (ok) { log({ ...base, decision: 'allow', why: ok }); process.exit(0); }
     const what = rec.agent ? 'result under research-tree/build/units/, then return' : kind === 'coordinator' ? 'STATE or TOP-STATE file, a brief, the journal, git commit' : 'a STATE file or a result under research-tree/build/units/, the journal, git commit';
-    const why = `window ceiling (r57-0008, r57-0056): context ${kfmt(l.ctx)} is past this ${rec.agent ? 'helper' : kind === 'coordinator' ? 'coordinator' : 'session'}'s line of ${kfmt(l.hard)}${sc ? ' (test scale ' + sc + ')' : ''}; only the ${who} passes now: write it (${what}), then ${rec.agent ? 'return LIMIT' : 'say a fresh session is needed and stop'}.`;
+    const why = `window ceiling (${ids}): context ${kfmt(l.ctx)} is past this ${rec.agent ? 'helper' : kind === 'coordinator' ? 'coordinator' : 'session'}'s line of ${kfmt(l.hard)}${fnote}${sc ? ' (test scale ' + sc + ')' : ''}; only the ${who} passes now: write it (${what}), then ${rec.agent ? 'return LIMIT' : 'say a fresh session is needed and stop'}.`;
     log({ ...base, decision: 'deny' });
     process.stderr.write(why + '\n');
     process.exit(2);
   }
   if (l.ctx >= l.warn) {
     log({ ...base, decision: 'notice' });
-    const text = `Window ceiling: context ${kfmt(l.ctx)}; ${kind === 'coordinator' ? 'hand-over point' : 'checkpoint'} ${kfmt(l.warn)}, hard line ${kfmt(l.hard)} (about ${Math.max(0, Math.round((l.hard - l.ctx) / Math.max(l.g, 1)))} calls at ${kfmt(l.g)} a call). A ${who} is due: go to the first quiet point and write it (r57-0008, r57-0056). Past the line only ${who} calls pass.`;
+    const text = `Window ceiling: context ${kfmt(l.ctx)}; ${kind === 'coordinator' ? 'hand-over point' : 'checkpoint'} ${kfmt(l.warn)}, hard line ${kfmt(l.hard)}${fnote} (about ${Math.max(0, Math.round((l.hard - l.ctx) / Math.max(l.g, 1)))} calls at ${kfmt(l.g)} a call). A ${who} is due: go to the first quiet point and write it (${ids}). Past the line only ${who} calls pass.`;
     process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: text } }));
     process.exit(0);
   }
