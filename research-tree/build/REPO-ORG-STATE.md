@@ -41,6 +41,10 @@ Cap 50 M tokens (his answer of 2026-11-25 to a second cap: question, "Yes, 50 M"
   (a temp work folder of that branch, `git checkout bilal/build -- harness-kit`, one line in `PROVEN.md` pointing at
   `harness-kit/README.md`, commit, push); one line in CLAUDE.md "Where things are"; a journal record; report to him.
   A successor session can finish from this line if the top session's window reaches its ceiling.
+- 2026-11-25, the kit built (record r58-0105): all four helpers handed back; `node harness-kit/check-clone.mjs`
+  exit 0; committed on `bilal/build` (b2fd9454) and pushed. Pull request 4 was found MERGED on GitHub (not by a
+  session) before the kit's commit reached its branch, so the kit went into a second pull request from the same
+  branch, open and not merged. Counted 39.15 M of the cap when the helpers had handed back.
 - 2026-11-25, last: on his word ("Yes, update it") the remote `origin` of this folder now points at
   `https://github.com/ghaaso/harness-engineering.git` (it was the Tempest-Zero address, which GitHub redirected);
   reads and the upstream of `bilal/build` checked through it.
