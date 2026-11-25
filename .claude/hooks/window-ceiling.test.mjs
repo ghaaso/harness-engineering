@@ -3,6 +3,7 @@
 // Every case feeds real PreToolUse JSON on stdin to the hook as a separate process, against transcripts built here
 // in a temporary folder; logs and state go to that folder (WINDOW_CEILING_LOGDIR), never to .claude/logs.
 import { spawnSync } from 'node:child_process';
+import { runHook } from './hook-under-test.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, existsSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -53,11 +54,11 @@ const work = (m, g = 2300, F = 170000) => Array.from({ length: m }, (_, i) => F 
 const main = (m) => [...orient, ...work(m)];
 
 function run(input, extraEnv = {}) {
-  const r = spawnSync(process.execPath, [HOOK], { input: typeof input === 'string' ? input : JSON.stringify(input), env: { ...ENV, ...extraEnv }, encoding: 'utf8' });
+  const r = runHook(HOOK, [], { input: typeof input === 'string' ? input : JSON.stringify(input), env: { ...ENV, ...extraEnv }, encoding: 'utf8' });
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
 function show(file, kind) {
-  const r = spawnSync(process.execPath, [HOOK, '--show', file, ...(kind === true ? ['helper'] : kind ? [kind] : [])], { env: ENV, encoding: 'utf8' });
+  const r = runHook(HOOK, ['--show', file, ...(kind === true ? ['helper'] : kind ? [kind] : [])], { env: ENV, encoding: 'utf8' });
   return JSON.parse(r.stdout);
 }
 const SESS = '11111111-2222-3333-4444-555555555555';
@@ -249,7 +250,7 @@ ok(run(pre(tpMain, 'Agent', {})).code === 0, 'a test scale naming no session is 
 writeFileSync(testFile, JSON.stringify({ session: SESS, scale: 3, expires: future }));
 r = run(pre(tpOver, 'Agent', {}));
 ok(r.code === 2, 'a scale above 1 is ignored: it cannot raise the line', r.err);
-const cli = (args) => spawnSync(process.execPath, [HOOK, ...args], { env: ENV, encoding: 'utf8' });
+const cli = (args) => runHook(HOOK, [...args], { env: ENV, encoding: 'utf8' });
 ok(cli(['--test', SESS, '0.4', '5']).status === 0 && JSON.parse(readFileSync(testFile, 'utf8')).scale === 0.4, '--test writes the file with its expiry');
 ok(cli(['--test', SESS, '1.5', '5']).status === 1, '--test refuses a scale that would raise the line');
 ok(cli(['--test-off']).status === 0 && !existsSync(testFile), '--test-off removes it');
@@ -388,7 +389,7 @@ ok(r.code === 2 && new RegExp(`helper's line of 882 K \\(Fable: the compaction c
   writeFileSync(join(KP, '.harness', 'NOTES.md'), 'Session 33333333 (not a state file), kind orchestrate.\n');
   const KENV = { ...process.env, WINDOW_CEILING_SETTINGS: SETTINGS };
   const kit = (input, proj = KP) => {
-    const x = spawnSync(process.execPath, [HOOK, '--harness-kit', `--project=${proj}`], { input: JSON.stringify(input), env: KENV, encoding: 'utf8' });
+    const x = runHook(HOOK, ['--harness-kit', `--project=${proj}`], { input: JSON.stringify(input), env: KENV, encoding: 'utf8' });
     return { code: x.status, out: x.stdout, err: x.stderr };
   };
   const kpre = (tp, tool, input, more = {}) => ({ ...pre(tp, tool, input, more), cwd: KP });

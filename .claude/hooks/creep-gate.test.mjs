@@ -1,5 +1,7 @@
 // Self-tests of the creep gate, version 2 with rule 5. Run: node .claude/hooks/creep-gate.test.mjs
-import { spawnSync } from 'node:child_process';
+// With KIT_HOOK_BIN_DIR set to a folder of built programs the same cases run against the Rust port kit-creep-gate
+// (hook-under-test.mjs; harness-kit/rust/DESIGN.md).
+import { runHook } from './hook-under-test.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -33,7 +35,7 @@ function setup(main = [], helpers = [], journal = null) {
 }
 function run(name, want, s, desc, prompt, opt = {}) {
   const input = opt.raw ?? JSON.stringify({ session_id: SESS, transcript_path: opt.tp || s.main, hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: opt.tu || 'cur', tool_input: { description: desc, prompt } });
-  const r = spawnSync(process.execPath, [HOOK], { input, env: { ...process.env, CREEP_GATE_ROOT: s.root }, encoding: 'utf8' });
+  const r = runHook(HOOK, [], { input, env: { ...process.env, CREEP_GATE_ROOT: s.root }, encoding: 'utf8' });
   const got = r.status === 2 ? 'deny' : r.status === 0 ? 'allow' : 'exit ' + r.status;
   let ok = got === want && (want !== 'deny' || r.stderr.includes('r57-0063'));
   if (ok && opt.says) ok = (r.stderr + r.stdout).includes(opt.says);
@@ -101,14 +103,14 @@ const okLog = ['t', 'session', 'agent_id', 'tu', 'desc', 'decision', 'why'].ever
 if (!okLog) failed++;
 console.log(`${okLog ? 'ok  ' : 'FAIL'} log line has time, session, helper, call, decision, why`);
 // replay
-const rp = spawnSync(process.execPath, [HOOK, '--replay', two.main], { env: { ...process.env, CREEP_GATE_ROOT: two.root }, encoding: 'utf8' });
+const rp = runHook(HOOK, ['--replay', two.main], { env: { ...process.env, CREEP_GATE_ROOT: two.root }, encoding: 'utf8' });
 const okRp = rp.status === 0 && /2 starts refused|0 of 2 starts refused/.test(rp.stdout);
 if (!okRp) failed++;
 console.log(`${okRp ? 'ok  ' : 'FAIL'} replay runs: ${rp.stdout.trim().split('\n').pop()}`);
 // kit mode (harness kit, 2026-11-25): --harness-kit "--project=<folder>"; the project is the root, briefs under .harness/
 const kitRun = (name, want, s, desc, prompt, says) => {
   const input = JSON.stringify({ session_id: SESS, transcript_path: s.main, hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'cur', tool_input: { description: desc, prompt } });
-  const r = spawnSync(process.execPath, [HOOK, '--harness-kit', `--project=${s.root}`], { input, env: { ...process.env, CREEP_GATE_ROOT: join(base, 'not-this') }, encoding: 'utf8' });
+  const r = runHook(HOOK, ['--harness-kit', `--project=${s.root}`], { input, env: { ...process.env, CREEP_GATE_ROOT: join(base, 'not-this') }, encoding: 'utf8' });
   const got = r.status === 2 ? 'deny' : r.status === 0 ? 'allow' : 'exit ' + r.status;
   const ok = got === want && (!says || (r.stderr + r.stdout).includes(says));
   if (!ok) failed++;

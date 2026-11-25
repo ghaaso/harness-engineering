@@ -66,6 +66,20 @@ Then: `node harness-kit/check-clone.mjs` exits 0; commits on `bilal/build`; a br
   rerun `node harness-kit/basis.build.mjs` after the documents change. The effort check is not built: what it takes
   is in `in/hooks-report.md`.
 - 17:59 UTC: wave R0 started: the Rust core builder (brief `briefs/RUST-CORE.md`, hand-back `in/rust-core-report.md`).
+- 18:22 UTC (clock): wave R0 done and committed (c6e138e7): the workspace `harness-kit/rust/`, `kit-core`, the tier
+  hook and the start hook as programs; the test switch `hook-under-test.mjs` (`KIT_HOOK_BIN_DIR`); both test files
+  pass both ways (24 with 1 skip against the program, 10 of 10); one passing call 36.9 ms in JavaScript, 6.1 ms in
+  Rust (median of 20). The lock file is final and the five other crates hold placeholders. One departure: the
+  program refuses a kind such as `constructor`, which makes `tier-hook.mjs` throw and pass the start unchecked; the
+  JavaScript hook is left as it is and the fault is to be listed for the owner as a follow-up.
+- 18:23 UTC: wave R1 started, five Opus builders at once (meter 86 % all models, 57 % Fable; the session's total
+  31.5 M as the creep gate counts): ports A window-ceiling (limit 9 M), B creep-gate (8 M), C count-gate (8 M),
+  D fanout-gate and the token counter (10 M), brief `briefs/RUST-PORT.md`, hand-backs `in/rust-A-report.md` to
+  `rust-D-report.md`; and the set-up builder (8 M), brief `briefs/SETUP.md`, hand-back `in/setup2-report.md`.
+- Next: when all five are back, commit, read the meter, start the writer (`briefs/DOCS.md`); then run
+  `node harness-kit/check-clone.mjs` in the background, one blind review, a repair only for a breaking fault, then
+  `tools/promote.mjs`, the pull request and the records. At the end remove `in/rust-skills/` (copies of third-party
+  skills, not to be committed).
 - To record by `tools/journal.mjs` at the end: his two cap answers, the Rust instruction and "no fallbacks", the
   measured costs of this job's helpers, what was built.
 

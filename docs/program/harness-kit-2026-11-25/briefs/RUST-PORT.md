@@ -49,6 +49,12 @@ comment included, and its test file.
   outside the repository, pass `-j 6`, and build only your own crate (`-p <crate>`). Every cargo call carries
   `--offline`. If `Cargo.lock` must change for your crate, say so in the report and change nothing else in it.
 - If the same case still fails after three different fixes, stop and report it with the failing input.
+- A hook on this PC counts the error lines of every shell call that runs cargo check, build, clippy or test, per
+  helper, and refuses that helper's further cargo calls once three calls in a row did not go down and the last
+  is above zero. Two clean calls followed by one with errors count as that (it stopped builder D at 0, 0, 7). So:
+  run the checks of one step as one shell call (clippy, then tests, chained), fix every error a call reports before
+  the next call, and do not make cargo calls you do not need. If it refuses you, do not look for a way round it:
+  write what is done and what is left in your report and return; a fresh helper continues.
 - No commit, no push, no branch. No install, no download. Shell calls under 150 s.
 
 ## Hand-back
