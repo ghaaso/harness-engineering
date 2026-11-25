@@ -7,6 +7,8 @@ His words in full: `docs/program/repo-organisation-2026-11-25/OWNER-WORDS.md`. T
 Cap 20 M tokens (his answer to a cap: question, 2026-11-25: "Yes, 20 M"). Meter at the reading before the
 fan-out: weekly all models 78 %, Fable 46 %, reset 2026-11-30 12:00 UTC.
 
+Cap 50 M tokens (his answer of 2026-11-25 to a second cap: question, "Yes, 50 M"; replaces the 20 M above).
+
 ## Plan
 
 1. Git state by script (done by the top session): branches, what holds what, pushed or not, uncommitted files.
@@ -22,3 +24,10 @@ fan-out: weekly all models 78 %, Fable 46 %, reset 2026-11-30 12:00 UTC.
   the proposal is `docs/program/repo-organisation-2026-11-25/PROPOSAL.md`, the page `page/repo-map.html` beside it
   (published as a private Artifact). Step 4: nothing done; the six moves of PROPOSAL.md section 5 wait for his
   approve:. A session that carries them out reads PROPOSAL.md sections 5 and 6 first.
+- 2026-11-25, later: his second message (two people) folded in as PROPOSAL.md section 7; he approved all six moves
+  (r58-0008), kept the evidence guard (r58-0009) and raised the cap to 50 M (r58-0010). All six are carried out:
+  PROPOSAL.md section 8 says what happened and where it differs; records r58-0103 and r58-0104. Counted 25.95 M of
+  the cap when the builders had handed back.
+- Open, none of it this session's to do without his word: his merge of PR 4 after the teammate has seen it; the
+  remote URL (GitHub says the repository moved to ghaaso/harness-engineering); 209 uncommitted files of the session
+  tool's Rust move (held by its own gate); the record book's way onto main.

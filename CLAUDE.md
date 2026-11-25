@@ -70,6 +70,23 @@ say what was not tested, and do not rule a family of methods out after one exper
   and meter gate, the owner-report check, the journal tool's watch (records are added only by `tools/journal.mjs`);
   every rule with what enforces it and what it cannot see: `research-tree/build/ENFORCEMENT-TABLE.md`.
 
+## Branches and owners (2026-11-25; r58-0005, r58-0008, r58-0009)
+
+Two people work in this repository. `OWNERS.json` says who has what; `.claude/hooks/owner-guard.mjs` holds this PC's
+sessions to it. The record: `docs/program/repo-organisation-2026-11-25/PROPOSAL.md` sections 7 and 8.
+
+- `bilal/build`: the owner's one working line. Every session works here.
+- `main`: shared. Proven pieces only, added by pull request: `node tools/promote.mjs <entries.json>` makes the branch
+  (it refuses a piece without a measured or observed record), a session opens the pull request, the owner merges.
+  Never pushed to directly. It keeps the archive as evidence.
+- `bilal/<what>`: a side line, named for what it is, merged into `bilal/build` and deleted. No dates, no session names.
+- `u/<unit>` and `build`: local lines the landing scripts make during a build round (`build` in its own work folder,
+  as `land.mjs` and the plan gate expect). Never pushed. When the round ends they are folded into `bilal/build` and
+  deleted, the work folder with them.
+- The teammate's branches (`work/...`, `eashah/...`), pull requests and files (`OWNERS.json` lists them): never pushed
+  to, deleted, renamed, merged, rebased or edited from this PC.
+- A frozen line is a tag (`history/...`, `archive/...`), never a branch.
+
 ## This machine
 
 Windows 11, Ryzen 9 7900X, 31 GB of memory, an RTX 5070 with 12 GB. The shell tool is Git Bash; `node`

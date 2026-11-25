@@ -177,3 +177,26 @@ Never touched in any move: Eashah's branch, PR 3, and the paths in 7.1.
 - Whether Eashah works from other branches or forks not yet pushed.
 - Whether Eashah wants the `eashah/` prefix for new branches: theirs to say; nothing here depends on it.
 - Whether the split of 2026-11-17 still holds row by row after his note of 2026-11-24.
+
+## 8. What was done (2026-11-25; his approve: "All six moves", r58-0008)
+
+| Move | State | What happened, and where it differs from 7.4 |
+|---|---|---|
+| 1 Save | done | Five commits (d054e661 to 96cb049e), pushed as `bilal/build`. **Not committed: 209 files** under `docs/program/monitor/round9/rust` and `round9/migration`: the migration gate refuses a commit that touches them while its level 1 check fails. A staged `Cargo.lock` from that work had made every commit in this folder touch them, so nothing had been committed here since 2026-11-24. It is now unstaged; those files are that work's to commit. |
+| 2 One line | done | `top9/track-plan` renamed `bilal/build`; `build`, `transfer/...` and the diagram branch deleted here and on GitHub after a containment check (0 commits outside); PR 1 closed with a note; the PC's `main` brought up to GitHub's. **No code changed**: `plan-gate.mjs:366` and `land.mjs:128` still name `build`. During a build round the landing scripts make a local `build` line in its own work folder, as tested; it is folded into `bilal/build` and deleted when the round ends (CLAUDE.md, "Branches and owners"). |
+| 3 Unit branches | done | 27 `u/*` deleted (each 0 commits outside `bilal/build`); work folders `../hb` and `PC2` removed (each held only a `research-tree/tmp/` folder of test leftovers). |
+| 4 Archive as tags | done | The work split brought in (cb21cbc5). 73 tags of the same names as the history branches, two under `archive/` for the `claude/*` branches; 171 tags here and on GitHub, each compared with its branch before the branch went; all 296 archived commits reachable from tags. |
+| 5 `main` | pull request open | He ruled the evidence guard stays (r58-0009): nothing leaves `main`. PR 4 (`bilal/promote-first`) adds 37 files and `PROVEN.md`: the hooks with tests and lean helper types, the journal tool and commit check, the lane and landing scripts. Not merged. **The record book is not in it**: the commit check's rule on journal lines refuses a journal copied onto another line (its seal does not hold lines older than the tool). The tag `archive/split-2026-11-16` was not made (nothing was removed). |
+| 6 Keep it that way | built | `OWNERS.json`; `.claude/hooks/owner-guard.mjs` with tests, wired in both settings files; `tools/promote.mjs` with 11 tests; the branch rules in CLAUDE.md; a row in `research-tree/build/ENFORCEMENT-TABLE.md`. Not built: a change to `land.mjs` to delete a unit branch at landing (the round's close-out does it, see move 2). |
+
+After, checked by script: `bilal/build` and `main` on the PC (and `bilal/promote-first` until PR 4 is merged); on
+GitHub those and `work/2026-11-20-board-checker-simple-split`, its tip b9ef61234d39 and PR 3 as before.
+
+What the owner guard cannot see (the builder's list): a path held in a variable or computed by a script,
+`git update-ref --stdin`, `git apply`, `patch`, `gh api`, commits on a local copy of the teammate's branch (pushing
+it is refused), anything done outside this PC's sessions. It refuses more than the brief in four places: a push to a
+branch name it cannot read; removing her paths even where they do not exist here; removing a folder that holds one
+of her files; `git checkout -B` and `git switch -C` on her branches.
+
+Open: the owner's merge of PR 4 after the teammate has seen it; the remote URL (GitHub answers that the repository
+moved to `ghaaso/harness-engineering`); the 209 files of move 1; the record book's way onto `main`.
