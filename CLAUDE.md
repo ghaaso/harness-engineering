@@ -48,6 +48,24 @@ say what was not tested, and do not rule a family of methods out after one exper
    a repair round only for breaking findings (the rest listed at the end), no plan, spec, critique or page for work he
    has not asked for, no rounds of small steps before the real work. Enforced by `.claude/hooks/creep-gate.mjs`.
 
+9. **Research for something we build: mechanisms first, a reasoned hypothesis before any run** (the owner,
+   2026-11-25; `docs/program/RESEARCH-METHOD-RULES-2026-11-25.md` has all seven rules and the mistakes behind them).
+   From every source keep only what a mechanism or data step can and cannot do, with the counterexample: no
+   leaderboard tables, no "X beat Y", and a published gain is never a reason to choose a form. Teaching material
+   (courses, decks, textbook chapters) comes before papers. The session that designs reads the material itself, in
+   full; a helper's summary is never the basis of a design choice (this is the designer's own work, rule 5
+   notwithstanding). Before any build, training or card run of a model: a written hypothesis the owner has seen, with
+   the alternatives for each decision, their strengths and weaknesses for our use case, why the choice follows and what
+   would refute it. No sweeps over forms or library defaults to find a design. A model is designed and tested to work
+   on a repository it was not trained on. Read `docs/program/learning/` in full before designing or judging a model.
+
+10. **Graph of thoughts means the method, run in the open** (the owner, 2026-11-25; r58-0027;
+    `docs/program/RESEARCH-METHOD-RULES-2026-11-25.md`, last section). When he asks for it: say first what can and cannot be
+    run; the plan before the first thought; every thought a record with its parents, its score and its fate; several
+    thoughts per part and several combinations, each scored; the account of what was done is the ledger printed from the
+    records by `tools/check-got.mjs`, never a description from memory. A re-reading is not a round. Enforced by the
+    hypothesis gate and a reminder hook.
+
 ## Where things are
 
 - **For a second person or a new machine: `harness-kit/README.md`** (built 2026-11-25): the set-up that wires the
