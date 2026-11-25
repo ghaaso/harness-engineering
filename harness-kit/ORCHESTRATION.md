@@ -3,7 +3,8 @@
 Read this before you start helpers. Each rule ends with its status and record:
 `[measured]` a number from a run here, `[observed]` seen working or failing, no number, `[quoted]` documentation or
 paper, `[hypothesis]` designed or reasoned, never run. Read a record with `bash library/lookup.sh -f <id>` (the record
-book `library/` is on the branch `bilal/build`, not on `main`).
+book `library/` is on the branch `bilal/build`, not on `main`). The records cited as costs are also in
+`harness-kit/basis.json`, each with its claim; the kit's fan-out gate accepts them as a basis.
 Every number comes from one repository on one Windows PC in November 2026. Treat it as a basis, not a law.
 
 ## 1. The kind of job decides the model
@@ -31,7 +32,7 @@ Never mythos. Source: `.claude/hooks/tier-routes.json` [observed, r57-0005, r57-
 
 - Per fresh token on the weekly meter, against Opus: Sonnet 0.15-0.5, Haiku 0.15-0.8, Fable 2.7-5.6 [measured, r57-0175, one week].
 - Whether Sonnet or Haiku gives the same output as Opus on a job here is not measured; the routes ran once and worked [hypothesis, r57-0005, r57-0208].
-- The lean helper types (`.claude/agents/lean-*.md`) load five tools only; their saving is not measured [observed, r57-0155 for the archived load].
+- The lean helper types (`.claude/agents/lean-*.md`) load five tools only; their saving is not measured [observed, r57-0155 for the archived load]. In a project of your own, copy them into its `.claude/agents/`.
 - A one-command job (one search, one file read) is done in your own session: a fresh helper carries about 56-60 K tokens before any work [measured, hc1-0104]; the rule itself [hypothesis, r57-0210].
 - A session cannot change its own model or effort [observed, r57-0176].
 
@@ -39,7 +40,7 @@ Never mythos. Source: `.claude/hooks/tier-routes.json` [observed, r57-0005, r57-
 
 - Start together all work that can run together; serial helpers on independent parts were a recorded mistake [observed, r57-0006, r57-0603].
 - Five Sonnet readers at once took 4 minutes and 767,000 tokens in all [measured, r57-0115, one trial].
-- Keep helpers running at once under 20, helpers of helpers counted: the app refuses the 21st [measured, t8-0109].
+- Keep helpers running at once under 20, helpers of helpers counted: the app refuses the 21st [measured, t8-0109]; in the kit, `kit-count-gate` refuses it first.
 - Heavy test commands go through a queue of at most 4 slots; 4 test files at once each took 1.06-1.15 times their time alone; above 4 is not measured [measured, r57-0159].
 - No middle helper between you and leaf helpers: it hears from its children only by polling, estimated at 1.5-3.5 M tokens against 0.42 M saved [hypothesis, r57-0418].
 - Width does not change total tokens, except redone work and re-reads at each wake [hypothesis, r57-0414].
@@ -47,7 +48,7 @@ Never mythos. Source: `.claude/hooks/tier-routes.json` [observed, r57-0005, r57-
 
 ## 3. A limit for every helper, a cap for the job, the meter before each wave
 
-- Every helper brief carries the line `token limit N M (expected about E M, basis <record id>)`, N above E, the basis a measured or observed record of similar work [observed, r57-0038, t8-0110].
+- Every helper brief carries the line `token limit N M (expected about E M, basis <record id>)`, N above E, the basis a measured or observed record of similar work [observed, r57-0038, t8-0110]. In the kit `kit-fanout-gate` checks the line; its records are in `harness-kit/basis.json` and your own in `.harness/basis.json`.
 - Take E from the measured cost of the role, not a guess:
 
 | role (median or range) | tokens | record |
@@ -60,10 +61,10 @@ Never mythos. Source: `.claude/hooks/tier-routes.json` [observed, r57-0005, r57-
 | blind Opus refuter of one build unit | 10.6 M | r57-0173 |
 | Opus builder unit with all its helpers | 32.3 M | r57-0173 |
 
-- Agree a cap for the whole job with the person before the first wave. Before each start, tokens spent plus the unused part of running helpers' limits plus the new limit stay under the cap [observed, r57-0614, t8-0110].
-- Read the usage meter in a message before the start, after the previous wave, no older than 26 minutes; never in the same message as the start [observed, r57-0615, r57-0183].
+- Agree a cap for the whole job with the person before the first wave. Before each start, tokens spent plus the unused part of running helpers' limits plus the new limit stay under the cap [observed, r57-0614, t8-0110]. In the kit the cap is the line `Cap <n> M tokens` of `.harness/<NAME>-STATE.md`, beside `Session <first 8 characters of the session id>`, and `kit-fanout-gate` refuses a start past it.
+- Read the usage meter in a message before the start, after the previous wave, no older than 26 minutes; never in the same message as the start [observed, r57-0615, r57-0183]. `kit-fanout-gate` refuses a start without such a reading, unless the kit was set up with `--no-usage-tool`.
 - Price every step in the plan, building test cases included [measured, t7-0602].
-- Count tokens as input + cache creation + cache read + output, once per message id, from the transcripts [measured, r58-0102].
+- Count tokens as input + cache creation + cache read + output, once per message id, from the transcripts [measured, r58-0102]: `harness-kit/rust/target/release/kit-tokens` counts so.
 - A helper that reaches its limit stops and reports; you decide whether to extend it [observed, r57-0038].
 - The five-hour and weekly windows reset in full; their sizes are not published [quoted, a1-0327].
 
@@ -81,7 +82,7 @@ Never mythos. Source: `.claude/hooks/tier-routes.json` [observed, r57-0005, r57-
 
 - The coordinating session only coordinates; reading, building and checking go to helpers [observed, r57-0008].
 - Every call re-reads your whole window: a build root cost about 0.24 M a call, a top session 200-280 K a message [measured, r57-0173, r58-0102, r58-0104].
-- Hand over through a state file at the first quiet point after W* = F + sqrt(2 R g); measured for the build's roots at 247-273 K [measured, r57-0171]. The design figure of 133 K was too low [measured, r57-0139].
+- Hand over through a state file at the first quiet point after W* = F + sqrt(2 R g); measured for the build's roots at 247-273 K [measured, r57-0171]. The design figure of 133 K was too low [measured, r57-0139]. In the kit the state file is `.harness/<NAME>-STATE.md`, and past the line `kit-window-ceiling` lets only the hand-over through.
 - A helper that is not a coordinator writes a checkpoint at about 330 K; the app compacts Opus at 368 K [observed, t8-0107].
 - A successor session starts only on a turn the person types; plan the hand-over for when they are there [observed, r57-0109, r57-0171].
 - Helpers hand back through a file whose done line is written last [observed, r57-0164].
@@ -112,7 +113,7 @@ Never mythos. Source: `.claude/hooks/tier-routes.json` [observed, r57-0005, r57-
 - "Overthinking": not recorded; no record measures a model running longer than its job needs.
 - Designed, never run: raise effort on the current tier before moving up a tier; Haiku low or medium, Sonnet medium or high [hypothesis, r57-0207].
 - Opus at high and xhigh ran once and worked; no record shows xhigh beat high [observed, r57-0207].
-- No hook checks effort [observed, r57-0120]. A helper's effort changes only when written into CLAUDE.md or a skill [observed, r57-0176, r57-0421].
+- The tier hook checks, on trial and in kit mode only, that a helper start names an effort its route lists; no hook sees the effort a helper really runs at [observed, r57-0120]. A helper's effort changes only when written into CLAUDE.md or a skill [observed, r57-0176, r57-0421].
 - Measuring effort is an open task that needs Bilal's word [a1-0501].
 
 ## Mistakes that cost tokens here
