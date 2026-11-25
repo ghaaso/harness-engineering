@@ -1,0 +1,139 @@
+<title>File Prediction Architecture</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+/* Layout: one architecture figure read left to right (three kinds of question -> seeds -> four stages -> ranked files), then the chain of choices as need / choice / reason cards, then what the old models did and what this one promises. */
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #18212b; --muted: #5a6877; --line: #c9d1da; --soft: #e9edf2;
+  --accent: #1f5f8b; --core: #eaf1f7; --core-line: #1f5f8b; --base: #f3efe6; --base-line: #a9966a;
+  --bad: #a3352b; --ok: #1d7a4f;
+  --display: "Space Grotesk", "Segoe UI", system-ui, sans-serif; --body: "Inter", "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #12171d; --panel: #1a212a; --ink: #e8edf2; --muted: #9aa8b6; --line: #3a4756; --soft: #232c37;
+  --accent: #7db8e0; --core: #1c2e3f; --core-line: #7db8e0; --base: #2b281f; --base-line: #b8a679;
+  --bad: #f09a90; --ok: #6fd3a0; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #12171d; --panel: #1a212a; --ink: #e8edf2; --muted: #9aa8b6; --line: #3a4756; --soft: #232c37;
+  --accent: #7db8e0; --core: #1c2e3f; --core-line: #7db8e0; --base: #2b281f; --base-line: #b8a679;
+  --bad: #f09a90; --ok: #6fd3a0; color-scheme: dark }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 16px; line-height: 1.5;
+  padding-block: 28px 48px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.wrap { max-width: 1440px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
+h1, h2 { font-family: var(--display); margin: 0; text-wrap: balance; font-weight: 600; }
+h1 { font-size: 1.9rem; } h2 { font-size: 1.15rem; }
+p { margin: 0; } .sub { color: var(--muted); }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 22px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+figure { margin: 0; display: flex; flex-direction: column; gap: 10px; }
+.scroll { overflow-x: auto; }
+svg { display: block; width: 100%; min-width: 1040px; height: auto; color: var(--ink); font-family: var(--body); }
+.bx { fill: var(--panel); stroke: var(--line); stroke-width: 1.2; }
+.core { fill: var(--core); stroke: var(--core-line); stroke-width: 1.6; }
+.basebx { fill: var(--base); stroke: var(--base-line); stroke-width: 1.2; }
+.repo { fill: var(--soft); stroke: var(--line); stroke-width: 1.2; }
+.t { fill: currentColor; font-size: 14px; font-weight: 600; } .s { fill: var(--muted); font-size: 12px; }
+.lab { fill: var(--accent); font-size: 11.5px; font-weight: 500; }
+.ln { stroke: currentColor; stroke-width: 1.3; fill: none; } .dash { stroke-dasharray: 5 4; }
+figcaption { color: var(--muted); font-size: 0.92rem; }
+.chain { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.link { border-top: 3px solid var(--accent); padding-top: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: 0.92rem; }
+.link .need { font-weight: 600; } .link .pick { color: var(--ink); } .link .why { color: var(--muted); }
+.two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; align-items: start; }
+ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+li { color: var(--muted); font-size: 0.95rem; } li b { color: var(--ink); font-weight: 600; }
+.foot { color: var(--muted); font-size: 0.88rem; }
+@media (max-width: 1100px) { .chain { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .two, .chain { grid-template-columns: minmax(0, 1fr); } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>One model that answers "which files?" on any repository</h1>
+    <p class="sub">25 November. A design, reasoned from your lecture deck, the published work and our own measurements. None of the model is built yet.</p>
+  </header>
+
+  <section class="panel">
+    <figure>
+      <div class="scroll">
+        <svg viewBox="0 0 1300 500" role="img" aria-label="Three kinds of question become seeds in the repository graph; four stages turn them into ranked files with evidence; counting is added into the score so the model starts equal to it.">
+          <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>
+
+          <rect class="bx" x="20" y="34" width="200" height="60" rx="8"/><text class="t" x="34" y="59">Task words</text><text class="s" x="34" y="78">what needs doing</text>
+          <rect class="bx" x="20" y="114" width="200" height="60" rx="8"/><text class="t" x="34" y="139">A change</text><text class="s" x="34" y="158">a file and the functions edited</text>
+          <rect class="bx" x="20" y="194" width="200" height="60" rx="8"/><text class="t" x="34" y="219">An error</text><text class="s" x="34" y="238">stack frames and the message</text>
+
+          <path class="ln" d="M220 64 L278 128" marker-end="url(#ah)"/><path class="ln" d="M220 144 H278" marker-end="url(#ah)"/><path class="ln" d="M220 224 L278 160" marker-end="url(#ah)"/>
+          <rect class="bx" x="280" y="104" width="140" height="80" rx="8"/><text class="t" x="294" y="134">Seeds + text</text><text class="s" x="294" y="153">where in the graph</text><text class="s" x="294" y="169">the question starts</text>
+
+          <rect class="repo" x="20" y="310" width="400" height="164" rx="8"/>
+          <text class="t" x="34" y="336">The repository as a graph, as of now</text>
+          <text class="s" x="34" y="358">files · functions · commits · folders</text>
+          <text class="s" x="34" y="378">changed together: how often, how recently,</text>
+          <text class="s" x="34" y="394">in how big a commit</text>
+          <text class="s" x="34" y="414">imports · calls · contains · tested by</text>
+          <text class="lab" x="34" y="440">built by a parser and the git log;</text><text class="lab" x="34" y="456">no model writes it</text>
+
+          <path class="ln" d="M420 144 H478" marker-end="url(#ah)"/>
+          <rect class="bx" x="480" y="90" width="170" height="108" rx="8"/><text class="t" x="494" y="116">1 Retrieve</text><text class="s" x="494" y="138">about 300 candidate files:</text><text class="s" x="494" y="155">by count, by a walk from</text><text class="s" x="494" y="172">the seeds, and by text</text>
+          <path class="ln" d="M650 144 H688" marker-end="url(#ah)"/>
+          <rect class="core" x="690" y="90" width="170" height="108" rx="8"/><text class="t" x="704" y="116">2 Spread from seeds</text><text class="s" x="704" y="138">typed, time-aware messages,</text><text class="s" x="704" y="155">three hops; sums, not means;</text><text class="s" x="704" y="172">the counts ride on the edges</text>
+          <path class="ln" d="M860 144 H898" marker-end="url(#ah)"/>
+          <rect class="core" x="900" y="90" width="170" height="108" rx="8"/><text class="t" x="914" y="116">3 Compare candidates</text><text class="s" x="914" y="138">attention among the 300;</text><text class="s" x="914" y="155">position = relation to seeds:</text><text class="s" x="914" y="172">hops, walk, time, folder tree</text>
+          <path class="ln" d="M1070 144 H1108" marker-end="url(#ah)"/>
+          <rect class="bx" x="1110" y="90" width="170" height="108" rx="8"/><text class="t" x="1124" y="116">4 Score</text><text class="s" x="1124" y="138">counting + a learned</text><text class="s" x="1124" y="155">correction; trained on</text><text class="s" x="1124" y="172">whole ranked lists</text>
+
+          <path class="ln" d="M420 392 H775 V200" marker-end="url(#ah)"/><path class="ln" d="M565 392 V200" marker-end="url(#ah)"/>
+          <text class="lab" x="436" y="384">only what existed before the question</text>
+
+          <rect class="basebx" x="900" y="262" width="170" height="56" rx="8"/><text class="t" x="914" y="286">Plain counting</text><text class="s" x="914" y="304">today's baseline</text>
+          <path class="ln dash" d="M1070 290 H1150 V200" marker-end="url(#ah)"/><text class="lab" x="900" y="338">added in: the model starts equal to it</text>
+
+          <path class="ln" d="M1230 198 V376" marker-end="url(#ah)"/>
+          <rect class="bx" x="1110" y="378" width="170" height="72" rx="8"/><text class="t" x="1124" y="404">Ranked files</text><text class="s" x="1124" y="423">each with the path</text><text class="s" x="1124" y="439">that explains it</text>
+
+          <rect class="bx" x="480" y="418" width="590" height="56" rx="8"/><text class="t" x="494" y="442">Trained across many public repositories</text><text class="s" x="494" y="461">no part of the model belongs to one repository: a new one needs only its graph, no training</text>
+        </svg>
+      </div>
+      <figcaption>Three kinds of question enter the same model as starting points in the graph. The two shaded stages are the new model. Counting is added into the score, so the model begins as good as today's baseline and learns only the correction.</figcaption>
+    </figure>
+  </section>
+
+  <section class="panel">
+    <h2>The chain of reasoning: what the problem needs, the choice, and why</h2>
+    <div class="chain">
+      <div class="link"><span class="need">It must work on a repository it never saw</span><span class="pick">No learned vector per file and no global coordinates. Inputs are text features and structure only.</span><span class="why">A Laplacian position is a coordinate of one graph: costly, ambiguous in sign, rebuilt at every commit, blind to direction. It means nothing in the next repository.</span></div>
+      <div class="link"><span class="need">It must hold pair facts</span><span class="pick">Mark the seeds, and let every file's state depend on them.</span><span class="why">Your deck: message passing cannot count structures without a label that breaks the symmetry. For a pair question the right label is the question's own seed. One pass then scores every candidate.</span></div>
+      <div class="link"><span class="need">Counting must live inside the model</span><span class="pick">Each message is scaled by its edge (how often, how recently, how big the commit), and messages are summed.</span><span class="why">Your deck: real data is anisotropic, and the sum is the aggregator that can count. A mean cannot. With one layer this is exactly weighted counting.</span></div>
+      <div class="link"><span class="need">All of history, nothing stale</span><span class="pick">History as time-stamped edges read at question time. Time enters as a gap. No per-file memory.</span><span class="why">A relative time is the same function in every repository, and nothing has to be replayed or can fall out of a window.</span></div>
+      <div class="link"><span class="need">Files with no shared history</span><span class="pick">A parsed code graph (functions, calls, imports, tests, folders) under the same messages. Three hops.</span><span class="why">File to function to function to file is three hops. Over-squashing starts near four, so depth stops at three and attention does the rest.</span></div>
+      <div class="link"><span class="need">No n-squared cost</span><span class="pick">Retrieve about 300 candidates, then attend only among them.</span><span class="why">Your deck: dense attention is practical to about a thousand tokens, and retrieval can select the relevant subgraph instead of the whole graph.</span></div>
+      <div class="link"><span class="need">Position without coordinates</span><span class="pick">Each token says how it relates to the seeds: hops, walk mass, time since change, place in the folder tree.</span><span class="why">It meets the deck's tests for an encoding, follows edge direction, means the same in every repository, and cannot see the future. The tree row of your screenshot is the folder tree here.</span></div>
+      <div class="link"><span class="need">Never below counting, and the right target</span><span class="pick">Score = counting + a learned correction. The loss is over the whole candidate list.</span><span class="why">Five earlier learned models fell to or below counting. This one equals it at the first step. The candidates are the hard cases, which is what the score measures.</span></div>
+    </div>
+  </section>
+
+  <section class="two">
+    <div class="panel">
+      <h2>What our earlier models did instead</h2>
+      <ul>
+        <li><b>Averaged a file's neighbours.</b> An average cannot count, and counts are the main signal here.</li>
+        <li><b>Kept one vector per file.</b> That cannot hold a fact about a pair of files.</li>
+        <li><b>Looked at the last 20 to 32 events.</b> Half of the history stayed out of sight.</li>
+        <li><b>Trained against random easy examples,</b> then were scored against the hard ones.</li>
+        <li><b>Kept state per repository.</b> Such a model cannot be carried to another repository at all.</li>
+      </ul>
+      <p class="foot">Each was a published model run with its default settings. Each of these faults follows from theory and could have been reasoned out before a single card hour was spent.</p>
+    </div>
+    <div class="panel">
+      <h2>What this design promises, and how it can fail</h2>
+      <ul>
+        <li><b>Files with shared history:</b> equal to counting at the start, better after training.</li>
+        <li><b>Files without shared history:</b> better than today's ranker, through paths in the code.</li>
+        <li><b>An unseen repository:</b> no worse than counting there, with no training on it.</li>
+        <li><b>The limit of reasoning:</b> it can make sure the design is not crippled. It cannot promise the size of the gain. The best possible score on this task is about twice what counting reaches.</li>
+        <li><b>It fails if</b> the parsed graph misses the links that matter, or if paths add nothing over hand-made features.</li>
+      </ul>
+      <p class="foot">Built today: the history tables, counting, the learned rankers, text vectors. Not built: the code graph, this model, training across repositories, any test on an unseen repository, any set of real errors with their fixes.</p>
+    </div>
+  </section>
+</div>

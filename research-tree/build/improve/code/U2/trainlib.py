@@ -25,7 +25,10 @@ def build_model(tag, state=None, train=False):
         pm = get_peft_model(am, LoraConfig(**LORA))
         if state is not None:
             set_peft_model_state_dict(pm, state)
-        m[0].auto_model = pm
+        # 2026-11-25 (coordinator 8): sentence-transformers 6.3's Transformer.auto_model is a read-only property returning
+        # self.model, so assigning the PeftModel to it never took (the bare model, with the LoRA layers injected in place, is what
+        # runs, which is the LoRA model). The PeftModel is kept beside it for merge, state save and load.
+        object.__setattr__(m[0], '_u2_peft', pm)
     else:
         if state is not None:
             am.load_state_dict(state)
@@ -40,14 +43,14 @@ def build_model(tag, state=None, train=False):
 def trained_state(m, tag):
     if tag == 'qwen3':
         from peft import get_peft_model_state_dict
-        return {k: v.detach().cpu().clone() for k, v in get_peft_model_state_dict(m[0].auto_model).items()}
+        return {k: v.detach().cpu().clone() for k, v in get_peft_model_state_dict(m[0]._u2_peft).items()}
     return {k: v.detach().cpu().clone() for k, v in m[0].auto_model.state_dict().items()}
 
 
 def set_state(m, state, tag):
     if tag == 'qwen3':
         from peft import set_peft_model_state_dict
-        set_peft_model_state_dict(m[0].auto_model, state)
+        set_peft_model_state_dict(m[0]._u2_peft, state)
     else:
         m[0].auto_model.load_state_dict(state)
 
@@ -56,8 +59,8 @@ def to_eval(m, tag):
     """merge LoRA, fp16, 512 tokens: the card's inference form."""
     import torch
     if tag == 'qwen3':
-        m[0].auto_model = m[0].auto_model.merge_and_unload()
-        m[0].auto_model.gradient_checkpointing_disable()
+        m[0].model = m[0]._u2_peft.merge_and_unload()   # the base model with the LoRA weights merged in (see build_model)
+        m[0].model.gradient_checkpointing_disable()
     m.eval()
     m.half()
     m.max_seq_length = 512
@@ -118,14 +121,15 @@ def train(tag, examples, lr, epochs, bs=8, seed=0, log=None, ckpt=None, every=48
             if step > ep * spe + s // bs:
                 continue
             B = [examples[i] for i in order[s:s + bs]]
-            k = 1 + len(B[0]['negs'])
+            ks = [1 + len(e['negs']) for e in B]   # 2026-11-25 (coordinator 9): examples may carry fewer negatives than asked
+            off = [sum(ks[:i]) for i in range(len(B))]   # column of each example's positive
             qe = enc([prompt + e['query'] for e in B])
             de = enc([t for e in B for t in [e['pos']] + e['negs']])
             sims = qe @ de.T * SCALE
-            commit = [e['commit'] for e in B for _ in range(k)]
-            mask = torch.tensor([[commit[j] == B[i]['commit'] and j != i * k for j in range(len(commit))] for i in range(len(B))], device='cuda')
+            commit = [e['commit'] for e in B for _ in range(1 + len(e['negs']))]
+            mask = torch.tensor([[commit[j] == B[i]['commit'] and j != off[i] for j in range(len(commit))] for i in range(len(B))], device='cuda')
             sims = sims.masked_fill(mask, -1e4)   # another positive or negative of the same commit is not a negative
-            loss = torch.nn.functional.cross_entropy(sims, torch.arange(len(B), device='cuda') * k)
+            loss = torch.nn.functional.cross_entropy(sims, torch.tensor(off, device='cuda'))
             loss.backward()
             if step == 0:
                 nz = sum(1 for p in params if p.grad is not None and float(p.grad.abs().sum()) > 0)
