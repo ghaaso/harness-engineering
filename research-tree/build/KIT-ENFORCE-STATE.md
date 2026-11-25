@@ -114,4 +114,17 @@ Cap 95 M tokens (his answer of 2026-11-25 to a second cap: question, "yes 95m al
   open the pull request to `main` (not merged); two more records (the cap of 100 M, the review and its repair);
   remove `in/rust-skills/`; report.
 
+- 19:29: the repair done and committed (54b17300; one Opus builder, 3.70 M): both faults fixed in the JavaScript
+  hooks and the Rust programs; test files both ways window-ceiling 135, fanout-gate 49, count-gate 28 with 2
+  skipped. That commit's path list was built from the folder and so took in two files another session had just
+  written (`.claude/hooks/hypothesis-gate.mjs` and its test file): the next commit takes them out of the index
+  again, the files stay on disk as that session left them. The session's total at 19:29: 95.62 M.
+- Then: the clean-clone check run once more after the repair (every line passed, exit 0); two more records
+  (the cap of 100 M; the review and its repair); the branch `bilal/kit-enforce` made by `tools/promote.mjs` from
+  `docs/program/harness-kit-2026-11-25/promote-kit-enforce.json`; `bilal/build` and `bilal/kit-enforce` pushed; the
+  pull request to `main` opened, not merged. `in/rust-skills/` (copies of the vetted Rust skills) removed.
+- The journal file `library/journal/2026-11-25/r58.jsonl` is committed with this job's ten records and with five
+  lines another session had appended and not yet committed.
+- Open, for the owner: record r58-0500 (six points).
+
 Cap 100 M tokens (his answer of 2026-11-25 to a third cap: question, "Yes, 100 M"; replaces the 95 M above).
