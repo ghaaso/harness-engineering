@@ -1,6 +1,7 @@
 // Tests of tokens.mjs (2026-11-25). Run: node harness-kit/tokens.test.mjs
 // A made-up Claude config folder (CLAUDE_CONFIG_DIR) holds one session of a made-up project with two helpers.
-import { spawnSync } from 'node:child_process';
+// With KIT_HOOK_BIN_DIR set the cases run the Rust program kit-tokens instead (.claude/hooks/hook-under-test.mjs).
+import { runHook } from '../.claude/hooks/hook-under-test.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -23,7 +24,7 @@ writeFileSync(join(D, S, 'subagents', 'agent-bbb222.meta.json'), JSON.stringify(
 
 let pass = 0, fail = 0;
 const ok = (c, name, extra = '') => { c ? pass++ : fail++; console.log(`${c ? 'ok  ' : 'FAIL'} ${name}${c ? '' : '  ' + String(extra).slice(0, 300)}`); };
-const run = (...args) => spawnSync(process.execPath, [join(here, 'tokens.mjs'), '--project', P, ...args], { env: { ...process.env, CLAUDE_CONFIG_DIR: CFG }, encoding: 'utf8' });
+const run = (...args) => runHook(join(here, 'tokens.mjs'), ['--project', P, ...args], { env: { ...process.env, CLAUDE_CONFIG_DIR: CFG }, encoding: 'utf8' });
 
 let r = run('1234');
 ok(r.status === 0 && /aaa111\s+read: the schema\s+claude-sonnet-5-5\s+2\s+1\.20 M/.test(r.stdout), 'a helper: description, model, messages, tokens once per message id', r.stdout + r.stderr);

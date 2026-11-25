@@ -1,8 +1,9 @@
 // Self-tests of the fan-out gate. Run: node .claude/hooks/fanout-gate.test.mjs [hook file, default fanout-gate.mjs]
 // Each case feeds real PreToolUse JSON on stdin; transcripts, the journal and the state file are small fakes in a
-// temporary folder (FANOUT_GATE_ROOT), the clock is fixed (FANOUT_GATE_NOW). Before this hook every case below was
+// temporary folder (FANOUT_GATE_ROOT), the clock is fixed (FANOUT_GATE_NOW). With KIT_HOOK_BIN_DIR set the cases run the
+// Rust program kit-fanout-gate instead (.claude/hooks/hook-under-test.mjs). Before this hook every case below was
 // allowed: the "deny" cases are the ones the old setup (no gate) let through.
-import { spawnSync } from 'node:child_process';
+import { runHook } from './hook-under-test.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, copyFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -47,7 +48,7 @@ const readThenStart = (prompt = GOOD, pct = 33) => [
 ];
 
 function run(name, want, env, input, expectText) {
-  const r = spawnSync(process.execPath, [HOOK], {
+  const r = runHook(HOOK, [], {
     input: typeof input === 'string' ? input : JSON.stringify(input),
     env: { ...process.env, FANOUT_GATE_ROOT: env.root, FANOUT_GATE_NOW: env.now || at(2) }, encoding: 'utf8',
   });
@@ -192,7 +193,7 @@ if (existsSync(resolve(here, 'kit-mode.mjs'))) {
     return { root: P, proj, main: join(proj, SESS + '.jsonl') };
   };
   const kitRun = (name, want, s, input, expectText, extra = [], logText) => {
-    const r = spawnSync(process.execPath, [join(KH, 'fanout-gate.mjs'), '--harness-kit', `--project=${s.root}`, ...extra], {
+    const r = runHook(join(KH, 'fanout-gate.mjs'), ['--harness-kit', `--project=${s.root}`, ...extra], {
       input: JSON.stringify(input), env: { ...process.env, FANOUT_GATE_ROOT: join(base, 'not-this'), FANOUT_GATE_NOW: at(2) }, encoding: 'utf8' });
     const got = r.status === 2 ? 'deny' : r.status === 0 ? 'allow' : 'exit ' + r.status;
     let ok = got === want && (!expectText || (r.stderr || '').includes(expectText));

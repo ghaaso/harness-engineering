@@ -80,6 +80,15 @@ Then: `node harness-kit/check-clone.mjs` exits 0; commits on `bilal/build`; a br
   `node harness-kit/check-clone.mjs` in the background, one blind review, a repair only for a breaking fault, then
   `tools/promote.mjs`, the pull request and the records. At the end remove `in/rust-skills/` (copies of third-party
   skills, not to be committed).
+- 18:46 UTC (clock): ports A, B, C and the set-up done and committed (90e199c3). The clean-clone check ran once:
+  every hook's test file passes against the JavaScript and against the program; it fails only on what is not
+  written yet (`RULES.md`, the coverage rows still saying missing, the token counter's program). Port D was stopped
+  by the migration gate's repair-loop rule at 0, 0, 7 (two clean checks, then clippy); a fresh builder continues
+  from its report. Writer started 18:48 (limit 6 M). Session total 60.6 M.
+- About 18:50 UTC, the owner: "Why the fuck is this taking so long? You aren't doing unnecessary rounds of
+  adversarial reviews and JavaScript versus Rust comparisons, are you? [...] don't do that". So: **no review at
+  the end, no repair round, no further comparison runs.** When the token counter and the writer are back: one run
+  of the clean-clone check, commit, `tools/promote.mjs`, the pull request, the records, the report. Nothing else.
 - To record by `tools/journal.mjs` at the end: his two cap answers, the Rust instruction and "no fallbacks", the
   measured costs of this job's helpers, what was built.
 
