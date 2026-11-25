@@ -278,8 +278,9 @@ const CASES = {
     ['extra', 'at 360 K the hand-over .harness/KIT-STATE.md may be written', pre(pr.dir, 'Write', { file_path: join(pr.dir, '.harness', 'KIT-STATE.md'), content: 'x' }, wcHigh), 0],
   ],
   'tier-hook': (pr) => [
-    ['pass', 'Agent "read: x" on sonnet', pre(pr.dir, 'Agent', { description: 'read: x', model: 'sonnet', prompt: 'x' }), 0],
-    ['refuse', 'Agent "read: x" on opus', pre(pr.dir, 'Agent', { description: 'read: x', model: 'opus', prompt: 'x' }), 2],
+    ['pass', 'Agent "read: x" on sonnet at effort medium', pre(pr.dir, 'Agent', { description: 'read: x', model: 'sonnet', effort: 'medium', prompt: 'x' }), 0],
+    ['refuse', 'Agent "read: x" on opus', pre(pr.dir, 'Agent', { description: 'read: x', model: 'opus', effort: 'medium', prompt: 'x' }), 2],
+    ['extra', 'Agent "read: x" on sonnet with no effort is refused (the effort check, on trial)', pre(pr.dir, 'Agent', { description: 'read: x', model: 'sonnet', prompt: 'x' }), 2],
     ['extra', 'child session in the project (its settings wire kit-tier-hook) passes', pre(pr.dir, 'mcp__ccd_session__start_session', { title: 'read: x', model: 'sonnet', cwd: pr.dir }), 0],
     ['extra', 'child session in a folder without the hook is refused', pre(pr.dir, 'mcp__ccd_session__start_session', { title: 'read: x', model: 'sonnet', cwd: emptyDir }), 2],
   ],

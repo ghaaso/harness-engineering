@@ -139,3 +139,28 @@ Cap 100 M tokens (his answer of 2026-11-25 to a third cap: question, "Yes, 100 M
   Not done on purpose: the migration gate's repair-loop rule and this PC's own wiring are not part of the kit.
 
 Cap 140 M tokens (his answer of 2026-11-25 to a fourth cap: question, "Yes, 140 M"; replaces the 100 M above).
+
+## The Rust-only round (2026-11-25, 19:52 to 20:20 UTC by the clock)
+
+- Four Opus builders at once and one fresh builder after a stop by the repair-loop rule (0, 3, 3). Done: the
+  set-up as `kit-setup` with its two wrappers and the three settings; `kit-queue`, `kit-check`, `kit-unit`; the
+  JavaScript duplicates removed and the four hooks back to what `main` holds; the routing fix; the effort check on
+  trial; the documents. Commit 19d85582. The clean-clone check failed once on its own sample (a helper start with no
+  effort, refused by the new trial), was given an effort, and then passed every line (exit 0).
+- Tokens as the fan-out gate counts, read by `kit-tokens`:
+
+```
+build-invariant: Rust port D continued, fanout-gate and toke  claude-opus-5-5          54    6.73 M
+build-invariant: builder C, remove the JavaScript duplicates  claude-opus-5-5          20    1.01 M
+build-invariant: builder T, routing fix, effort trial and do  claude-opus-5-5          50    4.47 M
+build-invariant: builder P, parallel commands and queue in R  claude-opus-5-5          28    4.06 M
+build-invariant: builder P continued, finish the parallel co  claude-opus-5-5           9   342.2 K
+build-invariant: builder S, the set-up in Rust                claude-opus-5-5          29    4.27 M
+its own messages                                              claude-fable-5-2         97   33.41 M
+sum                                                                                        123.05 M
+```
+
+- Delivered: records by `tools/journal.mjs`; the branch `bilal/kit-rust-only` by `tools/promote.mjs` from
+  `docs/program/harness-kit-2026-11-25/promote-kit-rust-only.json`, with one more commit there that removes the two
+  JavaScript set-up files `main` still held; the earlier pull request closed in favour of the new one.
+- Still open, not part of the kit: points 2, 3 and 5 of record r58-0500.
