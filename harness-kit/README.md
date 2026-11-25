@@ -108,7 +108,7 @@ recorded; a before-and-after run of the work they guard is not.
 | The record book | `library/` on `bilal/build`: board in `library/INDEX.md`; a record by id with `bash library/lookup.sh -f <id>` |
 | Who has what | `OWNERS.json`; "Branches and owners" in the root `CLAUDE.md` on `bilal/build` |
 
-Branches: the kit is on Bilal's line `bilal/build` and in his open pull request 4 to `main` (`bilal/promote-first`),
-which also adds the hooks with their tests, the lean helper types, the journal tool, the commit check and the lane
-and landing scripts (r58-0104). Until it is merged, read the kit on `bilal/build`. `main` changes only by pull request, and each person
+Branches: the kit is on Bilal's line `bilal/build` and reaches `main` by pull request, as the hooks with their
+tests, the lean helper types, the journal tool, the commit check and the lane and landing scripts did (r58-0104).
+If `harness-kit/` is not on `main` yet, read it on `bilal/build`. `main` changes only by pull request, and each person
 merges only their own. Eashah's branches are `work/*` and `eashah/*`; sessions on Bilal's PC never push to or edit them.
