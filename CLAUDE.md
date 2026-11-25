@@ -50,6 +50,9 @@ say what was not tested, and do not rule a family of methods out after one exper
 
 ## Where things are
 
+- **For a second person or a new machine: `harness-kit/README.md`** (built 2026-11-25): the set-up that wires the
+  hooks which run anywhere, `ORCHESTRATION.md` (the rules for a session that starts helpers, each with its standing
+  and record) and `RESULTS.md` (every measurement on running work side by side).
 - **The research tree: read `research-tree/START-HERE.md` first.** Where it stands, what to open
   before designing anything, the owner's rulings on how it is worked, and the next steps.
 - `docs/program/`: the documents and pages. Start with `HARNESS-BOTTLENECKS-2026-11.md` (what was
