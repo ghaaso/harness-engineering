@@ -167,6 +167,21 @@ for (const r of rows) {
   if (r.why) console.log(`${r.hook} out: ${r.why}`);
   for (const x of r.extra) console.log(`  ${r.hook}: ${x}`);
 }
+// ---- the FixFlow switch-off, and --remove ---------------------------------------------------------------------------------
+{
+  const offS = Object.entries(settings.skillOverrides || {}).filter(([, v]) => v === 'off').map(([k]) => k);
+  const offA = ((settings.permissions || {}).deny || []).filter((d) => /^Agent\(/.test(d));
+  const lean = [...offS, ...offA].filter((x) => /lean-/.test(x));
+  const rm = spawnSync(process.execPath, [join(C, 'harness-kit', 'setup.mjs'), '--remove'], { cwd: C, encoding: 'utf8' });
+  const f = join(C, '.claude', 'settings.local.json');
+  const left = existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : {};
+  const still = [...offS.filter((k) => (left.skillOverrides || {})[k] !== undefined), ...offA.filter((d) => ((left.permissions || {}).deny || []).includes(d))];
+  const hooksLeft = JSON.stringify(left.hooks || {}).includes('--harness-kit');
+  const ok = rm.status === 0 && offS.length > 0 && offA.length > 0 && !lean.length && !still.length && !hooksLeft;
+  if (!ok) failures.push(`FixFlow switch-off: ${offS.length} skills, ${offA.length} agents, ${lean.length} lean-* off, ${still.length} left after --remove, kit hooks left ${hooksLeft}`);
+  console.log(`\nFixFlow: ${offS.length} skills and ${offA.length} agents switched off in the clone; --remove left ${still.length} of them${hooksLeft ? ' and kit hooks' : ''}${existsSync(f) ? '' : ' (file deleted)'}: ${ok ? 'ok' : 'WRONG'}`);
+}
+
 console.log('');
 if (failures.length) { console.log('FAILED:\n' + failures.map((f) => '  ' + f).join('\n')); done(1); }
 console.log(`all kit checks passed (${BRANCH}${FULL ? '' : ', --depth 1'}, ${process.platform}, node ${process.versions.node})`);

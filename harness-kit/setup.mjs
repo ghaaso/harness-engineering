@@ -20,7 +20,8 @@
 //   PreToolUse "*"           tier-hook        a helper or child session must name its kind of job and the model routed to it
 //   PreToolUse "Agent|Task"  creep-gate       no review panels, reviews of reviews, or repair rounds on small findings
 // Why these three and not count-gate or fanout-gate: harness-kit/check-clone.mjs, which tests them in a clean clone.
-import { readFileSync, writeFileSync, existsSync, renameSync, rmSync, mkdirSync } from 'node:fs';
+// It also switches off the archived FixFlow skills and agents the clone holds (see fixflowItems below).
+import { readFileSync, writeFileSync, existsSync, renameSync, rmSync, mkdirSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join, relative } from 'node:path';
@@ -68,6 +69,69 @@ export function addKit(settings, root) {
     if (!Array.isArray(s.hooks[k.event])) s.hooks[k.event] = [];
     s.hooks[k.event].push({ matcher: k.matcher, hooks: [{ type: 'command', command: commandFor(root, k.hook) }] });
   }
+  return s;
+}
+
+// ---- the archived FixFlow skills and agents: switched off as .claude/settings.json does on the owner's PC ----------------
+// skillOverrides { "<skill folder>": "off" } for every folder under .claude/skills/, and permissions.deny "Agent(<name>)"
+// for every .claude/agents/fixflow-*.md (its frontmatter name, else the file name), built at run time from the clone.
+// A lean-* name is never switched off. An entry she already has is left alone and is not ours; the entries this script
+// added are recorded in env.HARNESS_KIT_OFF (a JSON string: the one place in the settings schema that takes free text),
+// and --remove takes out exactly those, if they still hold the value it set.
+export const RECORD = 'HARNESS_KIT_OFF';
+export function fixflowItems(rootAbs) {
+  const skills = [], agents = [];
+  const sd = join(rootAbs, '.claude', 'skills');
+  try {
+    for (const e of readdirSync(sd, { withFileTypes: true })) if (e.isDirectory() && !e.name.startsWith('lean-')) skills.push(e.name);
+  } catch {}
+  const ad = join(rootAbs, '.claude', 'agents');
+  try {
+    for (const f of readdirSync(ad)) {
+      if (!/^fixflow-.*\.md$/.test(f)) continue;
+      let name = f.replace(/\.md$/, '');
+      try { const m = /^---\r?\n[\s\S]*?^name:\s*(\S+)\s*$/m.exec(readFileSync(join(ad, f), 'utf8')); if (m) name = m[1]; } catch {}
+      if (!name.startsWith('lean-')) agents.push(name);
+    }
+  } catch {}
+  return { skills: skills.sort(), agents: agents.sort() };
+}
+function readRecord(s) {
+  try { const r = JSON.parse((s.env || {})[RECORD]); return { skills: r.skills || [], deny: r.deny || [] }; } catch { return null; }
+}
+export function stripOff(settings) {
+  const s = JSON.parse(JSON.stringify(settings));
+  const rec = readRecord(s);
+  if (!rec) return s;
+  if (s.skillOverrides && typeof s.skillOverrides === 'object') {
+    for (const k of rec.skills) if (s.skillOverrides[k] === 'off') delete s.skillOverrides[k];
+    if (!Object.keys(s.skillOverrides).length) delete s.skillOverrides;
+  }
+  if (s.permissions && Array.isArray(s.permissions.deny)) {
+    s.permissions.deny = s.permissions.deny.filter((d) => !rec.deny.includes(d));
+    if (!s.permissions.deny.length) delete s.permissions.deny;
+    if (!Object.keys(s.permissions).length) delete s.permissions;
+  }
+  delete s.env[RECORD];
+  if (!Object.keys(s.env).length) delete s.env;
+  return s;
+}
+export function addOff(settings, items) {
+  const s = stripOff(settings);
+  const rec = { skills: [], deny: [] };
+  if (items.skills.length) {
+    s.skillOverrides = s.skillOverrides && typeof s.skillOverrides === 'object' ? s.skillOverrides : {};
+    for (const k of items.skills) if (!(k in s.skillOverrides)) { s.skillOverrides[k] = 'off'; rec.skills.push(k); }
+    if (!Object.keys(s.skillOverrides).length) delete s.skillOverrides;
+  }
+  if (items.agents.length) {
+    s.permissions = s.permissions && typeof s.permissions === 'object' ? s.permissions : {};
+    s.permissions.deny = Array.isArray(s.permissions.deny) ? s.permissions.deny : [];
+    for (const a of items.agents) { const d = `Agent(${a})`; if (!s.permissions.deny.includes(d)) { s.permissions.deny.push(d); rec.deny.push(d); } }
+    if (!s.permissions.deny.length) delete s.permissions.deny;
+    if (!Object.keys(s.permissions).length) delete s.permissions;
+  }
+  if (rec.skills.length || rec.deny.length) { s.env = s.env && typeof s.env === 'object' ? s.env : {}; s.env[RECORD] = JSON.stringify(rec); }
   return s;
 }
 
@@ -125,17 +189,26 @@ function main() {
       console.error(`setup: "hooks" in ${rel} is not an object of event lists; nothing changed.`);
       process.exit(1);
     }
+    const bad = [['skillOverrides', (v) => typeof v === 'object' && !Array.isArray(v)], ['permissions', (v) => typeof v === 'object' && !Array.isArray(v) && (v.deny === undefined || Array.isArray(v.deny))],
+      ['env', (v) => typeof v === 'object' && !Array.isArray(v)]].filter(([k, ok]) => before[k] !== undefined && !(before[k] && ok(before[k])));
+    if (bad.length) { console.error(`setup: ${bad.map((b) => '"' + b[0] + '"').join(', ')} in ${rel} has an unexpected shape; nothing changed.`); process.exit(1); }
   }
-  const after = remove ? stripKit(before) : addKit(before, root);
+  const items = remove ? { skills: [], agents: [] } : fixflowItems(rootAbs);
+  const after = remove ? stripOff(stripKit(before)) : addOff(addKit(before, root), items);
   const ours = (s) => Object.values(s.hooks || {}).flat().flatMap((g) => (g && g.hooks) || []).filter(isOurs).length;
+  const offRec = (s) => readRecord(s) || { skills: [], deny: [] };
 
   console.log(`clone: ${root}`);
   console.log(`settings file: ${file.replace(/\\/g, '/')} (${existed ? 'exists, merged' : 'new'})`);
   if (remove) {
-    console.log(`kit entries found: ${ours(before)}; they are taken out, every other entry stays.`);
+    const r = offRec(before);
+    console.log(`kit entries found: ${ours(before)}; FixFlow switched off by the kit: ${r.skills.length} skills, ${r.deny.length} agents; all taken out, every other entry stays.`);
   } else {
     console.log(`kit entries: ${KIT.length} (marked ${MARK}; ${ours(before)} old ones replaced)`);
     for (const k of KIT) console.log(`  ${k.event}  matcher "${k.matcher}"  ${commandFor(root, k.hook)}`);
+    const r = offRec(after);
+    console.log(`archived FixFlow material switched off: ${r.skills.length} skills (skillOverrides "off"), ${r.deny.length} agents (permissions.deny)`
+      + ` of ${items.skills.length} skill folders and ${items.agents.length} fixflow-* agents found; any she had set already are left as hers.`);
   }
 
   for (const [path, line] of [['.claude/settings.local.json', '.claude/settings.local.json'], ['.claude/logs/x', '.claude/logs/']]) {
@@ -147,7 +220,7 @@ function main() {
   const doIt = apply || remove;
   if (!doIt) { console.log('dry run: nothing changed. Run with --apply to write it, --remove to undo it.'); return; }
   if (remove && !existed) { console.log('nothing to remove: no settings file.'); return; }
-  if (remove && !ours(before)) { console.log('nothing to remove: no kit entries; the file is unchanged.'); return; }
+  if (remove && !ours(before) && !readRecord(before)) { console.log('nothing to remove: no kit entries; the file is unchanged.'); return; }
 
   if (remove && !Object.keys(after).length) {
     rmSync(file);
