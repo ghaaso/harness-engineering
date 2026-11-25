@@ -1,5 +1,6 @@
 // Tests of count-gate.mjs (2026-11-24, unit T8-COUNT; fixes B2 and B4 and two message faults, unit T8-FIX).
 // Run: node .claude/hooks/count-gate.test.mjs   (another hook file: COUNT_GATE_HOOK=count-gate.next.mjs node ...)
+// The Rust program kit-count-gate: KIT_HOOK_BIN_DIR=<folder of built programs> node .claude/hooks/count-gate.test.mjs
 // Each case copies the hook into a temporary folder (its own WIDTHS.md and log) and makes a session folder shaped as
 // the app writes it (<project>/<session>.jsonl, <project>/<session>/subagents/agent-<id>.meta.json and .jsonl, meta
 // fields as in this repository's sessions of 2026-11-19 to 24), sets file times, feeds the hook a PreToolUse input on
@@ -13,6 +14,7 @@ import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, readFileSync, rmSy
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runHook, hookCommand } from './hook-under-test.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, '..', '..');
@@ -28,6 +30,7 @@ function fixture(widths) {
   const r = join(dir, 'repo');
   mkdirSync(join(r, '.claude', 'hooks'), { recursive: true });
   copyFileSync(resolve(here, process.env.COUNT_GATE_HOOK || 'count-gate.mjs'), join(r, '.claude', 'hooks', 'count-gate.mjs'));
+  if (existsSync(resolve(here, 'kit-mode.mjs'))) copyFileSync(resolve(here, 'kit-mode.mjs'), join(r, '.claude', 'hooks', 'kit-mode.mjs'));
   mkdirSync(join(r, 'research-tree', 'build'), { recursive: true });
   if (widths != null) writeFileSync(join(r, 'research-tree', 'build', 'WIDTHS.md'), widths);
   const sid = 'aaaabbbb-1111-2222-3333-444455556666';
@@ -57,13 +60,14 @@ function input(fx, description, extra = {}) {
     tool_input: { description, prompt: 'x', subagent_type: 'general-purpose', model: 'opus', run_in_background: true }, ...extra };
 }
 function run(fx, obj, e = env) {
-  const r = spawnSync(process.execPath, [fx.hook], { input: typeof obj === 'string' ? obj : JSON.stringify(obj), encoding: 'utf8', env: e, timeout: 20000 });
+  const r = runHook(fx.hook, [], { input: typeof obj === 'string' ? obj : JSON.stringify(obj), encoding: 'utf8', env: e, timeout: 20000 });
   return { code: r.status, err: r.stderr || '', out: r.stdout || '' };
 }
 // Starts the hook at once but sends its input only when `go` resolves, so a batch reaches the count together.
 function runAsync(fx, obj, go = Promise.resolve()) {
   return new Promise((res) => {
-    const p = spawn(process.execPath, [fx.hook], { env });
+    const c = hookCommand(fx.hook);
+    const p = spawn(c.cmd, c.args, { env });
     let err = '';
     p.stderr.on('data', (d) => { err += d; });
     p.on('close', (code) => res({ code, err }));
@@ -179,12 +183,17 @@ test('2026-11-23 replayed: 13 running and a batch of 16 at once: 7 pass, 9 are r
   for (const r of rs.filter((x) => x.code === 2)) assert.match(r.err, /number 21/);
 });
 
-test('old hooks: the plan gate lets the 21st start through (nothing counted before this gate)', () => {
+// The two cases that read this PC's research-tree/build/plan.json and WIDTHS.md skip, saying so, in a clone without them.
+const PLAN = resolve(repo, 'research-tree', 'build', 'plan.json'), REAL_WIDTHS = resolve(repo, 'research-tree', 'build', 'WIDTHS.md');
+const noPlan = !existsSync(PLAN) && 'research-tree/build/plan.json (the owner\'s plan) is not in this clone';
+const noWidths = !existsSync(REAL_WIDTHS) && 'research-tree/build/WIDTHS.md (the owner\'s widths) is not in this clone';
+
+test('old hooks: the plan gate lets the 21st start through (nothing counted before this gate)', { skip: noPlan }, () => {
   const fx = fixture();
   many(fx, 20);
   const pg = join(fx.r, '.claude', 'hooks', 'plan-gate.mjs');
   copyFileSync(resolve(here, 'plan-gate.mjs'), pg);
-  copyFileSync(resolve(repo, 'research-tree', 'build', 'plan.json'), join(fx.r, 'research-tree', 'build', 'plan.json'));
+  copyFileSync(PLAN, join(fx.r, 'research-tree', 'build', 'plan.json'));
   const old = spawnSync(process.execPath, [pg], { input: JSON.stringify(input(fx, 'orchestrate: wave2 f4c memory')), encoding: 'utf8' });
   assert.equal(old.status, 0);
   assert.equal(run(fx, input(fx, 'orchestrate: wave2 f4c memory')).code, 2);
@@ -229,16 +238,16 @@ test('--end: a stale entry is ended by hand and counts again only if it writes a
   many(fx, 19);
   helper(fx, 'ghost', { ago: 2 });
   assert.equal(run(fx, input(fx, 'analyse: x')).code, 2);
-  const e = spawnSync(process.execPath, [fx.hook, '--end', 'agent-ghost', 'killed by the app restart at 10:00'], { encoding: 'utf8' });
+  const e = runHook(fx.hook, ['--end', 'agent-ghost', 'killed by the app restart at 10:00'], { encoding: 'utf8' });
   assert.equal(e.status, 0, e.stderr);
   assert.equal(run(fx, input(fx, 'analyse: y')).code, 0);
   const fx2 = fixture();
   many(fx2, 19);
   helper(fx2, 'ghost', { ago: 2 });
-  spawnSync(process.execPath, [fx2.hook, '--end', 'ghost', 'thought dead'], { encoding: 'utf8' });
+  runHook(fx2.hook, ['--end', 'ghost', 'thought dead'], { encoding: 'utf8' });
   const tp = join(fx2.sub, 'agent-ghost.jsonl'); const t = Date.now() / 1000 + 2; utimesSync(tp, t, t); // it writes again
   assert.equal(run(fx2, input(fx2, 'analyse: y')).code, 2);
-  assert.equal(spawnSync(process.execPath, [fx2.hook, '--end', 'ghost'], { encoding: 'utf8' }).status, 1); // a reason is required
+  assert.equal(runHook(fx2.hook, ['--end', 'ghost'], { encoding: 'utf8' }).status, 1); // a reason is required
 });
 
 test('SendMessage: to a running helper passes; reviving an ended one at the limit is refused; a name passes', () => {
@@ -278,19 +287,19 @@ test('odd input passes at once: empty, not JSON, other events and tools, no tran
   assert.ok(Date.now() - t0 < 5000, `took ${Date.now() - t0} ms`);
 });
 
-test('the repository\'s WIDTHS.md declares nothing yet; its indented and fenced examples are not declarations', () => {
-  const real = readFileSync(resolve(repo, 'research-tree', 'build', 'WIDTHS.md'), 'utf8');
+test('the repository\'s WIDTHS.md declares nothing yet; its indented and fenced examples are not declarations', { skip: noWidths }, () => {
+  const real = readFileSync(REAL_WIDTHS, 'utf8');
   const fx = fixture(real + '\n```\nwidth "x" 0: an example in a fence, line 9\n```\n    hold "a" while "b": indented example\n');
   many(fx, 2);
   assert.equal(run(fx, input(fx, 'x')).code, 0);
-  const s = spawnSync(process.execPath, [fx.hook, '--status', join(fx.proj, fx.sid)], { encoding: 'utf8' });
+  const s = runHook(fx.hook, ['--status', join(fx.proj, fx.sid)], { encoding: 'utf8' });
   assert.doesNotMatch(s.stdout, /BAD|WIDTHS\.md line/);
 });
 
 test('--status prints the count for a session folder', () => {
   const fx = fixture();
   many(fx, 2);
-  const r = spawnSync(process.execPath, [fx.hook, '--status', join(fx.proj, fx.sid)], { encoding: 'utf8' });
+  const r = runHook(fx.hook, ['--status', join(fx.proj, fx.sid)], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /2 helpers running, 0 pending, 0 admitted and then refused; limit 20/);
 });
@@ -388,4 +397,73 @@ test('B4: a finished helper whose transcript was written 0.5 s after its meta wa
   utimesSync(mp, (now - 6500) / 1000, (now - 6500) / 1000);
   utimesSync(tp, (now - 6000) / 1000, (now - 6000) / 1000);
   assert.equal(run(fx, input(fx, 'analyse: x')).code, 2); // the old gate (1 s) did not count it: 20 would run
+});
+
+// ---- kit mode (harness kit, 2026-11-25): --harness-kit "--project=<folder>" ----
+// Widths and holds from <project>/.harness/WIDTHS.md; log and lock under <project>/.claude/logs.
+function kitFixture(widths) {
+  const fx = fixture();
+  fx.P = join(fx.dir, 'her-project');
+  mkdirSync(join(fx.P, '.harness'), { recursive: true });
+  if (widths != null) writeFileSync(join(fx.P, '.harness', 'WIDTHS.md'), widths);
+  fx.args = ['--harness-kit', `--project=${fx.P}`];
+  fx.kitLog = join(fx.P, '.claude', 'logs', 'count-gate.jsonl');
+  return fx;
+}
+const kitRun = (fx, obj, extra = []) => {
+  const r = runHook(fx.hook, [...fx.args, ...extra], { input: JSON.stringify(obj), encoding: 'utf8', env, timeout: 20000 });
+  return { code: r.status, err: r.stderr || '' };
+};
+const W1 = 'width "build: *" 1: one builder at a time, the project has 1 test database\n';
+
+test('kit: a width in <project>/.harness/WIDTHS.md refuses the second builder; a reader passes; the log is under the project', () => {
+  const fx = kitFixture(W1);
+  helper(fx, 'b1', { desc: 'build: first part' });
+  const r = kitRun(fx, input(fx, 'build: second part'));
+  assert.equal(r.code, 2);
+  assert.match(r.err, /declared width 1 \(WIDTHS\.md line 1: one builder at a time/);
+  assert.equal(kitRun(fx, input(fx, 'read: the schema')).code, 0);
+  assert.ok(existsSync(fx.kitLog), 'log under <project>/.claude/logs');
+  assert.ok(!existsSync(fx.log), 'nothing in the clone\'s log');
+  assert.ok(!existsSync(join(fx.P, '.claude', 'logs', 'count-gate.lock')), 'the lock is released');
+});
+
+test('kit: without --harness-kit the project\'s WIDTHS.md is not read (the start passes)', () => {
+  const fx = kitFixture(W1);
+  helper(fx, 'b1', { desc: 'build: first part' });
+  assert.equal(run(fx, input(fx, 'build: second part')).code, 0);
+});
+
+test('kit: a declaration that does not parse names .harness/WIDTHS.md; the app limit of 20 holds as before', () => {
+  const fx = kitFixture('width "build: *" 1: no number here\n');
+  const r = kitRun(fx, input(fx, 'read: x'));
+  assert.equal(r.code, 2);
+  assert.match(r.err, /count gate: \.harness\/WIDTHS\.md line 1 is not a declaration/);
+  const fx2 = kitFixture();
+  many(fx2, 20);
+  assert.match(kitRun(fx2, input(fx2, 'read: x')).err, /number 21/);
+});
+
+test('kit: the refusal names --end and --status with the kit arguments and this machine\'s paths (repair F2)', () => {
+  const fx = kitFixture();
+  many(fx, 19);
+  helper(fx, 'slow', { ago: 10 });
+  const r = kitRun(fx, input(fx, 'analyse: x'));
+  assert.equal(r.code, 2);
+  const sl = (x) => x.replace(/\\/g, '/');
+  const args = ` --harness-kit "--clone=${sl(fx.r)}" "--project=${sl(fx.P)}"`;
+  const tail = ` --end <helper id> "<why>"${args} (ids and silences: `;
+  const i = r.err.indexOf(tail);
+  assert.ok(i > 0, r.err);
+  assert.match(r.err.slice(0, i), /to end one at once: .*count-gate[.a-z]*"$/);
+  assert.match(r.err.slice(i + tail.length), /count-gate[.a-z]*" --status aaaabbbb /);
+  assert.ok(r.err.trim().endsWith(`--status aaaabbbb${args}).`), r.err);
+});
+
+test('kit: --end writes to the project\'s log, without the kit\'s arguments in its reason', () => {
+  const fx = kitFixture();
+  const e = runHook(fx.hook, ['--end', 'ghost', 'killed', 'by', 'a', 'restart', ...fx.args, '--no-usage-tool'], { encoding: 'utf8' });
+  assert.equal(e.status, 0, e.stderr);
+  const last = JSON.parse(readFileSync(fx.kitLog, 'utf8').trim().split('\n').pop());
+  assert.equal(last.why, 'killed by a restart');
 });

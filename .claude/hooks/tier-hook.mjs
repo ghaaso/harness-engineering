@@ -10,10 +10,16 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
+// Kit mode (harness kit, 2026-11-25; docs/program/harness-kit-2026-11-25/CONTRACT.md section 2): only with --harness-kit,
+// the log goes to <project>/.claude/logs and a child session's folder without the hook is told to run the kit's set-up;
+// the routes stay beside this file. A missing or broken kit-mode.mjs leaves the hook as it is without the argument.
+let KIT = null;
+if (process.argv.includes('--harness-kit')) { try { KIT = (await import('./kit-mode.mjs')).kitMode(import.meta.url); } catch { KIT = null; } }
+const LOGDIR = KIT ? KIT.logs : resolve(here, '..', 'logs');
 function log(o) {
   try {
-    mkdirSync(resolve(here, '..', 'logs'), { recursive: true });
-    appendFileSync(resolve(here, '..', 'logs', 'tier-hook.jsonl'), JSON.stringify(o) + '\n');
+    mkdirSync(LOGDIR, { recursive: true });
+    appendFileSync(resolve(LOGDIR, 'tier-hook.jsonl'), JSON.stringify(o) + '\n');
   } catch {}
 }
 function allow(rec) { log({ ...rec, decision: 'allow' }); process.exit(0); }
@@ -52,8 +58,9 @@ if (isSession && typeof ti.cwd === 'string' && ti.cwd.trim() && !['ssh', 'cloud'
     try { return readFileSync(resolve(dir, '.claude', f), 'utf8').includes('tier-hook.mjs'); } catch { return false; }
   });
   if (!wired) {
-    deny({ ...rec, cwd: dir.slice(0, 80) },
-      `tier hook (r57-0026): the folder ${dir} does not carry the tier hook. Check and install it first: bash tools/ensure-tier-hook.sh "${dir}" (outside this repository only with the owner's word and --force).`);
+    deny({ ...rec, cwd: dir.slice(0, 80) }, KIT
+      ? `tier hook: the folder ${dir} does not carry the kit's hooks. Wire them there first: node "${KIT.clone.replace(/\\/g, '/')}/harness-kit/setup.mjs" --apply --project "${dir}"`
+      : `tier hook (r57-0026): the folder ${dir} does not carry the tier hook. Check and install it first: bash tools/ensure-tier-hook.sh "${dir}" (outside this repository only with the owner's word and --force).`);
   }
 }
 
