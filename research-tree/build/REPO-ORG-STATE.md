@@ -53,3 +53,4 @@ Cap 50 M tokens (his answer of 2026-11-25 to a second cap: question, "Yes, 50 M"
 - 2026-11-25, last: on his word ("Yes, update it") the remote `origin` of this folder now points at
   `https://github.com/ghaaso/harness-engineering.git` (it was the Tempest-Zero address, which GitHub redirected);
   reads and the upstream of `bilal/build` checked through it.
+- 2026-11-25, his fifth message: the kit lacked the parallel work. Added harness-kit/parallel/ (SPEEDUPS.md with its page and PDF, DECISION-RULE-v2.md, research/ with the six reports and BUILD-IN.md; copies) and a README section; on bilal/build and in a new pull request to main from bilal/promote-parallel, open and not merged.
