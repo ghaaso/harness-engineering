@@ -1,0 +1,106 @@
+// Self-tests of tier-hook.mjs (2026-11-25, harness kit; brief docs/program/harness-kit-2026-11-25/briefs/HOOKS.md item 3).
+// Run: node .claude/hooks/tier-hook.test.mjs [hook file in this folder, default tier-hook.mjs]
+// Needs nothing outside .claude/hooks/: the hook, tier-routes.json and kit-mode.mjs are copied into a temporary folder
+// shaped as a clone (<tmp>/clone/.claude/hooks/), so every log line goes there and nothing in the repository is written.
+// The cases: the five of selftest.mjs that are about this hook, the ten sample calls of harness-kit/check-clone.mjs, and
+// kit mode (--harness-kit "--project=<folder>") with the effort check on trial (2026-11-26), and a kind named like an
+// object property (`constructor`), refused as unknown both ways.
+// With KIT_HOOK_BIN_DIR set it runs the Rust program kit-tier-hook in place of the hook (./hook-under-test.mjs).
+// Kit mode is the program's only: against the JavaScript hook its cases are skipped, each with its reason.
+import { runHook, RUST } from './hook-under-test.mjs';
+import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const T = mkdtempSync(join(tmpdir(), 'tier-hook-'));
+const C = join(T, 'clone');
+const H = join(C, '.claude', 'hooks');
+mkdirSync(H, { recursive: true });
+copyFileSync(resolve(here, process.argv[2] || 'tier-hook.mjs'), join(H, 'tier-hook.mjs'));
+copyFileSync(resolve(here, 'tier-routes.json'), join(H, 'tier-routes.json'));
+if (existsSync(resolve(here, 'kit-mode.mjs'))) copyFileSync(resolve(here, 'kit-mode.mjs'), join(H, 'kit-mode.mjs'));
+const HOOK = join(H, 'tier-hook.mjs');
+// A folder that carries the hook (its .claude/settings.json names tier-hook.mjs) and one that does not.
+const WIRED = join(T, 'wired');
+mkdirSync(join(WIRED, '.claude'), { recursive: true });
+writeFileSync(join(WIRED, '.claude', 'settings.json'), JSON.stringify({ hooks: { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: `node "${HOOK.replace(/\\/g, '/')}"` }] }] } }));
+const LOCAL = join(T, 'wired-local');
+mkdirSync(join(LOCAL, '.claude'), { recursive: true });
+writeFileSync(join(LOCAL, '.claude', 'settings.local.json'), JSON.stringify({ hooks: { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: `node "${HOOK.replace(/\\/g, '/')}" --harness-kit` }] }] } }));
+const BARE = join(T, 'no-hooks-folder');
+mkdirSync(BARE, { recursive: true });
+
+let pass = 0, fail = 0, skip = 0;
+function run(input, args = [], hook = HOOK) {
+  const r = runHook(hook, args, { input: typeof input === 'string' ? input : JSON.stringify(input), encoding: 'utf8' });
+  return { code: r.status, err: r.stderr || '', out: r.stdout || '' };
+}
+// A case that cannot apply to the Rust program: counted, not run, the reason printed.
+function skipped(name, why) { skip++; console.log(`skip ${name}  (${why})`); }
+// A kit-mode case: run against the program only (the thunk is not called against the JavaScript hook).
+const KIT_ONLY = 'kit mode, and the effort check in it, are the Rust program\'s only';
+function kexpect(name, thunk, code, re) { if (RUST) expect(name, thunk(), code, re); else skipped(name, KIT_ONLY); }
+function expect(name, r, code, re) {
+  const ok = r.code === code && (!re || re.test(r.err + r.out));
+  ok ? pass++ : fail++;
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${ok ? '' : `  (exit ${r.code}; ${(r.err || r.out).slice(0, 160)})`}`);
+}
+const pre = (tool_name, tool_input, cwd = C) => ({ hook_event_name: 'PreToolUse', session_id: 'abcd1234-0000-4000-8000-000000000000', cwd, tool_name, tool_use_id: 'toolu_x', tool_input });
+const start = 'mcp__ccd_session__start_session';
+const logOf = (dir) => { try { return readFileSync(join(dir, 'tier-hook.jsonl'), 'utf8'); } catch { return ''; } };
+
+// ---- the five cases of selftest.mjs ----
+expect('session in a folder with no hook is refused', run(pre(start, { title: 'read: x', model: 'sonnet', cwd: BARE })), 2, /r57-0026/);
+expect('session in a folder whose settings carry the hook passes', run(pre(start, { title: 'read: x', model: 'sonnet', cwd: WIRED })), 0);
+expect('session with no cwd passes', run(pre(start, { title: 'read: x', model: 'sonnet' })), 0);
+expect('helper on the wrong model is still refused', run(pre('Agent', { description: 'refute: x', model: 'sonnet' })), 2);
+expect('helper on the right model still passes', run(pre('Agent', { description: 'read: x', model: 'sonnet' })), 0);
+
+// ---- the ten sample calls of harness-kit/check-clone.mjs ----
+expect('Agent "read: x" on sonnet passes', run(pre('Agent', { description: 'read: x', model: 'sonnet', prompt: 'x' })), 0);
+expect('Agent "read: x" on opus is refused', run(pre('Agent', { description: 'read: x', model: 'opus', prompt: 'x' })), 2, /"read" runs on/);
+expect('Agent with no kind is refused', run(pre('Agent', { description: 'look at x', model: 'sonnet' })), 2, /kind of job and a colon/);
+expect('Agent with no model is refused', run(pre('Agent', { description: 'build: x' })), 2, /pass the model explicitly/);
+expect('build-invariant on opus passes', run(pre('Agent', { description: 'build-invariant: lock', model: 'claude-opus-5-5' })), 0);
+expect('mythos is refused', run(pre('Agent', { description: 'analyse: x', model: 'mythos' })), 2);
+expect('a Bash call is not its business', run(pre('Bash', { command: 'ls' })), 0);
+expect('unreadable input passes', run('not json'), 0);
+expect('child session in a folder whose settings.local.json carries the hook passes', run(pre(start, { title: 'read: x', model: 'sonnet', cwd: LOCAL })), 0);
+expect('child session in a folder without the hook is refused', run(pre(start, { title: 'read: x', model: 'sonnet', cwd: BARE })), 2);
+expect('a kind named like an object property ("constructor: x") is refused as unknown', run(pre('Agent', { description: 'constructor: x', model: 'opus' })), 2, /kind of job and a colon/);
+expect('without --harness-kit the effort is not checked (none, or one no route lists)', { code: run(pre('Agent', { description: 'read: x', model: 'sonnet', effort: 'max' })).code + run(pre('Agent', { description: 'read: x', model: 'sonnet' })).code, err: '', out: '' }, 0);
+const plainLog = join(C, '.claude', 'logs');
+expect('without --harness-kit the log is beside the hooks (<clone>/.claude/logs)', { code: logOf(plainLog).includes('"decision"') ? 0 : 1, err: '', out: '' }, 0);
+
+// ---- kit mode ----
+const P = join(T, 'her-project');
+mkdirSync(P, { recursive: true });
+const KA = ['--harness-kit', `--project=${P}`];
+const before = logOf(plainLog).length;
+kexpect('kit: Agent "build: x" on sonnet at medium passes', () => run(pre('Agent', { description: 'build: x', model: 'sonnet', effort: 'medium' }, P), KA), 0);
+kexpect('kit: Agent "refute: x" on sonnet is refused (routes beside the hook)', () => run(pre('Agent', { description: 'refute: x', model: 'sonnet', effort: 'high' }, P), KA), 2, /"refute" runs on/);
+kexpect('kit: the log is under <project>/.claude/logs, not the clone\'s', () => ({ code: logOf(join(P, '.claude', 'logs')).split('\n').filter(Boolean).length === 2 && logOf(plainLog).length === before ? 0 : 1, err: '', out: '' }), 0);
+kexpect('kit: a child session in a folder without the kit\'s hooks is told to run the set-up there', () => run(pre(start, { title: 'read: x', model: 'sonnet', cwd: BARE }, P), KA), 2, /harness-kit\/setup\.(sh|cmd)" --apply --project/);
+kexpect('kit: --project given as two arguments works the same', () => run(pre('Agent', { description: 'read: x', model: 'opus', effort: 'high' }, P), ['--harness-kit', '--project', P]), 2);
+kexpect('kit: --no-usage-tool changes nothing here', () => run(pre('Agent', { description: 'extract: x', model: 'haiku', effort: 'low' }, P), [...KA, '--no-usage-tool']), 0);
+// ---- the effort check, on trial (kit mode only) ----
+const kitLog = () => logOf(join(P, '.claude', 'logs'));
+kexpect('kit: a helper with no effort is refused with the efforts its route allows, on trial', () => run(pre('Agent', { description: 'read: x', model: 'sonnet' }, P), KA), 2, /pass the effort explicitly\. For "read" the route allows medium or high\..*on trial/);
+kexpect('kit: an effort its route does not allow is refused', () => run(pre('Agent', { description: 'extract: x', model: 'haiku', effort: 'high' }, P), KA), 2, /"extract" runs at low or medium effort, not at high\..*on trial/);
+kexpect('kit: max is refused even for an Opus kind', () => run(pre('Agent', { description: 'analyse: x', model: 'opus', effort: 'max' }, P), KA), 2, /"analyse" runs at high or xhigh effort, not at max/);
+kexpect('kit: an allowed effort passes (refute on opus at xhigh)', () => run(pre('Agent', { description: 'refute: x', model: 'opus', effort: 'xhigh' }, P), KA), 0);
+kexpect('kit: every helper decision logs the effort it named', () => ({ code: /"effort":"high".*"decision":"deny"/.test(kitLog()) && /"effort":"xhigh".*"decision":"allow"/.test(kitLog()) && /"effort":null.*"decision":"deny"/.test(kitLog()) ? 0 : 1, err: '', out: '' }), 0);
+// A hook whose kit-mode.mjs is missing behaves as without the argument (log beside the hook, its own refusals).
+const C2 = join(T, 'clone-without-kit-mode', '.claude', 'hooks');
+mkdirSync(C2, { recursive: true });
+copyFileSync(HOOK, join(C2, 'tier-hook.mjs'));
+copyFileSync(join(H, 'tier-routes.json'), join(C2, 'tier-routes.json'));
+expect('kit-mode.mjs missing: --harness-kit is ignored, a wrong model is still refused', run(pre('Agent', { description: 'read: x', model: 'opus' }, P), KA, join(C2, 'tier-hook.mjs')), 2);
+if (RUST) skipped('kit-mode.mjs missing: the log stays beside the hook', 'the Rust program has kit mode built in: no module can be missing; its Rust test kit_mode_logs_under_the_project_and_plain_mode_beside_the_hooks covers the log folders');
+else expect('kit-mode.mjs missing: the log stays beside the hook', { code: logOf(join(C2, '..', 'logs')).includes('"deny"') ? 0 : 1, err: '', out: '' }, 0);
+
+console.log(`tier-hook${RUST ? ' (Rust program)' : ''}: ${pass} passed, ${fail} failed${skip ? `, ${skip} skipped` : ''} (${pass + fail + skip} cases)`);
+try { rmSync(T, { recursive: true, force: true }); } catch {}
+process.exit(fail ? 1 : 0);

@@ -1,0 +1,281 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Harness engineering: what we built and what it gained</title><style>
+@page { size: A4; margin: 12mm 13mm 13mm 13mm; }
+@page map { size: A4 landscape; margin: 8mm; }
+:root { --ink:#1b2430; --mute:#56606c; --line:#d5dae0; --accent:#1f5fa8; --tint:#eef3f9; --warn:#f5ecd9; }
+* { box-sizing: border-box; }
+body { font: 11pt/1.33 "Segoe UI", Arial, sans-serif; color: var(--ink); background:#fff; margin:0; }
+h1.title { font-size: 21pt; line-height: 1.2; margin: 0 0 3mm; color: var(--accent); }
+h2.sec { font-size: 14pt; margin: 6mm 0 2mm; border-bottom: 1.5px solid var(--accent); padding-bottom: 1mm; break-after: avoid; }
+h2.group { font-size: 15pt; margin: 0 0 3mm; padding: 2mm 3mm; background: var(--accent); color:#fff; break-after: avoid; margin-top: 5mm; }
+h2.group.mapgroup { break-before: page; page: map; margin: 0 0 2mm; padding: 1.5mm 3mm; font-size: 13pt; }
+h3 { font-size: 11.5pt; margin: 0 0 1mm; color: var(--accent); }
+.item { margin: 0 0 3mm; break-inside: avoid; }
+.item p { margin: 0 0 1mm; }
+p { margin: 0 0 2mm; }
+ul, ol { margin: 0 0 2mm; padding-left: 6mm; }
+li { margin: 0 0 .5mm; }
+code { font: 9.5pt Consolas, monospace; background: var(--tint); padding: 0 1mm; }
+table { border-collapse: collapse; width: 100%; font-size: 8.4pt; line-height: 1.28; }
+th { background: var(--accent); color:#fff; text-align:left; padding: 1.2mm 1.5mm; }
+td { border-bottom: 1px solid var(--line); padding: 1mm 1.5mm; vertical-align: top; }
+td.g { font-weight: 700; color: var(--accent); width: 17%; }
+tr.gstart td { border-top: 1.5px solid var(--accent); }
+tr { break-inside: avoid; }
+.fig { border: 1px solid var(--line); background: var(--tint); padding: 3mm; margin: 2mm 0 3mm; break-inside: avoid; font-size: 9.5pt; }
+.figrow { margin-bottom: 3mm; }
+.figrow:last-child { margin-bottom: 0; }
+.figlabel { font-weight: 700; margin-bottom: 1.5mm; }
+.fignote { color: var(--mute); margin-top: 1mm; font-style: italic; }
+.lane { display: flex; align-items: center; gap: 2mm; margin-bottom: 1mm; }
+.lane b { width: 18mm; }
+.u { display:inline-block; background:#fff; border:1px solid #9aa7b5; padding: .6mm 2mm; border-radius: 1mm; }
+.u.c { background:#fff; border-color: var(--accent); margin-right: 1.5mm; }
+.arrow { margin: 1.5mm 0; padding-left: 8mm; color: var(--accent); font-weight: 700; }
+.arrow::before { content: "\2193  "; }
+.shared { background: var(--accent); color:#fff; display:inline-block; padding: 1mm 4mm; border-radius: 1mm; }
+.last { font-size: 8pt; }
+.mapp { page: map; margin: 0 0 1.5mm; font-size: 10.5pt; }
+.mappage { page: map; text-align: center; }
+.mappage img { max-width: 100%; max-height: 138mm; }
+</style></head><body><h1 class="title">Harness engineering: what we built and what it gained</h1>
+<p>Written 2026-11-20 for the owner. Every figure carries a mark: <b>measured</b> (a log, a run or a count shows it), <b>computed</b> (arithmetic from measured figures, shown), <b>estimate</b> (a judgement, shown, not run) or <b>designed</b> (written down, not built or not run). Things that cost more than planned or gained nothing are listed with their figures. Sources are at the end.</p>
+<h2 class="sec">Summary</h2>
+<ul><li><b>Time.</b> The suite that checks every change: 596 s down to 120 s, five times faster (measured). Several writers on one set of files: 7 builders at once instead of 3 (measured).</li><li><b>Throughput.</b> Over the build, 1.8 helpers ran at a time, so the clock time was about 1.8 times shorter than one at a time (computed). The model check ran 1.8 times faster the same way (computed).</li><li><b>Quality.</b> Blind reviews found 10 breaking faults before merge (6 in the guards, 1 in slice 0, 3 in slice 1). The model check found one more, in a fix already built. Landings run the tests: of 25 tries, 3 were undone by failing tests and 2 stopped at merge conflicts (all measured).</li><li><b>Rules.</b> Four rules that were once only written down are now refused by hooks and a commit check (observed, 23 hook self-tests).</li><li><b>Tokens.</b> We found where they go (97 % of all tokens re-read a window already there) and acted on it. The build still used 2.3 times its planned tokens (908 M against 397 M, measured). That is the largest miss.</li><li><b>Planned, not run.</b> The research run's chosen plan cuts the owner's typing from 75-140 turns to 3 acts and the time from about two weeks to 5-8 hours of machine time (computed).</li></ul>
+<h2 class="sec">Every improvement, by what it improves</h2>
+<table><thead><tr><th>Group</th><th>Item</th><th>Before</th><th>After</th><th>Gain</th><th>Mark</th></tr></thead><tbody><tr class="gstart"><td class="g">Time and throughput</td><td>Several writers on one file</td><td>3 units at once</td><td>7 builders at once</td><td>2.3 times as many; about 1 h of the build</td><td>width measured, time estimate</td></tr><tr><td class="g"></td><td>Test suite, files side by side</td><td>596 s</td><td>264 s</td><td>2.3 times</td><td>measured</td></tr><tr><td class="g"></td><td>Self-test cut into 4 shards</td><td>221 s</td><td>67-70 s</td><td>3.2 times</td><td>measured</td></tr><tr><td class="g"></td><td>Suite, both together</td><td>596 s</td><td>120.4 s</td><td>5.0 times</td><td>measured</td></tr><tr><td class="g"></td><td>Heavy-command queue, 2 then 4 slots</td><td>177 min waiting in 780 commands</td><td>4 at once at 3.67 of 4</td><td>92 % of perfect</td><td>measured; waiting after not measured</td></tr><tr><td class="g"></td><td>Build helpers side by side</td><td>about 990 helper-min in turn</td><td>547 min by the clock</td><td>1.8 times</td><td>computed</td></tr><tr><td class="g"></td><td>Model-check runs, 3 at once</td><td>4,989 s of run time</td><td>2,820 s</td><td>1.8 times</td><td>computed</td></tr><tr><td class="g"></td><td>Readers side by side</td><td>not run in turn</td><td>5 readers, 4 min, 767 K tokens</td><td>none to state</td><td>measured, no baseline</td></tr><tr><td class="g"></td><td>Testbed's parallel check (earlier project)</td><td>855 s</td><td>284 s</td><td>3.0 times</td><td>measured</td></tr><tr class="gstart"><td class="g">Tokens</td><td>Found the sink: the re-read window</td><td>unknown</td><td>97 % of tokens are re-reads</td><td>a target</td><td>measured</td></tr><tr><td class="g"></td><td>Hand-over through files, roots in turn</td><td>coordinator ran on to 404-527 K</td><td>hand-over at 247-273 K; roots 17 % of tokens</td><td>window kept smaller</td><td>measured</td></tr><tr><td class="g"></td><td>Models by kind of job</td><td>helpers on the dearest model</td><td>haiku, sonnet, opus by job</td><td>not measured in tokens</td><td>rule in force; saving not measured</td></tr><tr><td class="g"></td><td>Router design (a model per operation)</td><td>one model per session</td><td>13-49 M of 986 M</td><td>1-5 %</td><td>designed, computed range</td></tr><tr><td class="g"></td><td>FixFlow skills switched off</td><td>about 8,000 tokens in every session</td><td>0</td><td>about 9 % of a first window</td><td>computed from characters</td></tr><tr><td class="g"></td><td>Testing policy</td><td>17 suite runs, 2 h 49 min</td><td>5 runs, 50 min</td><td>3.4 times fewer</td><td>designed</td></tr><tr><td class="g"></td><td>Tokens counted per unit and per point</td><td>40 M a point (guess)</td><td>62 M a point</td><td>a truer plan</td><td>measured</td></tr><tr class="gstart"><td class="g">Quality, fewer wrong claims</td><td>Blind reviews in a fresh context</td><td>none</td><td>10 breaking faults caught</td><td>10 faults</td><td>measured</td></tr><tr><td class="g"></td><td>Model check of the tree</td><td>not run</td><td>1 fault found, fixed</td><td>1 fault</td><td>measured</td></tr><tr><td class="g"></td><td>Every landing through the tests</td><td>unchecked merge</td><td>25 tries: 20 landed, 3 undone, 2 conflicts held</td><td>no merge without its tests</td><td>measured</td></tr><tr><td class="g"></td><td>Faults audit</td><td>no classes</td><td>56 faults sorted by cause</td><td>direction only</td><td>measured counts</td></tr><tr><td class="g"></td><td>Library of records and recall tests</td><td>notes in chat</td><td>4,131 records; recall tests 8, 5, 4 sure</td><td>answers from files</td><td>measured</td></tr><tr><td class="g"></td><td>Figures quoted from the paper</td><td>summaries</td><td>43 corrections to the first pass</td><td>fewer wrong figures</td><td>measured</td></tr><tr class="gstart"><td class="g">Rules by machine</td><td>Tier hook</td><td>rule in prose</td><td>17 self-tests; 6 of 6 live steps</td><td>refused starts</td><td>observed</td></tr><tr><td class="g"></td><td>Record guard, commit check, plan gate, start hook</td><td>prose</td><td>202, 19 and 37 tests pass</td><td>refused edits</td><td>observed</td></tr><tr class="gstart"><td class="g">Less of the owner</td><td>Chosen plan for the research run</td><td>75-140 turns, about two weeks</td><td>3 acts, 5-8 h</td><td>big</td><td>computed, not run</td></tr><tr><td class="g"></td><td>No design questions to the owner</td><td>29-question sheet</td><td>derive, compute, measure</td><td>one sheet rejected</td><td>ruling, hook-enforced</td></tr><tr class="gstart"><td class="g">PC</td><td>Freezes were blocked starts, not memory</td><td>3-session limit</td><td>limit withdrawn</td><td>width by the rule</td><td>observed</td></tr><tr class="gstart"><td class="g">Earlier measured work</td><td>Graph test</td><td>scripted search 0.625 recall</td><td>typed store 0.700</td><td>+0.076</td><td>measured; no agent run</td></tr><tr><td class="g"></td><td>Embeddings test</td><td>simple ranker</td><td>no arm adds</td><td>null</td><td>measured, one form</td></tr><tr class="gstart"><td class="g">Research behind the designs</td><td>Round 3, decision rule v2</td><td>none</td><td>145 statements: 86 confirmed</td><td>designed, untested</td><td>designed</td></tr></tbody></table>
+<h2 class="group">Group 1. Time and throughput: running work side by side</h2>
+<div class="item">
+<h3>Several writers on one file</h3>
+<p><b>The problem.</b> The owner ruled that "one writer per file" is the coarsest lock there is. We counted what it would allow. The build had 14 units. They share 20 places: 9 separate entries, 7 ordered lists and 4 identical statements. With one writer per file only <b>3 of the 14 units</b> could be built at once. With one writer per function or block, 7. Only by statement, and only with the change 0b built first, 8 (measured count from the change list, r57-0128).</p>
+<p><b>What we did.</b> Three steps, in this order.</p>
+<ol><li>Build 0b first, a change the plan puts ahead of the rest.</li><li>Make one small change, the skeleton. It fixes the interfaces and turns each shared ordered list into empty steps, one per fix.</li><li>Give each builder its own copy of the repository (a git worktree, about 20 of them). Each fills in only its own steps.</li></ol>
+<p>Then one script, <code>land.mjs</code>, lands every finished unit in one fixed order. It merges the unit, runs the tests of the files that unit touches, and undoes the merge if they fail.</p>
+<p><b>Why it works.</b> Writers never touch the same copy, so they cannot overwrite each other. The skeleton moves the shared places out of the way before work starts, so most units need no change there. What still collides shows at the landing, as a plain merge a test can check, not as a silent overwrite. The classical name is optimistic concurrency: work freely, check at the point of commit.</p>
+<div class="fig">
+<div class="figrow"><div class="figlabel">Before: one writer per file</div>
+<div class="lanes"><div class="lane"><b>File A</b><span class="u">unit 1</span><span class="u">unit 4</span><span class="u">unit 7</span></div>
+<div class="lane"><b>File B</b><span class="u">unit 2</span><span class="u">unit 5</span><span class="u">unit 8</span></div>
+<div class="lane"><b>File C</b><span class="u">unit 3</span><span class="u">unit 6</span><span class="u">unit 9</span></div></div>
+<div class="fignote">3 at a time; the others wait for the file</div></div>
+<div class="figrow"><div class="figlabel">After: own copies, landed in order</div>
+<div class="lanes wide"><div class="copies"><span class="u c">copy 1</span><span class="u c">copy 2</span><span class="u c">copy 3</span><span class="u c">copy 4</span><span class="u c">copy 5</span><span class="u c">copy 6</span><span class="u c">copy 7</span></div>
+<div class="arrow">land.mjs: one order, tests, undo on failure</div>
+<div class="shared">shared branch</div></div>
+<div class="fignote">7 at a time (measured); conflicts surface at the landing</div></div>
+</div>
+<p><b>The result.</b> The first batch had 8 fixes and ran <b>7 builders at once</b> (8 helpers at peak), measured. In all, 25 landings were tried (<code>landings.jsonl</code>, measured):</p>
+<ul><li>20 landed.</li><li><b>2 stopped with a merge conflict</b>, both in the written specification files. W7 conflicted in <code>spec/lib.md</code> with W6's text (two adjacent bullets). CLAIM conflicted in three spec files with REDO's text. Both times the script aborted and changed nothing. A helper merged the branch into the unit and kept both texts whole, and the unit landed again. The W7 merge cost 1.03 M tokens, the CLAIM merge 3.4 M. No code conflicted.</li><li>3 landings were undone because a test failed (CLAIM, OUT, W1). The CLAIM failure was a real interaction with REDO; a helper fixed it (6.1 M tokens) before the retry.</li></ul>
+<p>What it saved, as an estimate with the arithmetic. Helpers ran with 7 to 8 at once for 36 minutes and with 3 to 6 at once for 30 minutes (gate log, measured). The work above three at once is at most 36 x (7.5 - 3) + 30 x (4.5 - 3) = 207 helper-minutes. Done three at a time that is at most 207 / 3 = <b>69 minutes</b> more. So one writer per file would have added <b>at most about 1 hour</b> to the 6.5 hours of the fixes. The build never ran that way. The gain is small because after the first batch only two units were ready at once.</p>
+<p>What is not proven. The method came from the literature and worked once, on one repository. The papers disagree about copies against one writer (59.1 against 53.1 % in one, 63.8 against 66.4 % in another, r57-0415).</p>
+</div>
+<div class="item">
+<h3>The test suite</h3>
+<p><b>The problem.</b> One run took 596 s, one test file at a time (measured, r57-0103). Every landing and full check paid it, while the PC was about 3 of 24 threads busy.</p>
+<p><b>What we did.</b> Run 8 test files at once; set the queue to 4 slots after 4 files at once each took only 1.06 to 1.15 times their time alone; cut the slowest file, the self-test (31 tests, 221 s alone), into 4 shards by test name and run them together.</p>
+<p><b>Why it works.</b> The files use their own temporary folders and share no state; the runs passed with the same counts as before. The longest file had set the floor, about 270 s; cutting it removed the floor.</p>
+<p><b>The result.</b> 596 s became 264 s with 8 files at once and <b>120.4 s</b> with the shards too (processor 59 % average, 93 % peak, free memory above 11.8 GB, all tests passed). The self-test alone: 221 s to 67-70 s. Two whole suites at once took 334 s each, 1.58 times the throughput of one. One test (status T1) failed once at 4 at once and passed alone twice; listed as flaky. Not measured: above 4 at once, repeat runs.</p>
+</div>
+<div class="item">
+<h3>The heavy-command queue</h3>
+<p><b>The problem.</b> Every heavy command goes through one queue script. Its log of 780 commands shows 365 minutes of running and about 177 minutes of waiting. Two ran at once for only 41 of 324 minutes (measured, r57-0127).</p>
+<p><b>What we did.</b> Raised the slots from 2 to 4, the script's maximum, after measuring that four runs at once cost each only 6 to 15 % extra.</p>
+<p><b>Why it works.</b> A queue is short when its slots match what can run together and the PC has room. Free memory stayed above 13 GB and the processor under 50 % with four files running.</p>
+<p><b>The result.</b> Four files at once ran at 3.67 of a perfect 4 (92 %). Whether the waiting fell was not measured after the change.</p>
+</div>
+<div class="item">
+<h3>Helpers side by side in the build</h3>
+<p><b>The problem.</b> The build had 14 units and 65 helper runs, builders and reviewers. In turn they would have taken about 16.5 hours.</p>
+<p><b>What we did.</b> The root session started each unit as soon as it was ready, in its own copy, and its blind reviewer without waiting for the rest.</p>
+<p><b>Why it works.</b> Units that share no place do not wait for each other; the landing script is where they meet.</p>
+<p><b>The result.</b> From 16:22 to 01:29 UTC (547 minutes) the gate log shows 1.81 helpers running on average, 8 at most. Minutes by number running: none 42, one 269, two 170, three to six 30, seven or eight 36 (measured). Helper-minutes are 1.81 x 547 = about 990, so in turn about 990 minutes: <b>1.8 times the clock time</b> (computed; assumes helpers take as long alone as together). The first batch alone averaged 3.2 at a time.</p>
+</div>
+<div class="item">
+<h3>Model-check runs in parallel</h3>
+<p><b>The problem.</b> The model check of slice 2 needed 28 runs and 3 reruns, each up to 1,450 s.</p>
+<p><b>What we did.</b> Ran them through the queue, at most three at once.</p>
+<p><b>Why it works.</b> Each run is its own process with its own memory; free memory stayed between 12.7 and 14.3 GB and none waited for memory.</p>
+<p><b>The result.</b> 4,989 s of run time finished in 47 minutes (2,820 s): <b>1.77 times</b> (computed from measured figures, r57-0168).</p>
+</div>
+<div class="item">
+<h3>Readers side by side</h3>
+<p><b>The problem.</b> Reading sources one reader after another is slow.</p>
+<p><b>What we did.</b> Started several Sonnet readers at once, each on its own source and its own file. Used in the first literature wave and in round 3 (four lanes).</p>
+<p><b>Why it works.</b> Readers write different files and need nothing from each other.</p>
+<p><b>The result.</b> Five readers used 767 K tokens in 4 minutes, under one point of the week (measured, one trial, r57-0115). There is no one-at-a-time run beside it, so it shows cost, not saving. For the planned research run the analysis computes it: a field's readers 22-37 minutes at once against 48-110 in turn; seven fields at three at once 2.8-6.0 h against 13.7-21.1 h (computed, not run). Splitting the reading over five readers also costs fewer tokens, 13.9 M against 33.2 M for one reader (computed); that comes from the split, not from running at once.</p>
+</div>
+<div class="item">
+<h3>The testbed's parallel check (earlier project)</h3>
+<p><b>The problem.</b> The clinic testbed's check ran slowly and one at a time.</p>
+<p><b>What we did.</b> Ran the check in parallel; the Linux container run was also timed.</p>
+<p><b>Why it works.</b> Same reason as the suite: independent tests share nothing.</p>
+<p><b>The result.</b> 855 s to 284 s, 3.0 times (measured, <code>HARNESS-BOTTLENECKS-2026-11.md</code>). The Linux container run took 230 s against 367 s on Windows, 1.6 times, but is not the gate. This is another repository; it is evidence, not a tool.</p>
+</div>
+<h2 class="group">Group 2. Tokens</h2>
+<div class="item">
+<h3>Finding the sink: the re-read window</h3>
+<p><b>The problem.</b> Nobody knew where tokens go.</p>
+<p><b>What we did.</b> Counted every call in 35,834 calls of two other projects, once per message id (<code>TOKEN-BOTTLENECK-2026-11.md</code>, t1-0108); an independent re-measurement agreed within 0.3 %.</p>
+<p><b>Why it works.</b> Token use is calls times window size. A long window is re-read at every call.</p>
+<p><b>The result.</b> 97 % of tokens are re-reads; output is 0.75 %. In FixFlow 47 % was the fixed prefix of many small windows; in the clinic project 74 % sat in one big main window. The guide's answer: small windows, fresh helpers, hand-over. Measured.</p>
+</div>
+<div class="item">
+<h3>Hand-over through files, three roots in turn</h3>
+<p><b>The problem.</b> A coordinating session ran on to 404,000 and later 527,000 tokens of context (mistake r57-0604; the figure 800,000 in the record is in no source opened).</p>
+<p><b>What we did.</b> One session has one purpose; at its ceiling the work passes to a fresh session through files (r57-0008). The build ran as three roots in turn through <code>STATE.md</code>. Helpers are briefed by pointing at files.</p>
+<p><b>Why it works.</b> A fresh window is cheap to re-read. Only what the next session needs is written down.</p>
+<p><b>The result.</b> Measured hand-over point 247-273 K of context, not the planned 129 K; one root call cost about 0.24 M tokens. The three roots used 154.1 M of the build's 907.7 M, 17 % (r57-0170, r57-0171). Gain against the old way not measured.</p>
+</div>
+<div class="item">
+<h3>Models by kind of job</h3>
+<p><b>The problem.</b> Helpers had been put on the most expensive model for reading and write-ups (mistake r57-0603).</p>
+<p><b>What we did.</b> Routes from kind of job to model: Haiku locates and extracts, Sonnet reads, collects, runs and builds ordinary code, Opus builds invariant-sensitive code, analyses, refutes and orchestrates. A hook enforces them.</p>
+<p><b>Why it works.</b> The smallest model that gives the same output costs fewer fresh tokens; the meter weighs a fresh Sonnet token 0.15-0.5 of an Opus one (range, 132 readings).</p>
+<p><b>The result.</b> In force and enforced. The saving was not measured in tokens. In the build 956 M of 997 M tokens were Opus, because the work was invariant-sensitive; a research run's readers are cheaper. The hook cannot see a job named with the wrong kind (r57-0150).</p>
+</div>
+<div class="item">
+<h3>Router design: a model per operation inside a session</h3>
+<p><b>The problem.</b> One model serves a whole session, including steps that need less.</p>
+<p><b>What we did.</b> <code>ROUTER.md</code>: a design that lowers a step's effort first, then moves it to a helper or script on a cheaper model (a session cannot switch its own model). Version 2 follows a blind review of 11 findings.</p>
+<p><b>Why it works.</b> The meter counts fresh tokens; a cached re-read costs about 1 % of one.</p>
+<p><b>The result.</b> Designed only. Computed range: 13-49 M of 986 M tokens, 0.7-2.7 of 13-17 points on the chosen plan. Worth it but small.</p>
+</div>
+<div class="item">
+<h3>FixFlow skills switched off</h3>
+<p><b>The problem.</b> The archived FixFlow skills and agents load their descriptions into every session at the repository root: 32,317 characters, about 8,000 tokens (characters / 4), read again on every call (r57-0155).</p>
+<p><b>What we did.</b> Set the 13 skills off and denied the 12 agents in settings (r57-0036, hc1-0105); the files are untouched.</p>
+<p><b>Why it works.</b> A smaller fixed prefix is smaller at every call.</p>
+<p><b>The result.</b> About 8,000 tokens fewer per call: about 9 % of a main session's first window of 86,000 tokens (computed). Whether the switch-off takes effect in each session was observed, not measured on tokens.</p>
+</div>
+<div class="item">
+<h3>The testing policy</h3>
+<p><b>The problem.</b> The owner's ruling: no checking at every step where once at the end costs less (r57-0033).</p>
+<p><b>What we did.</b> Builders run only their own tests; the full suite runs only before a unit that depends on landed work, and at the end; a review runs beside the next build; a pass on unchanged files is never rerun (keyed by file hash).</p>
+<p><b>Why it works.</b> A late fault costs only the work stacked on it.</p>
+<p><b>The result.</b> Designed: 5 suite runs instead of 17, about 50 minutes instead of 2 h 49 min at 596 s (computed, r57-0417). Measured since: builders spent 4 to 10 % of their time in tests, not the 30-40 % assumed; reviews took 23.6 minutes each (r57-0173). With the suite at 120 s the saving shrinks.</p>
+</div>
+<div class="item">
+<h3>Counting tokens per unit and per meter point</h3>
+<p><b>The problem.</b> The plan guessed 40 M tokens a point of the weekly meter and 11.7 M a builder unit.</p>
+<p><b>What we did.</b> Counted every transcript once per message id (<code>tokens-self.mjs</code>, <code>usage.jsonl</code>).</p>
+<p><b>Why it works.</b> A plan is only as good as its inputs.</p>
+<p><b>The result.</b> About 62 M a point (59-66 M); a builder unit 32.3 M median (18.5-38.0); a refuter 10.6 M against 5.4 M planned. The next estimate rests on these (measured; one build, one week).</p>
+</div>
+<h2 class="group">Group 3. Quality and wrong claims</h2>
+<div class="item">
+<h3>Blind reviews in a fresh context</h3>
+<p><b>The problem.</b> A builder grades its own work.</p>
+<p><b>What we did.</b> Every unit got a reviewer that had not seen the builder's reasoning, with mutations to prove the tests catch faults.</p>
+<p><b>Why it works.</b> A fresh reader has no shared blind spot.</p>
+<p><b>The result.</b> The review of P0 and the plan gate: 6 breaking findings, fixed with tests that fail on the old code. Slice 0: 1 breaking (the skeleton took a lock step outside the run lock). Slice 1: 11 reviews over 14 units, 3 breaking (W5, W3, S2.1). Each was fixed before merge (measured). A review cost a median 10.6 M tokens. The reviews of the plans found 14 (pilot plan), 14 (complexity analysis), 16 (faults), 14 (unattended) and 11 (router) findings.</p>
+</div>
+<div class="item">
+<h3>The model check of the tree</h3>
+<p><b>The problem.</b> A coordination design can fail in ways tests do not reach.</p>
+<p><b>What we did.</b> Brought the model to the code as built and ran it once: 28 runs and 3 reruns (r57-0168).</p>
+<p><b>Why it works.</b> It explores every ordering of events, not one.</p>
+<p><b>The result.</b> One fault: a bare acknowledgement from the coordinator re-armed the age cap, so the owner was never told of a stuck attempt. Fixed in FX-W6 (41 M tokens with its review); the check then holds, and an ablation that keeps the old line fails it. The close group held in all 43 two-fault parts. Not covered: three fixes, more than two faults.</p>
+</div>
+<div class="item">
+<h3>Every landing through the tests</h3>
+<p><b>The problem.</b> Merged work can be clean to git and wrong.</p>
+<p><b>What we did.</b> The landing script (above) runs the unit's tests on every merge and undoes it on failure.</p>
+<p><b>Why it works.</b> The check sits at the one place all units pass.</p>
+<p><b>The result.</b> 25 landings: 20 landed, 2 stopped by conflicts, 3 undone by failing tests (measured). The suite then passed: 1,037 pass, 0 fail on the final build.</p>
+</div>
+<div class="item">
+<h3>The faults audit</h3>
+<p><b>The problem.</b> Where do our faults come from?</p>
+<p><b>What we did.</b> Sorted every fault on record by cause (<code>FAULTS.md</code>, reviewed blind: 16 findings).</p>
+<p><b>Why it works.</b> A class shows where a rule would pay.</p>
+<p><b>The result.</b> At least 56 faults. Our own glue: 23. A borrowed design with a step missed: 16. A borrowed design whose assumption fails for model sessions: 3. No part holds more than 8. A direction, not a gain: it favours using the app's own helpers over our session control.</p>
+</div>
+<div class="item">
+<h3>The library of records and its recall tests</h3>
+<p><b>The problem.</b> Sessions forget; chat ideas vanish.</p>
+<p><b>What we did.</b> A library of structured records, with a board, a lookup script and guards on its journal. Four recall tests by a session that knew nothing.</p>
+<p><b>Why it works.</b> An answer comes from a record with its evidence, not from memory.</p>
+<p><b>The result.</b> 4,131 records, every line parsed, no id repeated (r57-0152). Fill 1: 2,524 records; 733 read by hand against their sources, 3 small corrections, 1,791 checked by script only. Recall tests: 8 of 14, 5 of 9, 4 of 10 answered surely, the rest partly or rightly "not recorded"; the fourth, on the new board, had no wrong answer in 14 questions. Fixes followed each.</p>
+</div>
+<div class="item">
+<h3>Figures quoted from the paper</h3>
+<p><b>The problem.</b> A fetch tool returns a small model's summary. Figures taken from summaries were wrong (mistake r57-0606).</p>
+<p><b>What we did.</b> Read the paper itself: curl with <code>--ssl-no-revoke</code>, check the file starts <code>%PDF-</code>, <code>pdftotext</code> (r57-0110).</p>
+<p><b>Why it works.</b> The source is read, not a summary of it.</p>
+<p><b>The result.</b> The second pass listed 43 corrections to the first across five files, some only adding detail (the count 38 in the mistake record is in no file opened). Measured counts of corrections, not of hallucinations avoided later.</p>
+</div>
+<h2 class="group">Group 4. Rules enforced by the machine</h2>
+<div class="item">
+<h3>Tier hook</h3>
+<p><b>The problem.</b> A written rule about models was not followed (mistake r57-0603).</p>
+<p><b>What we did.</b> A hook refuses a helper or session without a kind of job in front, without an explicit model, or on a model its kind does not allow.</p>
+<p><b>Why it works.</b> The refusal happens before the start, whatever the session remembers.</p>
+<p><b>The result.</b> 17 self-tests pass; a real session gave the expected result on 6 of 6 steps (2 started, 4 refused); about 37 ms a start. It cannot see a wrong kind or the effort level (observed).</p>
+</div>
+<div class="item">
+<h3>Record guard, commit check, plan gate, start hook</h3>
+<p><b>The problem.</b> Archived evidence and journal lines were editable; design questions reached the owner.</p>
+<p><b>What we did.</b> A record guard refuses edits of archived evidence, non-append writes to the journal and a question not starting <code>approve:</code>, <code>cap:</code> or <code>fact:</code>. A commit check backs it. A plan gate checks a start and a done mark. A start hook puts the board into every session start (about 7,200 characters).</p>
+<p><b>Why it works.</b> The machine refuses before the mistake; a review found the first version's holes.</p>
+<p><b>The result.</b> Version 2 after six breaking findings: record guard 202 of 202 tests (the old guard fails 50), commit check 19 of 19, plan gate 37 of 37; about 43 ms a shell call. Seen but unprotected: 1,063 of 4,042 tracked evidence files are in no manifest (observed).</p>
+</div>
+<h2 class="group">Group 5. Running with less of the owner</h2>
+<div class="item">
+<h3>The chosen plan for the research run</h3>
+<p><b>The problem.</b> The tree as planned needs about 75-140 typed turns over about two weeks.</p>
+<p><b>What we did.</b> A complexity analysis (<code>COMPLEXITY.md</code>, blind review 14 findings, all accepted) chose path e2: a Fable coordinator starts one Opus helper per field, which runs the field's readers, gate and fresh refuter.</p>
+<p><b>Why it works.</b> Each field keeps its own fresh window and nothing waits for a typed turn.</p>
+<p><b>The result.</b> Computed, not run: 3 owner acts (the go, the cap, opening the coordinator); 5-8 h of machine time at three fields at once; about 1.0 B tokens (0.80-1.22), 16 points, 1.6 times the direction's 10 %. In tokens it saves only a little.</p>
+</div>
+<div class="item">
+<h3>Running without his typed "go"</h3>
+<p><b>The problem.</b> Each session start waited for him.</p>
+<p><b>What we did.</b> <code>UNATTENDED.md</code>: the app's own means (Auto mode, optional Remote Control, Windows set not to sleep) and the stops that remain.</p>
+<p><b>Why it works.</b> A coordinator starts helpers without a go per session.</p>
+<p><b>The result.</b> Designed. Three turns, none during the run unless it stops. It drops checks the protocol had (fencing a replaced helper, a restart limit, hang detection). Open: whether a session may start sessions on a continuation (P1).</p>
+</div>
+<div class="item">
+<h3>No design questions to the owner</h3>
+<p><b>The problem.</b> A 29-question decision sheet was put to him and rejected (r57-0001).</p>
+<p><b>What we did.</b> A mechanism comes from the recorded research, a parameter is computed against the seven measures, a missing fact is measured. The record guard refuses a question without a prefix.</p>
+<p><b>Why it works.</b> The owner supplies a go, a cap or a fact, not a design.</p>
+<p><b>The result.</b> In force and enforced. The saving in his time is not measured.</p>
+</div>
+<h2 class="group">Group 6. The PC</h2>
+<div class="item">
+<h3>The freezes were blocked program starts, not memory</h3>
+<p><b>The problem.</b> The PC froze; memory was blamed, and sessions were limited to three at once.</p>
+<p><b>What we did.</b> Read the app's own log and the recorder across 52 unclean restarts (<code>pc-freezes-2026-11-17/VERDICT.md</code>). Removed 360 Total Security.</p>
+<p><b>Why it works.</b> At all four freezes of 17 November 11.8 to 19.3 GB were free; what failed was starting a program. The antivirus slowed every PowerShell start thirteen-fold (2,070-2,180 ms against 151-160 ms after removal).</p>
+<p><b>The result.</b> The limit of three child sessions was withdrawn (r57-0032); the width is computed. The owner reports no freeze since; that the antivirus was the cause is not proven.</p>
+</div>
+<h2 class="group">Group 7. Earlier measured work</h2>
+<div class="item">
+<h3>The graph test</h3>
+<p><b>The problem.</b> Would a typed store of code facts help find the other files a change touches?</p>
+<p><b>What we did.</b> Three engines and two floors on 75 held-out commits, an 8,000-token answer.</p>
+<p><b>Why it works.</b> A typed store knows callers and co-changed files; a text search does not.</p>
+<p><b>The result.</b> Typed store 0.700 recall against 0.625 for scripted search, +0.076 [+0.036, +0.118]. The three engines were identical. A community prior added nothing (+0.015). Not tested: whether an agent finishes faster or with fewer mistakes. No agent was run.</p>
+</div>
+<div class="item">
+<h3>The embeddings test</h3>
+<p><b>The problem.</b> Would learned embeddings add to a simple ranker?</p>
+<p><b>What we did.</b> Four embedding models and a graph encoder fused with it; 50 later tuning commits.</p>
+<p><b>Why it works.</b> It does not: the models mostly relearn the co-change facts the ranker already has.</p>
+<p><b>The result.</b> Null. Largest gain +0.0023 in the pool against the +0.02 bar. A gain up to about +0.006 is not ruled out. This is one form on one repository, not a verdict on the family.</p>
+</div>
+<h2 class="group">Group 8. Research behind the designs</h2>
+<div class="item">
+<h3>Round 3 and the decision rule, version 2</h3>
+<p><b>The problem.</b> Several designs rested on guesses: how many workers a check feeds, how to pace tokens, how to let writers share files.</p>
+<p><b>What we did.</b> Four research lanes, each report refuted in a fresh context (r57-0140): 357 lane records and 884 extractor records. Version 2 of the rule was decided from them (r57-0841).</p>
+<p><b>Why it works.</b> The mechanisms are borrowed from solved fields.</p>
+<p><b>The result.</b> Lane counts by their own refuters: c1 66 claims (41 confirmed, 23 in part, 2 refuted); t1 115 (65, 42, 5, 3 unchecked); a1 82 (48, 33, 1). The rule: 145 statements, 86 confirmed, 53 narrowed, 1 refuted, 5 searched only. Designed and untested: every number in it is a hypothesis.</p>
+</div>
+<h2 class="group">What did not improve, or is only designed</h2>
+<ul><li><b>The build's tokens.</b> 908 M used against 397 M planned, 2.3 times (measured, r57-0170). A builder unit used 32.3 M against 11.7 M, a refuter 10.6 M against 5.4 M. The meter ran 64 % to 80 %.</li><li><b>The chain of four fixes.</b> W1 to W4 each depend on the one before; a link took 80-117 minutes. That chain set the fixes' time however many helpers ran. For 42 minutes no helper ran at all.</li><li><b>Parallel work saves time, not tokens.</b> In turn or side by side costs about the same; tokens are saved by small windows.</li><li><b>Several writers do not help research.</b> Every reader writes its own file, so the method saves nothing there; it would shorten only the pilot's fix round, 3 h to 1.2 h (computed, not built).</li><li><b>Nothing has run for real.</b> The pilot is the first real run of the tree.</li><li><b>Only designed:</b> the router, the chosen research plan, the unattended run, the testing policy and the decision rule's numbers. Probed once, no gain: helpers started in the background (r57-0158).</li><li><b>One test is flaky</b> under full load (stop.test FX-CLOSE).</li></ul>
+<h2 class="group mapgroup">The agent map</h2>
+<p class="mapp">This page shows the map of the planned research run: every agent a node, the lines show who starts whom. The top band is the run as chosen, the lower band the pilot as planned. It is the planned research run, not the build. The editable file is <code>research-tree/build/tree/research-run-map.drawio</code>.</p>
+<p class="mapp">How to read it. Start at the green "You" node and follow the lines down. A coordinator starts the seven fields; each field is a column with its helpers listed under it. Dashed nodes start only if the work grows while it runs.</p>
+<div class="mappage"><img src="../tree/research-run-map.png" alt="The research run agent map"></div>
+<h2 class="group">Sources</h2>
+<p class="last">Library records (<code>bash library/lookup.sh -f &lt;id&gt;</code>): r57-0001, r57-0008, r57-0012, r57-0032, r57-0033, r57-0036, r57-0103, r57-0110, r57-0115, r57-0120, r57-0121, r57-0124, r57-0127, r57-0128, r57-0130, r57-0132, r57-0140, r57-0150 to r57-0152, r57-0155, r57-0157, r57-0158, r57-0159, r57-0160, r57-0164 to r57-0173, r57-0401, r57-0403, r57-0414, r57-0415, r57-0417, r57-0420, r57-0603, r57-0604, r57-0606, r57-0841, t1-0108, hc1-0100, hc1-0101, hc1-0104, hc1-0105. Files: <code>research-tree/build/facts/lane-and-shards.md</code>, <code>landings.jsonl</code>, <code>STATE.md</code>, <code>reports/slice-0.md</code> to <code>slice-2.md</code>, <code>refute/</code> (P0-GATE, W1 to W7, S0.5, S2.1, the plan reviews), <code>COMPLEXITY.md</code>, <code>FAULTS.md</code>, <code>ROUTER.md</code>, <code>UNATTENDED.md</code>, <code>tools/tokens-self.mjs</code>, <code>tree/research-run-map.drawio</code>, all under <code>research-tree/build/</code>; <code>docs/program/HARNESS-BOTTLENECKS-2026-11.md</code>, <code>TOKEN-BOTTLENECK-2026-11.md</code>, <code>GRAPH-TEST-RESULT-2026-11.md</code>, <code>evidence/harness-bottlenecks/graph2/embeddings/COORDINATOR-REPORT.md</code>, <code>evidence/pc-freezes-2026-11-17/VERDICT.md</code>; <code>library/tests/recall-test-1.md</code> to <code>recall-test-4.md</code>.</p></body></html>

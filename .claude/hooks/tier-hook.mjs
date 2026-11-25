@@ -64,7 +64,9 @@ const where = isHelper ? 'description' : 'title';
 const label = String(isHelper ? (ti.description ?? '') : (ti.title ?? '')).trim();
 const m = /^([a-z-]+)\s*:/i.exec(label);
 const kind = m ? m[1].toLowerCase() : '';
-if (!kind || !kinds[kind]) {
+// Only the routes file's own kinds (2026-11-26): `kinds[kind]` alone also finds `constructor` on every object, and the
+// hook then threw and the start passed unchecked.
+if (!kind || !Object.hasOwn(kinds, kind) || !kinds[kind]) {
   deny({ ...rec, label: label.slice(0, 60) },
     `tier hook: start the ${where} with the kind of job and a colon, for example "extract: ...". Kinds and their models: ${table}.`);
 }
