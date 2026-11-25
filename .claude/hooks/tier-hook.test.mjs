@@ -4,7 +4,8 @@
 // shaped as a clone (<tmp>/clone/.claude/hooks/), so every log line goes there and nothing in the repository is written.
 // The cases: the five of selftest.mjs that are about this hook, the ten sample calls of harness-kit/check-clone.mjs, and
 // kit mode (--harness-kit "--project=<folder>").
-import { spawnSync } from 'node:child_process';
+// With KIT_HOOK_BIN_DIR set it runs the Rust program kit-tier-hook in place of the hook (./hook-under-test.mjs).
+import { runHook, RUST } from './hook-under-test.mjs';
 import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -29,11 +30,13 @@ writeFileSync(join(LOCAL, '.claude', 'settings.local.json'), JSON.stringify({ ho
 const BARE = join(T, 'no-hooks-folder');
 mkdirSync(BARE, { recursive: true });
 
-let pass = 0, fail = 0;
+let pass = 0, fail = 0, skip = 0;
 function run(input, args = [], hook = HOOK) {
-  const r = spawnSync(process.execPath, [hook, ...args], { input: typeof input === 'string' ? input : JSON.stringify(input), encoding: 'utf8' });
+  const r = runHook(hook, args, { input: typeof input === 'string' ? input : JSON.stringify(input), encoding: 'utf8' });
   return { code: r.status, err: r.stderr || '', out: r.stdout || '' };
 }
+// A case that cannot apply to the Rust program: counted, not run, the reason printed.
+function skipped(name, why) { skip++; console.log(`skip ${name}  (${why})`); }
 function expect(name, r, code, re) {
   const ok = r.code === code && (!re || re.test(r.err + r.out));
   ok ? pass++ : fail++;
@@ -81,8 +84,9 @@ mkdirSync(C2, { recursive: true });
 copyFileSync(HOOK, join(C2, 'tier-hook.mjs'));
 copyFileSync(join(H, 'tier-routes.json'), join(C2, 'tier-routes.json'));
 expect('kit-mode.mjs missing: --harness-kit is ignored, a wrong model is still refused', run(pre('Agent', { description: 'read: x', model: 'opus' }, P), KA, join(C2, 'tier-hook.mjs')), 2);
-expect('kit-mode.mjs missing: the log stays beside the hook', { code: logOf(join(C2, '..', 'logs')).includes('"deny"') ? 0 : 1, err: '', out: '' }, 0);
+if (RUST) skipped('kit-mode.mjs missing: the log stays beside the hook', 'the Rust program has kit mode built in: no module can be missing; its Rust test kit_mode_logs_under_the_project_and_plain_mode_beside_the_hooks covers the log folders');
+else expect('kit-mode.mjs missing: the log stays beside the hook', { code: logOf(join(C2, '..', 'logs')).includes('"deny"') ? 0 : 1, err: '', out: '' }, 0);
 
-console.log(`tier-hook: ${pass} passed, ${fail} failed (${pass + fail} cases)`);
+console.log(`tier-hook${RUST ? ' (Rust program)' : ''}: ${pass} passed, ${fail} failed${skip ? `, ${skip} skipped` : ''} (${pass + fail + skip} cases)`);
 try { rmSync(T, { recursive: true, force: true }); } catch {}
 process.exit(fail ? 1 : 0);

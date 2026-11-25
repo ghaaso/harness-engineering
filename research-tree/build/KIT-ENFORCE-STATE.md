@@ -56,6 +56,16 @@ Then: `node harness-kit/check-clone.mjs` exits 0; commits on `bilal/build`; a br
   test switch; limit 6 M, expected 3 M, basis r57-0191); wave R1 four Opus builders at once (window-ceiling 9 M;
   creep-gate 7 M; count-gate 8 M; fanout-gate and the token counter 8 M; expected 5, 3.9, 4.4, 4.6 M) with the
   set-up builder (8 M, expected 4 M); then the writer; then the clean-clone check and one review.
+- 17:58 UTC (clock): wave 1 done and committed (348ef7ef). Hooks builder: kit mode in the five JavaScript hooks,
+  `kit-mode.mjs`, the tier hook's own test file, start hook, token counter, basis table; tests window-ceiling 134,
+  creep-gate 42, fanout-gate 48, count-gate 29, tier 24, start 10, tokens 8, selftest 245; about 9 M by its own
+  count (limit 12 M). Parallel builder: `unit.mjs`, `check.mjs`, the queue's options; 6 tests; `land.mjs` unchanged.
+  The JavaScript to port is now 119,277 bytes (about 21 M at r57-0191's rate). Meter 85 % all models, 56 % Fable.
+  Open from the reports, for the set-up builder: `isOurs` must find the mark anywhere in a command; the check must
+  count skips apart from failures. For the writer: no verb removes a landed unit's copy (two git commands by hand);
+  rerun `node harness-kit/basis.build.mjs` after the documents change. The effort check is not built: what it takes
+  is in `in/hooks-report.md`.
+- 17:59 UTC: wave R0 started: the Rust core builder (brief `briefs/RUST-CORE.md`, hand-back `in/rust-core-report.md`).
 - To record by `tools/journal.mjs` at the end: his two cap answers, the Rust instruction and "no fallbacks", the
   measured costs of this job's helpers, what was built.
 

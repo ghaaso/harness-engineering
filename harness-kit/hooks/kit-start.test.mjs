@@ -1,6 +1,7 @@
 // Tests of kit-start.mjs (2026-11-25). Run: node harness-kit/hooks/kit-start.test.mjs
 // The hook is copied into a temporary clone (<tmp>/clone/harness-kit/hooks/); her project is another temporary folder.
-import { spawnSync } from 'node:child_process';
+// With KIT_HOOK_BIN_DIR set it runs the Rust program kit-start in place of the hook (.claude/hooks/hook-under-test.mjs).
+import { runHook, RUST } from '../../.claude/hooks/hook-under-test.mjs';
 import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -17,7 +18,7 @@ writeFileSync(join(P, '.harness', 'WIDTHS.md'), '# widths\n');
 let pass = 0, fail = 0;
 const ok = (c, name, extra = '') => { c ? pass++ : fail++; console.log(`${c ? 'ok  ' : 'FAIL'} ${name}${c ? '' : '  ' + String(extra).slice(0, 200)}`); };
 function run(source, args = ['--harness-kit', `--project=${P}`]) {
-  const r = spawnSync(process.execPath, [join(C, 'harness-kit', 'hooks', 'kit-start.mjs'), ...args], { input: JSON.stringify({ hook_event_name: 'SessionStart', session_id: 's', source }), encoding: 'utf8' });
+  const r = runHook(join(C, 'harness-kit', 'hooks', 'kit-start.mjs'), args, { input: JSON.stringify({ hook_event_name: 'SessionStart', session_id: 's', source }), encoding: 'utf8' });
   let t = ''; try { t = JSON.parse(r.stdout).hookSpecificOutput.additionalContext; } catch {}
   return { code: r.status, t };
 }
@@ -40,9 +41,9 @@ ok(/The summary is not the record/.test(r.t), 'compact: the summary is not the r
 r = run('resume', ['--harness-kit']);
 ok(r.code === 0 && /State files in \.harness\/: none yet\./.test(r.t), 'no --project: the project is the clone (no .harness there yet)', r.t.slice(-200));
 
-const bad = spawnSync(process.execPath, [join(C, 'harness-kit', 'hooks', 'kit-start.mjs'), '--harness-kit', `--project=${P}`], { input: 'not json', encoding: 'utf8' });
+const bad = runHook(join(C, 'harness-kit', 'hooks', 'kit-start.mjs'), ['--harness-kit', `--project=${P}`], { input: 'not json', encoding: 'utf8' });
 ok(bad.status === 0 && /Harness kit/.test(bad.stdout), 'unreadable input: still exit 0 with the text');
 
-console.log(`kit-start: ${pass} passed, ${fail} failed (${pass + fail} cases)`);
+console.log(`kit-start${RUST ? ' (Rust program)' : ''}: ${pass} passed, ${fail} failed (${pass + fail} cases)`);
 try { rmSync(T, { recursive: true, force: true }); } catch {}
 process.exit(fail ? 1 : 0);
