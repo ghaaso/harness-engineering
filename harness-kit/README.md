@@ -18,6 +18,31 @@ All figures are from one repository on Bilal's PC (Windows 11, 12 cores, 31 GB) 
 - **Waits under the cache's life**: in the replays, helpers that waited 5-10 minutes lost their cache 296 times, 46.2 M
   tokens, most after a shell call set to a 300 s timeout (t9-0102). The fix (calls under 240 s) is written, not piloted.
 
+## The parallel work and its speed-ups
+
+Everything this project did to run work side by side is in `parallel/`. Start there if that is what you came for.
+
+- `parallel/SPEEDUPS.md` (also `speedups.html` and `speedups.pdf`): what was built and what it gained, written for
+  Bilal on 20 November 2026, every figure marked measured, computed, estimate or designed. Its sections to read
+  first: "Several writers on one file" (one writer per file allowed 3 units at once; own copies, a skeleton change
+  first and one landing order allow 7: the width is measured, the time gain an estimate), "The test suite" (596 s to
+  120 s), "The heavy-command queue", "Helpers side by side in the build", "Readers side by side".
+- `parallel/DECISION-RULE-v2.md`: the rule for how many run at once, how several writers share files, and which unit
+  starts next. Decided on paper on 19 November 2026. Its numbers are not measured yet: read it as hypotheses.
+- `parallel/research/`: the reading behind the rule, one report per question, each claim checked by a refuter and
+  quoted from the papers:
+  - `c1-report.md`: the shared check as a queue (its saturation point, batching after Dorfman, merge queues, test selection)
+  - `w1-report.md`: several writers (anomalies, the grain of a lock, optimistic against locking, version-checked writes, structured merge)
+  - `t1-report.md`: the shape of the session tree (B-link splits, buffer trees, levels and summaries)
+  - `a1-report.md`: a refilling token allowance and long units (pacing, token buckets, backfill)
+  - `o1-report.md`, `o2-report.md`: finding which resource is the bottleneck; scheduling when several are scarce
+  - `BUILD-IN.md`: how the rule is to be built into the scripts (a design)
+
+Built and run: units in their own copies landing through the check in one order, the queue with 4 slots, the suite
+in shards. Designed and not built: several writers inside one file by version-checked writes or claims, the function
+that computes how many run at once, pacing of the token window. These files are copies: the originals, with every
+claim file and record, are on `bilal/build` under `docs/program/evidence/` and `research-tree/build/speedups/`.
+
 ## Set-up
 
 From `harness-kit/setup.mjs` and `harness-kit/check-clone.mjs` as they stood when this was written. Needs Node 20 or
