@@ -25,3 +25,8 @@ Everything on held-out: A1 and B1 stacks (U7, not started), the cut-offs refuter
 One seed per graph run; one A4 prompt, one A6 form; more than one repository family; other graph and temporal forms. One null here does not rule a family out.
 
 Per unit: U1.md U2.md U3.md U4.md U5.md U6.md U7.md T1-T3.md. Files: MANIFEST.md.
+
+## Update, 2026-11-26 about 17:40 UTC (as reported by the round's coordinator; tuning data only)
+- U2: both fine-tuning chains have ended and the fill ran by itself. Frozen settings, tuning Acc@10: Qwen3-Embedding-0.6B LoRA 0.880 (learning rate 2e-4, two epochs, three negatives, filtered, pooled); SweRankEmbed-Small 0.849 (learning rate 1e-5, one epoch, three negatives, unfiltered, pooled). Both are below A2 (0.919). The fill script also wrote their held-out files; no session has read or scored them.
+- U6: its last final folds are running, then finish.sh; both run without a session.
+- Held for the usage meter, which reads 99 %: the U2 finisher, the U6 report, the cut-offs refuter, U7's held-out scoring, the owner's page. The small result files of this update are not yet copied into this folder.
